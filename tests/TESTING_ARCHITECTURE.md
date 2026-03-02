@@ -1,8 +1,8 @@
-# Delegate Testing Architecture Documentation
+# Backbeat Testing Architecture Documentation
 
 ## Overview
 
-This document provides a comprehensive overview of Delegate's testing architecture, patterns, and best practices. The test suite validates the event-driven task delegation system through multiple testing layers.
+This document provides a comprehensive overview of Backbeat's testing architecture, patterns, and best practices. The test suite validates the event-driven task delegation system through multiple testing layers.
 
 ## Testing Philosophy
 
@@ -70,7 +70,7 @@ tests/
 │
 ├── e2e/                           # Full system tests
 │   ├── cli-commands.test.ts      # CLI interface testing
-│   ├── delegate-simple.test.ts   # Simple delegation flows
+│   ├── run-simple.test.ts   # Simple delegation flows
 │   ├── mcp-server.test.ts        # MCP server integration
 │   ├── mcp-server-comprehensive.test.ts # Complete MCP testing
 │   └── claude-code-integration.test.ts  # Real Claude Code tests
@@ -244,7 +244,7 @@ await manager.delegateTask(task);
 ```typescript
 // Test through CLI interface
 const { stdout, stderr } = await execCommand(
-  'delegate delegate "analyze codebase"'
+  'beat run "analyze codebase"'
 );
 expect(stdout).toContain('Task delegated successfully');
 ```
@@ -525,7 +525,7 @@ npm test -- --grep "should handle concurrent"
 node --inspect-brk ./node_modules/.bin/vitest
 
 # Set debug environment
-DEBUG=delegate:* npm test
+DEBUG=backbeat:* npm test
 ```
 
 ### Common Debug Patterns
@@ -658,7 +658,7 @@ afterEach(async () => {
 
 ## Conclusion
 
-Delegate's testing architecture emphasizes:
+Backbeat's testing architecture emphasizes:
 - **Event-driven validation** matching the system architecture
 - **Type-safe error handling** with Result types
 - **Behavioral testing** over implementation details

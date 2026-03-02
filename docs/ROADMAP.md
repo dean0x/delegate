@@ -1,10 +1,10 @@
-# Delegate Development Roadmap
+# Backbeat Development Roadmap
 
 ## Current Status: v0.4.0 ✅
 
 **Status**: Production Ready
 
-Delegate v0.4.0 is a fully-featured MCP server with autoscaling, persistence, task dependencies, task scheduling, and task resumption. See [FEATURES.md](./FEATURES.md) for complete list of current capabilities.
+Backbeat v0.4.0 is a fully-featured MCP server with autoscaling, persistence, task dependencies, task scheduling, and task resumption. See [FEATURES.md](./FEATURES.md) for complete list of current capabilities.
 
 ---
 
@@ -198,8 +198,8 @@ Resume failed or completed tasks with enriched context from automatic checkpoint
 
 **CLI Command**:
 ```bash
-delegate resume <task-id>
-delegate resume <task-id> --context "Try a different approach this time"
+beat resume <task-id>
+beat resume <task-id> --context "Try a different approach this time"
 ```
 
 **Implementation**:
@@ -268,7 +268,7 @@ v0.4.0 shipped the **"fallback" approach** for task resumption: enriched prompts
 
 **Added post-release**: `continueFrom` enables session continuation through dependency chains — dependent tasks receive checkpoint context (output, git state, errors) from a specified dependency before execution. This is context injection, not live state handoff.
 
-**"Scheduled tasks can have dependencies"** is deferred to v0.6.0 (Advanced Orchestration). A scheduled task's ID doesn't exist until the schedule fires, so pre-declaring dependencies on "the next run of schedule X" requires workflow definitions — this is fundamentally a workflow orchestration feature, not a scheduling feature. The `pipeline` CLI command provides a pragmatic stopgap for sequential execution.
+**"Scheduled tasks can have dependencies"** is deferred to v0.6.0 (Advanced Orchestration). A scheduled task's ID doesn't exist until the schedule fires, so pre-declaring dependencies on "the next run of schedule X" requires workflow definitions — this is fundamentally a workflow orchestration feature, not a scheduling feature. The `beat pipeline` CLI command provides a pragmatic stopgap for sequential execution.
 
 #### Timeline
 - **Completed**: Both Task Scheduling and Task Resumption implemented in v0.4.0
@@ -293,7 +293,7 @@ v0.4.0 shipped the **"fallback" approach** for task resumption: enriched prompts
 **Priority**: Medium - Enterprise use cases
 
 #### Features
-- **Multi-Server Support**: Distribute tasks across multiple Delegate instances
+- **Multi-Server Support**: Distribute tasks across multiple Backbeat instances
 - **Load Balancing**: Intelligent task distribution based on server resources
 - **Shared State**: Centralized task queue and status tracking (Redis backend)
 - **Fault Tolerance**: Handle server failures gracefully with automatic failover

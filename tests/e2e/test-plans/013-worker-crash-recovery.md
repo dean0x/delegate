@@ -23,8 +23,8 @@ preconditions:
 ### Step 1: Clean State
 **Action:** Ensure clean starting state
 ```bash
-rm -rf .delegate/
-pkill -f "delegate" || true
+rm -rf .backbeat/
+pkill -f "backbeat" || true
 ```
 **Expected:** Clean state achieved
 **Verify:**
@@ -44,7 +44,7 @@ npm run build
 ### Step 3: Create Task That Will Crash
 **Action:** Delegate task that exits abruptly
 ```bash
-node dist/cli.js delegate "echo 'Starting task' && sleep 2 && exit 1" --priority P0
+beat run "echo 'Starting task' && sleep 2 && exit 1" --priority P0
 TASK_ID=$(node dist/cli.js status --json 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 echo "Task ID: $TASK_ID"
 ```
@@ -107,7 +107,7 @@ echo "$final_status" | grep -i "failed" && echo "✓ Task marked as failed" || e
 ### Step 8: Test Worker Hang Detection
 **Action:** Create task that hangs (simulated)
 ```bash
-node dist/cli.js delegate "echo 'Hanging task' && sleep 300" --timeout 5000 --priority P0
+beat run "echo 'Hanging task' && sleep 300" --timeout 5000 --priority P0
 HANG_TASK=$(node dist/cli.js status --json 2>/dev/null | grep -o '"id":"[^"]*"' | tail -1 | cut -d'"' -f4)
 echo "Hang task ID: $HANG_TASK"
 ```
@@ -131,7 +131,7 @@ ps aux | grep -E "sleep 300" | grep -v grep || echo "✓ Hanging process killed"
 ### Step 10: Test Crash During Output
 **Action:** Task crashes while producing output
 ```bash
-node dist/cli.js delegate "for i in {1..10}; do echo 'Output line $i'; sleep 0.5; done; exit 1" --priority P0
+beat run "for i in {1..10}; do echo 'Output line $i'; sleep 0.5; done; exit 1" --priority P0
 OUTPUT_TASK=$(node dist/cli.js status --json 2>/dev/null | grep -o '"id":"[^"]*"' | tail -1 | cut -d'"' -f4)
 echo "Output task ID: $OUTPUT_TASK"
 ```
@@ -155,7 +155,7 @@ node dist/cli.js status $OUTPUT_TASK | grep "status"
 ### Step 12: Test SIGKILL Recovery
 **Action:** Force kill a worker process
 ```bash
-node dist/cli.js delegate "echo 'Kill test' && sleep 30" --priority P0 &
+beat run "echo 'Kill test' && sleep 30" --priority P0 &
 sleep 2
 # Find and kill the worker
 worker_pid=$(ps aux | grep -E "claude.*worker" | grep -v grep | awk '{print $2}' | head -1)
@@ -187,7 +187,7 @@ node dist/cli.js status $KILL_TASK | grep -E "status|retry|attempt"
 **Action:** Create task that crashes multiple times
 ```bash
 # This will crash 3 times then might be marked failed
-node dist/cli.js delegate "echo 'Multi-crash test attempt' && exit 1" --priority P0
+beat run "echo 'Multi-crash test attempt' && exit 1" --priority P0
 MULTI_TASK=$(node dist/cli.js status --json 2>/dev/null | grep -o '"id":"[^"]*"' | tail -1 | cut -d'"' -f4)
 
 for i in {1..5}; do
@@ -204,8 +204,8 @@ done
 ### Step 15: Cleanup
 **Action:** Clean up test artifacts
 ```bash
-pkill -f "delegate" || true
-rm -rf .delegate/
+pkill -f "backbeat" || true
+rm -rf .backbeat/
 ```
 **Expected:** Cleanup successful
 **Verify:**
@@ -225,7 +225,7 @@ rm -rf .delegate/
 ## Rollback Plan
 If test fails:
 1. Kill all workers: `pkill -9 -f claude`
-2. Clear database: `rm -rf .delegate/`
+2. Clear database: `rm -rf .backbeat/`
 3. Check for orphans: `ps aux | grep claude`
 4. Review retry logic in code
 

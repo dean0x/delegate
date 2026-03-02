@@ -1,8 +1,8 @@
-# 🚀 Delegate v0.1.0 - Initial Release
+# 🚀 Backbeat v0.1.0 - Initial Release
 
-## Introducing Delegate: Your MCP Sidekick for Claude Code
+## Introducing Backbeat: Your MCP Sidekick for Claude Code
 
-Delegate is an MCP (Model Context Protocol) server that enables Claude Code to delegate tasks to background Claude Code instances, allowing for true parallel task execution without context switching.
+Backbeat is an MCP (Model Context Protocol) server that enables Claude Code to delegate tasks to background Claude Code instances, allowing for true parallel task execution without context switching.
 
 ## ✨ Features
 
@@ -111,9 +111,9 @@ delegate help
 - Priority levels
 
 ### v0.3.0 - CLI Interface
-- Direct task delegation: `delegate delegate "task"`
-- Status monitoring: `delegate status`
-- Log retrieval: `delegate logs <id>`
+- Direct task delegation: `beat delegate "task"`
+- Status monitoring: `beat status`
+- Log retrieval: `beat logs <id>`
 
 ### v0.4.0 - Persistence
 - SQLite task history
@@ -145,7 +145,7 @@ MIT License - see [LICENSE](./LICENSE) file for details
 
 ## 🎉 Get Started
 
-1. Clone and install Delegate
+1. Clone and install Backbeat
 2. Configure MCP in Claude Code
 3. Start delegating tasks!
 

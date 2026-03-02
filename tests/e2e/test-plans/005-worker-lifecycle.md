@@ -54,7 +54,7 @@ npm run build
 ### Step 4: Start Simple Worker Task
 **Action:** Delegate a task that spawns a worker
 ```bash
-node dist/cli.js delegate "echo 'Worker started' && sleep 3 && echo 'Worker completed'" --priority P0
+node dist/cli.js run "echo 'Worker started' && sleep 3 && echo 'Worker completed'" --priority P0
 ```
 **Expected:** Worker spawned for task
 **Verify:**
@@ -104,7 +104,7 @@ ps aux | grep -E "claude.*worker" | grep -v grep || echo "Workers cleaned up suc
 ### Step 9: Test Worker with Error Output
 **Action:** Spawn worker that produces stderr
 ```bash
-node dist/cli.js delegate "echo 'Normal output' && >&2 echo 'Error output' && exit 1"
+node dist/cli.js run "echo 'Normal output' && >&2 echo 'Error output' && exit 1"
 ```
 **Expected:** Worker handles stderr
 **Verify:**
@@ -125,7 +125,7 @@ sleep 3 && node dist/cli.js logs $(node dist/cli.js status --json 2>/dev/null | 
 **Action:** Spawn 3 workers simultaneously
 ```bash
 for i in 1 2 3; do
-  node dist/cli.js delegate "echo 'Worker $i starting' && sleep 2 && echo 'Worker $i done'" &
+  node dist/cli.js run "echo 'Worker $i starting' && sleep 2 && echo 'Worker $i done'" &
 done
 wait
 ```
@@ -147,7 +147,7 @@ sleep 1 && ps aux | grep -E "claude" | grep -v grep | wc -l
 ### Step 13: Test Worker Timeout
 **Action:** Create task that will timeout
 ```bash
-node dist/cli.js delegate "echo 'Starting long task' && sleep 300" --timeout 5000
+node dist/cli.js run "echo 'Starting long task' && sleep 300" --timeout 5000
 ```
 **Expected:** Worker killed after timeout
 **Verify:**
@@ -168,7 +168,7 @@ sleep 7 && node dist/cli.js status $(node dist/cli.js status --json 2>/dev/null 
 **Action:** Clean up all test artifacts
 ```bash
 pkill -f "claude" || true
-rm -rf .delegate/delegate.db*
+rm -rf .backbeat/backbeat.db*
 ```
 **Expected:** Cleanup successful
 **Verify:**

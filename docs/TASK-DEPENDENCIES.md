@@ -1,6 +1,6 @@
 # Task Dependencies
 
-Delegate supports task dependencies through a DAG (Directed Acyclic Graph) based dependency system. Tasks can depend on other tasks, and Delegate ensures that dependent tasks only execute after their dependencies have completed.
+Backbeat supports task dependencies through a DAG (Directed Acyclic Graph) based dependency system. Tasks can depend on other tasks, and Backbeat ensures that dependent tasks only execute after their dependencies have completed.
 
 ## Architecture
 
@@ -39,7 +39,7 @@ const test = await taskManager.delegate({
 
 **CLI:**
 ```bash
-delegate delegate "npm test" --depends-on task-abc123 --continue-from task-abc123
+beat run "npm test" --depends-on task-abc123 --continue-from task-abc123
 ```
 
 ### Dependency-Aware Queueing
@@ -134,7 +134,7 @@ wouldCreateCycle(taskId, dependsOnTaskId):
 Delegate a new task with optional dependencies.
 
 ```typescript
-interface DelegateOptions {
+interface TaskOptions {
   prompt: string;
   priority?: Priority;
   dependsOn?: TaskId[];  // Array of task IDs this task depends on

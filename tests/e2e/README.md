@@ -1,4 +1,4 @@
-# E2E Testing Framework for Delegate
+# E2E Testing Framework for Backbeat
 
 ## Overview
 
@@ -110,8 +110,8 @@ Execute tests in priority order (P0 → P1 → P2) to ensure critical functional
 ## Troubleshooting
 
 ### Common Issues
-- **Database locks**: Clean `.delegate/` directory
-- **Orphaned processes**: Run `pkill -f delegate`
+- **Database locks**: Clean `.backbeat/` directory
+- **Orphaned processes**: Run `pkill -f beat`
 - **Stale results**: Re-run tests marked with 🔴
 
 ### Test Timeouts

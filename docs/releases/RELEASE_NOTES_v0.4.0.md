@@ -1,19 +1,18 @@
-# Delegate v0.4.0 - Project Rename + Task Scheduling & Resumption
+# Backbeat v0.4.0 - Project Rename + Task Scheduling & Resumption
 
-## Project Rename: claudine → @dean0x/delegate
+## Project Rename: claudine → backbeat
 
-This release renames the project from `claudine` to `@dean0x/delegate` to avoid trademark concerns with Anthropic's "Claude" branding. This is a **clean break** — no data migration from `~/.claudine/`.
+This release renames the project from `claudine` to `backbeat` to avoid trademark concerns with Anthropic's "Claude" branding. This is a **clean break** — no data migration from `~/.claudine/`.
 
 | Before | After |
 |--------|-------|
-| `npm install -g claudine` | `npm install -g @dean0x/delegate` |
-| `claudine mcp start` | `delegate mcp start` |
-| `CLAUDINE_DATABASE_PATH` | `DELEGATE_DATABASE_PATH` |
-| `CLAUDINE_DATA_DIR` | `DELEGATE_DATA_DIR` |
-| `~/.claudine/claudine.db` | `~/.delegate/delegate.db` |
-| `claudine/task-{id}` branches | `delegate/task-{id}` branches |
-| `.claudine-patches/` | `.delegate-patches/` |
-| `ClaudineError` / `isClaudineError` | `DelegateError` / `isDelegateError` |
+| `npm install -g claudine` | `npm install -g backbeat` |
+| `claudine mcp start` | `beat mcp start` |
+| `CLAUDINE_DATABASE_PATH` | `BACKBEAT_DATABASE_PATH` |
+| `CLAUDINE_DATA_DIR` | `BACKBEAT_DATA_DIR` |
+| `~/.claudine/claudine.db` | `~/.backbeat/backbeat.db` |
+| `.claudine-patches/` | `.backbeat-patches/` |
+| `ClaudineError` / `isClaudineError` | `BackbeatError` / `isBackbeatError` |
 
 See the **Breaking Changes** section below for full migration guide.
 
@@ -42,20 +41,20 @@ Schedule tasks for future or recurring execution with full lifecycle management.
 **CLI Commands (6 new + pipeline):**
 ```bash
 # Cron schedule
-delegate schedule create "run linter" --type cron --cron "0 9 * * 1-5"
+beat schedule create "run linter" --type cron --cron "0 9 * * 1-5"
 
 # One-time schedule
-delegate schedule create "deploy v2" --type one_time --at "2026-03-01T09:00:00Z"
+beat schedule create "deploy v2" --type one_time --at "2026-03-01T09:00:00Z"
 
 # List and manage
-delegate schedule list --status active
-delegate schedule get <id> --history
-delegate schedule pause <id>
-delegate schedule resume <id>
-delegate schedule cancel <id> "no longer needed"
+beat schedule list --status active
+beat schedule get <id> --history
+beat schedule pause <id>
+beat schedule resume <id>
+beat schedule cancel <id> "no longer needed"
 
 # Pipeline: sequential tasks with delays
-delegate pipeline "set up DB" --delay 5m "run migrations" --delay 10m "seed data"
+beat pipeline "set up DB" --delay 5m "run migrations" --delay 10m "seed data"
 ```
 
 **Architecture:**
@@ -82,8 +81,8 @@ Resume failed or completed tasks with enriched context from automatic checkpoint
 
 **CLI Command:**
 ```bash
-delegate resume <task-id>
-delegate resume <task-id> --context "Try a different approach this time"
+beat resume <task-id>
+beat resume <task-id> --context "Try a different approach this time"
 ```
 
 **Architecture:**
@@ -114,7 +113,7 @@ await DelegateTask({
 
 **CLI:**
 ```bash
-delegate delegate "npm test" --depends-on task-abc --continue-from task-abc
+beat run "npm test" --depends-on task-abc --continue-from task-abc
 ```
 
 ---
@@ -174,28 +173,23 @@ Added `withServices()` helper that eliminates 15-line bootstrap boilerplate repe
 ## Breaking Changes
 
 ### Package Rename
-- **npm package**: `claudine` → `@dean0x/delegate`
-- **CLI command**: `claudine` → `delegate`
-- **MCP server name**: `claudine` → `delegate`
+- **npm package**: `claudine` → `backbeat`
+- **CLI command**: `claudine` → `beat`
+- **MCP server name**: `claudine` → `backbeat`
 - **Update your MCP config** to use the new package and server name
 
 ### Environment Variables
-- `CLAUDINE_DATABASE_PATH` → `DELEGATE_DATABASE_PATH`
-- `CLAUDINE_DATA_DIR` → `DELEGATE_DATA_DIR`
+- `CLAUDINE_DATABASE_PATH` → `BACKBEAT_DATABASE_PATH`
+- `CLAUDINE_DATA_DIR` → `BACKBEAT_DATA_DIR`
 
 ### Data Paths
-- `~/.claudine/claudine.db` → `~/.delegate/delegate.db`
-- `%APPDATA%/claudine/` → `%APPDATA%/delegate/`
+- `~/.claudine/claudine.db` → `~/.backbeat/backbeat.db`
 - Existing data at `~/.claudine/` is **not migrated** — start fresh
 
 ### Library API
-- `ClaudineError` → `DelegateError`
-- `isClaudineError()` → `isDelegateError()`
-- `toClaudineError()` → `toDelegateError()`
-
-### Git Artifacts
-- Branch pattern: `claudine/task-{id}` → `delegate/task-{id}`
-- Patch directory: `.claudine-patches/` → `.delegate-patches/`
+- `ClaudineError` → `BackbeatError`
+- `isClaudineError()` → `isBackbeatError()`
+- `toClaudineError()` → `toBackbeatError()`
 
 Scheduling and resumption features are additive — existing databases auto-migrate on startup.
 
@@ -204,16 +198,16 @@ Scheduling and resumption features are additive — existing databases auto-migr
 ## Installation
 
 ```bash
-npm install -g @dean0x/delegate@0.4.0
+npm install -g backbeat@0.4.0
 ```
 
 Or add to your `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "delegate": {
+    "backbeat": {
       "command": "npx",
-      "args": ["-y", "@dean0x/delegate", "mcp", "start"]
+      "args": ["-y", "backbeat", "mcp", "start"]
     }
   }
 }
@@ -222,11 +216,6 @@ Or add to your `.mcp.json`:
 ---
 
 ## What's Next
-
-**v0.5.0** (Distributed Execution):
-- Remote worker nodes
-- Task routing and load balancing
-- Cross-machine worktree sync
 
 See [ROADMAP.md](../ROADMAP.md) for complete roadmap.
 
@@ -237,7 +226,7 @@ See [ROADMAP.md](../ROADMAP.md) for complete roadmap.
 No special upgrade steps required. Simply update to 0.4.0:
 
 ```bash
-npm install -g @dean0x/delegate@0.4.0
+npm install -g backbeat@0.4.0
 ```
 
 Existing databases will automatically migrate through v4-v6 schemas on first startup.
@@ -253,6 +242,6 @@ Existing databases will automatically migrate through v4-v6 schemas on first sta
 
 ## Links
 
-- NPM Package: https://www.npmjs.com/package/@dean0x/delegate
+- NPM Package: https://www.npmjs.com/package/backbeat
 - Documentation: https://github.com/dean0x/delegate/blob/main/docs/FEATURES.md
 - Issues: https://github.com/dean0x/delegate/issues

@@ -34,8 +34,8 @@ which stress || echo "stress tool not found - install with: apt install stress"
 ### Step 2: Clean State
 **Action:** Ensure clean starting state
 ```bash
-rm -rf .delegate/
-pkill -f "delegate" || true
+rm -rf .backbeat/
+pkill -f "backbeat" || true
 pkill -f "stress" || true
 ```
 **Expected:** Clean state achieved
@@ -98,7 +98,7 @@ ps aux | grep stress | grep -v grep | head -2
 **Action:** Create tasks while CPU loaded
 ```bash
 for i in {1..5}; do
-  node dist/cli.js delegate "echo 'CPU limit test $i' && sleep 3" --priority P0
+  beat run "echo 'CPU limit test $i' && sleep 3" --priority P0
 done
 ```
 **Expected:** Tasks created
@@ -180,7 +180,7 @@ free -m | grep "^Mem:" | awk '{print "Available: " $7 " MB"}'
 **Action:** Try to scale with low memory
 ```bash
 for i in {1..5}; do
-  node dist/cli.js delegate "echo 'Memory limit test $i' && sleep 2" --priority P0
+  beat run "echo 'Memory limit test $i' && sleep 2" --priority P0
 done
 sleep 5
 workers_low_mem=$(ps aux | grep -E "claude" | grep -v grep | wc -l)
@@ -214,7 +214,7 @@ stress --vm 1 --vm-bytes 500M --timeout 15 &
 sleep 2
 
 for i in {1..3}; do
-  node dist/cli.js delegate "echo 'Combined limit test $i'" --priority P0
+  beat run "echo 'Combined limit test $i'" --priority P0
 done
 
 sleep 5
@@ -230,8 +230,8 @@ echo "Workers under combined load: $workers_combined"
 **Action:** Clean up all test artifacts
 ```bash
 pkill -f "stress" || true
-pkill -f "delegate" || true
-rm -rf .delegate/
+pkill -f "backbeat" || true
+rm -rf .backbeat/
 ```
 **Expected:** Cleanup successful
 **Verify:**

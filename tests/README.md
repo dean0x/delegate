@@ -1,9 +1,9 @@
-# Delegate Test Suite
+# Backbeat Test Suite
 
 **Quality Score**: 75/100 (Target: 85/100)
 **Standards**: [TEST_STANDARDS.md](./TEST_STANDARDS.md) - **MUST READ BEFORE WRITING TESTS**
 
-This directory contains comprehensive tests for Delegate's task delegation system following strict quality standards.
+This directory contains comprehensive tests for Backbeat's task delegation system following strict quality standards.
 
 ## Test Structure
 
@@ -124,7 +124,7 @@ Reusable test data and mocks:
 
 ### Temporary Files
 Tests create temporary artifacts in:
-- `.delegate/` - Temporary databases
+- `.backbeat/` - Temporary databases
 
 **Cleanup**: Tests automatically clean up after execution
 
@@ -239,9 +239,9 @@ E2E tests are written in markdown with:
 - **Mock leakage**: Reset mocks in afterEach hooks
 
 ### E2E Test Issues
-- **Database locks**: Clean `.delegate/` directory
-- **Orphaned processes**: Run `pkill -f delegate`
-- **Orphaned processes**: Run `pkill -f "claude.*delegate"`
+- **Database locks**: Clean `.backbeat/` directory
+- **Orphaned processes**: Run `pkill -f beat`
+- **Orphaned processes**: Run `pkill -f "claude.*backbeat"`
 
 ## CI/CD Integration
 

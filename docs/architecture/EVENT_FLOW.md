@@ -1,6 +1,6 @@
 # Event Flow Architecture
 
-Delegate uses a **pure event-driven architecture** where all components communicate through a central EventBus. This document explains the event flows for common operations.
+Backbeat uses a **pure event-driven architecture** where all components communicate through a central EventBus. This document explains the event flows for common operations.
 
 ## Architecture Overview
 
@@ -502,7 +502,7 @@ The extraction reduces bootstrap.ts by ~28% and makes the handler setup pattern 
 Enable debug logging to see full event flow:
 
 ```bash
-LOG_LEVEL=debug delegate mcp start
+LOG_LEVEL=debug beat mcp start
 ```
 
 You'll see:

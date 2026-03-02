@@ -1,6 +1,6 @@
-# Delegate Features
+# Backbeat Features
 
-This document lists all features that are **currently implemented and working** in Delegate.
+This document lists all features that are **currently implemented and working** in Backbeat.
 
 Last Updated: February 2026
 
@@ -111,31 +111,31 @@ Last Updated: February 2026
 ## ✅ CLI Interface
 
 ### MCP Server Commands
-- `delegate mcp start`: Start the MCP server
-- `delegate mcp test`: Test server startup and validation
-- `delegate mcp config`: Show MCP configuration examples
-- `delegate help`: Show help and usage
+- `beat mcp start`: Start the MCP server
+- `beat mcp test`: Test server startup and validation
+- `beat mcp config`: Show MCP configuration examples
+- `beat help`: Show help and usage
 
 ### Direct Task Commands (v0.2.1+)
-- `delegate delegate <prompt>`: Delegate task directly to background Claude instance
-- `delegate status [task-id]`: Check status of all tasks or specific task
-- `delegate logs <task-id>`: Retrieve task output and logs
-- `delegate cancel <task-id> [reason]`: Cancel running task with optional reason
+- `beat run <prompt>`: Delegate task directly to background Claude instance
+- `beat status [task-id]`: Check status of all tasks or specific task
+- `beat logs <task-id>`: Retrieve task output and logs
+- `beat cancel <task-id> [reason]`: Cancel running task with optional reason
 
 ### Schedule Commands (v0.4.0+)
-- `delegate schedule create <prompt> [options]`: Create a cron or one-time scheduled task
-- `delegate schedule list [--status <status>]`: List schedules with optional status filter
-- `delegate schedule get <id> [--history]`: Get schedule details and execution history
-- `delegate schedule pause <id>`: Pause an active schedule
-- `delegate schedule resume <id>`: Resume a paused schedule
-- `delegate schedule cancel <id> [reason]`: Cancel a schedule with optional reason
+- `beat schedule create <prompt> [options]`: Create a cron or one-time scheduled task
+- `beat schedule list [--status <status>]`: List schedules with optional status filter
+- `beat schedule get <id> [--history]`: Get schedule details and execution history
+- `beat schedule pause <id>`: Pause an active schedule
+- `beat schedule resume <id>`: Resume a paused schedule
+- `beat schedule cancel <id> [reason]`: Cancel a schedule with optional reason
 
 ### Pipeline Commands (v0.4.0+)
-- `delegate pipeline <prompt> [--delay Nm <prompt>]...`: Create chained one-time schedules with delays
+- `beat pipeline <prompt> [--delay Nm <prompt>]...`: Create chained one-time schedules with delays
 
 ### Task Resumption Commands (v0.4.0+)
-- `delegate resume <task-id>`: Resume a failed/completed task from its checkpoint
-- `delegate resume <task-id> --context "..."`: Resume with additional instructions
+- `beat resume <task-id>`: Resume a failed/completed task from its checkpoint
+- `beat resume <task-id> --context "..."`: Resume with additional instructions
 
 ### Configuration Examples
 - **NPM Package**: Global installation support
@@ -264,18 +264,18 @@ Last Updated: February 2026
 - **Lifecycle Management**: Pause, resume, cancel schedules with full execution history
 - **Concurrent Execution Prevention**: Lock-based protection against overlapping runs
 - **6 MCP Tools**: `ScheduleTask`, `ListSchedules`, `GetSchedule`, `CancelSchedule`, `PauseSchedule`, `ResumeSchedule`
-- **CLI + Pipeline**: Full CLI parity including `pipeline` command for chained one-time schedules
+- **CLI + Pipeline**: Full CLI parity including `beat pipeline` command for chained one-time schedules
 
 ### Task Resumption
 - **Auto-Checkpoints**: Captured on task completion/failure with git state and output summary
 - **Enriched Prompts**: Resumed tasks receive full context from previous attempt
 - **Retry Chains**: Track resume lineage via `parentTaskId` and `retryOf` fields
 - **MCP Tool**: `ResumeTask` with optional additional context
-- **CLI**: `delegate resume <task-id> [--context "..."]`
+- **CLI**: `beat resume <task-id> [--context "..."]`
 
 ### Session Continuation (`continueFrom`)
 - **Dependency Context Injection**: Dependent tasks receive checkpoint context from a specified dependency
-- **`continueFrom` Field**: Added to `DelegateTask` MCP tool and `--continue-from` CLI flag
+- **`continueFrom` Field**: Added to `DelegateTask` MCP tool and `beat run --continue-from` CLI flag
 - **Automatic Enrichment**: Output summary, git state, and errors prepended to task prompt
 - **Race-Safe Design**: Subscribe-first pattern ensures checkpoint availability before task execution
 - **Chain Support**: Context flows through A→B→C dependency chains

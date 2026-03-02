@@ -1,7 +1,7 @@
 # E2E Test Plan Overview
 
 ## Purpose
-This document provides an overview of all E2E test plans for Delegate. These tests are designed to be executed by Claude Code directly by reading the markdown files and running the bash commands within them.
+This document provides an overview of all E2E test plans for Backbeat. These tests are designed to be executed by Claude Code directly by reading the markdown files and running the bash commands within them.
 
 ## Test Execution Method
 1. Claude Code reads the test plan markdown file
@@ -13,7 +13,7 @@ This document provides an overview of all E2E test plans for Delegate. These tes
 ## Test Categories and Coverage
 
 ### P0 - Critical (Core Functionality)
-These tests verify the fundamental operations that Delegate depends on.
+These tests verify the fundamental operations that Backbeat depends on.
 
 | Test ID | Test Name | Description | Duration |
 |---------|-----------|-------------|----------|
@@ -109,7 +109,7 @@ done
 ```
 
 ### Updating Results Table
-After each test run, update `/workspace/delegate/tests/e2e/RESULTS_TABLE.md`:
+After each test run, update `tests/e2e/RESULTS_TABLE.md`:
 1. Record test ID, name, and timestamp
 2. Note pass/fail status and duration
 3. Calculate and store test file hash
@@ -142,7 +142,7 @@ After each test run, update `/workspace/delegate/tests/e2e/RESULTS_TABLE.md`:
 **Solution**: Check system resources, verify timeout parameters, kill orphaned processes
 
 ### Issue: Database corruption during tests
-**Solution**: Use rollback plan, remove `.delegate/delegate.db`, restart clean
+**Solution**: Use rollback plan, remove `.backbeat/backbeat.db`, restart clean
 
 ### Issue: Port conflicts with MCP server
 **Solution**: Check for running instances, use different port configuration

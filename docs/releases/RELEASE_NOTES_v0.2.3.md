@@ -1,4 +1,4 @@
-# 🚀 Delegate v0.2.3 - Performance & Architecture Improvements
+# 🚀 Backbeat v0.2.3 - Performance & Architecture Improvements
 
 ## Major Features
 
@@ -152,7 +152,7 @@ All components now strictly follow event-driven patterns:
 ## Installation
 
 ```bash
-npm install -g @dean0x/delegate@0.2.3
+npm install -g backbeat@0.2.3
 ```
 
 ## What's Next

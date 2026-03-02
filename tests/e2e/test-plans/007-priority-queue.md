@@ -23,8 +23,8 @@ preconditions:
 ### Step 1: Clean State
 **Action:** Ensure clean starting state
 ```bash
-rm -rf .delegate/
-pkill -f "delegate" || true
+rm -rf .backbeat/
+pkill -f "backbeat" || true
 ```
 **Expected:** Clean state achieved
 **Verify:**
@@ -44,9 +44,9 @@ npm run build
 ### Step 3: Create P2 Tasks First
 **Action:** Add low priority tasks to queue
 ```bash
-node dist/cli.js delegate "echo 'P2 Task 1' && sleep 2" --priority P2
-node dist/cli.js delegate "echo 'P2 Task 2' && sleep 2" --priority P2
-node dist/cli.js delegate "echo 'P2 Task 3' && sleep 2" --priority P2
+beat run "echo 'P2 Task 1' && sleep 2" --priority P2
+beat run "echo 'P2 Task 2' && sleep 2" --priority P2
+beat run "echo 'P2 Task 3' && sleep 2" --priority P2
 ```
 **Expected:** Three P2 tasks queued
 **Verify:**
@@ -56,8 +56,8 @@ node dist/cli.js delegate "echo 'P2 Task 3' && sleep 2" --priority P2
 ### Step 4: Create P1 Tasks
 **Action:** Add medium priority tasks
 ```bash
-node dist/cli.js delegate "echo 'P1 Task 1' && sleep 2" --priority P1
-node dist/cli.js delegate "echo 'P1 Task 2' && sleep 2" --priority P1
+beat run "echo 'P1 Task 1' && sleep 2" --priority P1
+beat run "echo 'P1 Task 2' && sleep 2" --priority P1
 ```
 **Expected:** Two P1 tasks queued
 **Verify:**
@@ -67,8 +67,8 @@ node dist/cli.js delegate "echo 'P1 Task 2' && sleep 2" --priority P1
 ### Step 5: Create P0 Tasks
 **Action:** Add high priority tasks
 ```bash
-node dist/cli.js delegate "echo 'P0 Task 1' && sleep 2" --priority P0
-node dist/cli.js delegate "echo 'P0 Task 2' && sleep 2" --priority P0
+beat run "echo 'P0 Task 1' && sleep 2" --priority P0
+beat run "echo 'P0 Task 2' && sleep 2" --priority P0
 ```
 **Expected:** Two P0 tasks queued
 **Verify:**
@@ -117,7 +117,7 @@ node dist/cli.js logs $(node dist/cli.js status --json 2>/dev/null | grep -o '"i
 # Get current queue state
 node dist/cli.js status > /tmp/queue_before.txt
 # Kill process
-pkill -f "delegate" || true
+pkill -f "backbeat" || true
 sleep 2
 ```
 **Expected:** Process killed with tasks pending
@@ -139,7 +139,7 @@ diff /tmp/queue_before.txt /tmp/queue_after.txt || echo "Queue state may have pr
 ### Step 11: Test Priority Override
 **Action:** Add urgent P0 task to existing queue
 ```bash
-node dist/cli.js delegate "echo 'URGENT P0 Task' && sleep 1" --priority P0
+beat run "echo 'URGENT P0 Task' && sleep 1" --priority P0
 sleep 3
 node dist/cli.js status | grep -E "URGENT|running"
 ```
@@ -161,7 +161,7 @@ timeout 30 bash -c 'while [ $(node dist/cli.js status | grep -c "completed") -lt
 ### Step 13: Verify Final Execution Order
 **Action:** Check completion timestamps
 ```bash
-sqlite3 .delegate/delegate.db "SELECT priority, status, completedAt FROM tasks ORDER BY completedAt;" 2>/dev/null | head -10
+sqlite3 .backbeat/backbeat.db "SELECT priority, status, completedAt FROM tasks ORDER BY completedAt;" 2>/dev/null | head -10
 ```
 **Expected:** Completion follows priority
 **Verify:**
@@ -172,8 +172,8 @@ sqlite3 .delegate/delegate.db "SELECT priority, status, completedAt FROM tasks O
 ### Step 14: Cleanup
 **Action:** Clean up test artifacts
 ```bash
-pkill -f "delegate" || true
-rm -rf .delegate/ /tmp/queue_*.txt
+pkill -f "backbeat" || true
+rm -rf .backbeat/ /tmp/queue_*.txt
 ```
 **Expected:** Cleanup successful
 **Verify:**
@@ -192,8 +192,8 @@ rm -rf .delegate/ /tmp/queue_*.txt
 
 ## Rollback Plan
 If test fails:
-1. Kill all processes: `pkill -9 -f delegate`
-2. Clear database: `rm -rf .delegate/`
+1. Kill all processes: `pkill -9 -f backbeat`
+2. Clear database: `rm -rf .backbeat/`
 3. Check queue implementation in code
 4. Verify priority enum values (P0=0, P1=1, P2=2)
 

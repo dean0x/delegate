@@ -1,4 +1,4 @@
-# 🚀 Delegate v0.2.1 - Event-Driven Architecture & CLI Interface
+# 🚀 Backbeat v0.2.1 - Event-Driven Architecture & CLI Interface
 
 ## Major Features
 
@@ -74,7 +74,7 @@ delegate cancel <task-id> "reason" # Cancel with reason
 
 ```bash
 # Global installation (recommended)
-npm install -g @dean0x/delegate@0.2.1
+npm install -g backbeat@0.2.1
 
 # Or from source
 git clone https://github.com/dean0x/delegate.git

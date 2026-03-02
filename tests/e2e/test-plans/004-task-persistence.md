@@ -15,7 +15,7 @@ Verify that tasks are properly persisted to the database and can be recovered af
 preconditions:
   - Clean database state
   - Build completed successfully
-  - No running delegate processes
+  - No running backbeat processes
 ```
 
 ## Test Steps
@@ -23,12 +23,12 @@ preconditions:
 ### Step 1: Clean Database State
 **Action:** Remove any existing database
 ```bash
-rm -rf .delegate/delegate.db .delegate/delegate.db-wal .delegate/delegate.db-shm
+rm -rf .backbeat/backbeat.db .backbeat/backbeat.db-wal .backbeat/backbeat.db-shm
 ```
 **Expected:** Clean slate for testing
 **Verify:**
 - No database files exist
-- .delegate directory is clean
+- .backbeat directory is clean
 
 ### Step 2: Build Project
 **Action:** Build the TypeScript project
@@ -43,7 +43,7 @@ npm run build
 ### Step 3: Delegate First Task
 **Action:** Create a task that will be persisted
 ```bash
-node dist/cli.js delegate "echo 'Task 1: Persistence Test' && sleep 2" --priority P0
+node dist/cli.js run "echo 'Task 1: Persistence Test' && sleep 2" --priority P0
 ```
 **Expected:** Task created and delegated
 **Verify:**
@@ -53,17 +53,17 @@ node dist/cli.js delegate "echo 'Task 1: Persistence Test' && sleep 2" --priorit
 ### Step 4: Verify Database Created
 **Action:** Check database files and WAL mode
 ```bash
-ls -la .delegate/delegate.db* && sqlite3 .delegate/delegate.db "PRAGMA journal_mode;" 2>/dev/null || echo "Database check failed"
+ls -la .backbeat/backbeat.db* && sqlite3 .backbeat/backbeat.db "PRAGMA journal_mode;" 2>/dev/null || echo "Database check failed"
 ```
 **Expected:** Database with WAL mode
 **Verify:**
-- delegate.db file exists
+- backbeat.db file exists
 - WAL mode is enabled (output should show "wal")
 
 ### Step 5: Check Task in Database
 **Action:** Query database directly for task
 ```bash
-sqlite3 .delegate/delegate.db "SELECT COUNT(*) FROM tasks;" 2>/dev/null || echo "0"
+sqlite3 .backbeat/backbeat.db "SELECT COUNT(*) FROM tasks;" 2>/dev/null || echo "0"
 ```
 **Expected:** At least 1 task in database
 **Verify:**
@@ -73,7 +73,7 @@ sqlite3 .delegate/delegate.db "SELECT COUNT(*) FROM tasks;" 2>/dev/null || echo 
 ### Step 6: Delegate Second Task
 **Action:** Add another task to test multiple persistence
 ```bash
-node dist/cli.js delegate "echo 'Task 2: Multi-persistence' && date"
+node dist/cli.js run "echo 'Task 2: Multi-persistence' && date"
 ```
 **Expected:** Second task created
 **Verify:**
@@ -81,20 +81,20 @@ node dist/cli.js delegate "echo 'Task 2: Multi-persistence' && date"
 - Different from first task ID
 
 ### Step 7: Simulate Crash
-**Action:** Kill all delegate processes abruptly
+**Action:** Kill all backbeat processes abruptly
 ```bash
-pkill -9 -f "delegate" || true
+pkill -9 -f "backbeat" || true
 sleep 2
 ```
 **Expected:** Processes terminated
 **Verify:**
-- No delegate processes running
+- No backbeat processes running
 - Database files still exist
 
 ### Step 8: Check Database Integrity
 **Action:** Verify database is not corrupted
 ```bash
-sqlite3 .delegate/delegate.db "PRAGMA integrity_check;" 2>/dev/null || echo "integrity check failed"
+sqlite3 .backbeat/backbeat.db "PRAGMA integrity_check;" 2>/dev/null || echo "integrity check failed"
 ```
 **Expected:** Database intact
 **Verify:**
@@ -104,7 +104,7 @@ sqlite3 .delegate/delegate.db "PRAGMA integrity_check;" 2>/dev/null || echo "int
 ### Step 9: Query Persisted Tasks
 **Action:** List all tasks from database
 ```bash
-sqlite3 .delegate/delegate.db "SELECT id, status, priority FROM tasks ORDER BY createdAt;" 2>/dev/null || echo "Query failed"
+sqlite3 .backbeat/backbeat.db "SELECT id, status, priority FROM tasks ORDER BY createdAt;" 2>/dev/null || echo "Query failed"
 ```
 **Expected:** Both tasks present
 **Verify:**
@@ -124,7 +124,7 @@ node dist/cli.js status
 ### Step 11: Test Transaction Rollback
 **Action:** Create task with invalid data to test rollback
 ```bash
-node dist/cli.js delegate "" 2>&1 | grep -E "error|failed|invalid" || echo "No error detected"
+node dist/cli.js run "" 2>&1 | grep -E "error|failed|invalid" || echo "No error detected"
 ```
 **Expected:** Transaction rolled back
 **Verify:**
@@ -134,7 +134,7 @@ node dist/cli.js delegate "" 2>&1 | grep -E "error|failed|invalid" || echo "No e
 ### Step 12: Verify Final State
 **Action:** Count final tasks in database
 ```bash
-sqlite3 .delegate/delegate.db "SELECT COUNT(*) FROM tasks;" 2>/dev/null
+sqlite3 .backbeat/backbeat.db "SELECT COUNT(*) FROM tasks;" 2>/dev/null
 ```
 **Expected:** Consistent task count
 **Verify:**
@@ -144,8 +144,8 @@ sqlite3 .delegate/delegate.db "SELECT COUNT(*) FROM tasks;" 2>/dev/null
 ### Step 13: Cleanup
 **Action:** Clean up test artifacts
 ```bash
-rm -rf .delegate/delegate.db*
-pkill -f "delegate" || true
+rm -rf .backbeat/backbeat.db*
+pkill -f "beat" || true
 ```
 **Expected:** Cleanup successful
 **Verify:**
@@ -163,8 +163,8 @@ pkill -f "delegate" || true
 
 ## Rollback Plan
 If test fails:
-1. Remove corrupted database: `rm -rf .delegate/delegate.db*`
-2. Kill all processes: `pkill -9 -f delegate`
+1. Remove corrupted database: `rm -rf .backbeat/backbeat.db*`
+2. Kill all processes: `pkill -9 -f beat`
 3. Check disk space: `df -h .`
 4. Verify SQLite installation: `sqlite3 --version`
 

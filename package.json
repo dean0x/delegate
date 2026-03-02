@@ -1,9 +1,9 @@
 {
-  "name": "@dean0x/delegate",
+  "name": "backbeat",
   "version": "0.4.0",
   "main": "dist/index.js",
   "bin": {
-    "delegate": "./dist/cli.js"
+    "beat": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -63,11 +63,12 @@
     "claude",
     "claude-code",
     "automation",
-    "task-delegation"
+    "task-delegation",
+    "backbeat"
   ],
   "author": "dean0x",
   "license": "MIT",
-  "description": "MCP server for delegating tasks to background Claude Code instances",
+  "description": "Backbeat — MCP server for delegating tasks to background Claude Code instances",
   "publishConfig": {
     "access": "public"
   },

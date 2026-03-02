@@ -1,4 +1,4 @@
-# 🚀 Delegate v0.2.0 - Task Persistence & Stability
+# 🚀 Backbeat v0.2.0 - Task Persistence & Stability
 
 ## Major Features
 
@@ -6,8 +6,8 @@
 - **SQLite-based persistence**: All tasks are now stored in a local SQLite database
 - **Automatic recovery**: Tasks queued before a crash are automatically re-queued on startup
 - **Platform-specific storage**: 
-  - Unix/Mac: `~/.delegate/delegate.db`
-  - Windows: `%APPDATA%/delegate/delegate.db`
+  - Unix/Mac: `~/.backbeat/backbeat.db`
+  - Windows: `%APPDATA%/delegate/backbeat.db`
 - **Task history**: Complete history of all delegated tasks with status, logs, and metadata
 
 ### 🔧 MCP Connection Stability
@@ -58,10 +58,10 @@ No migration needed. The database will be created automatically on first run.
 
 ```bash
 # npm
-npm install -g @dean0x/delegate
+npm install -g backbeat
 
 # or use npx
-npx @dean0x/delegate mcp start
+npx backbeat mcp start
 ```
 
 ## Configuration

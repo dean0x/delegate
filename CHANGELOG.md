@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Delegate will be documented in this file.
+All notable changes to Backbeat will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -131,7 +131,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Atomic check-and-add operations using better-sqlite3
   - Verified protection with concurrent operation tests
 - **Error Handling Improvements**:
-  - Preserve semantic DelegateError types in addDependency (TASK_NOT_FOUND, INVALID_OPERATION)
+  - Preserve semantic BackbeatError types in addDependency (TASK_NOT_FOUND, INVALID_OPERATION)
   - Fixed error masking that converted validation failures to SYSTEM_ERROR
   - Migration error handling only catches "no such table" errors
   - Re-throws permission, corruption, and connection errors
@@ -182,10 +182,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### 🚀 Major Features
 - **🖥️ CLI Interface**: Direct task management without MCP connection
-  - `delegate delegate <prompt>`: Delegate tasks directly
-  - `delegate status [task-id]`: Check task status
-  - `delegate logs <task-id>`: Retrieve task output
-  - `delegate cancel <task-id> [reason]`: Cancel running tasks
+  - `beat run <prompt>`: Delegate tasks directly
+  - `beat status [task-id]`: Check task status
+  - `beat logs <task-id>`: Retrieve task output
+  - `beat cancel <task-id> [reason]`: Cancel running tasks
 - **🏗️ Event-Driven Architecture**: Complete architectural overhaul
   - EventBus-based coordination across all components
   - Event handlers for persistence, queue, worker, and output management
@@ -331,7 +331,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Upgrading to v0.2.0
 
 #### For New Users
-- Install via npm: `npm install -g @dean0x/delegate`
+- Install via npm: `npm install -g backbeat`
 - Configure MCP: See [README.md](./README.md#configuration) for setup instructions
 - No migration needed for new installations
 

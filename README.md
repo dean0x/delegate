@@ -1,12 +1,12 @@
-# Delegate - Task Delegation And Management Framework
+# Backbeat - Task Delegation And Management Framework
 
-[![npm version](https://img.shields.io/npm/v/@dean0x/delegate.svg)](https://www.npmjs.com/package/@dean0x/delegate)
+[![npm version](https://img.shields.io/npm/v/backbeat.svg)](https://www.npmjs.com/package/backbeat)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
 [![CI](https://github.com/dean0x/delegate/actions/workflows/ci.yml/badge.svg)](https://github.com/dean0x/delegate/actions/workflows/ci.yml)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-purple)](https://modelcontextprotocol.io/)
 
-## Why Delegate Exists
+## Why Backbeat Exists
 
 **The Problem**: Claude Code is incredibly powerful, but you can only work on one thing at a time with a single claude code instance. This kills true multitasking and orchestration.
 
@@ -53,15 +53,15 @@ Add to your project's `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "delegate": {
+    "backbeat": {
       "command": "npx",
-      "args": ["-y", "@dean0x/delegate", "mcp", "start"]
+      "args": ["-y", "backbeat", "mcp", "start"]
     }
   }
 }
 ```
 
-Restart Claude Code to connect to Delegate.
+Restart Claude Code to connect to Backbeat.
 
 ## Usage
 
@@ -88,24 +88,24 @@ Once configured, use these tools in Claude Code:
 
 | Command | Description |
 |---------|-------------|
-| `delegate mcp start` | Start the MCP server |
-| `delegate delegate <task>` | Submit new task (fire-and-forget by default) |
-| `delegate delegate <task> -f` | Submit task and stream output (foreground mode) |
-| `delegate list` / `delegate ls` | List all tasks |
-| `delegate status [task-id]` | Check task status (all tasks if no ID) |
-| `delegate logs <task-id>` | View task output |
-| `delegate cancel <task-id>` | Cancel running task |
-| `delegate retry <task-id>` | Retry a failed or completed task |
-| `delegate resume <task-id>` | Resume a task from its checkpoint |
-| `delegate schedule create <prompt>` | Create a cron or one-time schedule |
-| `delegate schedule list` | List schedules with optional status filter |
-| `delegate schedule get <id>` | Get schedule details and execution history |
-| `delegate schedule pause <id>` | Pause an active schedule |
-| `delegate schedule resume <id>` | Resume a paused schedule |
-| `delegate schedule cancel <id>` | Cancel a schedule |
-| `delegate pipeline <prompt> ...` | Create chained one-time schedules |
-| `delegate config show\|set\|reset\|path` | Manage configuration |
-| `delegate help` | Show help |
+| `beat mcp start` | Start the MCP server |
+| `beat run <task>` | Submit new task (fire-and-forget by default) |
+| `beat run <task> -f` | Submit task and stream output (foreground mode) |
+| `beat list` / `beat ls` | List all tasks |
+| `beat status [task-id]` | Check task status (all tasks if no ID) |
+| `beat logs <task-id>` | View task output |
+| `beat cancel <task-id>` | Cancel running task |
+| `beat retry <task-id>` | Retry a failed or completed task |
+| `beat resume <task-id>` | Resume a task from its checkpoint |
+| `beat schedule create <prompt>` | Create a cron or one-time schedule |
+| `beat schedule list` | List schedules with optional status filter |
+| `beat schedule get <id>` | Get schedule details and execution history |
+| `beat schedule pause <id>` | Pause an active schedule |
+| `beat schedule resume <id>` | Resume a paused schedule |
+| `beat schedule cancel <id>` | Cancel a schedule |
+| `beat pipeline <prompt> ...` | Create chained one-time schedules |
+| `beat config show\|set\|reset\|path` | Manage configuration |
+| `beat help` | Show help |
 
 ### Task Dependencies
 
@@ -113,15 +113,15 @@ Create workflows where tasks wait for dependencies to complete:
 
 ```bash
 # Step 1: Create build task (fire-and-forget by default)
-delegate delegate "npm run build" --priority P1
+beat run "npm run build" --priority P1
 # → task-abc123
 
 # Step 2: Create test task that waits for build
-delegate delegate "npm test" --deps task-abc123
+beat run "npm test" --deps task-abc123
 # Task waits for build to complete before running
 
 # Step 3: Create deploy task that waits for tests
-delegate delegate "npm run deploy" --deps task-def456
+beat run "npm run deploy" --deps task-def456
 # Execution order: build → test → deploy
 ```
 
@@ -187,10 +187,10 @@ Resume failed or completed tasks with enriched context from automatic checkpoint
 
 ```bash
 # Resume a failed task
-delegate resume task-abc123
+beat resume task-abc123
 
 # Resume with additional instructions
-delegate resume task-abc123 --context "Try a different approach this time"
+beat resume task-abc123 --context "Try a different approach this time"
 ```
 
 ```typescript
@@ -217,13 +217,13 @@ Configuration priority: **environment variables > config file > defaults**.
 
 ### Config File
 
-Persistent configuration stored at `~/.delegate/config.json`:
+Persistent configuration stored at `~/.backbeat/config.json`:
 
 ```bash
-delegate config show             # Show resolved configuration
-delegate config set timeout 300000  # Set a value
-delegate config reset timeout    # Revert to default
-delegate config path             # Print config file location
+beat config show             # Show resolved configuration
+beat config set timeout 300000  # Set a value
+beat config reset timeout    # Revert to default
+beat config path             # Print config file location
 ```
 
 ### Environment Variables
@@ -290,7 +290,7 @@ npm run test:coverage       # With coverage
 ### Project Structure
 
 ```
-delegate/
+backbeat/
 ├── src/
 │   ├── core/                # Core interfaces and types
 │   ├── implementations/     # Service implementations

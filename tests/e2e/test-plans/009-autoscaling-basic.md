@@ -24,8 +24,8 @@ preconditions:
 ### Step 1: Clean State
 **Action:** Ensure clean starting state
 ```bash
-rm -rf .delegate/
-pkill -f "delegate" || true
+rm -rf .backbeat/
+pkill -f "backbeat" || true
 ```
 **Expected:** Clean state achieved
 **Verify:**
@@ -59,7 +59,7 @@ uptime | awk -F'load average:' '{print "Load average:" $2}'
 **Action:** Add tasks to trigger scaling
 ```bash
 for i in {1..10}; do
-  node dist/cli.js delegate "echo 'Scaling test $i' && sleep 5" --priority P1
+  beat run "echo 'Scaling test $i' && sleep 5" --priority P1
 done
 ```
 **Expected:** 10 tasks queued
@@ -100,7 +100,7 @@ done
 **Action:** Add tasks to maintain scaling
 ```bash
 for i in {11..20}; do
-  node dist/cli.js delegate "echo 'Additional task $i' && sleep 3" --priority P1
+  beat run "echo 'Additional task $i' && sleep 3" --priority P1
 done
 ```
 **Expected:** More tasks queued
@@ -155,9 +155,9 @@ done
 ### Step 11: Test Min Workers Config
 **Action:** Test with minimum worker setting
 ```bash
-export DELEGATE_MIN_WORKERS=2
+export BACKBEAT_MIN_WORKERS=2
 for i in {1..5}; do
-  node dist/cli.js delegate "echo 'Min worker test $i' && sleep 2" --priority P1
+  beat run "echo 'Min worker test $i' && sleep 2" --priority P1
 done
 sleep 3
 min_workers=$(ps aux | grep -E "claude" | grep -v grep | wc -l)
@@ -171,9 +171,9 @@ echo "Workers with MIN_WORKERS=2: $min_workers"
 ### Step 12: Test Max Workers Config
 **Action:** Test maximum worker limit
 ```bash
-export DELEGATE_MAX_WORKERS=3
+export BACKBEAT_MAX_WORKERS=3
 for i in {1..15}; do
-  node dist/cli.js delegate "echo 'Max worker test $i' && sleep 5" --priority P1
+  beat run "echo 'Max worker test $i' && sleep 5" --priority P1
 done
 sleep 5
 max_workers=$(ps aux | grep -E "claude" | grep -v grep | wc -l)
@@ -193,7 +193,7 @@ stress --cpu 2 --timeout 10 &
 sleep 2
 # Try to scale
 for i in {1..5}; do
-  node dist/cli.js delegate "echo 'Resource limit test $i'" --priority P0
+  beat run "echo 'Resource limit test $i'" --priority P0
 done
 sleep 3
 workers_under_load=$(ps aux | grep -E "claude" | grep -v grep | wc -l)
@@ -207,10 +207,10 @@ echo "Workers under high CPU load: $workers_under_load"
 ### Step 14: Cleanup
 **Action:** Clean up test artifacts
 ```bash
-unset DELEGATE_MIN_WORKERS DELEGATE_MAX_WORKERS
+unset BACKBEAT_MIN_WORKERS BACKBEAT_MAX_WORKERS
 pkill -f "stress" || true
-pkill -f "delegate" || true
-rm -rf .delegate/
+pkill -f "backbeat" || true
+rm -rf .backbeat/
 ```
 **Expected:** Cleanup successful
 **Verify:**
@@ -230,7 +230,7 @@ rm -rf .delegate/
 ## Rollback Plan
 If test fails:
 1. Kill all workers: `pkill -9 -f claude`
-2. Clear environment: `unset DELEGATE_MIN_WORKERS DELEGATE_MAX_WORKERS`
+2. Clear environment: `unset BACKBEAT_MIN_WORKERS BACKBEAT_MAX_WORKERS`
 3. Check CPU: `top -bn1`
 4. Review autoscaling logic
 

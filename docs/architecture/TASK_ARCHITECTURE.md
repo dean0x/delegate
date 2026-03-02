@@ -1,8 +1,8 @@
-# Delegate Task Dependency Architecture - Comprehensive Analysis
+# Backbeat Task Dependency Architecture - Comprehensive Analysis
 
 ## Executive Summary
 
-Delegate has **already implemented a sophisticated task dependency system** (Phase 4) with:
+Backbeat has **already implemented a sophisticated task dependency system** (Phase 4) with:
 - Directed Acyclic Graph (DAG) validation with cycle detection
 - Event-driven dependency resolution
 - Persistent task dependency relationships in SQLite
@@ -16,7 +16,7 @@ The system is **production-ready** but not yet fully integrated with CLI command
 ## 1. TASK DATA MODEL
 
 ### 1.1 Core Task Interface
-**File**: `/workspace/delegate/src/core/domain.ts` (Lines 28-82)
+**File**: `/workspace/backbeat/src/core/domain.ts` (Lines 28-82)
 
 ```typescript
 export interface Task {
@@ -40,11 +40,11 @@ export interface Task {
 - `dependencyState`: Derived field indicating if task is blocked/ready/has no dependencies
 - Fields are **read-only** (immutable by design)
 
-### 1.2 DelegateRequest Interface
-**File**: `/workspace/delegate/src/core/domain.ts` (Lines 108-138)
+### 1.2 TaskRequest Interface
+**File**: `/workspace/backbeat/src/core/domain.ts` (Lines 108-138)
 
 ```typescript
-export interface DelegateRequest {
+export interface TaskRequest {
   readonly prompt: string;
   readonly priority?: Priority;
   // ...
@@ -57,7 +57,7 @@ export interface DelegateRequest {
 
 **Creation Factory**:
 ```typescript
-export const createTask = (request: DelegateRequest): Task => ({
+export const createTask = (request: TaskRequest): Task => ({
   // ... other fields
   dependsOn: request.dependsOn,                                    // Line 190
   dependents: undefined,                                            // Populated by DependencyRepository
@@ -71,7 +71,7 @@ export const createTask = (request: DelegateRequest): Task => ({
 ## 2. TASK LIFECYCLE
 
 ### 2.1 Lifecycle States
-**File**: `/workspace/delegate/src/core/domain.ts` (Lines 20-26)
+**File**: `/workspace/backbeat/src/core/domain.ts` (Lines 20-26)
 
 ```typescript
 enum TaskStatus {
@@ -146,7 +146,7 @@ User delegates task with dependsOn=[task-A, task-B]
 ## 3. EVENT SYSTEM FOR DEPENDENCIES
 
 ### 3.1 Dependency-Related Events
-**File**: `/workspace/delegate/src/core/events/events.ts` (Lines 184-213)
+**File**: `/workspace/backbeat/src/core/events/events.ts` (Lines 184-213)
 
 ```typescript
 // Event: A dependency was added to the graph
@@ -176,7 +176,7 @@ export interface TaskDependencyFailedEvent extends BaseEvent {
   type: 'TaskDependencyFailed';
   taskId: TaskId;
   failedDependencyId: TaskId;
-  error: DelegateError;
+  error: BackbeatError;
   requestedDependencies?: readonly TaskId[];  // All deps that were requested
 }
 
@@ -226,7 +226,7 @@ export interface TaskDeletedEvent extends BaseEvent {
 ## 4. DATABASE SCHEMA
 
 ### 4.1 Task Dependencies Table
-**File**: `/workspace/delegate/src/implementations/database.ts` (Lines 146-158)
+**File**: `/workspace/backbeat/src/implementations/database.ts` (Lines 146-158)
 
 ```sql
 CREATE TABLE IF NOT EXISTS task_dependencies (
@@ -285,7 +285,7 @@ tasks table:
 ## 5. QUEUE IMPLEMENTATION WITH DEPENDENCY AWARENESS
 
 ### 5.1 Priority Task Queue
-**File**: `/workspace/delegate/src/implementations/task-queue.ts`
+**File**: `/workspace/backbeat/src/implementations/task-queue.ts`
 
 ```typescript
 export class PriorityTaskQueue implements TaskQueue {
@@ -310,7 +310,7 @@ export class PriorityTaskQueue implements TaskQueue {
 - `contains()`: O(1) with index
 
 ### 5.2 Dependency-Aware Queueing
-**File**: `/workspace/delegate/src/services/handlers/queue-handler.ts`
+**File**: `/workspace/backbeat/src/services/handlers/queue-handler.ts`
 
 #### TaskPersisted Handler (Lines 63-110)
 ```typescript
@@ -346,7 +346,7 @@ private async handleTaskUnblocked(event: TaskUnblockedEvent): Promise<void> {
 ## 6. DEPENDENCY RESOLUTION SYSTEM
 
 ### 6.1 Dependency Repository
-**File**: `/workspace/delegate/src/implementations/dependency-repository.ts`
+**File**: `/workspace/backbeat/src/implementations/dependency-repository.ts`
 
 ```typescript
 export interface DependencyRepository {
@@ -371,7 +371,7 @@ export interface DependencyRepository {
 ```
 
 #### Key Implementation: Cycle Detection
-**File**: `/workspace/delegate/src/implementations/dependency-repository.ts` (Lines 91-187)
+**File**: `/workspace/backbeat/src/implementations/dependency-repository.ts` (Lines 91-187)
 
 ```typescript
 async addDependency(taskId: TaskId, dependsOnTaskId: TaskId): Promise<Result<TaskDependency>> {
@@ -400,7 +400,7 @@ async addDependency(taskId: TaskId, dependsOnTaskId: TaskId): Promise<Result<Tas
 **Atomicity**: Uses `db.transaction()` (synchronous) for true ACID compliance.
 
 ### 6.2 Dependency Handler - Resolution Flow
-**File**: `/workspace/delegate/src/services/handlers/dependency-handler.ts`
+**File**: `/workspace/backbeat/src/services/handlers/dependency-handler.ts`
 
 **DoS Prevention**: Handler enforces `MAX_DEPENDENCY_CHAIN_DEPTH = 100` to prevent deep dependency chains that could cause performance degradation or stack overflow during graph traversal.
 
@@ -482,7 +482,7 @@ private async resolveDependencies(
 ## 7. DEPENDENCY GRAPH - CYCLE DETECTION
 
 ### 7.1 Dependency Graph Class
-**File**: `/workspace/delegate/src/core/dependency-graph.ts`
+**File**: `/workspace/backbeat/src/core/dependency-graph.ts`
 
 ```typescript
 export class DependencyGraph {
@@ -495,7 +495,7 @@ export class DependencyGraph {
 ```
 
 ### 7.2 Cycle Detection Algorithm
-**File**: `/workspace/delegate/src/core/dependency-graph.ts` (Lines 339-433)
+**File**: `/workspace/backbeat/src/core/dependency-graph.ts` (Lines 339-433)
 
 ```typescript
 wouldCreateCycle(taskId: TaskId, dependsOnTaskId: TaskId): Result<boolean> {
@@ -587,7 +587,7 @@ topologicalSort(): Result<readonly TaskId[]>
 ## 8. KEY ARCHITECTURAL PATTERNS
 
 ### 8.1 Result Type Pattern
-**File**: `/workspace/delegate/src/core/result.ts`
+**File**: `/workspace/backbeat/src/core/result.ts`
 
 Never throws errors. All functions return `Result<T>`:
 
@@ -707,28 +707,28 @@ All state changes flow through events:
 
 | Component | File Path | Key Lines |
 |-----------|-----------|-----------|
-| Task Domain Model | `/workspace/delegate/src/core/domain.ts` | 28-82, 108-138, 162-199 |
-| DelegateRequest | `/workspace/delegate/src/core/domain.ts` | 108-138 |
-| TaskStatus Enum | `/workspace/delegate/src/core/domain.ts` | 20-26 |
-| Task Interfaces | `/workspace/delegate/src/core/interfaces.ts` | 94-144 |
-| Events | `/workspace/delegate/src/core/events/events.ts` | 184-213, 237-276 |
-| DependencyGraph | `/workspace/delegate/src/core/dependency-graph.ts` | Full file |
-| Cycle Detection | `/workspace/delegate/src/core/dependency-graph.ts` | 73-162 |
-| DependencyRepository | `/workspace/delegate/src/implementations/dependency-repository.ts` | Full file |
-| Database Schema | `/workspace/delegate/src/implementations/database.ts` | 146-158 |
-| DependencyHandler | `/workspace/delegate/src/services/handlers/dependency-handler.ts` | Full file |
-| QueueHandler | `/workspace/delegate/src/services/handlers/queue-handler.ts` | 62-355 |
-| PriorityTaskQueue | `/workspace/delegate/src/implementations/task-queue.ts` | Full file |
-| Result Type | `/workspace/delegate/src/core/result.ts` | Full file |
-| Errors | `/workspace/delegate/src/core/errors.ts` | Full file |
+| Task Domain Model | `/workspace/backbeat/src/core/domain.ts` | 28-82, 108-138, 162-199 |
+| TaskRequest | `/workspace/backbeat/src/core/domain.ts` | 108-138 |
+| TaskStatus Enum | `/workspace/backbeat/src/core/domain.ts` | 20-26 |
+| Task Interfaces | `/workspace/backbeat/src/core/interfaces.ts` | 94-144 |
+| Events | `/workspace/backbeat/src/core/events/events.ts` | 184-213, 237-276 |
+| DependencyGraph | `/workspace/backbeat/src/core/dependency-graph.ts` | Full file |
+| Cycle Detection | `/workspace/backbeat/src/core/dependency-graph.ts` | 73-162 |
+| DependencyRepository | `/workspace/backbeat/src/implementations/dependency-repository.ts` | Full file |
+| Database Schema | `/workspace/backbeat/src/implementations/database.ts` | 146-158 |
+| DependencyHandler | `/workspace/backbeat/src/services/handlers/dependency-handler.ts` | Full file |
+| QueueHandler | `/workspace/backbeat/src/services/handlers/queue-handler.ts` | 62-355 |
+| PriorityTaskQueue | `/workspace/backbeat/src/implementations/task-queue.ts` | Full file |
+| Result Type | `/workspace/backbeat/src/core/result.ts` | Full file |
+| Errors | `/workspace/backbeat/src/core/errors.ts` | Full file |
 
 ---
 
 ## 10. WHAT'S MISSING / TODO
 
 ### 10.1 CLI Integration
-- `delegate delegate --depends-on <task-id1>,<task-id2> "command"`
-- `delegate status --show-dependencies`
+- `beat run --depends-on <task-id1>,<task-id2> "command"`
+- `beat status --show-dependencies`
 - Visual dependency graph display
 
 ### 10.2 MCP Tool Integration
@@ -777,7 +777,7 @@ Always use Result type, never throw:
 ```typescript
 async addDependency(taskId, dependsOnTaskId): Promise<Result<TaskDependency>> {
   // ✅ GOOD
-  if (!exists) return err(new DelegateError(ErrorCode.TASK_NOT_FOUND, ...));
+  if (!exists) return err(new BackbeatError(ErrorCode.TASK_NOT_FOUND, ...));
   
   // ❌ BAD
   if (!exists) throw new Error("Not found");

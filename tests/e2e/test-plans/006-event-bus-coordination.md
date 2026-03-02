@@ -15,7 +15,7 @@ Verify the event-driven architecture is working correctly: events are emitted, h
 preconditions:
   - Clean system state
   - Build completed successfully
-  - No running delegate processes
+  - No running backbeat processes
 ```
 
 ## Test Steps
@@ -33,7 +33,7 @@ npm run build
 ### Step 2: Create Task to Trigger Events
 **Action:** Delegate task that will trigger multiple events
 ```bash
-node dist/cli.js delegate "echo 'Event test task'" --priority P0
+node dist/cli.js run "echo 'Event test task'" --priority P0
 ```
 **Expected:** Task created, events emitted
 **Verify:**
@@ -43,7 +43,7 @@ node dist/cli.js delegate "echo 'Event test task'" --priority P0
 ### Step 3: Verify TaskDelegated Event
 **Action:** Check logs for TaskDelegated event
 ```bash
-grep -r "TaskDelegated" .delegate/logs/ 2>/dev/null | head -1 || echo "No TaskDelegated event found in logs"
+grep -r "TaskDelegated" .backbeat/logs/ 2>/dev/null | head -1 || echo "No TaskDelegated event found in logs"
 ```
 **Expected:** Event emission logged
 **Verify:**
@@ -54,7 +54,7 @@ grep -r "TaskDelegated" .delegate/logs/ 2>/dev/null | head -1 || echo "No TaskDe
 **Action:** Create 5 tasks rapidly to test event handling
 ```bash
 for i in 1 2 3 4 5; do
-  node dist/cli.js delegate "echo 'Rapid event $i'" &
+  node dist/cli.js run "echo 'Rapid event $i'" &
 done
 wait
 ```
@@ -132,9 +132,9 @@ ps aux | grep "node" | grep -v grep | awk '{sum+=$6} END {print sum}' || echo "0
 ### Step 11: Test Event Ordering
 **Action:** Create task with specific priority to test order
 ```bash
-node dist/cli.js delegate "echo 'P0 task'" --priority P0
-node dist/cli.js delegate "echo 'P2 task'" --priority P2
-node dist/cli.js delegate "echo 'P1 task'" --priority P1
+node dist/cli.js run "echo 'P0 task'" --priority P0
+node dist/cli.js run "echo 'P2 task'" --priority P2
+node dist/cli.js run "echo 'P1 task'" --priority P1
 ```
 **Expected:** Events processed in order
 **Verify:**
@@ -154,7 +154,7 @@ node dist/cli.js status
 ### Step 13: Test Event Bus Disposal
 **Action:** Trigger cleanup by delegating final task
 ```bash
-node dist/cli.js delegate "echo 'Final disposal test'"
+node dist/cli.js run "echo 'Final disposal test'"
 ```
 **Expected:** Task created, cleanup triggered
 **Verify:**
@@ -164,13 +164,13 @@ node dist/cli.js delegate "echo 'Final disposal test'"
 ### Step 14: Cleanup
 **Action:** Clean up all test artifacts
 ```bash
-pkill -f "delegate" || true
-rm -rf .delegate/
+pkill -f "beat" || true
+rm -rf .backbeat/
 ```
 **Expected:** Cleanup successful
 **Verify:**
 - No processes running
-- .delegate directory removed
+- .backbeat directory removed
 
 ## Success Criteria
 - [ ] Events emitted and handled correctly
@@ -185,7 +185,7 @@ rm -rf .delegate/
 ## Rollback Plan
 If test fails:
 1. Kill all processes: `pkill -9 -f node`
-2. Clear logs: `rm -rf .delegate/logs/`
+2. Clear logs: `rm -rf .backbeat/logs/`
 3. Check system resources: `free -h`
 4. Review event bus implementation
 
