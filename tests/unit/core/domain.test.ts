@@ -466,5 +466,46 @@ describe('Domain Models - REAL Behavior Tests', () => {
       expect(task.continueFrom).toBeUndefined();
       expect(task.dependencyState).toBe('none');
     });
+
+    it('should set agent when provided in request (v0.5.0)', () => {
+      const task = createTask({
+        prompt: 'analyze with codex',
+        agent: 'codex',
+      });
+
+      expect(task.agent).toBe('codex');
+    });
+
+    it('should leave agent undefined when not provided (defaults to claude at runtime)', () => {
+      const task = createTask({
+        prompt: 'default agent task',
+      });
+
+      expect(task.agent).toBeUndefined();
+    });
+
+    it('should accept all valid agent providers (v0.5.0)', () => {
+      const agents = ['claude', 'codex', 'gemini', 'aider'] as const;
+
+      for (const agent of agents) {
+        const task = createTask({
+          prompt: `task for ${agent}`,
+          agent,
+        });
+
+        expect(task.agent).toBe(agent);
+        expect(task.status).toBe(TaskStatus.QUEUED);
+      }
+    });
+
+    it('should freeze task with agent field (v0.5.0)', () => {
+      const task = createTask({
+        prompt: 'frozen agent task',
+        agent: 'gemini',
+      });
+
+      expect(Object.isFrozen(task)).toBe(true);
+      expect(task.agent).toBe('gemini');
+    });
   });
 });

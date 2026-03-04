@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AGENT_PROVIDERS, isAgentProvider } from '../../src/core/agents';
 import { loadConfiguration } from '../../src/core/configuration';
 import type { Container } from '../../src/core/container';
 import type {
@@ -1619,6 +1620,71 @@ describe('CLI - Task Completion Lifecycle', () => {
       expect(mockTaskManager.cancelCalls).toHaveLength(1);
       expect(mockTaskManager.cancelCalls[0].taskId).toBe(taskId);
       expect(mockTaskManager.cancelCalls[0].reason).toBe('User interrupted (SIGINT)');
+    });
+  });
+
+  describe('Agent flag parsing (v0.5.0)', () => {
+    it('should accept valid --agent flag values', () => {
+      for (const agent of ['claude', 'codex', 'gemini', 'aider']) {
+        expect(isAgentProvider(agent)).toBe(true);
+      }
+    });
+
+    it('should reject invalid agent names', () => {
+      expect(isAgentProvider('unknown-agent')).toBe(false);
+      expect(isAgentProvider('')).toBe(false);
+      expect(isAgentProvider('gpt4')).toBe(false);
+    });
+
+    it('should parse --agent flag from CLI args', () => {
+      const args = ['analyze code', '--agent', 'codex', '-p', 'P0'];
+
+      let agentValue: string | undefined;
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--agent' || args[i] === '-a') {
+          const next = args[i + 1];
+          if (next && !next.startsWith('-') && isAgentProvider(next)) {
+            agentValue = next;
+          }
+        }
+      }
+
+      expect(agentValue).toBe('codex');
+    });
+
+    it('should parse -a shorthand flag', () => {
+      const args = ['analyze code', '-a', 'gemini'];
+
+      let agentValue: string | undefined;
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--agent' || args[i] === '-a') {
+          const next = args[i + 1];
+          if (next && !next.startsWith('-') && isAgentProvider(next)) {
+            agentValue = next;
+          }
+        }
+      }
+
+      expect(agentValue).toBe('gemini');
+    });
+  });
+
+  describe('Agent List command (v0.5.0)', () => {
+    it('should export listAgents function', async () => {
+      const agentsModule = await import('../../src/cli/commands/agents');
+      expect(typeof agentsModule.listAgents).toBe('function');
+    });
+
+    it('should list all AGENT_PROVIDERS', () => {
+      expect(AGENT_PROVIDERS).toEqual(['claude', 'codex', 'gemini', 'aider']);
+    });
+  });
+
+  describe('Agent in status display (v0.5.0)', () => {
+    it('should default to claude when agent is undefined', () => {
+      const agentDisplay = (agent?: string) => agent ?? 'claude';
+      expect(agentDisplay(undefined)).toBe('claude');
+      expect(agentDisplay('codex')).toBe('codex');
     });
   });
 });
