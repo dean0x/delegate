@@ -5,6 +5,8 @@
 
 import { ChildProcess } from 'child_process';
 import {
+  PipelineCreateRequest,
+  PipelineResult,
   ResumeTaskRequest,
   Schedule,
   ScheduleCreateRequest,
@@ -404,6 +406,7 @@ export interface ScheduleService {
   cancelSchedule(scheduleId: ScheduleId, reason?: string): Promise<Result<void>>;
   pauseSchedule(scheduleId: ScheduleId): Promise<Result<void>>;
   resumeSchedule(scheduleId: ScheduleId): Promise<Result<void>>;
+  createPipeline(request: PipelineCreateRequest): Promise<Result<PipelineResult>>;
 }
 
 /**

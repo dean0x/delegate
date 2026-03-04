@@ -352,6 +352,33 @@ export interface ScheduleCreateRequest {
 }
 
 /**
+ * Pipeline types - sequential task execution via chained one-time schedules
+ * ARCHITECTURE: Used by both MCP CreatePipeline tool and CLI pipeline command
+ */
+export interface PipelineStepRequest {
+  readonly prompt: string;
+  readonly priority?: Priority;
+  readonly workingDirectory?: string;
+}
+
+export interface PipelineCreateRequest {
+  readonly steps: readonly PipelineStepRequest[];
+  readonly priority?: Priority; // shared default for all steps
+  readonly workingDirectory?: string; // shared default for all steps
+}
+
+export interface PipelineStep {
+  readonly index: number;
+  readonly scheduleId: ScheduleId;
+  readonly prompt: string;
+}
+
+export interface PipelineResult {
+  readonly pipelineId: ScheduleId; // first schedule ID (stable reference)
+  readonly steps: readonly PipelineStep[];
+}
+
+/**
  * Task checkpoint - snapshot of task state at completion/failure
  * ARCHITECTURE: Captures enough context to create enriched retry prompts
  * Pattern: Immutable record, created by CheckpointHandler on task terminal events

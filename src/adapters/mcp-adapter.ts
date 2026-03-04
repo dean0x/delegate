@@ -7,6 +7,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
 import {
+  PipelineCreateRequest,
   Priority,
   ResumeTaskRequest,
   ScheduleCreateRequest,
@@ -105,6 +106,28 @@ const ResumeScheduleSchema = z.object({
   scheduleId: z.string().describe('Schedule ID to resume'),
 });
 
+const CreatePipelineSchema = z.object({
+  steps: z
+    .array(
+      z.object({
+        prompt: z.string().min(1).max(4000).describe('Task prompt for this step'),
+        priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
+        workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
+      }),
+    )
+    .min(2, 'Pipeline requires at least 2 steps')
+    .max(20, 'Pipeline cannot exceed 20 steps')
+    .describe('Ordered pipeline steps (executed sequentially)'),
+  priority: z
+    .enum(['P0', 'P1', 'P2'])
+    .optional()
+    .describe('Default priority for all steps (individual steps can override)'),
+  workingDirectory: z
+    .string()
+    .optional()
+    .describe('Default working directory for all steps (individual steps can override)'),
+});
+
 /** Standard MCP tool response shape */
 interface MCPToolResponse {
   [key: string]: unknown;
@@ -187,6 +210,8 @@ export class MCPAdapter {
             return await this.handlePauseSchedule(args);
           case 'ResumeSchedule':
             return await this.handleResumeSchedule(args);
+          case 'CreatePipeline':
+            return await this.handleCreatePipeline(args);
           default:
             // ARCHITECTURE: Return error response instead of throwing
             return {
@@ -501,6 +526,53 @@ export class MCPAdapter {
                   },
                 },
                 required: ['scheduleId'],
+              },
+            },
+            {
+              name: 'CreatePipeline',
+              description:
+                'Create a sequential pipeline of tasks that execute one after another. Each step runs only after the previous step completes successfully.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  steps: {
+                    type: 'array',
+                    description: 'Ordered pipeline steps (executed sequentially)',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        prompt: {
+                          type: 'string',
+                          description: 'Task prompt for this step',
+                          minLength: 1,
+                          maxLength: 4000,
+                        },
+                        priority: {
+                          type: 'string',
+                          enum: ['P0', 'P1', 'P2'],
+                          description: 'Priority override for this step',
+                        },
+                        workingDirectory: {
+                          type: 'string',
+                          description: 'Working directory override (absolute path)',
+                        },
+                      },
+                      required: ['prompt'],
+                    },
+                    minItems: 2,
+                    maxItems: 20,
+                  },
+                  priority: {
+                    type: 'string',
+                    enum: ['P0', 'P1', 'P2'],
+                    description: 'Default priority for all steps (individual steps can override)',
+                  },
+                  workingDirectory: {
+                    type: 'string',
+                    description: 'Default working directory for all steps (individual steps can override)',
+                  },
+                },
+                required: ['steps'],
               },
             },
           ],
@@ -1146,6 +1218,92 @@ export class MCPAdapter {
               {
                 success: true,
                 message: `Schedule ${scheduleId} resumed`,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle CreatePipeline tool call
+   * Creates a sequential pipeline of chained one-time schedules
+   */
+  private async handleCreatePipeline(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = CreatePipelineSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const data = parseResult.data;
+
+    // Validate shared workingDirectory
+    if (data.workingDirectory) {
+      const pathValidation = validatePath(data.workingDirectory);
+      if (!pathValidation.ok) {
+        return {
+          content: [{ type: 'text', text: `Invalid shared working directory: ${pathValidation.error.message}` }],
+          isError: true,
+        };
+      }
+    }
+
+    // Validate per-step workingDirectory paths
+    for (let i = 0; i < data.steps.length; i++) {
+      const step = data.steps[i];
+      if (step.workingDirectory) {
+        const pathValidation = validatePath(step.workingDirectory);
+        if (!pathValidation.ok) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Invalid working directory for step ${i + 1}: ${pathValidation.error.message}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+    }
+
+    const request: PipelineCreateRequest = {
+      steps: data.steps.map((s) => ({
+        prompt: s.prompt,
+        priority: s.priority as Priority | undefined,
+        workingDirectory: s.workingDirectory,
+      })),
+      priority: data.priority as Priority | undefined,
+      workingDirectory: data.workingDirectory,
+    };
+
+    const result = await this.scheduleService.createPipeline(request);
+
+    return match(result, {
+      ok: (pipeline) => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                pipelineId: pipeline.pipelineId,
+                stepCount: pipeline.steps.length,
+                steps: pipeline.steps.map((s) => ({
+                  index: s.index,
+                  scheduleId: s.scheduleId,
+                  prompt: s.prompt,
+                })),
               },
               null,
               2,

@@ -13,10 +13,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MCPAdapter } from '../../../src/adapters/mcp-adapter';
-import type { Task, TaskRequest } from '../../../src/core/domain';
+import type { PipelineCreateRequest, PipelineResult, Task, TaskRequest } from '../../../src/core/domain';
+import { Priority, ScheduleId } from '../../../src/core/domain';
 import { BackbeatError, ErrorCode, taskNotFound } from '../../../src/core/errors';
-import type { EventBus } from '../../../src/core/events/event-bus';
-import type { Logger, ScheduleRepository, TaskManager } from '../../../src/core/interfaces';
+import type { Logger, ScheduleService, TaskManager } from '../../../src/core/interfaces';
+import type { Result } from '../../../src/core/result';
 import { err, ok } from '../../../src/core/result';
 import { TaskFactory } from '../../fixtures/factories';
 
@@ -161,30 +162,15 @@ class MockLogger implements Logger {
   }
 }
 
-// Stub ScheduleRepository — tests in this file do not exercise schedule features
-const stubScheduleRepository: ScheduleRepository = {
-  save: vi.fn().mockResolvedValue(ok(undefined)),
-  update: vi.fn().mockResolvedValue(ok(undefined)),
-  findById: vi.fn().mockResolvedValue(ok(null)),
-  findAll: vi.fn().mockResolvedValue(ok([])),
-  findByStatus: vi.fn().mockResolvedValue(ok([])),
-  findDue: vi.fn().mockResolvedValue(ok([])),
-  delete: vi.fn().mockResolvedValue(ok(undefined)),
-  count: vi.fn().mockResolvedValue(ok(0)),
-  recordExecution: vi
-    .fn()
-    .mockResolvedValue(ok({ id: 1, scheduleId: '', scheduledFor: 0, status: 'pending', createdAt: 0 })),
-  getExecutionHistory: vi.fn().mockResolvedValue(ok([])),
-};
-
-// Stub EventBus — tests in this file do not exercise event features
-const stubEventBus: EventBus = {
-  emit: vi.fn().mockResolvedValue(ok(undefined)),
-  request: vi.fn().mockResolvedValue(ok(undefined)),
-  subscribe: vi.fn().mockReturnValue(ok('sub-id')),
-  unsubscribe: vi.fn().mockReturnValue(ok(undefined)),
-  subscribeAll: vi.fn().mockReturnValue(ok('sub-id')),
-  unsubscribeAll: vi.fn(),
+// Stub ScheduleService — task-focused tests do not exercise schedule features
+const stubScheduleService: ScheduleService = {
+  createSchedule: vi.fn().mockResolvedValue(ok(null)),
+  listSchedules: vi.fn().mockResolvedValue(ok([])),
+  getSchedule: vi.fn().mockResolvedValue(ok({ schedule: null })),
+  cancelSchedule: vi.fn().mockResolvedValue(ok(undefined)),
+  pauseSchedule: vi.fn().mockResolvedValue(ok(undefined)),
+  resumeSchedule: vi.fn().mockResolvedValue(ok(undefined)),
+  createPipeline: vi.fn().mockResolvedValue(ok({ pipelineId: '', steps: [] })),
 };
 
 describe('MCPAdapter - Protocol Compliance', () => {
@@ -195,7 +181,7 @@ describe('MCPAdapter - Protocol Compliance', () => {
   beforeEach(() => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
-    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleRepository, stubEventBus);
+    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService);
   });
 
   afterEach(() => {
@@ -634,6 +620,130 @@ describe('MCPAdapter - Protocol Compliance', () => {
   });
 });
 
+describe('MCPAdapter - CreatePipeline Tool', () => {
+  let adapter: MCPAdapter;
+  let mockTaskManager: MockTaskManager;
+  let mockLogger: MockLogger;
+  let mockScheduleService: MockScheduleService;
+
+  beforeEach(() => {
+    mockTaskManager = new MockTaskManager();
+    mockLogger = new MockLogger();
+    mockScheduleService = new MockScheduleService();
+    adapter = new MCPAdapter(mockTaskManager, mockLogger, mockScheduleService as unknown as ScheduleService);
+  });
+
+  afterEach(() => {
+    mockTaskManager.reset();
+    mockLogger.reset();
+  });
+
+  it('should reject steps array with fewer than 2 items', async () => {
+    const result = await simulateCreatePipeline(mockScheduleService, {
+      steps: [{ prompt: 'only one' }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('at least 2');
+  });
+
+  it('should reject steps array with more than 20 items', async () => {
+    const steps = Array.from({ length: 21 }, (_, i) => ({ prompt: `Step ${i + 1}` }));
+    const result = await simulateCreatePipeline(mockScheduleService, { steps });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('exceed 20');
+  });
+
+  it('should reject step with empty prompt', async () => {
+    const result = await simulateCreatePipeline(mockScheduleService, {
+      steps: [{ prompt: '' }, { prompt: 'valid' }],
+    });
+
+    expect(result.isError).toBe(true);
+  });
+
+  it('should return pipeline result on success', async () => {
+    const result = await simulateCreatePipeline(mockScheduleService, {
+      steps: [{ prompt: 'Step one' }, { prompt: 'Step two' }, { prompt: 'Step three' }],
+    });
+
+    expect(result.isError).toBe(false);
+    const response = JSON.parse(result.content[0].text);
+    expect(response.success).toBe(true);
+    expect(response.pipelineId).toBeDefined();
+    expect(response.stepCount).toBe(3);
+    expect(response.steps).toHaveLength(3);
+  });
+
+  it('should pass priority through to service', async () => {
+    await simulateCreatePipeline(mockScheduleService, {
+      steps: [{ prompt: 'Step one' }, { prompt: 'Step two' }],
+      priority: 'P0',
+    });
+
+    expect(mockScheduleService.createPipelineCalls).toHaveLength(1);
+    expect(mockScheduleService.createPipelineCalls[0].priority).toBe('P0');
+  });
+
+  it('should return error on service failure', async () => {
+    mockScheduleService.shouldFailPipeline = true;
+
+    const result = await simulateCreatePipeline(mockScheduleService, {
+      steps: [{ prompt: 'Step one' }, { prompt: 'Step two' }],
+    });
+
+    expect(result.isError).toBe(true);
+    const response = JSON.parse(result.content[0].text);
+    expect(response.success).toBe(false);
+    expect(response.error).toBeDefined();
+  });
+});
+
+/**
+ * Mock ScheduleService for CreatePipeline testing
+ */
+class MockScheduleService {
+  createPipelineCalls: PipelineCreateRequest[] = [];
+  shouldFailPipeline = false;
+
+  async createSchedule() {
+    return ok(null);
+  }
+  async listSchedules() {
+    return ok([]);
+  }
+  async getSchedule() {
+    return ok({ schedule: null });
+  }
+  async cancelSchedule() {
+    return ok(undefined);
+  }
+  async pauseSchedule() {
+    return ok(undefined);
+  }
+  async resumeSchedule() {
+    return ok(undefined);
+  }
+
+  async createPipeline(request: PipelineCreateRequest): Promise<Result<PipelineResult>> {
+    this.createPipelineCalls.push(request);
+
+    if (this.shouldFailPipeline) {
+      return err(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Pipeline creation failed', {}));
+    }
+
+    return ok({
+      pipelineId: ScheduleId('schedule-mock-first'),
+      steps: request.steps.map((s, i) => ({
+        index: i,
+        scheduleId: ScheduleId(`schedule-mock-${i}`),
+        prompt: s.prompt.substring(0, 50) + (s.prompt.length > 50 ? '...' : ''),
+      })),
+    });
+  }
+}
+
 // ============================================================================
 // Helper Functions - Simulate MCP tool calls
 // ============================================================================
@@ -881,4 +991,69 @@ async function simulateRetryTask(
       ],
     };
   }
+}
+
+async function simulateCreatePipeline(
+  scheduleService: MockScheduleService,
+  args: {
+    steps: Array<{ prompt: string; priority?: string; workingDirectory?: string }>;
+    priority?: string;
+    workingDirectory?: string;
+  },
+): Promise<MCPToolResponse> {
+  // Validate min/max steps (mirrors Zod schema)
+  if (args.steps.length < 2) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: 'Pipeline requires at least 2 steps' }],
+    };
+  }
+  if (args.steps.length > 20) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: 'Pipeline cannot exceed 20 steps' }],
+    };
+  }
+
+  // Validate prompts (mirrors Zod min(1))
+  for (const step of args.steps) {
+    if (!step.prompt || step.prompt.length === 0) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'Step prompt must not be empty' }],
+      };
+    }
+  }
+
+  const result = await scheduleService.createPipeline({
+    steps: args.steps.map((s) => ({
+      prompt: s.prompt,
+      priority: s.priority as Priority | undefined,
+      workingDirectory: s.workingDirectory,
+    })),
+    priority: args.priority as Priority | undefined,
+    workingDirectory: args.workingDirectory,
+  });
+
+  if (!result.ok) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
+    };
+  }
+
+  return {
+    isError: false,
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          pipelineId: result.value.pipelineId,
+          stepCount: result.value.steps.length,
+          steps: result.value.steps,
+        }),
+      },
+    ],
+  };
 }

@@ -5,8 +5,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ScheduleCreateRequest } from '../../../src/core/domain';
-import { createSchedule, MissedRunPolicy, ScheduleId, ScheduleStatus, ScheduleType } from '../../../src/core/domain';
+import type { PipelineCreateRequest, ScheduleCreateRequest } from '../../../src/core/domain';
+import { createSchedule, MissedRunPolicy, Priority, ScheduleId, ScheduleStatus, ScheduleType } from '../../../src/core/domain';
 import { Database } from '../../../src/implementations/database';
 import { SQLiteScheduleRepository } from '../../../src/implementations/schedule-repository';
 import { ScheduleManagerService, toMissedRunPolicy } from '../../../src/services/schedule-manager';
@@ -445,6 +445,155 @@ describe('ScheduleManagerService - Unit Tests', () => {
       const result = await service.resumeSchedule(ScheduleId('non-existent'));
 
       expect(result.ok).toBe(false);
+    });
+  });
+
+  describe('createPipeline()', () => {
+    function pipelineRequest(overrides: Partial<PipelineCreateRequest> = {}): PipelineCreateRequest {
+      return {
+        steps: [{ prompt: 'Step one' }, { prompt: 'Step two' }, { prompt: 'Step three' }],
+        ...overrides,
+      };
+    }
+
+    it('should reject fewer than 2 steps', async () => {
+      const result = await service.createPipeline({ steps: [{ prompt: 'Only one' }] });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('at least 2 steps');
+    });
+
+    it('should reject more than 20 steps', async () => {
+      const steps = Array.from({ length: 21 }, (_, i) => ({ prompt: `Step ${i + 1}` }));
+      const result = await service.createPipeline({ steps });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('exceed 20 steps');
+    });
+
+    it('should create chained schedules for 3-step pipeline', async () => {
+      const result = await service.createPipeline(pipelineRequest());
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.steps).toHaveLength(3);
+      expect(result.value.pipelineId).toBe(result.value.steps[0].scheduleId);
+    });
+
+    it('should return all schedule IDs in correct order', async () => {
+      const result = await service.createPipeline(pipelineRequest());
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      // Each step should have a unique schedule ID
+      const ids = result.value.steps.map((s) => s.scheduleId);
+      expect(new Set(ids).size).toBe(3);
+
+      // Indices should be sequential
+      expect(result.value.steps.map((s) => s.index)).toEqual([0, 1, 2]);
+    });
+
+    it('should use shared priority as default for all steps', async () => {
+      const result = await service.createPipeline(
+        pipelineRequest({ priority: Priority.P0 }),
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      // Verify all 3 ScheduleCreated events were emitted
+      expect(eventBus.getEventCount('ScheduleCreated')).toBe(3);
+
+      // Check each created schedule has P0 priority
+      const events = eventBus.getEmittedEvents('ScheduleCreated');
+      for (const event of events) {
+        expect(event.schedule.taskTemplate.priority).toBe(Priority.P0);
+      }
+    });
+
+    it('should allow per-step priority override', async () => {
+      const result = await service.createPipeline({
+        steps: [
+          { prompt: 'Step one', priority: Priority.P1 },
+          { prompt: 'Step two' },
+        ],
+        priority: Priority.P2,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const events = eventBus.getEmittedEvents('ScheduleCreated');
+      expect(events[0].schedule.taskTemplate.priority).toBe(Priority.P1);
+      expect(events[1].schedule.taskTemplate.priority).toBe(Priority.P2);
+    });
+
+    it('should use shared workingDirectory as default', async () => {
+      const cwd = process.cwd();
+      const result = await service.createPipeline(
+        pipelineRequest({ workingDirectory: cwd }),
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const events = eventBus.getEmittedEvents('ScheduleCreated');
+      for (const event of events) {
+        expect(event.schedule.taskTemplate.workingDirectory).toBe(cwd);
+      }
+    });
+
+    it('should allow per-step workingDirectory override', async () => {
+      const cwd = process.cwd();
+      const overrideDir = `${cwd}/src`;
+      const result = await service.createPipeline({
+        steps: [
+          { prompt: 'Step one', workingDirectory: overrideDir },
+          { prompt: 'Step two' },
+        ],
+        workingDirectory: cwd,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const events = eventBus.getEmittedEvents('ScheduleCreated');
+      expect(events[0].schedule.taskTemplate.workingDirectory).toBe(overrideDir);
+      expect(events[1].schedule.taskTemplate.workingDirectory).toBe(cwd);
+    });
+
+    it('should truncate long prompts at 50 chars in response', async () => {
+      const longPrompt = 'A'.repeat(60);
+      const result = await service.createPipeline({
+        steps: [{ prompt: longPrompt }, { prompt: 'Short' }],
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(result.value.steps[0].prompt).toBe('A'.repeat(50) + '...');
+      expect(result.value.steps[1].prompt).toBe('Short');
+    });
+
+    it('should stop on first failure and report error with step number', async () => {
+      // Make ScheduleCreated emission fail — first step will fail
+      eventBus.setEmitFailure('ScheduleCreated', true);
+
+      const result = await service.createPipeline(pipelineRequest());
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('step 1');
+    });
+
+    it('should emit ScheduleCreated for each step', async () => {
+      const result = await service.createPipeline(pipelineRequest());
+
+      expect(result.ok).toBe(true);
+      expect(eventBus.getEventCount('ScheduleCreated')).toBe(3);
     });
   });
 });
