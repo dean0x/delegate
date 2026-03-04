@@ -1,3 +1,4 @@
+import { isAgentProvider, type AgentProvider } from '../../core/agents.js';
 import { ScheduleId } from '../../core/domain.js';
 import type { ScheduleService } from '../../core/interfaces.js';
 import { validatePath } from '../../utils/validation.js';
@@ -54,6 +55,7 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
   let maxRuns: number | undefined;
   let expiresAt: string | undefined;
   let afterScheduleId: string | undefined;
+  let agent: AgentProvider | undefined;
 
   for (let i = 0; i < scheduleArgs.length; i++) {
     const arg = scheduleArgs[i];
@@ -110,6 +112,13 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
     } else if (arg === '--after' && next) {
       afterScheduleId = next;
       i++;
+    } else if ((arg === '--agent' || arg === '-a') && next) {
+      if (!isAgentProvider(next)) {
+        ui.error(`Unknown agent: "${next}". Available agents: claude, codex, gemini, aider`);
+        process.exit(1);
+      }
+      agent = next;
+      i++;
     } else if (arg.startsWith('-')) {
       ui.error(`Unknown flag: ${arg}`);
       process.exit(1);
@@ -161,6 +170,7 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
     maxRuns,
     expiresAt,
     afterScheduleId: afterScheduleId ? ScheduleId(afterScheduleId) : undefined,
+    agent,
   });
 
   if (result.ok) {
