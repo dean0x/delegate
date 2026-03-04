@@ -6,6 +6,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
+import { AGENT_PROVIDERS, AgentProvider, AgentRegistry } from '../core/agents.js';
 import {
   PipelineCreateRequest,
   Priority,
@@ -38,6 +39,10 @@ const DelegateTaskSchema = z.object({
     .describe(
       'Task ID to continue from — receives checkpoint context from this dependency (must be in dependsOn list)',
     ),
+  agent: z
+    .enum(['claude', 'codex', 'gemini', 'aider'])
+    .optional()
+    .describe('AI agent to execute the task (default: claude)'),
 });
 
 const TaskStatusSchema = z.object({
@@ -79,6 +84,10 @@ const ScheduleTaskSchema = z.object({
     .string()
     .optional()
     .describe("Schedule ID to chain after (new tasks depend on this schedule's latest task)"),
+  agent: z
+    .enum(['claude', 'codex', 'gemini', 'aider'])
+    .optional()
+    .describe('AI agent to execute the task (default: claude)'),
 });
 
 const ListSchedulesSchema = z.object({
@@ -113,6 +122,10 @@ const CreatePipelineSchema = z.object({
         prompt: z.string().min(1).max(4000).describe('Task prompt for this step'),
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
+        agent: z
+          .enum(['claude', 'codex', 'gemini', 'aider'])
+          .optional()
+          .describe('Agent override for this step'),
       }),
     )
     .min(2, 'Pipeline requires at least 2 steps')
@@ -126,6 +139,10 @@ const CreatePipelineSchema = z.object({
     .string()
     .optional()
     .describe('Default working directory for all steps (individual steps can override)'),
+  agent: z
+    .enum(['claude', 'codex', 'gemini', 'aider'])
+    .optional()
+    .describe('Default agent for all steps (individual steps can override)'),
 });
 
 /** Standard MCP tool response shape */
@@ -142,6 +159,7 @@ export class MCPAdapter {
     private readonly taskManager: TaskManager,
     private readonly logger: Logger,
     private readonly scheduleService: ScheduleService,
+    private readonly agentRegistry?: AgentRegistry,
   ) {
     this.server = new Server(
       {
@@ -212,6 +230,8 @@ export class MCPAdapter {
             return await this.handleResumeSchedule(args);
           case 'CreatePipeline':
             return await this.handleCreatePipeline(args);
+          case 'ListAgents':
+            return this.handleListAgents();
           default:
             // ARCHITECTURE: Return error response instead of throwing
             return {
@@ -289,6 +309,11 @@ export class MCPAdapter {
                     description:
                       'Task ID to continue from — receives checkpoint context when that dependency completes (must be in dependsOn list)',
                     pattern: '^task-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+                  },
+                  agent: {
+                    type: 'string',
+                    enum: ['claude', 'codex', 'gemini', 'aider'],
+                    description: 'AI agent to execute the task (default: claude)',
                   },
                 },
                 required: ['prompt'],
@@ -439,6 +464,11 @@ export class MCPAdapter {
                     type: 'string',
                     description: "Schedule ID to chain after (new tasks depend on this schedule's latest task)",
                   },
+                  agent: {
+                    type: 'string',
+                    enum: ['claude', 'codex', 'gemini', 'aider'],
+                    description: 'AI agent to execute the task (default: claude)',
+                  },
                 },
                 required: ['prompt', 'scheduleType'],
               },
@@ -556,6 +586,11 @@ export class MCPAdapter {
                           type: 'string',
                           description: 'Working directory override (absolute path)',
                         },
+                        agent: {
+                          type: 'string',
+                          enum: ['claude', 'codex', 'gemini', 'aider'],
+                          description: 'Agent override for this step',
+                        },
                       },
                       required: ['prompt'],
                     },
@@ -571,8 +606,22 @@ export class MCPAdapter {
                     type: 'string',
                     description: 'Default working directory for all steps (individual steps can override)',
                   },
+                  agent: {
+                    type: 'string',
+                    enum: ['claude', 'codex', 'gemini', 'aider'],
+                    description: 'Default agent for all steps (individual steps can override)',
+                  },
                 },
                 required: ['steps'],
+              },
+            },
+            // Agent tools (v0.5.0 Multi-Agent Support)
+            {
+              name: 'ListAgents',
+              description: 'List available AI agents and their registration status',
+              inputSchema: {
+                type: 'object',
+                properties: {},
               },
             },
           ],
@@ -626,6 +675,7 @@ export class MCPAdapter {
       maxOutputBuffer: data.maxOutputBuffer,
       dependsOn: data.dependsOn ? data.dependsOn.map(TaskId) : undefined,
       continueFrom: data.continueFrom ? TaskId(data.continueFrom) : undefined,
+      agent: data.agent as AgentProvider | undefined,
     };
 
     // Delegate task using our new architecture
@@ -711,6 +761,7 @@ export class MCPAdapter {
                   duration: task.completedAt && task.startedAt ? task.completedAt - task.startedAt : undefined,
                   exitCode: task.exitCode,
                   workingDirectory: task.workingDirectory,
+                  agent: task.agent ?? 'claude',
                 }),
               },
             ],
@@ -955,6 +1006,7 @@ export class MCPAdapter {
       maxRuns: data.maxRuns,
       expiresAt: data.expiresAt,
       afterScheduleId: data.afterSchedule ? ScheduleId(data.afterSchedule) : undefined,
+      agent: data.agent as AgentProvider | undefined,
     };
 
     const result = await this.scheduleService.createSchedule(request);
@@ -1282,6 +1334,7 @@ export class MCPAdapter {
         prompt: s.prompt,
         priority: s.priority as Priority | undefined,
         workingDirectory: s.workingDirectory,
+        agent: (s.agent ?? data.agent) as AgentProvider | undefined,
       })),
       priority: data.priority as Priority | undefined,
       workingDirectory: data.workingDirectory,
@@ -1316,5 +1369,46 @@ export class MCPAdapter {
         isError: true,
       }),
     });
+  }
+
+  // ============================================================================
+  // AGENT HANDLERS (v0.5.0 Multi-Agent Support)
+  // ============================================================================
+
+  /**
+   * Handle ListAgents tool call
+   * Returns all known agent providers and their registration status
+   */
+  private handleListAgents(): MCPToolResponse {
+    const agentDescriptions: Record<string, string> = {
+      claude: 'Claude Code (Anthropic)',
+      codex: 'Codex CLI (OpenAI)',
+      gemini: 'Gemini CLI (Google)',
+      aider: 'Aider',
+    };
+
+    const agents = AGENT_PROVIDERS.map((provider) => ({
+      provider,
+      description: agentDescriptions[provider] ?? provider,
+      registered: this.agentRegistry?.has(provider) ?? false,
+      isDefault: provider === 'claude',
+    }));
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              agents,
+              defaultAgent: 'claude',
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
   }
 }

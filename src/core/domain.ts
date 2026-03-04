@@ -362,6 +362,7 @@ export interface ScheduleCreateRequest {
   readonly maxRuns?: number;
   readonly expiresAt?: string; // ISO 8601 string (parsed by service)
   readonly afterScheduleId?: ScheduleId; // Chain: block until after-schedule's latest task completes
+  readonly agent?: AgentProvider; // Multi-agent support (v0.5.0)
 }
 
 /**
@@ -372,6 +373,7 @@ export interface PipelineStepRequest {
   readonly prompt: string;
   readonly priority?: Priority;
   readonly workingDirectory?: string;
+  readonly agent?: AgentProvider; // Multi-agent support (v0.5.0)
 }
 
 export interface PipelineCreateRequest {
