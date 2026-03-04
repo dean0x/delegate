@@ -174,7 +174,7 @@ describe('CodexAdapter', () => {
     expect(args).toContain('test prompt');
   });
 
-  it('should strip CODEX_ env vars', () => {
+  it('should preserve CODEX_ env vars (no known nesting indicators)', () => {
     const mockChild = createMockChildProcess(1234);
     mockSpawn.mockReturnValue(mockChild);
 
@@ -183,7 +183,7 @@ describe('CodexAdapter', () => {
       adapter.spawn('test prompt', '/workspace');
 
       const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-      expect(spawnOptions.env.CODEX_SESSION).toBeUndefined();
+      expect(spawnOptions.env.CODEX_SESSION).toBe('test');
       expect(spawnOptions.env.BACKBEAT_WORKER).toBe('true');
     } finally {
       delete process.env.CODEX_SESSION;
@@ -221,7 +221,7 @@ describe('GeminiAdapter', () => {
     expect(args).toContain('test prompt');
   });
 
-  it('should strip GEMINI_ env vars', () => {
+  it('should preserve GEMINI_ env vars including API key (no known nesting indicators)', () => {
     const mockChild = createMockChildProcess(1234);
     mockSpawn.mockReturnValue(mockChild);
 
@@ -230,7 +230,7 @@ describe('GeminiAdapter', () => {
       adapter.spawn('test prompt', '/workspace');
 
       const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-      expect(spawnOptions.env.GEMINI_API_KEY).toBeUndefined();
+      expect(spawnOptions.env.GEMINI_API_KEY).toBe('secret');
       expect(spawnOptions.env.BACKBEAT_WORKER).toBe('true');
     } finally {
       delete process.env.GEMINI_API_KEY;
@@ -269,7 +269,7 @@ describe('AiderAdapter', () => {
     expect(args).toContain('test prompt');
   });
 
-  it('should strip AIDER_ env vars', () => {
+  it('should preserve AIDER_ env vars (no known nesting indicators)', () => {
     const mockChild = createMockChildProcess(1234);
     mockSpawn.mockReturnValue(mockChild);
 
@@ -278,7 +278,7 @@ describe('AiderAdapter', () => {
       adapter.spawn('test prompt', '/workspace');
 
       const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-      expect(spawnOptions.env.AIDER_MODEL).toBeUndefined();
+      expect(spawnOptions.env.AIDER_MODEL).toBe('gpt-4');
       expect(spawnOptions.env.BACKBEAT_WORKER).toBe('true');
     } finally {
       delete process.env.AIDER_MODEL;

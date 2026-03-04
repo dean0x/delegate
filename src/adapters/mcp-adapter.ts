@@ -6,7 +6,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
-import { AGENT_PROVIDERS, AgentProvider, AgentRegistry } from '../core/agents.js';
+import { AGENT_DESCRIPTIONS, AGENT_PROVIDERS, AgentProvider, AgentRegistry, DEFAULT_AGENT } from '../core/agents.js';
 import {
   PipelineCreateRequest,
   Priority,
@@ -761,7 +761,7 @@ export class MCPAdapter {
                   duration: task.completedAt && task.startedAt ? task.completedAt - task.startedAt : undefined,
                   exitCode: task.exitCode,
                   workingDirectory: task.workingDirectory,
-                  agent: task.agent ?? 'claude',
+                  agent: task.agent ?? DEFAULT_AGENT,
                 }),
               },
             ],
@@ -1380,18 +1380,11 @@ export class MCPAdapter {
    * Returns all known agent providers and their registration status
    */
   private handleListAgents(): MCPToolResponse {
-    const agentDescriptions: Record<string, string> = {
-      claude: 'Claude Code (Anthropic)',
-      codex: 'Codex CLI (OpenAI)',
-      gemini: 'Gemini CLI (Google)',
-      aider: 'Aider',
-    };
-
     const agents = AGENT_PROVIDERS.map((provider) => ({
       provider,
-      description: agentDescriptions[provider] ?? provider,
+      description: AGENT_DESCRIPTIONS[provider],
       registered: this.agentRegistry?.has(provider) ?? false,
-      isDefault: provider === 'claude',
+      isDefault: provider === DEFAULT_AGENT,
     }));
 
     return {
@@ -1402,7 +1395,7 @@ export class MCPAdapter {
             {
               success: true,
               agents,
-              defaultAgent: 'claude',
+              defaultAgent: DEFAULT_AGENT,
             },
             null,
             2,

@@ -11,7 +11,7 @@
 import { ChildProcess } from 'child_process';
 import { AgentAdapter, AgentProvider } from '../core/agents.js';
 import { ProcessSpawner } from '../core/interfaces.js';
-import { ok, Result } from '../core/result.js';
+import { Result } from '../core/result.js';
 
 export class ProcessSpawnerAdapter implements AgentAdapter {
   readonly provider: AgentProvider = 'claude';

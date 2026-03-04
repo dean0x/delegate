@@ -40,18 +40,22 @@ export interface BootstrapOptions {
   skipScheduleExecutor?: boolean;
 }
 
-// Adapter
+// Adapters
 import { MCPAdapter } from './adapters/mcp-adapter.js';
+
+// Core
 import { AgentRegistry } from './core/agents.js';
+
+// Implementations
 import { InMemoryAgentRegistry } from './implementations/agent-registry.js';
 import { AiderAdapter } from './implementations/aider-adapter.js';
 import { SQLiteCheckpointRepository } from './implementations/checkpoint-repository.js';
 import { ClaudeAdapter } from './implementations/claude-adapter.js';
 import { CodexAdapter } from './implementations/codex-adapter.js';
-import { GeminiAdapter } from './implementations/gemini-adapter.js';
 import { Database } from './implementations/database.js';
 import { SQLiteDependencyRepository } from './implementations/dependency-repository.js';
 import { EventDrivenWorkerPool } from './implementations/event-driven-worker-pool.js';
+import { GeminiAdapter } from './implementations/gemini-adapter.js';
 import { ConsoleLogger, LogLevel, StructuredLogger } from './implementations/logger.js';
 import { BufferedOutputCapture } from './implementations/output-capture.js';
 import { SQLiteOutputRepository } from './implementations/output-repository.js';
@@ -59,17 +63,15 @@ import { ClaudeProcessSpawner } from './implementations/process-spawner.js';
 import { ProcessSpawnerAdapter } from './implementations/process-spawner-adapter.js';
 import { SystemResourceMonitor } from './implementations/resource-monitor.js';
 import { SQLiteScheduleRepository } from './implementations/schedule-repository.js';
-// Implementations
 import { PriorityTaskQueue } from './implementations/task-queue.js';
 import { SQLiteTaskRepository } from './implementations/task-repository.js';
+
+// Services
 import { AutoscalingManager } from './services/autoscaling-manager.js';
-// Handler Setup (extracts handler creation from bootstrap)
 import { extractHandlerDependencies, setupEventHandlers } from './services/handler-setup.js';
 import { RecoveryManager } from './services/recovery-manager.js';
-// Schedule Executor
 import { ScheduleExecutor } from './services/schedule-executor.js';
 import { ScheduleManagerService } from './services/schedule-manager.js';
-// Services
 import { TaskManagerService } from './services/task-manager.js';
 
 // Convert new configuration format to existing Config interface

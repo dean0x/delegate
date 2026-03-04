@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT } from '../../core/agents.js';
 import type { Task } from '../../core/domain.js';
 import { TaskId } from '../../core/domain.js';
 import { errorMessage, withServices } from '../services.js';
@@ -19,7 +20,7 @@ export async function getTaskStatus(taskId?: string) {
         lines.push(`ID:       ${task.id}`);
         lines.push(`Status:   ${ui.colorStatus(task.status)}`);
         lines.push(`Priority: ${task.priority}`);
-        lines.push(`Agent:    ${task.agent ?? 'claude'}`);
+        lines.push(`Agent:    ${task.agent ?? DEFAULT_AGENT}`);
         if (task.startedAt) lines.push(`Started:  ${new Date(task.startedAt).toISOString()}`);
         if (task.completedAt) lines.push(`Completed: ${new Date(task.completedAt).toISOString()}`);
         if (task.exitCode !== undefined) lines.push(`Exit Code: ${task.exitCode}`);

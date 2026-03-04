@@ -38,9 +38,20 @@ export const DEFAULT_AGENT: AgentProvider = 'claude';
  * Type guard for validating agent provider strings
  * Pattern: Parse, don't validate — used at system boundaries
  */
-export const isAgentProvider = (value: string): value is AgentProvider => {
+export function isAgentProvider(value: string): value is AgentProvider {
   return (AGENT_PROVIDERS as readonly string[]).includes(value);
-};
+}
+
+/**
+ * Human-readable descriptions for each agent provider
+ * Single source of truth — used by CLI, MCP adapter, and UI
+ */
+export const AGENT_DESCRIPTIONS: Readonly<Record<AgentProvider, string>> = Object.freeze({
+  claude: 'Claude Code (Anthropic)',
+  codex: 'Codex CLI (OpenAI)',
+  gemini: 'Gemini CLI (Google)',
+  aider: 'Aider',
+});
 
 /**
  * Agent adapter interface — abstracts agent-specific CLI interactions
