@@ -3,6 +3,7 @@ import { closeSync, mkdirSync, openSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import { bootstrap } from '../../bootstrap.js';
+import type { AgentProvider } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
 import type { TaskRequest } from '../../core/domain.js';
 import { Priority, TaskId } from '../../core/domain.js';
@@ -206,6 +207,7 @@ export async function runTask(
     continueFrom?: string;
     timeout?: number;
     maxOutputBuffer?: number;
+    agent?: string;
   },
 ) {
   let container: Container | undefined;
@@ -242,6 +244,7 @@ export async function runTask(
       const params: string[] = [];
       if (options.priority) params.push(`Priority: ${options.priority}`);
       if (options.workingDirectory) params.push(`Dir: ${options.workingDirectory}`);
+      if (options.agent) params.push(`Agent: ${options.agent}`);
       if (options.dependsOn && options.dependsOn.length > 0) params.push(`Deps: ${options.dependsOn.join(', ')}`);
       if (options.continueFrom) params.push(`Continue from: ${options.continueFrom}`);
       if (options.timeout) params.push(`Timeout: ${ui.formatMs(options.timeout)}`);
@@ -255,6 +258,7 @@ export async function runTask(
       priority: options?.priority ? Priority[options.priority as keyof typeof Priority] : undefined,
       dependsOn: options?.dependsOn?.map((id: string) => TaskId(id)),
       continueFrom: options?.continueFrom ? TaskId(options.continueFrom) : undefined,
+      agent: options?.agent as AgentProvider | undefined,
     };
 
     const result = await taskManager.delegate(request);

@@ -17,6 +17,8 @@ import { retryTask } from './cli/commands/retry.js';
 import { handleDetachMode, runTask } from './cli/commands/run.js';
 import { handleScheduleCommand } from './cli/commands/schedule.js';
 import { getTaskStatus } from './cli/commands/status.js';
+import { listAgents } from './cli/commands/agents.js';
+import { isAgentProvider } from './core/agents.js';
 import * as ui from './cli/ui.js';
 import { validateBufferSize, validatePath, validateTimeout } from './utils/validation.js';
 
@@ -56,6 +58,7 @@ if (mainCommand === 'mcp') {
       continueFrom?: string;
       timeout?: number;
       maxOutputBuffer?: number;
+      agent?: string;
     } = {};
 
     let promptWords: string[] = [];
@@ -132,6 +135,19 @@ if (mainCommand === 'mcp') {
         }
         options.maxOutputBuffer = bufferResult.value;
         i++;
+      } else if (arg === '--agent' || arg === '-a') {
+        const next = foregroundArgs[i + 1];
+        if (next && !next.startsWith('-')) {
+          if (!isAgentProvider(next)) {
+            ui.error(`Unknown agent: "${next}". Available agents: claude, codex, gemini, aider`);
+            process.exit(1);
+          }
+          options.agent = next;
+          i++;
+        } else {
+          ui.error('--agent requires an agent name (claude, codex, gemini, aider)');
+          process.exit(1);
+        }
       } else if (arg.startsWith('-')) {
         ui.error(`Unknown flag: ${arg}`);
         process.exit(1);
@@ -149,12 +165,14 @@ if (mainCommand === 'mcp') {
           '  -f, --foreground              Stream output and wait for completion',
           '  -p, --priority P0|P1|P2      Task priority (P0=critical, P1=high, P2=normal)',
           '  -w, --working-directory DIR   Working directory for task execution',
+          '  -a, --agent AGENT            AI agent to use (claude, codex, gemini, aider)',
           '  -t, --timeout MS              Task timeout in milliseconds',
           '  --max-output-buffer BYTES     Maximum output buffer size',
           '',
           'Examples:',
           '  beat run "refactor auth"                     # Fire-and-forget (default)',
           '  beat run "quick fix" --foreground            # Stream output, wait',
+          '  beat run "analyze code" --agent codex        # Use Codex instead of Claude',
           '',
         ].join('\n'),
       );
@@ -217,6 +235,14 @@ if (mainCommand === 'mcp') {
   await handleScheduleCommand(subCommand, args.slice(2));
 } else if (mainCommand === 'pipeline') {
   await handlePipelineCommand(args.slice(1));
+} else if (mainCommand === 'agents') {
+  if (subCommand === 'list' || !subCommand) {
+    await listAgents();
+  } else {
+    ui.error(`Unknown agents subcommand: ${subCommand}`);
+    process.stderr.write('Valid subcommands: list\n');
+    process.exit(1);
+  }
 } else if (mainCommand === 'resume') {
   const taskId = args[1];
   if (!taskId) {

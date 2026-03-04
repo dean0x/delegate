@@ -27,6 +27,7 @@ ${bold('Task Commands:')}
     -f, --foreground           Stream output and wait for task completion
     -p, --priority P0|P1|P2    Task priority (P0=critical, P1=high, P2=normal)
     -w, --working-directory D  Working directory for task execution
+    -a, --agent AGENT          AI agent to use (claude, codex, gemini, aider)
     --deps TASK_IDS            Comma-separated task IDs this task depends on (alias: --depends-on)
     -c, --continue TASK_ID     Continue from a dependency's checkpoint (alias: --continue-from)
     -t, --timeout MS           Task timeout in milliseconds
@@ -60,6 +61,9 @@ ${bold('Schedule Commands:')}
   ${cyan('schedule pause')} <schedule-id>
   ${cyan('schedule resume')} <schedule-id>
 
+${bold('Agent Commands:')}
+  ${cyan('agents list')}                List available AI agents
+
 ${bold('Pipeline Commands:')}
   ${cyan('pipeline')} <prompt> [<prompt>]...   Create chained one-time schedules
     Example: pipeline "set up db" "run migrations" "seed data"
@@ -76,7 +80,9 @@ ${bold('Examples:')}
   beat mcp start                                      # Start MCP server
   beat run "analyze this codebase"                    # Fire-and-forget (default)
   beat run "fix the bug" --foreground                 # Stream output, wait
+  beat run "analyze code" --agent codex               # Use Codex instead of Claude
   beat run "run tests" --deps task-abc123             # Wait for dependency
+  beat agents list                                    # List available agents
   beat list                                           # List all tasks
 
   # Scheduling
