@@ -34,7 +34,7 @@ const TaskRowSchema = z.object({
   exit_code: z.number().nullable(),
   dependencies: z.string().nullable(),
   continue_from: z.string().nullable(),
-  agent: z.enum(['claude', 'codex', 'gemini', 'aider']).nullable(),
+  agent: z.enum(['claude', 'codex', 'gemini']).nullable(),
 });
 
 /**

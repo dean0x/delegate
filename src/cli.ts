@@ -139,13 +139,13 @@ if (mainCommand === 'mcp') {
         const next = foregroundArgs[i + 1];
         if (next && !next.startsWith('-')) {
           if (!isAgentProvider(next)) {
-            ui.error(`Unknown agent: "${next}". Available agents: claude, codex, gemini, aider`);
+            ui.error(`Unknown agent: "${next}". Available agents: claude, codex, gemini`);
             process.exit(1);
           }
           options.agent = next;
           i++;
         } else {
-          ui.error('--agent requires an agent name (claude, codex, gemini, aider)');
+          ui.error('--agent requires an agent name (claude, codex, gemini)');
           process.exit(1);
         }
       } else if (arg.startsWith('-')) {
@@ -165,7 +165,7 @@ if (mainCommand === 'mcp') {
           '  -f, --foreground              Stream output and wait for completion',
           '  -p, --priority P0|P1|P2      Task priority (P0=critical, P1=high, P2=normal)',
           '  -w, --working-directory DIR   Working directory for task execution',
-          '  -a, --agent AGENT            AI agent to use (claude, codex, gemini, aider)',
+          '  -a, --agent AGENT            AI agent to use (claude, codex, gemini)',
           '  -t, --timeout MS              Task timeout in milliseconds',
           '  --max-output-buffer BYTES     Maximum output buffer size',
           '',

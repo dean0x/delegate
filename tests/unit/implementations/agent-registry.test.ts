@@ -23,15 +23,13 @@ describe('InMemoryAgentRegistry', () => {
   let claudeAdapter: AgentAdapter;
   let codexAdapter: AgentAdapter;
   let geminiAdapter: AgentAdapter;
-  let aiderAdapter: AgentAdapter;
   let registry: InMemoryAgentRegistry;
 
   beforeEach(() => {
     claudeAdapter = createMockAdapter('claude');
     codexAdapter = createMockAdapter('codex');
     geminiAdapter = createMockAdapter('gemini');
-    aiderAdapter = createMockAdapter('aider');
-    registry = new InMemoryAgentRegistry([claudeAdapter, codexAdapter, geminiAdapter, aiderAdapter]);
+    registry = new InMemoryAgentRegistry([claudeAdapter, codexAdapter, geminiAdapter]);
   });
 
   afterEach(() => {
@@ -49,7 +47,7 @@ describe('InMemoryAgentRegistry', () => {
     });
 
     it('should return the correct adapter for each registered provider', () => {
-      for (const provider of ['claude', 'codex', 'gemini', 'aider'] as const) {
+      for (const provider of ['claude', 'codex', 'gemini'] as const) {
         const result = registry.get(provider);
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -74,7 +72,6 @@ describe('InMemoryAgentRegistry', () => {
       expect(registry.has('claude')).toBe(true);
       expect(registry.has('codex')).toBe(true);
       expect(registry.has('gemini')).toBe(true);
-      expect(registry.has('aider')).toBe(true);
     });
 
     it('should return false for unregistered provider in empty registry', () => {
@@ -87,7 +84,7 @@ describe('InMemoryAgentRegistry', () => {
     it('should return all registered provider names sorted', () => {
       const providers = registry.list();
 
-      expect(providers).toEqual(['aider', 'claude', 'codex', 'gemini']);
+      expect(providers).toEqual(['claude', 'codex', 'gemini']);
     });
 
     it('should return empty array for empty registry', () => {
@@ -108,7 +105,6 @@ describe('InMemoryAgentRegistry', () => {
       expect(claudeAdapter.dispose).toHaveBeenCalledOnce();
       expect(codexAdapter.dispose).toHaveBeenCalledOnce();
       expect(geminiAdapter.dispose).toHaveBeenCalledOnce();
-      expect(aiderAdapter.dispose).toHaveBeenCalledOnce();
     });
 
     it('should clear all adapters after dispose', () => {

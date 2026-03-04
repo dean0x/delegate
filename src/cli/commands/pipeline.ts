@@ -13,7 +13,7 @@ export async function handlePipelineCommand(pipelineArgs: string[]) {
 
     if ((arg === '--agent' || arg === '-a') && next) {
       if (!isAgentProvider(next)) {
-        ui.error(`Unknown agent: "${next}". Available agents: claude, codex, gemini, aider`);
+        ui.error(`Unknown agent: "${next}". Available agents: claude, codex, gemini`);
         process.exit(1);
       }
       agent = next;

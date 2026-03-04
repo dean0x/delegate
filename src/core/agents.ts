@@ -15,13 +15,13 @@ import { Result } from './result.js';
  * Supported agent providers
  * Each provider corresponds to a CLI-based coding agent
  */
-export type AgentProvider = 'claude' | 'codex' | 'gemini' | 'aider';
+export type AgentProvider = 'claude' | 'codex' | 'gemini';
 
 /**
  * All valid agent providers as a readonly array
  * Used for validation and iteration
  */
-export const AGENT_PROVIDERS: readonly AgentProvider[] = Object.freeze(['claude', 'codex', 'gemini', 'aider'] as const);
+export const AGENT_PROVIDERS: readonly AgentProvider[] = Object.freeze(['claude', 'codex', 'gemini'] as const);
 
 /**
  * Default agent when none is specified
@@ -45,7 +45,6 @@ export const AGENT_DESCRIPTIONS: Readonly<Record<AgentProvider, string>> = Objec
   claude: 'Claude Code (Anthropic)',
   codex: 'Codex CLI (OpenAI)',
   gemini: 'Gemini CLI (Google)',
-  aider: 'Aider',
 });
 
 /**

@@ -10,16 +10,16 @@ import { AGENT_PROVIDERS, DEFAULT_AGENT, isAgentProvider } from '../../../src/co
 
 describe('Agent Types (v0.5.0)', () => {
   describe('AGENT_PROVIDERS constant', () => {
-    it('should contain all four supported agents', () => {
-      expect(AGENT_PROVIDERS).toEqual(['claude', 'codex', 'gemini', 'aider']);
+    it('should contain all three supported agents', () => {
+      expect(AGENT_PROVIDERS).toEqual(['claude', 'codex', 'gemini']);
     });
 
     it('should be frozen (immutable)', () => {
       expect(Object.isFrozen(AGENT_PROVIDERS)).toBe(true);
     });
 
-    it('should have exactly 4 providers', () => {
-      expect(AGENT_PROVIDERS.length).toBe(4);
+    it('should have exactly 3 providers', () => {
+      expect(AGENT_PROVIDERS.length).toBe(3);
     });
   });
 
@@ -55,7 +55,6 @@ describe('Agent Types (v0.5.0)', () => {
       expect(isAgentProvider('Claude')).toBe(false);
       expect(isAgentProvider('CODEX')).toBe(false);
       expect(isAgentProvider('Gemini')).toBe(false);
-      expect(isAgentProvider('AIDER')).toBe(false);
     });
 
     it('should return false for provider names with extra whitespace', () => {

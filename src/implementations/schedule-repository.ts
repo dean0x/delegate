@@ -74,7 +74,7 @@ const TaskRequestSchema = z.object({
   retryOf: z.string().optional(),
   dependsOn: z.array(z.string()).optional(),
   continueFrom: z.string().optional(),
-  agent: z.enum(['claude', 'codex', 'gemini', 'aider']).optional(),
+  agent: z.enum(['claude', 'codex', 'gemini']).optional(),
 });
 
 /**

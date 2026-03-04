@@ -114,7 +114,7 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
       i++;
     } else if ((arg === '--agent' || arg === '-a') && next) {
       if (!isAgentProvider(next)) {
-        ui.error(`Unknown agent: "${next}". Available agents: claude, codex, gemini, aider`);
+        ui.error(`Unknown agent: "${next}". Available agents: claude, codex, gemini`);
         process.exit(1);
       }
       agent = next;

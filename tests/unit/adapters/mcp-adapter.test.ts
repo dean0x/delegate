@@ -730,7 +730,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
     });
 
     it('should accept all valid agent values', async () => {
-      const agents = ['claude', 'codex', 'gemini', 'aider'] as const;
+      const agents = ['claude', 'codex', 'gemini'] as const;
 
       for (const agent of agents) {
         mockTaskManager.reset();

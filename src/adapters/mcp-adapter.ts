@@ -39,10 +39,7 @@ const DelegateTaskSchema = z.object({
     .describe(
       'Task ID to continue from — receives checkpoint context from this dependency (must be in dependsOn list)',
     ),
-  agent: z
-    .enum(['claude', 'codex', 'gemini', 'aider'])
-    .optional()
-    .describe('AI agent to execute the task (default: claude)'),
+  agent: z.enum(['claude', 'codex', 'gemini']).optional().describe('AI agent to execute the task (default: claude)'),
 });
 
 const TaskStatusSchema = z.object({
@@ -84,10 +81,7 @@ const ScheduleTaskSchema = z.object({
     .string()
     .optional()
     .describe("Schedule ID to chain after (new tasks depend on this schedule's latest task)"),
-  agent: z
-    .enum(['claude', 'codex', 'gemini', 'aider'])
-    .optional()
-    .describe('AI agent to execute the task (default: claude)'),
+  agent: z.enum(['claude', 'codex', 'gemini']).optional().describe('AI agent to execute the task (default: claude)'),
 });
 
 const ListSchedulesSchema = z.object({
@@ -122,7 +116,7 @@ const CreatePipelineSchema = z.object({
         prompt: z.string().min(1).max(4000).describe('Task prompt for this step'),
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
-        agent: z.enum(['claude', 'codex', 'gemini', 'aider']).optional().describe('Agent override for this step'),
+        agent: z.enum(['claude', 'codex', 'gemini']).optional().describe('Agent override for this step'),
       }),
     )
     .min(2, 'Pipeline requires at least 2 steps')
@@ -137,7 +131,7 @@ const CreatePipelineSchema = z.object({
     .optional()
     .describe('Default working directory for all steps (individual steps can override)'),
   agent: z
-    .enum(['claude', 'codex', 'gemini', 'aider'])
+    .enum(['claude', 'codex', 'gemini'])
     .optional()
     .describe('Default agent for all steps (individual steps can override)'),
 });
@@ -309,7 +303,7 @@ export class MCPAdapter {
                   },
                   agent: {
                     type: 'string',
-                    enum: ['claude', 'codex', 'gemini', 'aider'],
+                    enum: ['claude', 'codex', 'gemini'],
                     description: 'AI agent to execute the task (default: claude)',
                   },
                 },
@@ -463,7 +457,7 @@ export class MCPAdapter {
                   },
                   agent: {
                     type: 'string',
-                    enum: ['claude', 'codex', 'gemini', 'aider'],
+                    enum: ['claude', 'codex', 'gemini'],
                     description: 'AI agent to execute the task (default: claude)',
                   },
                 },
@@ -585,7 +579,7 @@ export class MCPAdapter {
                         },
                         agent: {
                           type: 'string',
-                          enum: ['claude', 'codex', 'gemini', 'aider'],
+                          enum: ['claude', 'codex', 'gemini'],
                           description: 'Agent override for this step',
                         },
                       },
@@ -605,7 +599,7 @@ export class MCPAdapter {
                   },
                   agent: {
                     type: 'string',
-                    enum: ['claude', 'codex', 'gemini', 'aider'],
+                    enum: ['claude', 'codex', 'gemini'],
                     description: 'Default agent for all steps (individual steps can override)',
                   },
                 },

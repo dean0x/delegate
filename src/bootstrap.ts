@@ -48,7 +48,6 @@ import { AgentRegistry } from './core/agents.js';
 
 // Implementations
 import { InMemoryAgentRegistry } from './implementations/agent-registry.js';
-import { AiderAdapter } from './implementations/aider-adapter.js';
 import { SQLiteCheckpointRepository } from './implementations/checkpoint-repository.js';
 import { ClaudeAdapter } from './implementations/claude-adapter.js';
 import { CodexAdapter } from './implementations/codex-adapter.js';
@@ -282,7 +281,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     const configResult = container.get<Configuration>('config');
     if (!configResult.ok) throw new Error('Config required for AgentRegistry');
     const cfg = configResult.value;
-    const adapters = [new ClaudeAdapter(cfg), new CodexAdapter(cfg), new GeminiAdapter(cfg), new AiderAdapter(cfg)];
+    const adapters = [new ClaudeAdapter(cfg), new CodexAdapter(cfg), new GeminiAdapter(cfg)];
     return new InMemoryAgentRegistry(adapters);
   });
 

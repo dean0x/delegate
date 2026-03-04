@@ -485,7 +485,7 @@ describe('Domain Models - REAL Behavior Tests', () => {
     });
 
     it('should accept all valid agent providers (v0.5.0)', () => {
-      const agents = ['claude', 'codex', 'gemini', 'aider'] as const;
+      const agents = ['claude', 'codex', 'gemini'] as const;
 
       for (const agent of agents) {
         const task = createTask({

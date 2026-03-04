@@ -27,7 +27,7 @@ ${bold('Task Commands:')}
     -f, --foreground           Stream output and wait for task completion
     -p, --priority P0|P1|P2    Task priority (P0=critical, P1=high, P2=normal)
     -w, --working-directory D  Working directory for task execution
-    -a, --agent AGENT          AI agent to use (claude, codex, gemini, aider)
+    -a, --agent AGENT          AI agent to use (claude, codex, gemini)
     --deps TASK_IDS            Comma-separated task IDs this task depends on (alias: --depends-on)
     -c, --continue TASK_ID     Continue from a dependency's checkpoint (alias: --continue-from)
     -t, --timeout MS           Task timeout in milliseconds

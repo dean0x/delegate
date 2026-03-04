@@ -1,5 +1,5 @@
 /**
- * Agent Adapter Tests — Claude, Codex, Gemini, Aider
+ * Agent Adapter Tests — Claude, Codex, Gemini
  *
  * ARCHITECTURE: Tests the spawn arguments, environment stripping, and kill
  * behavior for each agent adapter implementation.
@@ -10,7 +10,6 @@
 import type { ChildProcess } from 'child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Configuration } from '../../../src/core/configuration';
-import { AiderAdapter } from '../../../src/implementations/aider-adapter';
 import { ClaudeAdapter } from '../../../src/implementations/claude-adapter';
 import { CodexAdapter } from '../../../src/implementations/codex-adapter';
 import { GeminiAdapter } from '../../../src/implementations/gemini-adapter';
@@ -235,65 +234,5 @@ describe('GeminiAdapter', () => {
     } finally {
       delete process.env.GEMINI_API_KEY;
     }
-  });
-});
-
-describe('AiderAdapter', () => {
-  let adapter: AiderAdapter;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    adapter = new AiderAdapter(testConfig, 'aider');
-  });
-
-  afterEach(() => {
-    adapter.dispose();
-  });
-
-  it('should have provider set to aider', () => {
-    expect(adapter.provider).toBe('aider');
-  });
-
-  it('should spawn with --yes-always, --no-git, and --message flags', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    const result = adapter.spawn('test prompt', '/workspace');
-
-    expect(result.ok).toBe(true);
-    const [command, args] = mockSpawn.mock.calls[0];
-    expect(command).toBe('aider');
-    expect(args).toContain('--yes-always');
-    expect(args).toContain('--no-git');
-    expect(args).toContain('--message');
-    expect(args).toContain('test prompt');
-  });
-
-  it('should preserve AIDER_ env vars (no known nesting indicators)', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    process.env.AIDER_MODEL = 'gpt-4';
-    try {
-      adapter.spawn('test prompt', '/workspace');
-
-      const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-      expect(spawnOptions.env.AIDER_MODEL).toBe('gpt-4');
-      expect(spawnOptions.env.BACKBEAT_WORKER).toBe('true');
-    } finally {
-      delete process.env.AIDER_MODEL;
-    }
-  });
-
-  it('should pass prompt via --message flag not as positional arg', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawn('analyze codebase', '/workspace');
-
-    const args = mockSpawn.mock.calls[0][1] as string[];
-    const messageIdx = args.indexOf('--message');
-    expect(messageIdx).toBeGreaterThan(-1);
-    expect(args[messageIdx + 1]).toBe('analyze codebase');
   });
 });
