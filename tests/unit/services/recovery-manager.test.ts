@@ -554,17 +554,18 @@ describe('RecoveryManager', () => {
 
   describe('Edge cases', () => {
     it('should handle task at exactly 30 minute boundary as not stale', async () => {
-      // Task started exactly 30 minutes ago (threshold is >, not >=)
+      // Task started slightly less than 30 minutes ago to avoid timing drift
+      // between Date.now() here and Date.now() inside recover()
       const base = new TaskFactory()
         .withStatus(TaskStatus.RUNNING)
-        .withStartedAt(Date.now() - 30 * 60 * 1000)
+        .withStartedAt(Date.now() - 30 * 60 * 1000 + 1000)
         .build();
       const task = { ...base, id: TaskId('boundary-task') };
       setupFindByStatus([], [task]);
 
       await manager.recover();
 
-      // At exactly 30 min, taskAge === threshold, so isStale = false (> not >=)
+      // Under 30 min threshold, so isStale = false (> not >=)
       // The task should be re-queued, not marked failed
       expect(queue.enqueue).toHaveBeenCalledWith(task);
       expect(repo.update).not.toHaveBeenCalled();
