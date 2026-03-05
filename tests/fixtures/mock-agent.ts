@@ -5,7 +5,6 @@
  * AgentRegistry instances from ProcessSpawner (backward compat).
  */
 
-import type { AgentRegistry } from '../../src/core/agents';
 import type { ProcessSpawner } from '../../src/core/interfaces';
 import { InMemoryAgentRegistry } from '../../src/implementations/agent-registry';
 import { ProcessSpawnerAdapter } from '../../src/implementations/process-spawner-adapter';

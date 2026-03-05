@@ -104,14 +104,6 @@ describe('Agent Config Storage', () => {
 
       expect(loadAgentConfig('gemini').apiKey).toBe('new-key');
     });
-
-    it('should reject unknown config keys', () => {
-      const result = saveAgentConfig('claude', 'unknownKey', 'value');
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error).toContain('Unknown agent config key');
-      }
-    });
   });
 
   describe('resetAgentConfig', () => {

@@ -220,8 +220,8 @@ export function saveConfigValue(key: string, value: unknown): { ok: true } | { o
   existing[key] = fieldResult.data;
 
   try {
-    mkdirSync(_configDir, { recursive: true });
-    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+    mkdirSync(_configDir, { recursive: true, mode: 0o700 });
+    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
     return { ok: true };
   } catch {
     return { ok: false, error: `Failed to write config file at ${_configFilePath}` };
@@ -243,8 +243,8 @@ export function resetConfigValue(key: string): { ok: true } | { ok: false; error
   delete existing[key];
 
   try {
-    mkdirSync(_configDir, { recursive: true });
-    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+    mkdirSync(_configDir, { recursive: true, mode: 0o700 });
+    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
     return { ok: true };
   } catch {
     return { ok: false, error: `Failed to write config file at ${_configFilePath}` };
@@ -279,13 +279,9 @@ export function loadAgentConfig(provider: AgentProvider): AgentConfig {
  */
 export function saveAgentConfig(
   provider: AgentProvider,
-  key: string,
+  key: 'apiKey',
   value: string,
 ): { ok: true } | { ok: false; error: string } {
-  if (key !== 'apiKey') {
-    return { ok: false, error: `Unknown agent config key: ${key}. Valid keys: apiKey` };
-  }
-
   const existing = loadConfigFile();
   const agents = (
     existing.agents && typeof existing.agents === 'object' && !Array.isArray(existing.agents) ? existing.agents : {}
@@ -299,8 +295,8 @@ export function saveAgentConfig(
   existing.agents = agents;
 
   try {
-    mkdirSync(_configDir, { recursive: true });
-    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+    mkdirSync(_configDir, { recursive: true, mode: 0o700 });
+    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
     return { ok: true };
   } catch {
     return { ok: false, error: `Failed to write config file at ${_configFilePath}` };
@@ -331,8 +327,8 @@ export function resetAgentConfig(provider: AgentProvider): { ok: true } | { ok: 
   }
 
   try {
-    mkdirSync(_configDir, { recursive: true });
-    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+    mkdirSync(_configDir, { recursive: true, mode: 0o700 });
+    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
     return { ok: true };
   } catch {
     return { ok: false, error: `Failed to write config file at ${_configFilePath}` };

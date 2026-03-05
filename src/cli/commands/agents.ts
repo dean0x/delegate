@@ -94,6 +94,11 @@ export async function agentsConfigSet(
     process.exit(1);
   }
 
+  if (key !== 'apiKey') {
+    ui.error(`Unknown config key: "${key}". Valid keys: apiKey`);
+    process.exit(1);
+  }
+
   const result = saveAgentConfig(agent as AgentProvider, key, value);
   if (!result.ok) {
     ui.error(result.error);

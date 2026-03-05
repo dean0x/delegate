@@ -77,7 +77,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     // 3. Check CLI binary in PATH (login-based auth assumed)
-    if (isCommandInPath(auth.command)) {
+    if (isCommandInPath(this.command)) {
       return ok({ injectedEnv: {} });
     }
 
@@ -157,7 +157,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           } finally {
             this.killTimeouts.delete(pid);
           }
-        }, this.config.killGracePeriodMs ?? 5000);
+        }, this.config.killGracePeriodMs);
 
         this.killTimeouts.set(pid, timeoutId);
       },

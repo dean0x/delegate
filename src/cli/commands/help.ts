@@ -63,6 +63,10 @@ ${bold('Schedule Commands:')}
 
 ${bold('Agent Commands:')}
   ${cyan('agents list')}                List available AI agents
+  ${cyan('agents check')}               Check agent auth status and readiness
+  ${cyan('agents config set')} <agent> apiKey <key>   Store an API key for an agent
+  ${cyan('agents config show')} <agent>               Show stored config for an agent
+  ${cyan('agents config reset')} <agent>              Remove stored config for an agent
 
 ${bold('Pipeline Commands:')}
   ${cyan('pipeline')} <prompt> [<prompt>]...   Create chained one-time schedules
