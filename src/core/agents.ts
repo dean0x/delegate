@@ -136,7 +136,18 @@ export function checkAgentAuth(
 
   // 3. Check CLI binary in PATH (login-based auth assumed)
   if (isCommandInPath(auth.command)) {
-    return { provider, ready: true, method: 'cli-installed', cliFound: true };
+    return {
+      provider,
+      ready: true,
+      method: 'cli-installed',
+      cliFound: true,
+      hint: [
+        `Auth not verified. To confirm:`,
+        `  1. Log in: ${auth.loginHint}`,
+        `  2. Set API key: ${auth.apiKeyHint}`,
+        `  3. Store key: beat agents config set ${provider} apiKey <key>`,
+      ].join('\n'),
+    };
   }
 
   // 4. Nothing configured

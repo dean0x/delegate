@@ -62,11 +62,18 @@ export async function checkAgents(): Promise<void> {
         authDesc = 'not configured';
     }
 
-    const badge = status.ready ? ui.cyan('[ready]') : '[action needed]';
+    let badge: string;
+    if (status.method === 'cli-installed') {
+      badge = ui.yellow('[check auth]');
+    } else if (status.ready) {
+      badge = ui.cyan('[ready]');
+    } else {
+      badge = '[action needed]';
+    }
     ui.step(`${provider.padEnd(10)} ${cliStatus.padEnd(8)} ${authDesc.padEnd(40)} ${badge}`);
 
-    if (!status.ready && status.hint) {
-      const hintLines = status.hint.split('\n').slice(1); // Skip the first "not configured" line
+    if (status.hint && (status.method === 'cli-installed' || !status.ready)) {
+      const hintLines = status.hint.split('\n').slice(1); // Skip the header line
       for (const line of hintLines) {
         ui.info(`  ${ui.dim(line)}`);
       }

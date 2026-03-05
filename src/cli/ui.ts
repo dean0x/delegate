@@ -155,3 +155,7 @@ export function dim(text: string): string {
 export function cyan(text: string): string {
   return isTTY ? pc.cyan(text) : text;
 }
+
+export function yellow(text: string): string {
+  return isTTY ? pc.yellow(text) : text;
+}
