@@ -114,8 +114,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         ),
       );
       const env = {
-        ...cleanEnv,
         ...this.additionalEnv,
+        ...cleanEnv,
         ...authResult.value.injectedEnv,
         BACKBEAT_WORKER: 'true',
         ...(taskId && { BACKBEAT_TASK_ID: taskId }),

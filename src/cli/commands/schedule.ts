@@ -112,7 +112,11 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
     } else if (arg === '--after' && next) {
       afterScheduleId = next;
       i++;
-    } else if ((arg === '--agent' || arg === '-a') && next) {
+    } else if (arg === '--agent' || arg === '-a') {
+      if (!next || next.startsWith('-')) {
+        ui.error(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
+        process.exit(1);
+      }
       if (!isAgentProvider(next)) {
         ui.error(`Unknown agent: "${next}". Available agents: ${AGENT_PROVIDERS.join(', ')}`);
         process.exit(1);

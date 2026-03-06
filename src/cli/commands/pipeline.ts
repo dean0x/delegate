@@ -11,7 +11,11 @@ export async function handlePipelineCommand(pipelineArgs: string[]) {
     const arg = pipelineArgs[i];
     const next = pipelineArgs[i + 1];
 
-    if ((arg === '--agent' || arg === '-a') && next) {
+    if (arg === '--agent' || arg === '-a') {
+      if (!next || next.startsWith('-')) {
+        ui.error(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
+        process.exit(1);
+      }
       if (!isAgentProvider(next)) {
         ui.error(`Unknown agent: "${next}". Available agents: ${AGENT_PROVIDERS.join(', ')}`);
         process.exit(1);
