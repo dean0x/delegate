@@ -8,7 +8,6 @@ import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadConfiguration } from '../../src/core/configuration.js';
 import type { Task, WorkerId } from '../../src/core/domain.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { Database } from '../../src/implementations/database.js';
@@ -53,7 +52,7 @@ describe('Integration: Event-driven task delegation flow', () => {
     );
 
     // Initialize task manager with new signature: (eventBus, logger, config)
-    const config = loadConfiguration();
+    const config = createTestConfiguration();
     const taskManager = new TaskManagerService(eventBus, logger, config);
 
     // Track events

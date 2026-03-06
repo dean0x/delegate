@@ -13,6 +13,7 @@
  * - All state changes MUST go through events
  */
 
+import { resolveDefaultAgent } from '../core/agents.js';
 import { Configuration } from '../core/configuration.js';
 import {
   canCancel,
@@ -75,6 +76,11 @@ export class TaskManagerService implements TaskManager {
         };
       }
     }
+
+    // Resolve agent: explicit → config default → error
+    const agentResult = resolveDefaultAgent(requestWithDefaults.agent, this.config.defaultAgent);
+    if (!agentResult.ok) return agentResult;
+    requestWithDefaults = { ...requestWithDefaults, agent: agentResult.value };
 
     // Create task using pure function with defaults applied
     const task = createTask(requestWithDefaults);

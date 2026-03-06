@@ -393,6 +393,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       getFromContainer<Logger>(container, 'logger').child({ module: 'MCP' }),
       getFromContainer<ScheduleService>(container, 'scheduleService'),
       getFromContainer<AgentRegistry>(container, 'agentRegistry'),
+      config,
     );
   });
 

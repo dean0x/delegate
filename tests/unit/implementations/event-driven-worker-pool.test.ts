@@ -77,11 +77,12 @@ const createTestEventBus = () =>
 /**
  * Helper to build a Task object without using withId() (which mutates a frozen object).
  * Spreads the frozen task from the factory into a plain mutable object.
+ * Sets agent='claude' by default since worker pool requires task.agent to be set.
  */
 const buildTask = (configure?: (factory: TaskFactory) => void): Task => {
   const factory = new TaskFactory();
   if (configure) configure(factory);
-  return { ...factory.build() };
+  return { ...factory.build(), agent: 'claude' as const };
 };
 
 describe('EventDrivenWorkerPool', () => {

@@ -9,7 +9,8 @@
  */
 
 import { ChildProcess, spawnSync } from 'child_process';
-import { Result } from './result.js';
+import { BackbeatError, ErrorCode } from './errors.js';
+import { err, ok, Result } from './result.js';
 
 /**
  * Supported agent providers
@@ -30,10 +31,31 @@ export const AGENT_PROVIDERS_TUPLE: [AgentProvider, ...AgentProvider[]] = ['clau
 export const AGENT_PROVIDERS: readonly AgentProvider[] = Object.freeze(AGENT_PROVIDERS_TUPLE);
 
 /**
- * Default agent when none is specified
- * ARCHITECTURE: Ensures backward compatibility — existing tasks always use Claude
+ * Resolve which agent to use for a task.
+ *
+ * Resolution order: explicit task agent → config default → error.
+ * Returns an actionable error when neither is set so the user
+ * knows exactly how to fix it.
  */
-export const DEFAULT_AGENT: AgentProvider = 'claude';
+export function resolveDefaultAgent(
+  taskAgent: AgentProvider | undefined,
+  configDefault: AgentProvider | undefined,
+): Result<AgentProvider> {
+  if (taskAgent) return ok(taskAgent);
+  if (configDefault) return ok(configDefault);
+  return err(
+    new BackbeatError(
+      ErrorCode.INVALID_INPUT,
+      [
+        'No agent specified and no default agent configured.',
+        '  Set a default: beat config set defaultAgent <agent>',
+        `  Available agents: ${AGENT_PROVIDERS.join(', ')}`,
+        '  Or specify per-task: beat run --agent <agent> "prompt"',
+      ].join('\n'),
+      { field: 'agent' },
+    ),
+  );
+}
 
 /**
  * Type guard for validating agent provider strings

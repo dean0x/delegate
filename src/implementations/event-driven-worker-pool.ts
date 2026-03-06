@@ -8,7 +8,7 @@
 
 import { ChildProcess } from 'child_process';
 
-import { AgentRegistry, DEFAULT_AGENT } from '../core/agents.js';
+import { AgentRegistry } from '../core/agents.js';
 import { Task, TaskId, Worker, WorkerId } from '../core/domain.js';
 import { BackbeatError, ErrorCode, taskTimeout } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
@@ -41,8 +41,19 @@ export class EventDrivenWorkerPool implements WorkerPool {
     this.logger.debug('Spawning worker for task', {
       taskId: task.id,
       prompt: task.prompt.substring(0, 100),
-      agent: task.agent ?? DEFAULT_AGENT,
+      agent: task.agent ?? 'unknown',
     });
+
+    // Guard: task.agent must be set by TaskManager before reaching worker pool
+    const agentProvider = task.agent;
+    if (!agentProvider) {
+      return err(
+        new BackbeatError(
+          ErrorCode.WORKER_SPAWN_FAILED,
+          'Task has no agent assigned. This may be a task from before v0.5.0. Re-delegate with --agent.',
+        ),
+      );
+    }
 
     // Check if we can spawn based on resources
     const canSpawnResult = await this.monitor.canSpawnWorker();
@@ -56,7 +67,6 @@ export class EventDrivenWorkerPool implements WorkerPool {
     }
 
     // Resolve the agent adapter for this task
-    const agentProvider = task.agent ?? DEFAULT_AGENT;
     const adapterResult = this.agentRegistry.get(agentProvider);
 
     if (!adapterResult.ok) {

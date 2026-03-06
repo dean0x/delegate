@@ -173,6 +173,43 @@ describe('TaskManagerService', () => {
       expect(result.error).toBe(emitError);
     });
 
+    describe('agent resolution', () => {
+      it('should fail delegation when no agent specified and no default configured', async () => {
+        const noDefaultConfig = new ConfigFactory().withDefaultAgent(undefined).build();
+        const svc = new TaskManagerService(eventBus as unknown as EventBus, logger, noDefaultConfig);
+
+        const result = await svc.delegate({ prompt: 'test' });
+
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.error).toBeInstanceOf(BackbeatError);
+        expect((result.error as BackbeatError).code).toBe(ErrorCode.INVALID_INPUT);
+        expect(result.error.message).toContain('No agent specified');
+      });
+
+      it('should use config defaultAgent when task does not specify one', async () => {
+        const geminiConfig = new ConfigFactory().withDefaultAgent('gemini').build();
+        const svc = new TaskManagerService(eventBus as unknown as EventBus, logger, geminiConfig);
+
+        const result = await svc.delegate({ prompt: 'test' });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.agent).toBe('gemini');
+      });
+
+      it('should prefer explicit task agent over config default', async () => {
+        const claudeConfig = new ConfigFactory().withDefaultAgent('claude').build();
+        const svc = new TaskManagerService(eventBus as unknown as EventBus, logger, claudeConfig);
+
+        const result = await svc.delegate({ prompt: 'test', agent: 'codex' });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.agent).toBe('codex');
+      });
+    });
+
     describe('continueFrom handling', () => {
       it('should validate continueFrom task exists via event bus request', async () => {
         const existingTask = buildCompletedTask({

@@ -37,6 +37,7 @@ describe('Retry Functionality', () => {
       logLevel: 'info',
       maxListenersPerEvent: 100,
       maxTotalSubscriptions: 1000,
+      defaultAgent: 'claude',
     };
 
     // FIX: EventBus constructor expects (config, logger) not (logger)

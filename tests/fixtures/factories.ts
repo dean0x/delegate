@@ -7,6 +7,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import type { AgentProvider } from '../../src/core/agents';
 import type { Configuration } from '../../src/core/configuration';
 import type {
   Priority,
@@ -269,6 +270,8 @@ export class ConfigFactory {
     retryMaxDelayMs: 1000, // Fast for tests
     // Recovery defaults
     taskRetentionDays: 7,
+    // Agent defaults — set to 'claude' so existing tests don't break
+    defaultAgent: 'claude' as AgentProvider,
   };
 
   withTimeout(timeout: number): this {
@@ -293,6 +296,11 @@ export class ConfigFactory {
 
   withLogLevel(level: Configuration['logLevel']): this {
     this.config.logLevel = level;
+    return this;
+  }
+
+  withDefaultAgent(agent: AgentProvider | undefined): this {
+    this.config.defaultAgent = agent;
     return this;
   }
 

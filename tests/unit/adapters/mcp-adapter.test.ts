@@ -19,11 +19,12 @@ import { BackbeatError, ErrorCode, taskNotFound } from '../../../src/core/errors
 import type { Logger, ScheduleService, TaskManager } from '../../../src/core/interfaces';
 import type { Result } from '../../../src/core/result';
 import { err, ok } from '../../../src/core/result';
-import { TaskFactory } from '../../fixtures/factories';
+import { createTestConfiguration, TaskFactory } from '../../fixtures/factories';
 
 // Test constants
 const VALID_PROMPT = 'analyze the codebase';
 const VALID_TASK_ID = 'task-abc123';
+const testConfig = createTestConfiguration();
 
 /**
  * Mock TaskManager for MCP adapter testing
@@ -181,7 +182,7 @@ describe('MCPAdapter - Protocol Compliance', () => {
   beforeEach(() => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
-    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService);
+    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, undefined, testConfig);
   });
 
   afterEach(() => {
@@ -630,7 +631,13 @@ describe('MCPAdapter - CreatePipeline Tool', () => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
     mockScheduleService = new MockScheduleService();
-    adapter = new MCPAdapter(mockTaskManager, mockLogger, mockScheduleService as unknown as ScheduleService);
+    adapter = new MCPAdapter(
+      mockTaskManager,
+      mockLogger,
+      mockScheduleService as unknown as ScheduleService,
+      undefined,
+      testConfig,
+    );
   });
 
   afterEach(() => {
@@ -708,7 +715,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
   beforeEach(() => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
-    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService);
+    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, undefined, testConfig);
   });
 
   afterEach(() => {
@@ -744,7 +751,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
       }
     });
 
-    it('should delegate successfully without agent specified (defaults to claude)', async () => {
+    it('should delegate successfully without agent specified (uses config default)', async () => {
       const result = await simulateDelegateTask(adapter, mockTaskManager, {
         prompt: VALID_PROMPT,
       });
@@ -757,7 +764,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
   describe('ListAgents tool', () => {
     it('should return agent list without registry', () => {
       // Adapter created without agentRegistry
-      const adapterNoRegistry = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService);
+      const adapterNoRegistry = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, undefined, testConfig);
       // The handleListAgents is private, so we verify via schema/tool listing
       // This is a structural test — actual handler is tested via integration
       expect(adapterNoRegistry).toBeTruthy();
@@ -772,7 +779,13 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
         dispose: vi.fn(),
       };
 
-      const adapterWithRegistry = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, mockRegistry);
+      const adapterWithRegistry = new MCPAdapter(
+        mockTaskManager,
+        mockLogger,
+        stubScheduleService,
+        mockRegistry,
+        testConfig,
+      );
 
       expect(adapterWithRegistry).toBeTruthy();
       expect(adapterWithRegistry.getServer()).toBeTruthy();
@@ -783,7 +796,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
     it('should exist as a constructable adapter method', () => {
       // ConfigureAgent is exposed via MCP tool registration
       // Structural test — actual handler is private
-      const adapterInstance = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService);
+      const adapterInstance = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, undefined, testConfig);
       expect(adapterInstance).toBeTruthy();
       expect(adapterInstance.getServer()).toBeTruthy();
     });
@@ -796,7 +809,13 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
         dispose: vi.fn(),
       };
 
-      const adapterWithRegistry = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, mockRegistry);
+      const adapterWithRegistry = new MCPAdapter(
+        mockTaskManager,
+        mockLogger,
+        stubScheduleService,
+        mockRegistry,
+        testConfig,
+      );
       expect(adapterWithRegistry).toBeTruthy();
     });
   });

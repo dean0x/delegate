@@ -13,10 +13,9 @@ import {
   AgentProvider,
   AgentRegistry,
   checkAgentAuth,
-  DEFAULT_AGENT,
   maskApiKey,
 } from '../core/agents.js';
-import { loadAgentConfig, resetAgentConfig, saveAgentConfig } from '../core/configuration.js';
+import { type Configuration, loadAgentConfig, resetAgentConfig, saveAgentConfig } from '../core/configuration.js';
 import {
   PipelineCreateRequest,
   Priority,
@@ -49,7 +48,10 @@ const DelegateTaskSchema = z.object({
     .describe(
       'Task ID to continue from — receives checkpoint context from this dependency (must be in dependsOn list)',
     ),
-  agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('AI agent to execute the task (default: claude)'),
+  agent: z
+    .enum(AGENT_PROVIDERS_TUPLE)
+    .optional()
+    .describe('AI agent to execute the task (uses configured default if omitted)'),
 });
 
 const TaskStatusSchema = z.object({
@@ -91,7 +93,10 @@ const ScheduleTaskSchema = z.object({
     .string()
     .optional()
     .describe("Schedule ID to chain after (new tasks depend on this schedule's latest task)"),
-  agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('AI agent to execute the task (default: claude)'),
+  agent: z
+    .enum(AGENT_PROVIDERS_TUPLE)
+    .optional()
+    .describe('AI agent to execute the task (uses configured default if omitted)'),
 });
 
 const ListSchedulesSchema = z.object({
@@ -169,7 +174,8 @@ export class MCPAdapter {
     private readonly taskManager: TaskManager,
     private readonly logger: Logger,
     private readonly scheduleService: ScheduleService,
-    private readonly agentRegistry?: AgentRegistry,
+    private readonly agentRegistry: AgentRegistry | undefined,
+    private readonly config: Configuration,
   ) {
     this.server = new Server(
       {
@@ -325,7 +331,7 @@ export class MCPAdapter {
                   agent: {
                     type: 'string',
                     enum: [...AGENT_PROVIDERS],
-                    description: 'AI agent to execute the task (default: claude)',
+                    description: `AI agent to execute the task (${this.config.defaultAgent ? `default: ${this.config.defaultAgent}` : 'required if no default configured'})`,
                   },
                 },
                 required: ['prompt'],
@@ -479,7 +485,7 @@ export class MCPAdapter {
                   agent: {
                     type: 'string',
                     enum: [...AGENT_PROVIDERS],
-                    description: 'AI agent to execute the task (default: claude)',
+                    description: `AI agent to execute the task (${this.config.defaultAgent ? `default: ${this.config.defaultAgent}` : 'required if no default configured'})`,
                   },
                 },
                 required: ['prompt', 'scheduleType'],
@@ -797,7 +803,7 @@ export class MCPAdapter {
                   duration: task.completedAt && task.startedAt ? task.completedAt - task.startedAt : undefined,
                   exitCode: task.exitCode,
                   workingDirectory: task.workingDirectory,
-                  agent: task.agent ?? DEFAULT_AGENT,
+                  agent: task.agent ?? 'unknown',
                 }),
               },
             ],
@@ -1424,7 +1430,7 @@ export class MCPAdapter {
         provider,
         description: AGENT_DESCRIPTIONS[provider],
         registered: this.agentRegistry?.has(provider) ?? false,
-        isDefault: provider === DEFAULT_AGENT,
+        isDefault: provider === this.config.defaultAgent,
         authStatus: authStatus.ready ? 'ready' : 'not-configured',
         authMethod: authStatus.method,
         ...(authStatus.hint && { hint: authStatus.hint }),
@@ -1439,7 +1445,7 @@ export class MCPAdapter {
             {
               success: true,
               agents,
-              defaultAgent: DEFAULT_AGENT,
+              defaultAgent: this.config.defaultAgent ?? null,
             },
             null,
             2,

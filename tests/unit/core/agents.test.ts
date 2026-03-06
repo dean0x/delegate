@@ -10,10 +10,11 @@ import {
   AGENT_AUTH,
   AGENT_PROVIDERS,
   checkAgentAuth,
-  DEFAULT_AGENT,
   isAgentProvider,
   maskApiKey,
+  resolveDefaultAgent,
 } from '../../../src/core/agents';
+import { BackbeatError, ErrorCode } from '../../../src/core/errors';
 
 describe('Agent Types (v0.5.0)', () => {
   describe('AGENT_PROVIDERS constant', () => {
@@ -30,13 +31,35 @@ describe('Agent Types (v0.5.0)', () => {
     });
   });
 
-  describe('DEFAULT_AGENT constant', () => {
-    it('should be claude', () => {
-      expect(DEFAULT_AGENT).toBe('claude');
+  describe('resolveDefaultAgent', () => {
+    it('should return task agent when provided', () => {
+      const result = resolveDefaultAgent('codex', 'claude');
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value).toBe('codex');
     });
 
-    it('should be a valid agent provider', () => {
-      expect(isAgentProvider(DEFAULT_AGENT)).toBe(true);
+    it('should return config default when no task agent', () => {
+      const result = resolveDefaultAgent(undefined, 'gemini');
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value).toBe('gemini');
+    });
+
+    it('should return error when neither is set', () => {
+      const result = resolveDefaultAgent(undefined, undefined);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(BackbeatError);
+        expect((result.error as BackbeatError).code).toBe(ErrorCode.INVALID_INPUT);
+        expect(result.error.message).toContain('No agent specified');
+        expect(result.error.message).toContain('beat config set defaultAgent');
+        expect(result.error.message).toContain('beat run --agent');
+      }
+    });
+
+    it('should prefer task agent over config default', () => {
+      const result = resolveDefaultAgent('gemini', 'claude');
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value).toBe('gemini');
     });
   });
 

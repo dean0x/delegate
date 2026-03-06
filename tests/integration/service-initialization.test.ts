@@ -152,6 +152,7 @@ describe('Integration: Service initialization', () => {
 
     try {
       process.env.BACKBEAT_DATABASE_PATH = join(tempDir, 'test.db');
+      process.env.BACKBEAT_DEFAULT_AGENT = 'claude';
 
       // Bootstrap the system
       const result = await bootstrap({
@@ -210,6 +211,7 @@ describe('Integration: Service initialization', () => {
       await container.dispose();
     } finally {
       delete process.env.BACKBEAT_DATABASE_PATH;
+      delete process.env.BACKBEAT_DEFAULT_AGENT;
       await rm(tempDir, { recursive: true, force: true });
     }
   });

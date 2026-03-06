@@ -10,21 +10,24 @@ import {
   AGENT_DESCRIPTIONS,
   AGENT_PROVIDERS,
   checkAgentAuth,
-  DEFAULT_AGENT,
   isAgentProvider,
   maskApiKey,
 } from '../../core/agents.js';
-import { loadAgentConfig, resetAgentConfig, saveAgentConfig } from '../../core/configuration.js';
+import { loadAgentConfig, loadConfiguration, resetAgentConfig, saveAgentConfig } from '../../core/configuration.js';
 import * as ui from '../ui.js';
 
 export async function listAgents(): Promise<void> {
+  const config = loadConfiguration();
   const lines: string[] = [];
   for (const provider of AGENT_PROVIDERS) {
-    const suffix = provider === DEFAULT_AGENT ? ' [default]' : '';
+    const suffix = provider === config.defaultAgent ? ' [default]' : '';
     lines.push(`${provider.padEnd(10)} ${AGENT_DESCRIPTIONS[provider]}${suffix}`);
   }
   ui.note(lines.join('\n'), 'Available Agents');
 
+  if (!config.defaultAgent) {
+    ui.info('No default agent set. Run: beat config set defaultAgent <agent>');
+  }
   ui.info('Usage: beat run "prompt" --agent <name>');
   process.exit(0);
 }

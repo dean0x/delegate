@@ -24,6 +24,7 @@ describe('Integration: Task Dependencies - End-to-End Flow', () => {
     // Create isolated temp directory for each test
     tempDir = await mkdtemp(join(tmpdir(), 'backbeat-deps-test-'));
     process.env.BACKBEAT_DATABASE_PATH = join(tempDir, 'test.db');
+    process.env.BACKBEAT_DEFAULT_AGENT = 'claude';
 
     const result = await bootstrap({
       processSpawner: new NoOpProcessSpawner(),
@@ -65,8 +66,9 @@ describe('Integration: Task Dependencies - End-to-End Flow', () => {
     if (container) {
       await container.dispose();
     }
-    // Clean up env var and temp directory
+    // Clean up env vars and temp directory
     delete process.env.BACKBEAT_DATABASE_PATH;
+    delete process.env.BACKBEAT_DEFAULT_AGENT;
     if (tempDir) {
       await rm(tempDir, { recursive: true, force: true });
     }

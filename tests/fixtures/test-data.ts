@@ -11,6 +11,7 @@ export const createTestTask = (overrides?: Partial<Task>): Task => ({
   workingDirectory: '/workspace',
   timeout: 300000,
   maxOutputBuffer: 10485760,
+  agent: 'claude',
   ...overrides,
 });
 

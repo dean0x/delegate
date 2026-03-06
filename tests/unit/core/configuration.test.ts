@@ -525,6 +525,62 @@ describe('loadConfiguration - REAL Configuration Loading', () => {
   });
 });
 
+describe('ConfigurationSchema - defaultAgent', () => {
+  it('should accept valid defaultAgent', () => {
+    const result = ConfigurationSchema.safeParse({ defaultAgent: 'claude' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.defaultAgent).toBe('claude');
+  });
+
+  it('should accept all valid agent providers', () => {
+    for (const agent of ['claude', 'codex', 'gemini']) {
+      const result = ConfigurationSchema.safeParse({ defaultAgent: agent });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it('should accept config without defaultAgent (optional)', () => {
+    const result = ConfigurationSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.defaultAgent).toBeUndefined();
+  });
+
+  it('should reject invalid agent provider', () => {
+    const result = ConfigurationSchema.safeParse({ defaultAgent: 'gpt4' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('loadConfiguration - BACKBEAT_DEFAULT_AGENT env var', () => {
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it('should load defaultAgent from BACKBEAT_DEFAULT_AGENT env var', () => {
+    process.env.BACKBEAT_DEFAULT_AGENT = 'gemini';
+    const config = loadConfiguration();
+    expect(config.defaultAgent).toBe('gemini');
+  });
+
+  it('should ignore invalid BACKBEAT_DEFAULT_AGENT value', () => {
+    process.env.BACKBEAT_DEFAULT_AGENT = 'invalid-agent';
+    const config = loadConfiguration();
+    expect(config.defaultAgent).toBeUndefined();
+  });
+
+  it('should not set defaultAgent when env var is empty', () => {
+    process.env.BACKBEAT_DEFAULT_AGENT = '';
+    const config = loadConfiguration();
+    expect(config.defaultAgent).toBeUndefined();
+  });
+});
+
 describe('TaskConfiguration - Interface Testing', () => {
   it('should allow partial configuration', () => {
     const taskConfig: TaskConfiguration = {

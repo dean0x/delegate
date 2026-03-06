@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'f
 import { homedir } from 'os';
 import path from 'path';
 import { z } from 'zod';
-import type { AgentProvider } from './agents.js';
+import { AGENT_PROVIDERS_TUPLE, type AgentProvider, isAgentProvider } from './agents.js';
 
 /**
  * Configuration Schema with Zod
@@ -48,6 +48,8 @@ export const ConfigurationSchema = z.object({
   retryMaxDelayMs: z.number().min(5000).max(300000).default(30000), // Default: 30 second max delay
   // Recovery configuration
   taskRetentionDays: z.number().min(1).max(365).default(7), // Default: keep tasks for 7 days
+  // Agent configuration (v0.5.0 Multi-Agent Support)
+  defaultAgent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
 });
 
 export type Configuration = z.infer<typeof ConfigurationSchema>;
@@ -81,6 +83,8 @@ const DEFAULT_CONFIG: Configuration = {
   retryMaxDelayMs: 30000, // Default: 30 second maximum retry delay
   // Recovery defaults
   taskRetentionDays: 7, // Default: keep tasks for 7 days before cleanup
+  // Agent configuration (v0.5.0)
+  defaultAgent: undefined,
 };
 
 function parseEnvNumber(value: string | undefined, defaultValue: number): number {
@@ -133,6 +137,8 @@ export function loadConfiguration(): Configuration {
     envConfig.retryInitialDelayMs = parseEnvNumber(process.env.RETRY_INITIAL_DELAY_MS, 0);
   if (process.env.RETRY_MAX_DELAY_MS) envConfig.retryMaxDelayMs = parseEnvNumber(process.env.RETRY_MAX_DELAY_MS, 0);
   if (process.env.TASK_RETENTION_DAYS) envConfig.taskRetentionDays = parseEnvNumber(process.env.TASK_RETENTION_DAYS, 0);
+  if (process.env.BACKBEAT_DEFAULT_AGENT && isAgentProvider(process.env.BACKBEAT_DEFAULT_AGENT))
+    envConfig.defaultAgent = process.env.BACKBEAT_DEFAULT_AGENT;
 
   // Layer 2: Config file values (lower priority than env vars)
   const fileConfig = loadConfigFile();
