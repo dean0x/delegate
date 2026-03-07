@@ -250,6 +250,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       getFromContainer<EventBus>(container, 'eventBus'),
       getFromContainer<Logger>(container, 'logger').child({ module: 'ScheduleManager' }),
       getFromContainer<ScheduleRepository>(container, 'scheduleRepository'),
+      config,
     );
   });
 

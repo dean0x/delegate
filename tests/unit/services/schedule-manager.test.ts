@@ -17,6 +17,7 @@ import {
 import { Database } from '../../../src/implementations/database';
 import { SQLiteScheduleRepository } from '../../../src/implementations/schedule-repository';
 import { ScheduleManagerService, toMissedRunPolicy } from '../../../src/services/schedule-manager';
+import { createTestConfiguration } from '../../fixtures/factories';
 import { TestEventBus, TestLogger } from '../../fixtures/test-doubles';
 
 describe('ScheduleManagerService - Unit Tests', () => {
@@ -31,7 +32,7 @@ describe('ScheduleManagerService - Unit Tests', () => {
     scheduleRepo = new SQLiteScheduleRepository(db);
     eventBus = new TestEventBus();
     logger = new TestLogger();
-    service = new ScheduleManagerService(eventBus, logger, scheduleRepo);
+    service = new ScheduleManagerService(eventBus, logger, scheduleRepo, createTestConfiguration());
   });
 
   afterEach(() => {
