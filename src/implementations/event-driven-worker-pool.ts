@@ -80,9 +80,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const spawnResult = adapter.spawn(task.prompt, finalWorkingDirectory, task.id);
 
     if (!spawnResult.ok) {
-      return err(
-        new BackbeatError(ErrorCode.WORKER_SPAWN_FAILED, `Failed to spawn worker: ${spawnResult.error.message}`),
-      );
+      return err(spawnResult.error);
     }
 
     const { process: childProcess, pid } = spawnResult.value;

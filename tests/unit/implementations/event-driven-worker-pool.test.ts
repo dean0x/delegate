@@ -160,6 +160,49 @@ describe('EventDrivenWorkerPool', () => {
       expect(result.error).toBe(monitorError);
     });
 
+    it('should propagate agent registry errors without wrapping', async () => {
+      const registryError = new BackbeatError(ErrorCode.AGENT_NOT_FOUND, "Agent 'unknown' not found");
+      // Replace registry with one that returns an error
+      const failRegistry = {
+        get: vi.fn().mockReturnValue(err(registryError)),
+        has: vi.fn().mockReturnValue(false),
+        list: vi.fn().mockReturnValue([]),
+        dispose: vi.fn(),
+      } as unknown as AgentRegistry;
+      const failPool = new EventDrivenWorkerPool(failRegistry, monitor, logger, eventBus, outputCapture);
+      const task = buildTask();
+
+      const result = await failPool.spawn(task);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBe(registryError);
+      expect((result.error as BackbeatError).code).toBe(ErrorCode.AGENT_NOT_FOUND);
+    });
+
+    it('should propagate adapter spawn errors without wrapping', async () => {
+      const spawnError = new BackbeatError(
+        ErrorCode.AGENT_MISCONFIGURED,
+        "Agent 'claude' is misconfigured: CLI not found",
+      );
+      const failAdapter = {
+        provider: 'claude' as const,
+        spawn: vi.fn().mockReturnValue(err(spawnError)),
+        kill: vi.fn().mockReturnValue(ok(undefined)),
+        dispose: vi.fn(),
+      };
+      const failRegistry = new InMemoryAgentRegistry([failAdapter]);
+      const failPool = new EventDrivenWorkerPool(failRegistry, monitor, logger, eventBus, outputCapture);
+      const task = buildTask();
+
+      const result = await failPool.spawn(task);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBe(spawnError);
+      expect((result.error as BackbeatError).code).toBe(ErrorCode.AGENT_MISCONFIGURED);
+    });
+
     it('should use task.workingDirectory when provided', async () => {
       const task = buildTask((f) => f.withWorkingDirectory('/my/project'));
 
