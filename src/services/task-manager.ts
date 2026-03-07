@@ -16,7 +16,6 @@
 import { resolveDefaultAgent } from '../core/agents.js';
 import { Configuration } from '../core/configuration.js';
 import {
-  canCancel,
   createTask,
   isTerminalState,
   ResumeTaskRequest,
@@ -45,7 +44,6 @@ export class TaskManagerService implements TaskManager {
   /**
    * Delegate a task - purely event-driven, no direct state management
    */
-
   async delegate(request: TaskRequest): Promise<Result<Task>> {
     // Apply configuration defaults to request
     let requestWithDefaults: TaskRequest = {

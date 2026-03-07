@@ -83,8 +83,6 @@ const DEFAULT_CONFIG: Configuration = {
   retryMaxDelayMs: 30000, // Default: 30 second maximum retry delay
   // Recovery defaults
   taskRetentionDays: 7, // Default: keep tasks for 7 days before cleanup
-  // Agent configuration (v0.5.0)
-  defaultAgent: undefined,
 };
 
 function parseEnvNumber(value: string | undefined, defaultValue: number): number {

@@ -3,7 +3,7 @@
  * Eliminates race conditions through event-based coordination
  *
  * ARCHITECTURE (v0.5.0): Uses AgentRegistry to resolve the correct agent adapter
- * per task. Defaults to 'claude' when task.agent is not specified.
+ * per task. Requires task.agent to be set (resolved by TaskManager before queueing).
  */
 
 import { ChildProcess } from 'child_process';
@@ -345,17 +345,4 @@ export class EventDrivenWorkerPool implements WorkerPool {
     });
   }
 
-  /**
-   * Handle worker process errors
-   */
-  private async handleWorkerError(taskId: TaskId, error: Error): Promise<void> {
-    this.logger.error('Worker process error', error, { taskId });
-
-    // Emit task failed event
-    await this.eventBus.emit('TaskFailed', {
-      taskId,
-      exitCode: 1,
-      error: new BackbeatError(ErrorCode.TASK_EXECUTION_FAILED, `Worker process error: ${error.message}`),
-    });
-  }
 }
