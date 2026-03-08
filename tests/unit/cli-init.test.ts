@@ -70,6 +70,10 @@ describe('parseInitArgs', () => {
     expect(parseInitArgs(['--agent', '--yes'])).toEqual({ yes: true });
   });
 
+  it('should parse --agent=value syntax', () => {
+    expect(parseInitArgs(['--agent=claude'])).toEqual({ agent: 'claude' });
+  });
+
   it('should parse combined flags', () => {
     expect(parseInitArgs(['-a', 'gemini', '-y'])).toEqual({ agent: 'gemini', yes: true });
   });
@@ -93,7 +97,7 @@ describe('runInit — non-interactive', () => {
 
     const result = await runInit({ agent: 'claude' }, deps);
 
-    expect(result).toEqual({ code: 0, agent: 'claude' });
+    expect(result).toEqual({ code: 0, agent: 'claude', status: expect.objectContaining({ provider: 'claude' }) });
     expect(savedKey).toBe('defaultAgent');
     expect(savedValue).toBe('claude');
   });
@@ -121,7 +125,7 @@ describe('runInit — non-interactive', () => {
     for (const provider of AGENT_PROVIDERS) {
       const deps = makeDeps();
       const result = await runInit({ agent: provider }, deps);
-      expect(result).toEqual({ code: 0, agent: provider });
+      expect(result).toEqual({ code: 0, agent: provider, status: expect.objectContaining({ provider }) });
     }
   });
 });
@@ -144,7 +148,7 @@ describe('runInit — non-TTY', () => {
     const deps = makeDeps({ isTTY: false });
     const result = await runInit({ agent: 'claude' }, deps);
 
-    expect(result).toEqual({ code: 0, agent: 'claude' });
+    expect(result).toEqual({ code: 0, agent: 'claude', status: expect.objectContaining({ provider: 'claude' }) });
   });
 });
 
@@ -233,7 +237,7 @@ describe('runInit — interactive', () => {
 
     const result = await runInit({}, deps);
 
-    expect(result).toEqual({ code: 0, agent: 'gemini' });
+    expect(result).toEqual({ code: 0, agent: 'gemini', status: expect.objectContaining({ provider: 'gemini' }) });
     expect(savedAgent).toBe('gemini');
   });
 

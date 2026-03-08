@@ -17,7 +17,7 @@ import * as ui from '../ui.js';
 // ============================================================================
 
 export type InitResult =
-  | { readonly code: 0; readonly agent: AgentProvider }
+  | { readonly code: 0; readonly agent: AgentProvider; readonly status: AgentAuthStatus }
   | { readonly code: 0; readonly reason: string }
   | { readonly code: 1; readonly reason: string };
 
@@ -44,7 +44,9 @@ export function parseInitArgs(args: readonly string[]): InitOptions {
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--agent' || arg === '-a') {
+    if (arg.startsWith('--agent=')) {
+      options.agent = arg.slice('--agent='.length) || undefined;
+    } else if (arg === '--agent' || arg === '-a') {
       const next = args[i + 1];
       if (next && !next.startsWith('-')) {
         options.agent = next;
@@ -78,7 +80,8 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<Ini
       return { code: 1, reason: result.error };
     }
 
-    return { code: 0, agent: options.agent };
+    const status = deps.checkAuth(options.agent);
+    return { code: 0, agent: options.agent, status };
   }
 
   // Non-TTY guard
@@ -110,7 +113,8 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<Ini
     return { code: 1, reason: result.error };
   }
 
-  return { code: 0, agent: selected };
+  const status = statuses.find((s) => s.provider === selected);
+  return { code: 0, agent: selected, status: status! };
 }
 
 // ============================================================================
@@ -126,7 +130,7 @@ function authHint(status: AgentAuthStatus): string {
     case 'config-file':
       return 'ready (config)';
     case 'cli-installed':
-      return 'CLI found';
+      return 'may need login';
     default:
       return 'not configured';
   }
@@ -202,12 +206,14 @@ export async function initCommand(args: readonly string[]): Promise<void> {
 
   if ('agent' in result) {
     if (isInteractive) {
-      const status = deps.checkAuth(result.agent);
-      if (status.hint) {
-        ui.info(status.hint);
+      if (result.status.hint) {
+        ui.info(result.status.hint);
       }
       ui.outro(`Default agent set to '${result.agent}'. Config: ${CONFIG_FILE_PATH}`);
     } else {
+      if (result.status.hint) {
+        ui.info(result.status.hint);
+      }
       ui.success(`Default agent set to '${result.agent}'`);
     }
   } else if (result.reason === 'Setup cancelled.') {
