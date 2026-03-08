@@ -2,10 +2,10 @@ import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createTask, TaskStatus } from '../../../../src/core/domain';
+import { createTask, TaskId, TaskStatus } from '../../../../src/core/domain';
 import { BackbeatError, ErrorCode } from '../../../../src/core/errors';
 import { InMemoryEventBus } from '../../../../src/core/events/event-bus';
-import { createEvent, TaskPersistedEvent } from '../../../../src/core/events/events';
+import { TaskPersistedEvent } from '../../../../src/core/events/events';
 import { Database } from '../../../../src/implementations/database';
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository';
 import { PersistenceHandler } from '../../../../src/services/handlers/persistence-handler';
@@ -100,7 +100,7 @@ describe('PersistenceHandler', () => {
 
     it('should log error when repository update fails', async () => {
       // Emit TaskStarted for a task that doesn't exist in the DB
-      await eventBus.emit('TaskStarted', { taskId: 'nonexistent-task', workerId: 'worker-1' });
+      await eventBus.emit('TaskStarted', { taskId: TaskId('nonexistent-task'), workerId: 'worker-1' });
       await flushEventLoop();
 
       const errorLogs = logger.getLogsByLevel('error');
