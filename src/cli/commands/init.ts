@@ -201,9 +201,8 @@ export async function initCommand(args: readonly string[]): Promise<void> {
   }
 
   if ('agent' in result) {
-    const status = deps.checkAuth(result.agent);
-
     if (isInteractive) {
+      const status = deps.checkAuth(result.agent);
       if (status.hint && !status.ready) {
         ui.info(status.hint);
       }
