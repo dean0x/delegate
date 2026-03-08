@@ -114,7 +114,10 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<Ini
   }
 
   const status = statuses.find((s) => s.provider === selected);
-  return { code: 0, agent: selected, status: status! };
+  if (!status) {
+    return { code: 1, reason: `Internal error: no auth status for '${selected}'` };
+  }
+  return { code: 0, agent: selected, status };
 }
 
 // ============================================================================
