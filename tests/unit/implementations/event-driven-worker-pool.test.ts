@@ -119,6 +119,17 @@ describe('EventDrivenWorkerPool', () => {
   // --- spawn ---
 
   describe('spawn', () => {
+    it('should return WORKER_SPAWN_FAILED when task has no agent assigned', async () => {
+      const task = { ...buildTask(), agent: undefined } as unknown as Task;
+
+      const result = await pool.spawn(task);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect((result.error as BackbeatError).code).toBe(ErrorCode.WORKER_SPAWN_FAILED);
+      expect(result.error.message).toContain('no agent assigned');
+    });
+
     it('should spawn successfully and return worker with correct fields', async () => {
       const task = buildTask((f) => f.withPrompt('do stuff'));
 
@@ -244,6 +255,24 @@ describe('EventDrivenWorkerPool', () => {
   // --- kill ---
 
   describe('kill', () => {
+    it('should skip process.kill but still clean up state when process is already killed', async () => {
+      const task = buildTask();
+      const spawnResult = await pool.spawn(task);
+      if (!spawnResult.ok) return;
+
+      // Simulate process already killed externally
+      mockProcess.killed = true;
+      mockProcess.kill.mockClear();
+
+      await pool.kill(spawnResult.value.id);
+
+      // process.kill should NOT have been called (process.killed was true)
+      expect(mockProcess.kill).not.toHaveBeenCalled();
+      // But state should still be cleaned up
+      expect(pool.getWorkerCount()).toBe(0);
+      expect(monitor.decrementWorkerCount as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+    });
+
     it('should return error for unknown worker', async () => {
       const unknownId = WorkerId('worker-nonexistent');
 
@@ -316,6 +345,15 @@ describe('EventDrivenWorkerPool', () => {
   // --- killAll ---
 
   describe('killAll', () => {
+    it('should return ok immediately when pool is empty', async () => {
+      expect(pool.getWorkerCount()).toBe(0);
+
+      const result = await pool.killAll();
+
+      expect(result.ok).toBe(true);
+      expect(pool.getWorkerCount()).toBe(0);
+    });
+
     it('should kill all workers', async () => {
       const task1 = buildTask();
       await pool.spawn(task1);
@@ -467,6 +505,27 @@ describe('EventDrivenWorkerPool', () => {
       expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
     });
 
+    it('should not crash or double-emit when timeout fires after worker already completed', async () => {
+      const task = buildTask((f) => f.withTimeout(5000));
+
+      await pool.spawn(task);
+
+      // Process exits before timeout fires
+      mockProcess.emit('exit', 0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(pool.getWorkerCount()).toBe(0);
+
+      // Clear emit calls to track only what happens after
+      (eventBus.emit as ReturnType<typeof vi.fn>).mockClear();
+
+      // Advance past the timeout — should be no-op since timeout was cleared on completion
+      await vi.advanceTimersByTimeAsync(5001);
+
+      // Should NOT emit TaskTimeout (timeout was cleared during completion)
+      expect(eventBus.emit as ReturnType<typeof vi.fn>).not.toHaveBeenCalledWith('TaskTimeout', expect.anything());
+    });
+
     it('should emit TaskTimeout event when timeout triggers', async () => {
       const task = buildTask((f) => f.withTimeout(3000));
 
@@ -486,6 +545,25 @@ describe('EventDrivenWorkerPool', () => {
   // --- Worker completion (tested via process exit event) ---
 
   describe('worker completion', () => {
+    it('should log warning and not crash when completion fires for already-removed worker', async () => {
+      const task = buildTask();
+      const spawnResult = await pool.spawn(task);
+      if (!spawnResult.ok) return;
+
+      // Kill the worker first (removes from maps)
+      await pool.kill(spawnResult.value.id);
+
+      // Now simulate process exit (worker already removed from maps by kill)
+      mockProcess.emit('exit', 0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Should log warning, not crash
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Worker completion for unknown task',
+        expect.objectContaining({ taskId: task.id }),
+      );
+    });
+
     it('should emit TaskCompleted event on exit code 0', async () => {
       const task = buildTask();
       await pool.spawn(task);

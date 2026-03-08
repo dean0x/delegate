@@ -1,4 +1,3 @@
-import * as os from 'os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryEventBus } from '../../../src/core/events/event-bus';
 import { TestLogger } from '../../../src/implementations/logger';
@@ -89,6 +88,7 @@ describe('SystemResourceMonitor', () => {
 
       const result = await monitor.getResources();
 
+      expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value.cpuUsage).toBe(expected);
       }
@@ -103,6 +103,16 @@ describe('SystemResourceMonitor', () => {
       if (result.ok) {
         expect(result.value.cpuUsage).toBe(0);
       }
+    });
+  });
+
+  describe('getThresholds', () => {
+    it('should calculate maxCpuPercent from reserved cores', () => {
+      const thresholds = monitor.getThresholds();
+
+      // 4 CPUs, 2 reserved → (4-2)/4 * 100 = 50%
+      expect(thresholds.maxCpuPercent).toBe(50);
+      expect(thresholds.minMemoryBytes).toBe(MEMORY_1GB);
     });
   });
 
@@ -256,40 +266,112 @@ describe('SystemResourceMonitor', () => {
     });
 
     it('should include settling workers in effective worker count', async () => {
-      // Record multiple spawns (simulating workers that haven't settled yet)
-      monitor.recordSpawn();
-      monitor.recordSpawn();
-      monitor.recordSpawn();
+      const originalMaxWorkers = process.env.MAX_WORKERS;
+      process.env.MAX_WORKERS = '3';
 
-      // With settling workers, canSpawnWorker should consider them
-      // The exact behavior depends on maxWorkers config
-      const result = await monitor.canSpawnWorker();
-      expect(result.ok).toBe(true);
+      try {
+        const limitedConfig = createTestConfiguration({
+          cpuCoresReserved: 2,
+          memoryReserve: MEMORY_1GB,
+        });
+        const limitedMonitor = new SystemResourceMonitor(limitedConfig, eventBus, logger);
+
+        // Record spawns up to but not exceeding limit
+        limitedMonitor.recordSpawn();
+        limitedMonitor.recordSpawn();
+
+        // 2 settling workers < 3 max → should still allow spawn
+        const canSpawn = await limitedMonitor.canSpawnWorker();
+        expect(canSpawn.ok).toBe(true);
+        if (canSpawn.ok) {
+          expect(canSpawn.value).toBe(true);
+        }
+
+        // 3rd settling worker hits the limit
+        limitedMonitor.recordSpawn();
+        const blocked = await limitedMonitor.canSpawnWorker();
+        expect(blocked.ok).toBe(true);
+        if (blocked.ok) {
+          expect(blocked.value).toBe(false);
+        }
+      } finally {
+        if (originalMaxWorkers !== undefined) {
+          process.env.MAX_WORKERS = originalMaxWorkers;
+        } else {
+          delete process.env.MAX_WORKERS;
+        }
+      }
     });
 
     it('should expire settling workers after 15 second window', async () => {
-      // Record a spawn
-      monitor.recordSpawn();
+      const originalMaxWorkers = process.env.MAX_WORKERS;
+      process.env.MAX_WORKERS = '1';
 
-      // Fast-forward past the settling window (15 seconds)
-      await vi.advanceTimersByTimeAsync(16_000);
+      try {
+        const limitedConfig = createTestConfiguration({
+          cpuCoresReserved: 2,
+          memoryReserve: MEMORY_1GB,
+        });
+        const limitedMonitor = new SystemResourceMonitor(limitedConfig, eventBus, logger);
 
-      // The spawn should have expired from settling tracking
-      // canSpawnWorker cleans up old timestamps
-      const result = await monitor.canSpawnWorker();
-      expect(result.ok).toBe(true);
+        // Record a spawn (fills the 1-worker limit)
+        limitedMonitor.recordSpawn();
+
+        // Should be blocked while settling
+        const blocked = await limitedMonitor.canSpawnWorker();
+        expect(blocked.ok).toBe(true);
+        if (blocked.ok) {
+          expect(blocked.value).toBe(false);
+        }
+
+        // Fast-forward past the settling window (15 seconds)
+        await vi.advanceTimersByTimeAsync(16_000);
+
+        // The spawn should have expired — can spawn again
+        const unblocked = await limitedMonitor.canSpawnWorker();
+        expect(unblocked.ok).toBe(true);
+        if (unblocked.ok) {
+          expect(unblocked.value).toBe(true);
+        }
+      } finally {
+        if (originalMaxWorkers !== undefined) {
+          process.env.MAX_WORKERS = originalMaxWorkers;
+        } else {
+          delete process.env.MAX_WORKERS;
+        }
+      }
     });
 
     it('should not expire settling workers within the window', async () => {
-      // Record a spawn
-      monitor.recordSpawn();
+      const originalMaxWorkers = process.env.MAX_WORKERS;
+      process.env.MAX_WORKERS = '1';
 
-      // Fast-forward 10 seconds (within the 15 second window)
-      await vi.advanceTimersByTimeAsync(10_000);
+      try {
+        const limitedConfig = createTestConfiguration({
+          cpuCoresReserved: 2,
+          memoryReserve: MEMORY_1GB,
+        });
+        const limitedMonitor = new SystemResourceMonitor(limitedConfig, eventBus, logger);
 
-      // The spawn should still be tracked
-      const result = await monitor.canSpawnWorker();
-      expect(result.ok).toBe(true);
+        // Record a spawn (fills the 1-worker limit)
+        limitedMonitor.recordSpawn();
+
+        // Fast-forward 10 seconds (within the 15 second window)
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        // The spawn should still be tracked — cannot spawn
+        const result = await limitedMonitor.canSpawnWorker();
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.value).toBe(false);
+        }
+      } finally {
+        if (originalMaxWorkers !== undefined) {
+          process.env.MAX_WORKERS = originalMaxWorkers;
+        } else {
+          delete process.env.MAX_WORKERS;
+        }
+      }
     });
 
     it('should correctly project resource usage for settling workers', async () => {
@@ -333,6 +415,82 @@ describe('SystemResourceMonitor', () => {
 
     afterEach(() => {
       vi.useRealTimers();
+    });
+
+    it('should emit SystemResourcesUpdated events on interval', async () => {
+      const events: unknown[] = [];
+      eventBus.on('SystemResourcesUpdated', (data) => events.push(data));
+
+      monitor.startMonitoring();
+
+      // Advance past one monitoring interval (100ms)
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(events.length).toBeGreaterThan(0);
+      expect(events[0]).toEqual(
+        expect.objectContaining({
+          cpuPercent: expect.any(Number),
+          memoryUsed: expect.any(Number),
+          workerCount: expect.any(Number),
+        }),
+      );
+    });
+
+    it('should be idempotent when startMonitoring is called twice', async () => {
+      const events: unknown[] = [];
+      eventBus.on('SystemResourcesUpdated', (data) => events.push(data));
+
+      monitor.startMonitoring();
+      monitor.startMonitoring(); // Second call should be no-op
+
+      await vi.advanceTimersByTimeAsync(150);
+
+      // Should have events from one monitoring loop, not two
+      expect(events.length).toBe(1);
+    });
+
+    it('should be safe to call stopMonitoring when not monitoring', () => {
+      // Fresh monitor — not started
+      expect(() => monitor.stopMonitoring()).not.toThrow();
+    });
+
+    it('should not start monitoring when eventBus is not provided', () => {
+      const config = createTestConfiguration({
+        cpuCoresReserved: 2,
+        memoryReserve: MEMORY_1GB,
+        resourceMonitorIntervalMs: 100,
+      });
+      const noEventBusMonitor = new SystemResourceMonitor(config, undefined, logger);
+
+      noEventBusMonitor.startMonitoring();
+
+      expect(noEventBusMonitor['monitoringInterval']).toBeNull();
+      expect(noEventBusMonitor['isMonitoring']).toBe(false);
+    });
+
+    it('should continue scheduling after performResourceCheck encounters an error', async () => {
+      let callCount = 0;
+      mockLoadavg = () => {
+        callCount++;
+        if (callCount === 1) throw new Error('Temporary OS error');
+        return [1.0, 1.0, 1.0];
+      };
+
+      const events: unknown[] = [];
+      eventBus.on('SystemResourcesUpdated', (data) => events.push(data));
+
+      monitor.startMonitoring();
+
+      // First check → error (monitoring should continue via finally)
+      await vi.advanceTimersByTimeAsync(150);
+
+      // Second check → success (monitoring continued past the error)
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(callCount).toBeGreaterThan(1);
+      expect(monitor['isMonitoring']).toBe(true);
+      // Should have at least one successful event after recovery
+      expect(events.length).toBeGreaterThan(0);
     });
 
     // TODO: Implement threshold crossing event emission in SystemResourceMonitor

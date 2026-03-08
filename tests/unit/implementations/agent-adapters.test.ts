@@ -44,7 +44,6 @@ const mockSpawn = vi.mocked(spawn);
 
 /** Minimal config for adapter construction */
 const testConfig: Configuration = {
-  maxWorkers: 4,
   maxOutputBuffer: 10485760,
   timeout: 300000,
   killGracePeriodMs: 5000,
@@ -53,9 +52,6 @@ const testConfig: Configuration = {
   logLevel: 'info',
   maxListenersPerEvent: 50,
   maxTotalSubscriptions: 500,
-  maxQueueSize: 100,
-  spawnThrottleMs: 1000,
-  maxEventsPerSecond: 1000,
 };
 
 function createMockChildProcess(pid: number): ChildProcess {
@@ -255,6 +251,130 @@ describe('GeminiAdapter', () => {
       expect(spawnOptions.env.BACKBEAT_WORKER).toBe('true');
     } finally {
       delete process.env.GEMINI_API_KEY;
+    }
+  });
+});
+
+// ============================================================================
+// BaseAgentAdapter kill/dispose Tests
+// ============================================================================
+
+describe('BaseAgentAdapter kill', () => {
+  let adapter: ClaudeAdapter;
+  let processKillSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    mockIsCommandInPath.mockReturnValue(true);
+    adapter = new ClaudeAdapter(testConfig, 'claude');
+    processKillSpy = vi.spyOn(process, 'kill').mockImplementation((() => true) as never);
+  });
+
+  afterEach(() => {
+    adapter.dispose();
+    processKillSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('should send SIGTERM to the process', () => {
+    const result = adapter.kill(1234);
+
+    expect(result.ok).toBe(true);
+    expect(processKillSpy).toHaveBeenCalledWith(1234, 'SIGTERM');
+  });
+
+  it('should escalate to SIGKILL after killGracePeriodMs', () => {
+    adapter.kill(1234);
+
+    // Advance past grace period (5000ms from testConfig)
+    vi.advanceTimersByTime(testConfig.killGracePeriodMs);
+
+    expect(processKillSpy).toHaveBeenCalledWith(1234, 'SIGKILL');
+  });
+
+  it('should return PROCESS_KILL_FAILED when process.kill throws', () => {
+    processKillSpy.mockImplementation((() => {
+      throw new Error('ESRCH: No such process');
+    }) as never);
+
+    const result = adapter.kill(1234);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(ErrorCode.PROCESS_KILL_FAILED);
+    }
+  });
+
+  it('should clear pending kill timeouts on dispose', () => {
+    adapter.kill(1234);
+
+    // Dispose before grace period expires
+    adapter.dispose();
+
+    // Advance past grace period
+    vi.advanceTimersByTime(testConfig.killGracePeriodMs);
+
+    // SIGKILL should NOT have been sent (dispose cleared the timeout)
+    expect(processKillSpy).not.toHaveBeenCalledWith(1234, 'SIGKILL');
+  });
+
+  it('should clear previous pending SIGKILL timeout before setting new one', () => {
+    // First kill
+    adapter.kill(1234);
+
+    // Second kill of same pid (clears previous timeout, sets new one)
+    adapter.kill(1234);
+
+    // Advance past grace period once
+    vi.advanceTimersByTime(testConfig.killGracePeriodMs);
+
+    // SIGKILL should only be sent once (not twice from two pending timeouts)
+    const sigkillCalls = processKillSpy.mock.calls.filter((call) => call[0] === 1234 && call[1] === 'SIGKILL');
+    expect(sigkillCalls).toHaveLength(1);
+  });
+});
+
+// ============================================================================
+// GeminiAdapter env Tests
+// ============================================================================
+
+describe('GeminiAdapter env', () => {
+  let adapter: GeminiAdapter;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsCommandInPath.mockReturnValue(true);
+    adapter = new GeminiAdapter(testConfig, 'gemini');
+  });
+
+  afterEach(() => {
+    adapter.dispose();
+  });
+
+  it('should set GEMINI_SANDBOX=false in spawn env', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    adapter.spawn('test prompt', '/workspace');
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.GEMINI_SANDBOX).toBe('false');
+  });
+
+  it("should allow user's GEMINI_SANDBOX=true to override adapter default", () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    process.env.GEMINI_SANDBOX = 'true';
+    try {
+      adapter.spawn('test prompt', '/workspace');
+
+      const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+      // User's env (cleanEnv) spreads after additionalEnv, so user wins
+      expect(spawnOptions.env.GEMINI_SANDBOX).toBe('true');
+    } finally {
+      delete process.env.GEMINI_SANDBOX;
     }
   });
 });
