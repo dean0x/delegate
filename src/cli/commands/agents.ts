@@ -26,7 +26,7 @@ export async function listAgents(): Promise<void> {
   ui.note(lines.join('\n'), 'Available Agents');
 
   if (!config.defaultAgent) {
-    ui.info('No default agent set. Run: beat config set defaultAgent <agent>');
+    ui.info('No default agent set. Run: beat init');
   }
   ui.info('Usage: beat run "prompt" --agent <name>');
   process.exit(0);

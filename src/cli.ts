@@ -16,6 +16,7 @@ import {
 import { cancelTask } from './cli/commands/cancel.js';
 import { configPath, configReset, configSet, configShow } from './cli/commands/config.js';
 import { showHelp } from './cli/commands/help.js';
+import { initCommand } from './cli/commands/init.js';
 import { getTaskLogs } from './cli/commands/logs.js';
 import { handleMcpStart, handleMcpTest, showConfig } from './cli/commands/mcp.js';
 import { handlePipelineCommand } from './cli/commands/pipeline.js';
@@ -277,6 +278,8 @@ if (mainCommand === 'mcp') {
   }
 
   await handleResumeCommand(taskId, additionalContext);
+} else if (mainCommand === 'init') {
+  await initCommand(args.slice(1));
 } else if (mainCommand === 'config') {
   if (subCommand === 'show') {
     configShow();

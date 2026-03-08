@@ -51,6 +51,7 @@ describe('Agent Types (v0.5.0)', () => {
         expect(result.error).toBeInstanceOf(BackbeatError);
         expect((result.error as BackbeatError).code).toBe(ErrorCode.INVALID_INPUT);
         expect(result.error.message).toContain('No agent specified');
+        expect(result.error.message).toContain('beat init');
         expect(result.error.message).toContain('beat config set defaultAgent');
         expect(result.error.message).toContain('beat run --agent');
       }

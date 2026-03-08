@@ -48,7 +48,8 @@ export function resolveDefaultAgent(
       ErrorCode.INVALID_INPUT,
       [
         'No agent specified and no default agent configured.',
-        '  Set a default: beat config set defaultAgent <agent>',
+        '  Quick setup: beat init',
+        '  Or set directly: beat config set defaultAgent <agent>',
         `  Available agents: ${AGENT_PROVIDERS.join(', ')}`,
         '  Or specify per-task: beat run --agent <agent> "prompt"',
       ].join('\n'),

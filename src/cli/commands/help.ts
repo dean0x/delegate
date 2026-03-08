@@ -17,6 +17,11 @@ export function showHelp(dirname: string): void {
 ${bold('Usage:')}
   beat <command> [options...]
 
+${bold('Setup:')}
+  ${cyan('init')}                       Interactive first-time setup (select default agent)
+    -a, --agent AGENT          Non-interactive: set default agent directly
+    -y, --yes                  Overwrite existing config without prompting
+
 ${bold('MCP Server Commands:')}
   ${cyan('mcp start')}              Start the MCP server
   ${cyan('mcp test')}               Test server startup and validation
@@ -81,6 +86,8 @@ ${bold('Configuration:')}
   ${cyan('help')}                       Show this help message
 
 ${bold('Examples:')}
+  beat init                                            # Interactive setup
+  beat init --agent claude                            # Non-interactive (CI/scripting)
   beat mcp start                                      # Start MCP server
   beat run "analyze this codebase"                    # Fire-and-forget (default)
   beat run "fix the bug" --foreground                 # Stream output, wait
