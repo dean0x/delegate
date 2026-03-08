@@ -80,6 +80,31 @@ export function step(msg: string): void {
   }
 }
 
+// Session markers (intro/outro/cancel for interactive flows)
+export function intro(msg: string): void {
+  if (isTTY) {
+    p.intro(msg, { output });
+  } else {
+    output.write(`${msg}\n`);
+  }
+}
+
+export function outro(msg: string): void {
+  if (isTTY) {
+    p.outro(msg, { output });
+  } else {
+    output.write(`${msg}\n`);
+  }
+}
+
+export function cancel(msg: string): void {
+  if (isTTY) {
+    p.cancel(msg, { output });
+  } else {
+    output.write(`${msg}\n`);
+  }
+}
+
 // Boxed display (task details, config sections)
 export function note(msg: string, title?: string): void {
   if (isTTY) {

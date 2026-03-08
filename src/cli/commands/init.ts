@@ -190,7 +190,7 @@ export async function initCommand(args: readonly string[]): Promise<void> {
   const isInteractive = deps.isTTY && !options.agent;
 
   if (isInteractive) {
-    p.intro('Backbeat Setup', { output: process.stderr });
+    ui.intro('Backbeat Setup');
   }
 
   const result = await runInit(options, deps);
@@ -207,12 +207,14 @@ export async function initCommand(args: readonly string[]): Promise<void> {
       if (status.hint && !status.ready) {
         ui.info(status.hint);
       }
-      p.outro(`Default agent set to '${result.agent}'. Config: ${CONFIG_FILE_PATH}`, { output: process.stderr });
+      ui.outro(`Default agent set to '${result.agent}'. Config: ${CONFIG_FILE_PATH}`);
     } else {
       ui.success(`Default agent set to '${result.agent}'`);
     }
+  } else if (result.reason === 'Setup cancelled.') {
+    ui.cancel('Setup cancelled.');
   } else if (deps.isTTY) {
-    p.outro(result.reason, { output: process.stderr });
+    ui.outro(result.reason);
   } else {
     ui.info(result.reason);
   }
