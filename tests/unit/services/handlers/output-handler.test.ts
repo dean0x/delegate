@@ -44,6 +44,7 @@ describe('OutputHandler', () => {
       expect(debugLogs.length).toBe(1);
       expect(debugLogs[0].context!.taskId).toBe('task-1');
       expect(debugLogs[0].context!.stdoutLines).toBeGreaterThan(0);
+      expect(debugLogs[0].context!.stderrLines).toBeGreaterThan(0);
     });
 
     it('should pass tail parameter to OutputCapture', async () => {

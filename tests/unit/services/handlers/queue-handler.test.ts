@@ -162,15 +162,17 @@ describe('QueueHandler', () => {
 
   describe('TaskUnblocked', () => {
     it('should fetch fresh task from DB, enqueue, and emit TaskQueued', async () => {
-      // Save task in QUEUED status to DB
-      const task = createTask({ prompt: 'unblocked task' });
+      // Save task then update priority in DB — event payload has stale P2
+      const task = createTask({ prompt: 'unblocked task', priority: 'P2' });
       await taskRepo.save(task);
+      await taskRepo.update(task.id, { priority: 'P0' as Task['priority'] });
 
       let queuedEvent: TaskQueuedEvent | undefined;
       eventBus.on('TaskQueued', (event: TaskQueuedEvent) => {
         queuedEvent = event;
       });
 
+      // Event carries stale task — handler should fetch fresh from DB
       await eventBus.emit('TaskUnblocked', { taskId: task.id, task });
       await flushEventLoop();
 
@@ -178,6 +180,11 @@ describe('QueueHandler', () => {
       expect(queue.contains(task.id)).toBe(true);
       expect(queuedEvent).toBeDefined();
       expect(queuedEvent!.taskId).toBe(task.id);
+
+      // Verify enqueued task reflects DB state (P0), not event payload (P2)
+      const dequeued = queue.dequeue();
+      expect(dequeued.ok).toBe(true);
+      expect(dequeued.value!.priority).toBe('P0');
     });
 
     it('should not enqueue task that is no longer in QUEUED status', async () => {

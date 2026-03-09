@@ -258,6 +258,7 @@ describe('EventDrivenWorkerPool', () => {
     it('should skip process.kill but still clean up state when process is already killed', async () => {
       const task = buildTask();
       const spawnResult = await pool.spawn(task);
+      expect(spawnResult.ok).toBe(true);
       if (!spawnResult.ok) return;
 
       // Simulate process already killed externally
@@ -508,7 +509,8 @@ describe('EventDrivenWorkerPool', () => {
     it('should not crash or double-emit when timeout fires after worker already completed', async () => {
       const task = buildTask((f) => f.withTimeout(5000));
 
-      await pool.spawn(task);
+      const spawnResult = await pool.spawn(task);
+      expect(spawnResult.ok).toBe(true);
 
       // Process exits before timeout fires
       mockProcess.emit('exit', 0);
@@ -548,6 +550,7 @@ describe('EventDrivenWorkerPool', () => {
     it('should log warning and not crash when completion fires for already-removed worker', async () => {
       const task = buildTask();
       const spawnResult = await pool.spawn(task);
+      expect(spawnResult.ok).toBe(true);
       if (!spawnResult.ok) return;
 
       // Kill the worker first (removes from maps)
