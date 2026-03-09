@@ -1,10 +1,10 @@
 # Backbeat Development Roadmap
 
-## Current Status: v0.4.0 ✅
+## Current Status: v0.5.0 ✅
 
-**Status**: Published to npm (2026-03-03)
+**Status**: Released (2026-03-10)
 
-Backbeat v0.4.0 is a fully-featured MCP server with autoscaling, persistence, task dependencies, task scheduling, task resumption, CLI detach mode, and multi-agent orchestration foundations. See [FEATURES.md](./FEATURES.md) for complete list of current capabilities.
+Backbeat v0.5.0 adds multi-agent support — pluggable agent registry with adapters for Claude, Codex, and Gemini, per-task agent selection, `beat init` interactive setup, and comprehensive test coverage. See [FEATURES.md](./FEATURES.md) for complete list of current capabilities.
 
 ---
 
@@ -50,54 +50,54 @@ Open items are low priority — they'll be addressed opportunistically or when p
 
 ## Future Development
 
-### v0.5.0 - Multi-Agent Support
-**Goal**: Support multiple AI coding agents beyond Claude Code
-**Priority**: High — the core differentiator for Backbeat
+### v0.5.0 - Multi-Agent Support ✅
+**Status**: **RELEASED** (2026-03-10)
 
-#### Features
-- **Agent Registry**: Pluggable interface for registering coding agents
-  - How to spawn (command, args, stdio patterns)
-  - How to pass a prompt (stdin, CLI arg, file)
-  - How to detect completion (exit code, output parsing)
-  - Capability metadata (supports resume? streaming? context window size?)
-- **Per-Task Agent Selection**: Choose which agent runs each task
-- **Agent Configuration**: Per-agent settings (timeout, environment, model)
-- **Agent Discovery**: Auto-detect installed agents on the system
-
-#### Target Agents
-| Agent | Command | Status |
-|-------|---------|--------|
-| Claude Code | `claude` | ✅ Current (hardcoded) |
-| Codex CLI | `codex` | Planned |
-| Gemini CLI | `gemini` | Planned |
-| Aider | `aider` | Planned |
-| GitHub Copilot CLI | `gh copilot` | Planned |
-
-#### MCP Interface
-```typescript
-await DelegateTask({
-  prompt: "fix the login bug",
-  agent: "codex"  // default: "claude"
-});
-```
-
-#### CLI Interface
-```bash
-beat run "fix the bug" --agent codex
-beat run "write tests" --agent gemini
-beat run "refactor auth" # defaults to claude
-beat agents list  # show installed/configured agents
-```
-
-#### Architecture
-- `AgentRegistry`: Map of agent name → `AgentAdapter`
-- `AgentAdapter` interface: `spawn()`, `parseOutput()`, `capabilities()`
-- `WorkerPool` refactored to use `AgentAdapter` instead of hardcoded `claude` spawn
-- Agent config in `~/.backbeat/agents.json` or per-project `.backbeat/agents.json`
+Agent registry with pluggable adapters (Claude, Codex, Gemini), per-task agent selection, `beat init` interactive setup, `beat agents list`, default agent configuration, auth checking, and comprehensive test coverage (#54).
 
 ---
 
-### v0.6.0 - Agent Failover & Smart Routing
+### v0.6.0 - Scheduled Pipelines & Loops
+**Goal**: Time-triggered pipelines and condition-driven iteration
+**Priority**: High — completes the orchestration story
+**Issues**: [#78](https://github.com/dean0x/backbeat/issues/78), [#79](https://github.com/dean0x/backbeat/issues/79)
+
+#### Feature 1: Scheduled Pipelines (#78)
+Run a multi-step DAG on a cron or one-time schedule. Today `beat schedule create` only supports single tasks and `CreatePipeline` only runs immediately — this connects the two.
+
+```bash
+beat schedule create --cron "0 9 * * *" --pipeline \
+  --step "lint the codebase" \
+  --step "run test suite" \
+  --step "deploy to staging"
+```
+
+- Each trigger creates a fresh pipeline instance (new task IDs)
+- Steps inherit the schedule's agent unless overridden
+- Execution history tracks which schedule triggered which pipeline
+
+#### Feature 2: Task/Pipeline Loops (#79)
+Repeat a task or pipeline until an exit condition is met — the [Ralph Wiggum Loop](https://ghuntley.com/loop/) pattern.
+
+```bash
+beat loop "implement next item from spec.md" \
+  --until "npm test && npm run build" \
+  --max-iterations 10
+```
+
+- Exit condition: shell command returning exit code 0
+- Max iterations: required safety cap
+- Fresh context per iteration (Ralph pattern) or continue from checkpoint
+- Composable with schedules: "every night, loop until spec is done"
+
+#### Builds On
+- v0.4.0 schedules (cron/one-time), checkpoints, `continueFrom`
+- v0.4.1 pipelines (`CreatePipeline`)
+- v0.5.0 multi-agent per-task selection
+
+---
+
+### v0.7.0 - Agent Failover & Smart Routing
 **Goal**: Automatic agent switching on rate limits, intelligent task routing
 **Priority**: High — makes multi-agent practically useful
 
@@ -109,29 +109,13 @@ beat agents list  # show installed/configured agents
 - **Usage Tracking**: Track per-agent usage to predict limit exhaustion
 - **Cooldown Management**: Track rate limit windows, re-enable agents when limits reset
 
-#### Failover Flow
-```
-Task running on Claude Code
-  → Rate limit detected in stderr
-  → Auto-checkpoint captured (output, partial changes, git state)
-  → Resume with next agent in priority chain (e.g., Codex)
-  → Continuation prompt includes checkpoint context
-  → Task completes on fallback agent
-```
-
-#### Configuration
-```bash
-beat config set failover-chain "claude,codex,gemini"
-beat config set auto-failover true
-```
-
 #### Builds On
 - v0.4.0 checkpoint/resumption system (`continueFrom`)
 - v0.5.0 agent registry and adapters
 
 ---
 
-### v0.7.0 - Workflow Recipes & Templates
+### v0.8.0 - Workflow Recipes & Templates
 **Goal**: Reusable multi-step workflows with predefined DAGs
 **Priority**: Medium — power user productivity
 
@@ -183,10 +167,11 @@ beat recipe create my-workflow  # interactive recipe builder
 #### Builds On
 - v0.4.0 task dependencies (DAG), scheduling, `continueFrom`
 - v0.5.0 per-task agent selection
+- v0.6.0 scheduled pipelines, loops
 
 ---
 
-### v0.8.0 - Monitoring & REST API
+### v0.9.0 - Monitoring & REST API
 **Goal**: Production observability and external integrations
 **Priority**: Medium — production readiness
 
@@ -238,10 +223,11 @@ beat recipe create my-workflow  # interactive recipe builder
 | v0.3.0 | ✅ Released | Task Dependencies (DAG) |
 | v0.3.1–3 | ✅ Released | Dependency optimizations + security |
 | v0.4.0 | ✅ Released | Scheduling, Resumption, Rename to Backbeat |
-| v0.5.0 | 🎯 Next | Multi-Agent Support |
-| v0.6.0 | 📋 Planned | Agent Failover + Smart Routing |
-| v0.7.0 | 📋 Planned | Workflow Recipes & Templates |
-| v0.8.0 | 💭 Research | Monitoring + REST API + Dashboard |
+| v0.5.0 | ✅ Released | Multi-Agent Support |
+| v0.6.0 | 🎯 Next | Scheduled Pipelines + Loops |
+| v0.7.0 | 📋 Planned | Agent Failover + Smart Routing |
+| v0.8.0 | 📋 Planned | Workflow Recipes & Templates |
+| v0.9.0 | 💭 Research | Monitoring + REST API + Dashboard |
 | v1.0.0 | 💭 Research | Distributed Processing |
 
 ---
