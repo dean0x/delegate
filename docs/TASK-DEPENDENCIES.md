@@ -92,15 +92,23 @@ TaskDelegated
                     ├─ Blocked: Skip enqueueing
                     └─ Not Blocked: Enqueue task
 
-TaskCompleted/Failed/Cancelled
+TaskCompleted
   │
   └─▶ DependencyHandler.handleTaskCompleted()
-        └─▶ Resolves dependencies
+        └─▶ Resolves dependencies as 'completed'
         └─▶ Checks dependent tasks
-              └─▶ If unblocked: Emits TaskUnblocked
+              └─▶ If unblocked (all deps completed): Emits TaskUnblocked
                     │
                     └─▶ QueueHandler.handleTaskUnblocked()
                           └─▶ Enqueues unblocked task
+
+TaskFailed/Cancelled/Timeout
+  │
+  └─▶ DependencyHandler.handleTaskFailed/Cancelled/Timeout()
+        └─▶ Resolves dependencies as 'failed' or 'cancelled'
+        └─▶ Checks dependent tasks
+              └─▶ If unblocked but has failed/cancelled dep:
+                    Emits TaskCancellationRequested (cascade cancellation)
 ```
 
 ### DAG Validation
@@ -376,7 +384,7 @@ const aggregateResults = await taskManager.delegate({
 ### Error Handling
 
 ```typescript
-// Dependencies can fail or be cancelled
+// Dependency failures cascade automatically (v0.6.0+)
 
 const dbMigration = await taskManager.delegate({
   prompt: 'Run database migrations'
@@ -389,15 +397,17 @@ const seedData = await taskManager.delegate({
 
 // If dbMigration fails:
 // 1. Dependency is resolved as 'failed'
-// 2. seedData is no longer blocked (isBlocked returns false)
-// 3. seedData can execute (you may want to check dependency resolution states)
+// 2. seedData has no more pending dependencies
+// 3. DependencyHandler detects the failed dependency
+// 4. seedData is automatically cancelled (cascade cancellation)
+// 5. seedData never executes
 
-// To check dependency resolution:
+// To inspect dependency resolution after the fact:
 const deps = await dependencyRepo.getDependencies(seedData.value.id);
 if (deps.ok) {
-  const allSucceeded = deps.value.every(dep => dep.resolution === 'completed');
-  if (!allSucceeded) {
-    console.log('Some dependencies failed - task may want to abort');
+  for (const dep of deps.value) {
+    console.log(`Dependency ${dep.dependsOnTaskId}: ${dep.resolution}`);
+    // 'completed' | 'failed' | 'cancelled'
   }
 }
 ```
@@ -465,22 +475,28 @@ await taskManager.delegate({
 
 ### 3. Handle Dependency Failures
 
-#### Current Behavior (v0.3.0)
+> **Breaking Change (v0.6.0):** Dependency failure behavior changed from "unblock and execute" to "cascade cancellation". Failed or cancelled upstream tasks now automatically cancel all downstream dependents. This replaced the v0.3.0 behavior where dependents were unblocked and expected to check resolution states manually.
 
-**Important:** When a dependency fails or is cancelled, the dependent task is **unblocked** but **not automatically failed or cancelled**.
+#### Current Behavior (v0.6.0+)
+
+**Important:** When a dependency fails, is cancelled, or times out, all dependent tasks are **automatically cancelled** via cascade cancellation. Dependents do not execute.
 
 **Resolution Flow:**
 
 ```
-Task A fails/is cancelled
+Task A fails/is cancelled/times out
   ↓
 Dependency resolved as 'failed' or 'cancelled'
   ↓
-Task B (depends on A) becomes unblocked (isBlocked = false)
+Task B (depends on A) becomes unblocked (no pending deps remain)
   ↓
-Task B is enqueued and can execute
+DependencyHandler detects a failed/cancelled dependency in Task B's resolved deps
   ↓
-Task B should check dependency resolution states before proceeding
+Emits TaskCancellationRequested for Task B
+  ↓
+Task B is cancelled with reason "Dependency <taskA.id> failed"
+  ↓
+If Task B has its own dependents, the cascade continues recursively
 ```
 
 **Example:**
@@ -499,117 +515,40 @@ const taskB = await taskManager.delegate({
 
 // If Task A fails:
 // 1. Dependency is marked as resolution='failed'
-// 2. Task B becomes unblocked (isBlocked returns false)
-// 3. Task B is enqueued and will start executing
-// 4. Task B SHOULD check dependency states before proceeding
-
-// Recommended pattern for Task B:
-const deps = await dependencyRepo.getDependencies(taskB.id);
-if (deps.ok) {
-  const failedDeps = deps.value.filter(d => d.resolution === 'failed');
-  const cancelledDeps = deps.value.filter(d => d.resolution === 'cancelled');
-
-  if (failedDeps.length > 0 || cancelledDeps.length > 0) {
-    // Option 1: Fail the task
-    throw new Error(`Dependencies failed: ${failedDeps.map(d => d.dependsOnTaskId).join(', ')}`);
-
-    // Option 2: Skip execution and log warning
-    console.warn('Skipping task due to failed dependencies');
-    return;
-
-    // Option 3: Continue anyway (if task can handle partial results)
-    console.warn('Proceeding despite failed dependencies');
-  }
-}
+// 2. Task B has no more pending dependencies (isBlocked = false)
+// 3. DependencyHandler finds a failed dependency in Task B's resolved deps
+// 4. TaskCancellationRequested is emitted for Task B
+// 5. Task B is cancelled — it never executes
+// 6. If Task C depends on Task B, it will also be cascade-cancelled
 ```
 
 #### Design Rationale
 
-The current behavior (unblock but don't auto-fail) was chosen for flexibility:
+Cascade cancellation (auto-cancel on upstream failure) was chosen for safety and pipeline reliability:
 
 **Advantages:**
-- ✅ Tasks can inspect dependency resolution states and make decisions
-- ✅ Some tasks may be able to proceed despite failed dependencies (e.g., "best effort" tasks)
-- ✅ Prevents cascading failures when only partial results are needed
+- Prevents executing tasks when prerequisites failed (e.g., deploying after a failed build)
+- No manual resolution checking required in task code
+- Recursive propagation handles deep dependency chains automatically
+- Essential for scheduled pipelines where unattended execution must fail-safe
 
-**Disadvantages:**
-- ⚠️ Tasks may execute when they shouldn't if resolution checks are forgotten
-- ⚠️ Requires explicit handling in each task's code
+**Implementation:**
+- `DependencyHandler.resolveDependencies()` checks resolved deps after unblocking
+- If any dependency has `resolution === 'failed'` or `resolution === 'cancelled'`, emits `TaskCancellationRequested`
+- The cancellation itself triggers further cascade for downstream dependents
 
-#### Future Consideration (v0.4.0)
+#### Cascade Cancellation Propagation
 
-We may add configurable dependency failure strategies:
-
-```typescript
-// Proposed future API (not yet implemented)
-await taskManager.delegate({
-  prompt: 'Task B',
-  dependsOn: [taskA.id],
-  onDependencyFailure: 'auto-fail'  // or 'auto-cancel', 'continue', 'manual'
-});
-```
-
-**Track this in**: [GitHub Issue #TBD - Dependency Failure Strategies]
-
-#### Cancelled Dependency Propagation
-
-**Current Behavior:** Cancelling a task does **not** automatically cancel its dependents.
+**Current Behavior:** Cancelling or failing a task automatically cascades to all dependents.
 
 ```typescript
-// Task C depends on Task A
-await taskManager.cancel(taskA.id);
-
-// Task C is NOT automatically cancelled
-// Task C becomes unblocked (dependency resolved as 'cancelled')
-// Task C will be enqueued and can execute
+// Pipeline: A → B → C
+// If Task A fails:
+// 1. Task B is cascade-cancelled (reason: "Dependency <A.id> failed")
+// 2. Task C is cascade-cancelled (reason: "Dependency <B.id> cancelled")
 ```
 
-**Workaround for Cascading Cancellation:**
-
-```typescript
-// Manual cascade cancellation
-async function cancelWithDependents(taskId: TaskId) {
-  // Get all dependent tasks
-  const dependents = await dependencyRepo.getDependents(taskId);
-
-  if (dependents.ok) {
-    // Cancel the original task
-    await taskManager.cancel(taskId);
-
-    // Recursively cancel all dependents
-    for (const dep of dependents.value) {
-      await cancelWithDependents(dep.taskId);
-    }
-  }
-}
-```
-
-#### Recommendation
-
-**For production use**, always check dependency resolution states:
-
-```typescript
-// At the start of every task that has dependencies:
-async function executeTask(taskId: TaskId) {
-  // 1. Check dependencies
-  const deps = await dependencyRepo.getDependencies(taskId);
-
-  if (deps.ok && deps.value.length > 0) {
-    // 2. Verify all dependencies completed successfully
-    const allSucceeded = deps.value.every(d => d.resolution === 'completed');
-
-    if (!allSucceeded) {
-      const failedDeps = deps.value.filter(d => d.resolution !== 'completed');
-      throw new Error(
-        `Cannot execute: ${failedDeps.length} dependencies did not complete successfully`
-      );
-    }
-  }
-
-  // 3. Proceed with task execution
-  // ...
-}
-```
+This is handled automatically by the `DependencyHandler` — no manual cancellation code is needed.
 
 ### 4. Avoid Circular Dependencies
 
