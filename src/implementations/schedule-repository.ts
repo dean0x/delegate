@@ -82,6 +82,12 @@ const TaskRequestSchema = z.object({
 });
 
 /**
+ * Zod schema for validating pipeline_task_ids JSON from database
+ * Pattern: Boundary validation for pipeline task ID arrays
+ */
+const PipelineTaskIdsSchema = z.array(z.string().min(1)).min(1);
+
+/**
  * Zod schema for validating pipeline_steps JSON from database
  * Pattern: Boundary validation for pipeline step definitions (2-20 steps)
  */
@@ -537,8 +543,9 @@ export class SQLiteScheduleRepository implements ScheduleRepository {
     let pipelineTaskIds: readonly TaskId[] | undefined;
     if (data.pipeline_task_ids) {
       try {
-        const parsed = JSON.parse(data.pipeline_task_ids) as string[];
-        pipelineTaskIds = parsed.map((id) => TaskId(id));
+        const parsed = JSON.parse(data.pipeline_task_ids);
+        const validated = PipelineTaskIdsSchema.parse(parsed);
+        pipelineTaskIds = validated.map((id) => TaskId(id));
       } catch {
         // Non-fatal: log but don't fail
         pipelineTaskIds = undefined;
