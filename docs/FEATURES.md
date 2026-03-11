@@ -202,6 +202,7 @@ Last Updated: March 2026
 - **PauseSchedule**: Pause an active schedule (can be resumed later)
 - **ResumeSchedule**: Resume a paused schedule
 - **CreatePipeline** (v0.4.1): Create sequential task pipelines with 2–20 steps, per-step delays, priority, and working directory overrides
+- **SchedulePipeline** (v0.6.0): Create recurring or one-time scheduled pipelines with 2–20 steps, each trigger creates a fresh pipeline instance with linear task dependencies
 
 ### Schedule Types
 - **CRON**: Standard 5-field cron expressions for recurring task execution
@@ -263,6 +264,29 @@ Last Updated: March 2026
 - **`agent` field on DelegateTask**: Specify agent per task (e.g., `{ agent: "codex" }`)
 - **Fallback**: Uses default agent when no agent specified
 
+## ✅ Scheduled Pipelines (v0.6.0)
+
+### Recurring & One-Time Pipelines
+- **SchedulePipeline MCP Tool**: Create a single schedule that triggers a full pipeline (2–20 steps) on each execution
+- **Cron + One-Time**: Supports both recurring cron expressions and single future execution
+- **Linear Dependencies**: Each trigger creates fresh tasks wired with linear dependencies (step N depends on step N-1)
+- **Per-Step Configuration**: Each step can have its own prompt, priority, working directory, and agent override (MCP only)
+- **Shared Defaults**: Schedule-level agent, priority, and working directory apply to all steps unless overridden
+
+### Pipeline Lifecycle
+- **Dependency Failure Cascade**: When a pipeline step fails, all downstream steps are automatically cancelled
+- **Cancel with Tasks**: `CancelSchedule` with `cancelTasks: true` cancels in-flight pipeline tasks from current execution
+- **Concurrency Tracking**: Pipeline completion tracked via tail task — prevents overlapping pipeline executions
+- **`afterScheduleId` Support**: Chain pipelines after other schedules (predecessor dependency injected on step 0)
+
+### CLI Support
+- `beat schedule create --pipeline --step "lint" --step "test" --cron "0 9 * * *"`: Create scheduled pipeline
+- `beat schedule cancel <id> --cancel-tasks`: Cancel schedule and in-flight tasks
+
+### Bug Fixes (v0.6.0)
+- **Dependency Failure Cascade**: Failed/cancelled upstream tasks now cascade cancellation to dependents (was incorrectly unblocking them)
+- **Queue Handler Race Condition**: Fast-path check prevents blocked tasks from being prematurely enqueued
+
 ## ❌ NOT Implemented (Despite Some Documentation Claims)
 - **Distributed Processing**: Single-server only
 - **Web UI**: No dashboard interface
@@ -271,6 +295,26 @@ Last Updated: March 2026
 - **REST API**: MCP protocol only
 
 ---
+
+---
+
+## 🆕 What's New in v0.6.0
+
+### Scheduled Pipelines
+- **`SchedulePipeline` MCP Tool**: Create cron or one-time schedules that trigger a full pipeline (2–20 steps) on each execution
+- **Linear Task Dependencies**: Each trigger creates fresh tasks with `task[i].dependsOn = [task[i-1].id]`
+- **Per-Step Agent Override**: MCP tool supports per-step `agent` field; CLI uses shared `--agent`
+- **`cancelTasks` on CancelSchedule**: Optional flag to also cancel in-flight pipeline tasks from current execution
+- **ListSchedules Enhancement**: Response includes `isPipeline` and `stepCount` indicators
+- **GetSchedule Enhancement**: Response includes full `pipelineSteps` when present
+- **CLI**: `--pipeline --step "..." --step "..."` flags for creating scheduled pipelines
+
+### Bug Fixes
+- **Dependency Failure Cascade**: When upstream task fails or is cancelled, dependent tasks are now cancelled instead of incorrectly unblocked (**breaking change**)
+- **Queue Handler Race Condition**: Fast-path `dependencyState` check prevents blocked tasks from being enqueued before dependency rows are written to DB
+
+### Database
+- **Migration 8**: `pipeline_steps` column on `schedules` table, `pipeline_task_ids` column on `schedule_executions` table
 
 ---
 

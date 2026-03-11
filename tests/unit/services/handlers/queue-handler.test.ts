@@ -160,6 +160,45 @@ describe('QueueHandler', () => {
     });
   });
 
+  describe('Fast-path blocked task check (v0.6.0)', () => {
+    it('should not enqueue task when dependencyState is blocked', async () => {
+      // Arrange - Create a task with dependsOn set (createTask sets dependencyState: 'blocked' automatically)
+      const parentId = TaskId('parent-task-id');
+      const task = createTask({ prompt: 'blocked task', dependsOn: [parentId] });
+      // dependencyState is 'blocked' because dependsOn is set
+
+      // Act - Emit TaskPersisted with the blocked task
+      await eventBus.emit('TaskPersisted', { taskId: task.id, task });
+      await flushEventLoop();
+
+      // Assert - Task should NOT be enqueued (fast-path skip)
+      expect(queue.size()).toBe(0);
+      expect(queue.contains(task.id)).toBe(false);
+      expect(logger.hasLogContaining('fast-path')).toBe(true);
+    });
+
+    it('should still enqueue task when dependencyState is none', async () => {
+      // Arrange - Create a task with no dependencies (dependencyState: 'none')
+      const task = createTask({ prompt: 'independent task' });
+      // dependencyState is 'none' because no dependsOn
+
+      let queuedEvent: TaskQueuedEvent | undefined;
+      eventBus.on('TaskQueued', (event: TaskQueuedEvent) => {
+        queuedEvent = event;
+      });
+
+      // Act - Emit TaskPersisted with the unblocked task
+      await eventBus.emit('TaskPersisted', { taskId: task.id, task });
+      await flushEventLoop();
+
+      // Assert - Task should be enqueued normally
+      expect(queue.size()).toBe(1);
+      expect(queue.contains(task.id)).toBe(true);
+      expect(queuedEvent).toBeDefined();
+      expect(queuedEvent!.taskId).toBe(task.id);
+    });
+  });
+
   describe('TaskUnblocked', () => {
     it('should fetch fresh task from DB, enqueue, and emit TaskQueued', async () => {
       // Save task then update priority in DB — event payload has stale P2

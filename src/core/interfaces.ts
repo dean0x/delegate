@@ -12,6 +12,7 @@ import {
   ScheduleCreateRequest,
   ScheduleId,
   ScheduleStatus,
+  ScheduledPipelineCreateRequest,
   SystemResources,
   Task,
   TaskCheckpoint,
@@ -248,6 +249,7 @@ export interface ScheduleExecution {
   readonly executedAt?: number; // Epoch ms - when execution actually started
   readonly status: 'pending' | 'triggered' | 'completed' | 'failed' | 'missed' | 'skipped';
   readonly errorMessage?: string; // Error details if status is 'failed' or 'missed'
+  readonly pipelineTaskIds?: readonly TaskId[]; // All task IDs from a pipeline trigger (v0.6.0)
   readonly createdAt: number;
 }
 
@@ -403,10 +405,11 @@ export interface ScheduleService {
     includeHistory?: boolean,
     historyLimit?: number,
   ): Promise<Result<{ schedule: Schedule; history?: readonly ScheduleExecution[] }>>;
-  cancelSchedule(scheduleId: ScheduleId, reason?: string): Promise<Result<void>>;
+  cancelSchedule(scheduleId: ScheduleId, reason?: string, cancelTasks?: boolean): Promise<Result<void>>;
   pauseSchedule(scheduleId: ScheduleId): Promise<Result<void>>;
   resumeSchedule(scheduleId: ScheduleId): Promise<Result<void>>;
   createPipeline(request: PipelineCreateRequest): Promise<Result<PipelineResult>>;
+  createScheduledPipeline(request: ScheduledPipelineCreateRequest): Promise<Result<Schedule>>;
 }
 
 /**

@@ -42,7 +42,7 @@ Items originally planned for v0.3.1 that were completed across v0.3.1–v0.4.0:
 | Remove Cycle Detection from Repository Layer | Open | — |
 | Consolidate Graph Caching | Open | — |
 | JSDoc Coverage for dependency APIs | Open | — |
-| Failed/Cancelled Dependency Propagation Semantics | Open | Needs design decision |
+| Failed/Cancelled Dependency Propagation Semantics | ✅ Done | v0.6.0 (cascade cancellation) |
 
 Open items are low priority — they'll be addressed opportunistically or when performance demands it.
 
@@ -57,26 +57,19 @@ Agent registry with pluggable adapters (Claude, Codex, Gemini), per-task agent s
 
 ---
 
-### v0.6.0 - Scheduled Pipelines & Loops
-**Goal**: Time-triggered pipelines and condition-driven iteration
+### v0.6.0 - Scheduled Pipelines ✅
+**Status**: **RELEASED** (2026-03-18)
+
+Scheduled pipelines (`SchedulePipeline` MCP tool, `--pipeline --step` CLI), dependency failure cascade fix, queue handler race condition fix, `cancelTasks` on `CancelSchedule`. See [FEATURES.md](./FEATURES.md) for details.
+
+---
+
+### v0.6.1 - Task/Pipeline Loops
+**Goal**: Condition-driven iteration
 **Priority**: High — completes the orchestration story
-**Issues**: [#78](https://github.com/dean0x/backbeat/issues/78), [#79](https://github.com/dean0x/backbeat/issues/79)
+**Issue**: [#79](https://github.com/dean0x/backbeat/issues/79)
 
-#### Feature 1: Scheduled Pipelines (#78)
-Run a multi-step DAG on a cron or one-time schedule. Today `beat schedule create` only supports single tasks and `CreatePipeline` only runs immediately — this connects the two.
-
-```bash
-beat schedule create --cron "0 9 * * *" --pipeline \
-  --step "lint the codebase" \
-  --step "run test suite" \
-  --step "deploy to staging"
-```
-
-- Each trigger creates a fresh pipeline instance (new task IDs)
-- Steps inherit the schedule's agent unless overridden
-- Execution history tracks which schedule triggered which pipeline
-
-#### Feature 2: Task/Pipeline Loops (#79)
+#### Task/Pipeline Loops (#79)
 Repeat a task or pipeline until an exit condition is met — the [Ralph Wiggum Loop](https://ghuntley.com/loop/) pattern.
 
 ```bash
@@ -94,6 +87,7 @@ beat loop "implement next item from spec.md" \
 - v0.4.0 schedules (cron/one-time), checkpoints, `continueFrom`
 - v0.4.1 pipelines (`CreatePipeline`)
 - v0.5.0 multi-agent per-task selection
+- v0.6.0 scheduled pipelines
 
 ---
 
@@ -224,7 +218,8 @@ beat recipe create my-workflow  # interactive recipe builder
 | v0.3.1–3 | ✅ Released | Dependency optimizations + security |
 | v0.4.0 | ✅ Released | Scheduling, Resumption, Rename to Backbeat |
 | v0.5.0 | ✅ Released | Multi-Agent Support |
-| v0.6.0 | 🎯 Next | Scheduled Pipelines + Loops |
+| v0.6.0 | ✅ Released | Scheduled Pipelines |
+| v0.6.1 | 🎯 Next | Task/Pipeline Loops |
 | v0.7.0 | 📋 Planned | Agent Failover + Smart Routing |
 | v0.8.0 | 📋 Planned | Workflow Recipes & Templates |
 | v0.9.0 | 💭 Research | Monitoring + REST API + Dashboard |

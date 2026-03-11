@@ -56,6 +56,8 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
   let expiresAt: string | undefined;
   let afterScheduleId: string | undefined;
   let agent: AgentProvider | undefined;
+  let isPipeline = false;
+  const pipelineSteps: string[] = [];
 
   for (let i = 0; i < scheduleArgs.length; i++) {
     const arg = scheduleArgs[i];
@@ -123,18 +125,17 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
       }
       agent = next;
       i++;
+    } else if (arg === '--pipeline') {
+      isPipeline = true;
+    } else if (arg === '--step' && next) {
+      pipelineSteps.push(next);
+      i++;
     } else if (arg.startsWith('-')) {
       ui.error(`Unknown flag: ${arg}`);
       process.exit(1);
     } else {
       promptWords.push(arg);
     }
-  }
-
-  const prompt = promptWords.join(' ');
-  if (!prompt) {
-    ui.error('Usage: beat schedule create <prompt> --cron "..." | --at "..." [options]');
-    process.exit(1);
   }
 
   // Infer type from --cron / --at flags
@@ -154,6 +155,62 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
   }
 
   const { ScheduleType, MissedRunPolicy, Priority } = await import('../../core/domain.js');
+
+  // Pipeline mode: --pipeline with --step flags
+  if (isPipeline) {
+    if (pipelineSteps.length < 2) {
+      ui.error('Pipeline requires at least 2 --step flags');
+      process.exit(1);
+    }
+
+    const result = await service.createScheduledPipeline({
+      steps: pipelineSteps.map((prompt) => ({ prompt })),
+      scheduleType: scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
+      cronExpression,
+      scheduledAt,
+      timezone,
+      missedRunPolicy:
+        missedRunPolicy === 'catchup'
+          ? MissedRunPolicy.CATCHUP
+          : missedRunPolicy === 'fail'
+            ? MissedRunPolicy.FAIL
+            : missedRunPolicy
+              ? MissedRunPolicy.SKIP
+              : undefined,
+      priority: priority ? Priority[priority] : undefined,
+      workingDirectory,
+      maxRuns,
+      expiresAt,
+      afterScheduleId: afterScheduleId ? ScheduleId(afterScheduleId) : undefined,
+      agent,
+    });
+
+    if (result.ok) {
+      ui.success(`Scheduled pipeline created: ${result.value.id}`);
+      const details = [
+        `Type: ${result.value.scheduleType}`,
+        `Steps: ${result.value.pipelineSteps?.length ?? 0}`,
+        `Status: ${result.value.status}`,
+      ];
+      if (result.value.nextRunAt) details.push(`Next run: ${new Date(result.value.nextRunAt).toISOString()}`);
+      if (result.value.cronExpression) details.push(`Cron: ${result.value.cronExpression}`);
+      if (agent) details.push(`Agent: ${agent}`);
+      ui.info(details.join(' | '));
+      process.exit(0);
+    } else {
+      ui.error(`Failed to create scheduled pipeline: ${result.error.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Single-task mode
+  const prompt = promptWords.join(' ');
+  if (!prompt) {
+    ui.error('Usage: beat schedule create <prompt> --cron "..." | --at "..." [options]');
+    ui.info('  Pipeline: beat schedule create --pipeline --step "lint" --step "test" --cron "0 9 * * *"');
+    process.exit(1);
+  }
 
   const result = await service.createSchedule({
     prompt,
@@ -273,6 +330,15 @@ async function scheduleGet(service: ScheduleService, scheduleArgs: string[]) {
     );
     if (schedule.taskTemplate.agent) lines.push(`Agent:       ${schedule.taskTemplate.agent}`);
 
+    if (schedule.pipelineSteps && schedule.pipelineSteps.length > 0) {
+      lines.push(`Pipeline:    ${schedule.pipelineSteps.length} steps`);
+      for (let i = 0; i < schedule.pipelineSteps.length; i++) {
+        const step = schedule.pipelineSteps[i];
+        const stepInfo = `  Step ${i + 1}: ${step.prompt.substring(0, 60)}${step.prompt.length > 60 ? '...' : ''}`;
+        lines.push(stepInfo);
+      }
+    }
+
     ui.note(lines.join('\n'), 'Schedule Details');
 
     if (history && history.length > 0) {
@@ -292,16 +358,28 @@ async function scheduleGet(service: ScheduleService, scheduleArgs: string[]) {
 }
 
 async function scheduleCancel(service: ScheduleService, scheduleArgs: string[]) {
-  const scheduleId = scheduleArgs[0];
+  let cancelTasks = false;
+  const filteredArgs: string[] = [];
+
+  for (const arg of scheduleArgs) {
+    if (arg === '--cancel-tasks') {
+      cancelTasks = true;
+    } else {
+      filteredArgs.push(arg);
+    }
+  }
+
+  const scheduleId = filteredArgs[0];
   if (!scheduleId) {
-    ui.error('Usage: beat schedule cancel <schedule-id> [reason]');
+    ui.error('Usage: beat schedule cancel <schedule-id> [--cancel-tasks] [reason]');
     process.exit(1);
   }
-  const reason = scheduleArgs.slice(1).join(' ') || undefined;
+  const reason = filteredArgs.slice(1).join(' ') || undefined;
 
-  const result = await service.cancelSchedule(ScheduleId(scheduleId), reason);
+  const result = await service.cancelSchedule(ScheduleId(scheduleId), reason, cancelTasks);
   if (result.ok) {
     ui.success(`Schedule ${scheduleId} cancelled`);
+    if (cancelTasks) ui.info('In-flight tasks also cancelled');
     if (reason) ui.info(`Reason: ${reason}`);
   } else {
     ui.error(`Failed to cancel schedule: ${result.error.message}`);

@@ -62,6 +62,16 @@ export class QueueHandler extends BaseEventHandler {
    */
   private async handleTaskPersisted(event: TaskPersistedEvent): Promise<void> {
     await this.handleEvent(event, async (event) => {
+      // Fast-path: if task was created with dependencies, skip DB check entirely
+      // This eliminates the race condition where DependencyHandler hasn't written
+      // dependency rows yet but isBlocked() returns false
+      if (event.task.dependencyState === 'blocked') {
+        this.logger.info('Task blocked by dependencies (fast-path)', {
+          taskId: event.task.id,
+        });
+        return ok(undefined);
+      }
+
       // Check if task is blocked by dependencies
       const isBlockedResult = await this.dependencyRepo.isBlocked(event.task.id);
       if (!isBlockedResult.ok) {

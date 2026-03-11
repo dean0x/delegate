@@ -8,14 +8,15 @@
  * state (repo, logger) rather than thrown exceptions.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Schedule } from '../../../../src/core/domain';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PipelineStepRequest, Schedule, Task } from '../../../../src/core/domain';
 import {
   createSchedule,
   MissedRunPolicy,
   ScheduleId,
   ScheduleStatus,
   ScheduleType,
+  TaskId,
   TaskStatus,
 } from '../../../../src/core/domain';
 import { InMemoryEventBus } from '../../../../src/core/events/event-bus';
@@ -579,6 +580,229 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       if (!allTasks.ok) return;
       expect(allTasks.value).toHaveLength(1);
       expect(allTasks.value[0].dependsOn ?? []).toHaveLength(0);
+    });
+  });
+
+  describe('Pipeline trigger (v0.6.0)', () => {
+    const pipelineSteps: readonly PipelineStepRequest[] = [
+      { prompt: 'lint code' },
+      { prompt: 'run tests' },
+      { prompt: 'deploy' },
+    ];
+
+    function createPipelineSchedule(overrides: Partial<Parameters<typeof createSchedule>[0]> = {}): Schedule {
+      return createSchedule({
+        taskTemplate: { prompt: 'Pipeline', workingDirectory: '/tmp' },
+        scheduleType: ScheduleType.ONE_TIME,
+        scheduledAt: Date.now() + 60000,
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
+        pipelineSteps,
+        ...overrides,
+      });
+    }
+
+    async function triggerSchedule(scheduleId: ReturnType<typeof ScheduleId>): Promise<void> {
+      await scheduleRepo.update(scheduleId, { nextRunAt: Date.now() - 1000 });
+      await eventBus.emit('ScheduleTriggered', { scheduleId, triggeredAt: Date.now() });
+      await flushEventLoop();
+    }
+
+    it('should create N tasks with linear dependencies for pipeline schedule', async () => {
+      // Arrange
+      const delegatedTasks: Task[] = [];
+      eventBus.subscribe('TaskDelegated', async (e) => {
+        delegatedTasks.push(e.task);
+      });
+
+      const schedule = createPipelineSchedule();
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+
+      // Act
+      await triggerSchedule(schedule.id);
+
+      // Assert: 3 tasks created in the repo
+      const allTasksResult = await taskRepo.findAll();
+      expect(allTasksResult.ok).toBe(true);
+      if (!allTasksResult.ok) return;
+      expect(allTasksResult.value).toHaveLength(3);
+
+      // TaskDelegated events are emitted in pipeline order (step 0, 1, 2)
+      expect(delegatedTasks).toHaveLength(3);
+      expect(delegatedTasks[0].prompt).toBe('lint code');
+      expect(delegatedTasks[1].prompt).toBe('run tests');
+      expect(delegatedTasks[2].prompt).toBe('deploy');
+
+      // Assert: linear dependencies — step[1] depends on step[0], step[2] depends on step[1]
+      expect(delegatedTasks[0].dependsOn ?? []).toHaveLength(0);
+      expect(delegatedTasks[1].dependsOn).toContain(delegatedTasks[0].id);
+      expect(delegatedTasks[2].dependsOn).toContain(delegatedTasks[1].id);
+      expect(delegatedTasks[2].dependsOn).not.toContain(delegatedTasks[0].id);
+
+      // Assert: pipeline trigger logged
+      expect(logger.hasLogContaining('Pipeline triggered successfully')).toBe(true);
+    });
+
+    it('should emit ScheduleExecuted with lastTaskId for concurrency tracking', async () => {
+      // Arrange
+      const twoSteps: readonly PipelineStepRequest[] = [
+        { prompt: 'build' },
+        { prompt: 'push' },
+      ];
+      const schedule = createPipelineSchedule({ pipelineSteps: twoSteps });
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+
+      const executedEvents: Array<{ scheduleId: ReturnType<typeof ScheduleId>; taskId: ReturnType<typeof TaskId> }> = [];
+      eventBus.subscribe('ScheduleExecuted', async (e) => {
+        executedEvents.push({ scheduleId: e.scheduleId, taskId: e.taskId });
+      });
+
+      // Act
+      await triggerSchedule(schedule.id);
+
+      // Assert: exactly one ScheduleExecuted event
+      expect(executedEvents).toHaveLength(1);
+      expect(executedEvents[0].scheduleId).toBe(schedule.id);
+
+      // The taskId in ScheduleExecuted must be the LAST step's task ID
+      const allTasksResult = await taskRepo.findAll();
+      expect(allTasksResult.ok).toBe(true);
+      if (!allTasksResult.ok) return;
+
+      const allTasks = allTasksResult.value;
+      expect(allTasks).toHaveLength(2);
+
+      // Last task is the one with no dependents (step 1 = 'push')
+      const lastTask = allTasks.find((t) => t.prompt === 'push');
+      expect(lastTask).toBeDefined();
+      expect(executedEvents[0].taskId).toBe(lastTask!.id);
+    });
+
+    it('should inject afterScheduleId dependency on step 0', async () => {
+      // Arrange: create a predecessor schedule and trigger it to create a task
+      const predecessor = createTestSchedule();
+      await saveSchedule(predecessor);
+      await scheduleRepo.update(predecessor.id, { nextRunAt: Date.now() - 60000 });
+
+      await eventBus.emit('ScheduleTriggered', {
+        scheduleId: predecessor.id,
+        triggeredAt: Date.now(),
+      });
+      await flushEventLoop();
+
+      // Confirm predecessor task was created and is still QUEUED (non-terminal)
+      const predecessorTasksResult = await taskRepo.findAll();
+      expect(predecessorTasksResult.ok).toBe(true);
+      if (!predecessorTasksResult.ok) return;
+      expect(predecessorTasksResult.value).toHaveLength(1);
+      const predecessorTask = predecessorTasksResult.value[0];
+      expect(predecessorTask.status).toBe(TaskStatus.QUEUED);
+
+      // Capture TaskDelegated events for the pipeline
+      const delegatedTasks: Task[] = [];
+      eventBus.subscribe('TaskDelegated', async (e) => {
+        delegatedTasks.push(e.task);
+      });
+
+      // Create pipeline schedule chained after predecessor
+      const twoSteps: readonly PipelineStepRequest[] = [
+        { prompt: 'step-0' },
+        { prompt: 'step-1' },
+      ];
+      const pipelineSchedule = createPipelineSchedule({
+        afterScheduleId: predecessor.id,
+        pipelineSteps: twoSteps,
+      });
+      await saveSchedule({ ...pipelineSchedule, status: ScheduleStatus.ACTIVE });
+
+      // Act
+      await triggerSchedule(pipelineSchedule.id);
+
+      // Assert: 2 pipeline tasks created (plus the 1 predecessor task = 3 total)
+      const allTasksResult = await taskRepo.findAll();
+      expect(allTasksResult.ok).toBe(true);
+      if (!allTasksResult.ok) return;
+      expect(allTasksResult.value).toHaveLength(3);
+
+      // The 2 pipeline TaskDelegated events carry the dependency info
+      expect(delegatedTasks).toHaveLength(2);
+
+      const step0 = delegatedTasks.find((t) => t.prompt === 'step-0');
+      const step1 = delegatedTasks.find((t) => t.prompt === 'step-1');
+      expect(step0).toBeDefined();
+      expect(step1).toBeDefined();
+
+      // Step 0 depends on predecessor task (afterScheduleId injection)
+      expect(step0!.dependsOn).toContain(predecessorTask.id);
+
+      // Step 1 depends on step 0
+      expect(step1!.dependsOn).toContain(step0!.id);
+      expect(step1!.dependsOn).not.toContain(predecessorTask.id);
+    });
+
+    it('should handle partial save failure by cancelling saved tasks', async () => {
+      // Arrange: 3-step pipeline where the 3rd save will fail
+      const schedule = createPipelineSchedule();
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+
+      let saveCallCount = 0;
+      const originalSave = taskRepo.save.bind(taskRepo);
+      const saveSpy = vi.spyOn(taskRepo, 'save').mockImplementation(async (task) => {
+        saveCallCount++;
+        if (saveCallCount === 3) {
+          // Simulate failure on the 3rd task save
+          const { err: mkErr } = await import('../../../../src/core/result');
+          const { BackbeatError, ErrorCode } = await import('../../../../src/core/errors');
+          return mkErr(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Simulated DB failure on step 3'));
+        }
+        return originalSave(task);
+      });
+
+      // Act
+      await triggerSchedule(schedule.id);
+
+      saveSpy.mockRestore();
+
+      // Assert: the 2 tasks that were saved should now be CANCELLED
+      const allTasksResult = await taskRepo.findAll();
+      expect(allTasksResult.ok).toBe(true);
+      if (!allTasksResult.ok) return;
+
+      const allTasks = allTasksResult.value;
+      // Only 2 tasks saved (the 3rd failed)
+      expect(allTasks).toHaveLength(2);
+      expect(allTasks.every((t) => t.status === TaskStatus.CANCELLED)).toBe(true);
+
+      // Assert: a failed execution was recorded
+      const historyResult = await scheduleRepo.getExecutionHistory(schedule.id);
+      expect(historyResult.ok).toBe(true);
+      if (!historyResult.ok) return;
+      expect(historyResult.value).toHaveLength(1);
+      expect(historyResult.value[0].status).toBe('failed');
+    });
+
+    it('should update schedule state after pipeline trigger', async () => {
+      // Arrange: ONE_TIME pipeline schedule
+      const schedule = createPipelineSchedule({
+        scheduleType: ScheduleType.ONE_TIME,
+        scheduledAt: Date.now() - 60000,
+      });
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE, nextRunAt: Date.now() - 60000 });
+
+      // Act
+      await eventBus.emit('ScheduleTriggered', { scheduleId: schedule.id, triggeredAt: Date.now() });
+      await flushEventLoop();
+
+      // Assert: schedule is COMPLETED (ONE_TIME runs once)
+      const findResult = await scheduleRepo.findById(schedule.id);
+      expect(findResult.ok).toBe(true);
+      if (!findResult.ok) return;
+
+      const persisted = findResult.value;
+      expect(persisted).not.toBeNull();
+      expect(persisted!.status).toBe(ScheduleStatus.COMPLETED);
+      expect(persisted!.runCount).toBe(1);
+      expect(persisted!.nextRunAt).toBeUndefined();
     });
   });
 });

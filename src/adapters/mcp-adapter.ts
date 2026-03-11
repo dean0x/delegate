@@ -24,6 +24,7 @@ import {
   ScheduleId,
   ScheduleStatus,
   ScheduleType,
+  ScheduledPipelineCreateRequest,
   Task,
   TaskId,
   TaskRequest,
@@ -108,6 +109,11 @@ const ListSchedulesSchema = z.object({
 const CancelScheduleSchema = z.object({
   scheduleId: z.string().describe('Schedule ID to cancel'),
   reason: z.string().optional().describe('Reason for cancellation'),
+  cancelTasks: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Also cancel in-flight pipeline tasks from the current execution'),
 });
 
 const GetScheduleSchema = z.object({
@@ -145,6 +151,38 @@ const CreatePipelineSchema = z.object({
     .string()
     .optional()
     .describe('Default working directory for all steps (individual steps can override)'),
+  agent: z
+    .enum(AGENT_PROVIDERS_TUPLE)
+    .optional()
+    .describe('Default agent for all steps (individual steps can override)'),
+});
+
+const SchedulePipelineSchema = z.object({
+  steps: z
+    .array(
+      z.object({
+        prompt: z.string().min(1).max(4000).describe('Task prompt for this step'),
+        priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
+        workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
+        agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
+      }),
+    )
+    .min(2, 'Pipeline requires at least 2 steps')
+    .max(20, 'Pipeline cannot exceed 20 steps')
+    .describe('Ordered pipeline steps (executed sequentially on each trigger)'),
+  scheduleType: z.enum(['cron', 'one_time']).describe('Schedule type'),
+  cronExpression: z.string().optional().describe('Cron expression (5-field) for recurring pipelines'),
+  scheduledAt: z.string().optional().describe('ISO 8601 datetime for one-time pipelines'),
+  timezone: z.string().optional().default('UTC').describe('IANA timezone'),
+  missedRunPolicy: z.enum(['skip', 'catchup', 'fail']).optional().default('skip'),
+  priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Default priority for all steps'),
+  workingDirectory: z.string().optional().describe('Default working directory for all steps'),
+  maxRuns: z.number().min(1).optional().describe('Maximum number of pipeline runs for cron schedules'),
+  expiresAt: z.string().optional().describe('ISO 8601 datetime when schedule expires'),
+  afterSchedule: z
+    .string()
+    .optional()
+    .describe("Schedule ID to chain after (step 0 depends on this schedule's latest task)"),
   agent: z
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
@@ -246,6 +284,8 @@ export class MCPAdapter {
             return await this.handleResumeSchedule(args);
           case 'CreatePipeline':
             return await this.handleCreatePipeline(args);
+          case 'SchedulePipeline':
+            return await this.handleSchedulePipeline(args);
           case 'ListAgents':
             return this.handleListAgents();
           case 'ConfigureAgent':
@@ -536,7 +576,8 @@ export class MCPAdapter {
             },
             {
               name: 'CancelSchedule',
-              description: 'Cancel an active schedule',
+              description:
+                'Cancel an active schedule. Optionally cancel in-flight pipeline tasks from the current execution.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -545,6 +586,12 @@ export class MCPAdapter {
                   },
                   reason: {
                     type: 'string',
+                  },
+                  cancelTasks: {
+                    type: 'boolean',
+                    description:
+                      'Also cancel in-flight tasks from the current pipeline execution (default: false)',
+                    default: false,
                   },
                 },
                 required: ['scheduleId'],
@@ -631,6 +678,97 @@ export class MCPAdapter {
                   },
                 },
                 required: ['steps'],
+              },
+            },
+            // Scheduled pipeline (v0.6.0)
+            {
+              name: 'SchedulePipeline',
+              description:
+                'Schedule a recurring or one-time pipeline. Each trigger creates N tasks with linear dependencies (e.g., "every day at 9am: lint → test → deploy").',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  steps: {
+                    type: 'array',
+                    description: 'Ordered pipeline steps (executed sequentially on each trigger)',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        prompt: {
+                          type: 'string',
+                          description: 'Task prompt for this step',
+                          minLength: 1,
+                          maxLength: 4000,
+                        },
+                        priority: {
+                          type: 'string',
+                          enum: ['P0', 'P1', 'P2'],
+                          description: 'Priority override for this step',
+                        },
+                        workingDirectory: {
+                          type: 'string',
+                          description: 'Working directory override (absolute path)',
+                        },
+                        agent: {
+                          type: 'string',
+                          enum: [...AGENT_PROVIDERS],
+                          description: 'Agent override for this step',
+                        },
+                      },
+                      required: ['prompt'],
+                    },
+                    minItems: 2,
+                    maxItems: 20,
+                  },
+                  scheduleType: {
+                    type: 'string',
+                    enum: ['cron', 'one_time'],
+                    description: 'cron for recurring, one_time for single execution',
+                  },
+                  cronExpression: {
+                    type: 'string',
+                    description: 'Cron expression (5-field: minute hour day month weekday)',
+                  },
+                  scheduledAt: {
+                    type: 'string',
+                    description: 'ISO 8601 datetime for one-time pipelines',
+                  },
+                  timezone: {
+                    type: 'string',
+                    description: 'IANA timezone (default: UTC)',
+                  },
+                  missedRunPolicy: {
+                    type: 'string',
+                    enum: ['skip', 'catchup', 'fail'],
+                  },
+                  priority: {
+                    type: 'string',
+                    enum: ['P0', 'P1', 'P2'],
+                    description: 'Default priority for all steps',
+                  },
+                  workingDirectory: {
+                    type: 'string',
+                    description: 'Default working directory for all steps',
+                  },
+                  maxRuns: {
+                    type: 'number',
+                    description: 'Maximum runs for cron pipelines',
+                  },
+                  expiresAt: {
+                    type: 'string',
+                    description: 'ISO 8601 expiration datetime',
+                  },
+                  afterSchedule: {
+                    type: 'string',
+                    description: "Schedule ID to chain after (step 0 depends on this schedule's latest task)",
+                  },
+                  agent: {
+                    type: 'string',
+                    enum: [...AGENT_PROVIDERS],
+                    description: 'Default agent for all steps (individual steps can override)',
+                  },
+                },
+                required: ['steps', 'scheduleType'],
               },
             },
             // Agent tools (v0.5.0 Multi-Agent Support)
@@ -1107,6 +1245,8 @@ export class MCPAdapter {
           nextRunAt: s.nextRunAt ? new Date(s.nextRunAt).toISOString() : null,
           runCount: s.runCount,
           maxRuns: s.maxRuns,
+          isPipeline: !!(s.pipelineSteps && s.pipelineSteps.length > 0),
+          stepCount: s.pipelineSteps?.length ?? 0,
         }));
 
         return {
@@ -1176,6 +1316,18 @@ export class MCPAdapter {
               priority: schedule.taskTemplate.priority,
               workingDirectory: schedule.taskTemplate.workingDirectory,
             },
+            ...(schedule.pipelineSteps && schedule.pipelineSteps.length > 0
+              ? {
+                  isPipeline: true,
+                  pipelineSteps: schedule.pipelineSteps.map((s, i) => ({
+                    index: i,
+                    prompt: s.prompt.substring(0, 100) + (s.prompt.length > 100 ? '...' : ''),
+                    priority: s.priority,
+                    workingDirectory: s.workingDirectory,
+                    agent: s.agent,
+                  })),
+                }
+              : {}),
           },
         };
 
@@ -1218,9 +1370,9 @@ export class MCPAdapter {
       };
     }
 
-    const { scheduleId, reason } = parseResult.data;
+    const { scheduleId, reason, cancelTasks } = parseResult.data;
 
-    const result = await this.scheduleService.cancelSchedule(ScheduleId(scheduleId), reason);
+    const result = await this.scheduleService.cancelSchedule(ScheduleId(scheduleId), reason, cancelTasks);
 
     return match(result, {
       ok: () => ({
@@ -1232,6 +1384,7 @@ export class MCPAdapter {
                 success: true,
                 message: `Schedule ${scheduleId} cancelled`,
                 reason,
+                cancelledTasks: cancelTasks,
               },
               null,
               2,
@@ -1399,6 +1552,71 @@ export class MCPAdapter {
                   scheduleId: s.scheduleId,
                   prompt: s.prompt,
                 })),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle SchedulePipeline tool call
+   * Creates a scheduled pipeline that triggers N tasks with linear dependencies on each run
+   */
+  private async handleSchedulePipeline(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = SchedulePipelineSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const data = parseResult.data;
+
+    const request: ScheduledPipelineCreateRequest = {
+      steps: data.steps.map((s) => ({
+        prompt: s.prompt,
+        priority: s.priority as Priority | undefined,
+        workingDirectory: s.workingDirectory,
+        agent: s.agent as AgentProvider | undefined,
+      })),
+      scheduleType: data.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
+      cronExpression: data.cronExpression,
+      scheduledAt: data.scheduledAt,
+      timezone: data.timezone,
+      missedRunPolicy: toMissedRunPolicy(data.missedRunPolicy),
+      priority: data.priority as Priority | undefined,
+      workingDirectory: data.workingDirectory,
+      maxRuns: data.maxRuns,
+      expiresAt: data.expiresAt,
+      afterScheduleId: data.afterSchedule ? ScheduleId(data.afterSchedule) : undefined,
+      agent: data.agent as AgentProvider | undefined,
+    };
+
+    const result = await this.scheduleService.createScheduledPipeline(request);
+
+    return match(result, {
+      ok: (schedule) => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                scheduleId: schedule.id,
+                stepCount: schedule.pipelineSteps?.length ?? 0,
+                scheduleType: schedule.scheduleType,
+                nextRunAt: schedule.nextRunAt ? new Date(schedule.nextRunAt).toISOString() : undefined,
+                status: schedule.status,
+                timezone: schedule.timezone,
               },
               null,
               2,

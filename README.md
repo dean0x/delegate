@@ -79,10 +79,12 @@ Once configured, use these tools in Claude Code:
 | **ScheduleTask** | Schedule recurring or one-time tasks | `ScheduleTask({ prompt: "...", scheduleType: "cron", cronExpression: "0 2 * * *" })` |
 | **ListSchedules** | List schedules with optional status filter | `ListSchedules({ status: "active" })` |
 | **GetSchedule** | Get schedule details and execution history | `GetSchedule({ scheduleId })` |
-| **CancelSchedule** | Cancel an active schedule | `CancelSchedule({ scheduleId, reason })` |
+| **CancelSchedule** | Cancel an active schedule (optionally cancel in-flight tasks) | `CancelSchedule({ scheduleId, reason, cancelTasks? })` |
 | **PauseSchedule** | Pause a schedule (resumable) | `PauseSchedule({ scheduleId })` |
 | **ResumeSchedule** | Resume a paused schedule | `ResumeSchedule({ scheduleId })` |
 | **ResumeTask** | Resume a failed/completed task with checkpoint context | `ResumeTask({ taskId, additionalContext? })` |
+| **CreatePipeline** | Create sequential task pipelines | `CreatePipeline({ steps: [...] })` |
+| **SchedulePipeline** | Create recurring/one-time scheduled pipelines | `SchedulePipeline({ steps: [...], cronExpression: "0 9 * * *" })` |
 
 ### CLI Commands
 
@@ -316,7 +318,8 @@ backbeat/
 - [x] v0.3.3 - Test infrastructure and memory management
 - [x] v0.4.0 - Task scheduling and task resumption
 - [x] v0.5.0 - Multi-agent support (Claude, Codex, Gemini)
-- [ ] v0.6.0 - Scheduled pipelines and loops
+- [x] v0.6.0 - Scheduled pipelines
+- [ ] v0.6.1 - Task/pipeline loops
 
 See **[ROADMAP.md](./docs/ROADMAP.md)** for detailed plans and timelines.
 

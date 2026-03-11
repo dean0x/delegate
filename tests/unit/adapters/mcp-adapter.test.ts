@@ -13,8 +13,16 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MCPAdapter } from '../../../src/adapters/mcp-adapter';
-import type { PipelineCreateRequest, PipelineResult, Task, TaskRequest } from '../../../src/core/domain';
-import { Priority, ScheduleId } from '../../../src/core/domain';
+import type {
+  PipelineCreateRequest,
+  PipelineResult,
+  PipelineStepRequest,
+  Schedule,
+  ScheduledPipelineCreateRequest,
+  Task,
+  TaskRequest,
+} from '../../../src/core/domain';
+import { MissedRunPolicy, Priority, ScheduleId, ScheduleStatus, ScheduleType } from '../../../src/core/domain';
 import { BackbeatError, ErrorCode, taskNotFound } from '../../../src/core/errors';
 import type { Logger, ScheduleService, TaskManager } from '../../../src/core/interfaces';
 import type { Result } from '../../../src/core/result';
@@ -172,6 +180,7 @@ const stubScheduleService: ScheduleService = {
   pauseSchedule: vi.fn().mockResolvedValue(ok(undefined)),
   resumeSchedule: vi.fn().mockResolvedValue(ok(undefined)),
   createPipeline: vi.fn().mockResolvedValue(ok({ pipelineId: '', steps: [] })),
+  createScheduledPipeline: vi.fn().mockResolvedValue(ok(null)),
 };
 
 describe('MCPAdapter - Protocol Compliance', () => {
@@ -821,25 +830,194 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
   });
 });
 
+describe('MCPAdapter - SchedulePipeline & Enhanced Schedule Tools', () => {
+  let adapter: MCPAdapter;
+  let mockTaskManager: MockTaskManager;
+  let mockLogger: MockLogger;
+  let mockScheduleService: MockScheduleService;
+
+  beforeEach(() => {
+    mockTaskManager = new MockTaskManager();
+    mockLogger = new MockLogger();
+    mockScheduleService = new MockScheduleService();
+    adapter = new MCPAdapter(
+      mockTaskManager,
+      mockLogger,
+      mockScheduleService as unknown as ScheduleService,
+      undefined,
+      testConfig,
+    );
+  });
+
+  afterEach(() => {
+    mockTaskManager.reset();
+    mockLogger.reset();
+  });
+
+  describe('SchedulePipeline tool', () => {
+    it('should create scheduled pipeline with cron expression', async () => {
+      const result = await simulateSchedulePipeline(mockScheduleService, {
+        steps: [{ prompt: 'Build project' }, { prompt: 'Run tests' }, { prompt: 'Deploy' }],
+        scheduleType: 'cron',
+        cronExpression: '0 9 * * 1-5',
+      });
+
+      expect(result.isError).toBe(false);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.scheduleId).toBeDefined();
+      expect(response.stepCount).toBe(3);
+      expect(mockScheduleService.createScheduledPipelineCalls).toHaveLength(1);
+      expect(mockScheduleService.createScheduledPipelineCalls[0].steps).toHaveLength(3);
+    });
+
+    it('should validate minimum steps requirement', async () => {
+      const result = await simulateSchedulePipeline(mockScheduleService, {
+        steps: [{ prompt: 'only one step' }],
+        scheduleType: 'cron',
+        cronExpression: '0 9 * * *',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('at least 2');
+      expect(mockScheduleService.createScheduledPipelineCalls).toHaveLength(0);
+    });
+  });
+
+  describe('CancelSchedule with cancelTasks flag', () => {
+    it('should pass cancelTasks flag to service', async () => {
+      const result = await simulateCancelSchedule(mockScheduleService, {
+        scheduleId: 'schedule-abc123',
+        reason: 'No longer needed',
+        cancelTasks: true,
+      });
+
+      expect(result.isError).toBe(false);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.cancelledTasks).toBe(true);
+      expect(mockScheduleService.cancelScheduleCalls).toHaveLength(1);
+      expect(mockScheduleService.cancelScheduleCalls[0].cancelTasks).toBe(true);
+    });
+  });
+
+  describe('ListSchedules with pipeline indicators', () => {
+    it('should include isPipeline indicator in response', async () => {
+      const now = Date.now();
+      mockScheduleService.listSchedulesResult = [
+        Object.freeze({
+          id: ScheduleId('schedule-pipeline-1'),
+          taskTemplate: { prompt: 'pipeline step 1' },
+          scheduleType: ScheduleType.CRON,
+          cronExpression: '0 9 * * *',
+          timezone: 'UTC',
+          missedRunPolicy: MissedRunPolicy.SKIP,
+          status: ScheduleStatus.ACTIVE,
+          runCount: 3,
+          nextRunAt: now + 60000,
+          pipelineSteps: [
+            { prompt: 'Step 1' },
+            { prompt: 'Step 2' },
+            { prompt: 'Step 3' },
+          ] as readonly PipelineStepRequest[],
+          createdAt: now,
+          updatedAt: now,
+        }),
+      ];
+
+      const result = await simulateListSchedules(mockScheduleService, {});
+
+      expect(result.isError).toBe(false);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.schedules).toHaveLength(1);
+      expect(response.schedules[0].isPipeline).toBe(true);
+      expect(response.schedules[0].stepCount).toBe(3);
+    });
+  });
+
+  describe('GetSchedule with pipelineSteps', () => {
+    it('should include pipelineSteps in response when present', async () => {
+      const now = Date.now();
+      mockScheduleService.getScheduleResult = {
+        schedule: Object.freeze({
+          id: ScheduleId('schedule-pipeline-detail'),
+          taskTemplate: { prompt: 'pipeline placeholder' },
+          scheduleType: ScheduleType.CRON,
+          cronExpression: '0 */6 * * *',
+          timezone: 'America/New_York',
+          missedRunPolicy: MissedRunPolicy.SKIP,
+          status: ScheduleStatus.ACTIVE,
+          runCount: 5,
+          nextRunAt: now + 120000,
+          pipelineSteps: [
+            { prompt: 'Lint codebase' },
+            { prompt: 'Run unit tests', priority: 'P0' as Priority },
+          ] as readonly PipelineStepRequest[],
+          createdAt: now,
+          updatedAt: now,
+        }),
+      };
+
+      const result = await simulateGetSchedule(mockScheduleService, {
+        scheduleId: 'schedule-pipeline-detail',
+      });
+
+      expect(result.isError).toBe(false);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.schedule.isPipeline).toBe(true);
+      expect(response.schedule.pipelineSteps).toHaveLength(2);
+      expect(response.schedule.pipelineSteps[0].prompt).toBe('Lint codebase');
+      expect(response.schedule.pipelineSteps[1].priority).toBe('P0');
+    });
+  });
+});
+
 /**
- * Mock ScheduleService for CreatePipeline testing
+ * Mock ScheduleService for CreatePipeline / SchedulePipeline testing
  */
 class MockScheduleService {
   createPipelineCalls: PipelineCreateRequest[] = [];
+  createScheduledPipelineCalls: ScheduledPipelineCreateRequest[] = [];
+  cancelScheduleCalls: Array<{ scheduleId: string; reason?: string; cancelTasks?: boolean }> = [];
+  listSchedulesResult: Schedule[] = [];
+  getScheduleResult: { schedule: Schedule; history?: readonly { scheduledFor: number; executedAt?: number; status: string; taskId?: string; errorMessage?: string }[] } | null = null;
   shouldFailPipeline = false;
+  shouldFailScheduledPipeline = false;
+  shouldFailCancelSchedule = false;
+  shouldFailListSchedules = false;
+  shouldFailGetSchedule = false;
 
   async createSchedule() {
     return ok(null);
   }
-  async listSchedules() {
-    return ok([]);
+
+  async listSchedules(): Promise<Result<readonly Schedule[]>> {
+    if (this.shouldFailListSchedules) {
+      return err(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Failed to list schedules', {}));
+    }
+    return ok(this.listSchedulesResult);
   }
-  async getSchedule() {
-    return ok({ schedule: null });
+
+  async getSchedule(scheduleId: ScheduleId, _includeHistory?: boolean, _historyLimit?: number): Promise<Result<{ schedule: Schedule; history?: readonly { scheduledFor: number; executedAt?: number; status: string; taskId?: string; errorMessage?: string }[] }>> {
+    if (this.shouldFailGetSchedule) {
+      return err(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Failed to get schedule', {}));
+    }
+    if (this.getScheduleResult) {
+      return ok(this.getScheduleResult);
+    }
+    return err(new BackbeatError(ErrorCode.SYSTEM_ERROR, `Schedule ${scheduleId} not found`, {}));
   }
-  async cancelSchedule() {
+
+  async cancelSchedule(scheduleId: ScheduleId, reason?: string, cancelTasks?: boolean): Promise<Result<void>> {
+    this.cancelScheduleCalls.push({ scheduleId: scheduleId as string, reason, cancelTasks });
+    if (this.shouldFailCancelSchedule) {
+      return err(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Failed to cancel schedule', {}));
+    }
     return ok(undefined);
   }
+
   async pauseSchedule() {
     return ok(undefined);
   }
@@ -862,6 +1040,34 @@ class MockScheduleService {
         prompt: s.prompt.substring(0, 50) + (s.prompt.length > 50 ? '...' : ''),
       })),
     });
+  }
+
+  async createScheduledPipeline(request: ScheduledPipelineCreateRequest): Promise<Result<Schedule>> {
+    this.createScheduledPipelineCalls.push(request);
+
+    if (this.shouldFailScheduledPipeline) {
+      return err(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Scheduled pipeline creation failed', {}));
+    }
+
+    const now = Date.now();
+    return ok(Object.freeze({
+      id: ScheduleId('schedule-mock-pipeline'),
+      taskTemplate: {
+        prompt: request.steps[0].prompt,
+        priority: request.priority,
+        workingDirectory: request.workingDirectory,
+      },
+      scheduleType: request.scheduleType,
+      cronExpression: request.cronExpression,
+      timezone: request.timezone ?? 'UTC',
+      missedRunPolicy: request.missedRunPolicy ?? MissedRunPolicy.SKIP,
+      status: ScheduleStatus.ACTIVE,
+      runCount: 0,
+      nextRunAt: now + 60000,
+      pipelineSteps: request.steps,
+      createdAt: now,
+      updatedAt: now,
+    }));
   }
 }
 
@@ -1174,6 +1380,234 @@ async function simulateCreatePipeline(
           stepCount: result.value.steps.length,
           steps: result.value.steps,
         }),
+      },
+    ],
+  };
+}
+
+async function simulateSchedulePipeline(
+  scheduleService: MockScheduleService,
+  args: {
+    steps: Array<{ prompt: string; priority?: string; workingDirectory?: string }>;
+    scheduleType: string;
+    cronExpression?: string;
+    scheduledAt?: string;
+    timezone?: string;
+    missedRunPolicy?: string;
+    priority?: string;
+    workingDirectory?: string;
+    maxRuns?: number;
+    expiresAt?: string;
+  },
+): Promise<MCPToolResponse> {
+  // Validate min/max steps (mirrors SchedulePipelineSchema Zod validation)
+  if (args.steps.length < 2) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: 'Pipeline requires at least 2 steps' }],
+    };
+  }
+  if (args.steps.length > 20) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: 'Pipeline cannot exceed 20 steps' }],
+    };
+  }
+
+  const request: ScheduledPipelineCreateRequest = {
+    steps: args.steps.map((s) => ({
+      prompt: s.prompt,
+      priority: s.priority as Priority | undefined,
+      workingDirectory: s.workingDirectory,
+    })),
+    scheduleType: args.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
+    cronExpression: args.cronExpression,
+    scheduledAt: args.scheduledAt,
+    timezone: args.timezone ?? 'UTC',
+    priority: args.priority as Priority | undefined,
+    workingDirectory: args.workingDirectory,
+    maxRuns: args.maxRuns,
+    expiresAt: args.expiresAt,
+  };
+
+  const result = await scheduleService.createScheduledPipeline(request);
+
+  if (!result.ok) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
+    };
+  }
+
+  return {
+    isError: false,
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          scheduleId: result.value.id,
+          stepCount: result.value.pipelineSteps?.length ?? 0,
+          scheduleType: result.value.scheduleType,
+          nextRunAt: result.value.nextRunAt ? new Date(result.value.nextRunAt).toISOString() : undefined,
+          status: result.value.status,
+          timezone: result.value.timezone,
+        }),
+      },
+    ],
+  };
+}
+
+async function simulateCancelSchedule(
+  scheduleService: MockScheduleService,
+  args: { scheduleId: string; reason?: string; cancelTasks?: boolean },
+): Promise<MCPToolResponse> {
+  const { scheduleId, reason, cancelTasks } = args;
+
+  const result = await scheduleService.cancelSchedule(
+    ScheduleId(scheduleId),
+    reason,
+    cancelTasks,
+  );
+
+  if (!result.ok) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
+    };
+  }
+
+  return {
+    isError: false,
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          message: `Schedule ${scheduleId} cancelled`,
+          reason,
+          cancelledTasks: cancelTasks,
+        }),
+      },
+    ],
+  };
+}
+
+async function simulateListSchedules(
+  scheduleService: MockScheduleService,
+  args: { status?: string; limit?: number; offset?: number },
+): Promise<MCPToolResponse> {
+  const result = await scheduleService.listSchedules();
+
+  if (!result.ok) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
+    };
+  }
+
+  const schedules = result.value;
+  const simplifiedSchedules = schedules.map((s) => ({
+    id: s.id,
+    status: s.status,
+    scheduleType: s.scheduleType,
+    cronExpression: s.cronExpression,
+    nextRunAt: s.nextRunAt ? new Date(s.nextRunAt).toISOString() : null,
+    runCount: s.runCount,
+    maxRuns: s.maxRuns,
+    isPipeline: !!(s.pipelineSteps && s.pipelineSteps.length > 0),
+    stepCount: s.pipelineSteps?.length ?? 0,
+  }));
+
+  return {
+    isError: false,
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          schedules: simplifiedSchedules,
+          count: simplifiedSchedules.length,
+        }),
+      },
+    ],
+  };
+}
+
+async function simulateGetSchedule(
+  scheduleService: MockScheduleService,
+  args: { scheduleId: string; includeHistory?: boolean; historyLimit?: number },
+): Promise<MCPToolResponse> {
+  const result = await scheduleService.getSchedule(
+    ScheduleId(args.scheduleId),
+    args.includeHistory,
+    args.historyLimit,
+  );
+
+  if (!result.ok) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
+    };
+  }
+
+  const { schedule, history } = result.value;
+
+  const response: Record<string, unknown> = {
+    success: true,
+    schedule: {
+      id: schedule.id,
+      status: schedule.status,
+      scheduleType: schedule.scheduleType,
+      cronExpression: schedule.cronExpression,
+      scheduledAt: schedule.scheduledAt ? new Date(schedule.scheduledAt).toISOString() : null,
+      timezone: schedule.timezone,
+      missedRunPolicy: schedule.missedRunPolicy,
+      maxRuns: schedule.maxRuns,
+      runCount: schedule.runCount,
+      lastRunAt: schedule.lastRunAt ? new Date(schedule.lastRunAt).toISOString() : null,
+      nextRunAt: schedule.nextRunAt ? new Date(schedule.nextRunAt).toISOString() : null,
+      expiresAt: schedule.expiresAt ? new Date(schedule.expiresAt).toISOString() : null,
+      createdAt: new Date(schedule.createdAt).toISOString(),
+      updatedAt: new Date(schedule.updatedAt).toISOString(),
+      taskTemplate: {
+        prompt:
+          schedule.taskTemplate.prompt.substring(0, 100) +
+          (schedule.taskTemplate.prompt.length > 100 ? '...' : ''),
+        priority: schedule.taskTemplate.priority,
+        workingDirectory: schedule.taskTemplate.workingDirectory,
+      },
+      ...(schedule.pipelineSteps && schedule.pipelineSteps.length > 0
+        ? {
+            isPipeline: true,
+            pipelineSteps: schedule.pipelineSteps.map((s, i) => ({
+              index: i,
+              prompt: s.prompt.substring(0, 100) + (s.prompt.length > 100 ? '...' : ''),
+              priority: s.priority,
+              workingDirectory: s.workingDirectory,
+              agent: s.agent,
+            })),
+          }
+        : {}),
+    },
+  };
+
+  if (history) {
+    response.history = history.map((h) => ({
+      scheduledFor: new Date(h.scheduledFor).toISOString(),
+      executedAt: h.executedAt ? new Date(h.executedAt).toISOString() : null,
+      status: h.status,
+      taskId: h.taskId,
+      errorMessage: h.errorMessage,
+    }));
+  }
+
+  return {
+    isError: false,
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify(response, null, 2),
       },
     ],
   };

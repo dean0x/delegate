@@ -261,6 +261,7 @@ export interface Schedule {
   readonly nextRunAt?: number; // Computed next execution time (epoch ms)
   readonly expiresAt?: number; // Optional expiration time (epoch ms)
   readonly afterScheduleId?: ScheduleId; // Chain: new tasks depend on this schedule's latest task
+  readonly pipelineSteps?: readonly PipelineStepRequest[]; // Pipeline: ordered steps to create on each trigger
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -279,6 +280,7 @@ export interface ScheduleRequest {
   readonly maxRuns?: number; // Optional limit for CRON
   readonly expiresAt?: number; // Optional expiration
   readonly afterScheduleId?: ScheduleId; // Chain: block until after-schedule's latest task completes
+  readonly pipelineSteps?: readonly PipelineStepRequest[]; // Pipeline: ordered steps for scheduled pipeline
 }
 
 /**
@@ -321,6 +323,7 @@ export const createSchedule = (request: ScheduleRequest): Schedule => {
     nextRunAt: request.scheduleType === ScheduleType.ONE_TIME ? request.scheduledAt : undefined,
     expiresAt: request.expiresAt,
     afterScheduleId: request.afterScheduleId,
+    pipelineSteps: request.pipelineSteps,
     createdAt: now,
     updatedAt: now,
   });
@@ -380,6 +383,26 @@ export interface PipelineCreateRequest {
   readonly steps: readonly PipelineStepRequest[];
   readonly priority?: Priority; // shared default for all steps
   readonly workingDirectory?: string; // shared default for all steps
+  readonly agent?: AgentProvider; // shared default for all steps
+}
+
+/**
+ * Request type for creating scheduled pipelines via ScheduleService
+ * ARCHITECTURE: Flat structure for MCP/CLI consumption
+ * Each trigger creates fresh tasks with linear dependencies from pipelineSteps
+ */
+export interface ScheduledPipelineCreateRequest {
+  readonly steps: readonly PipelineStepRequest[];
+  readonly scheduleType: ScheduleType;
+  readonly cronExpression?: string;
+  readonly scheduledAt?: string; // ISO 8601 string (parsed by service)
+  readonly timezone?: string;
+  readonly missedRunPolicy?: MissedRunPolicy;
+  readonly priority?: Priority; // shared default for all steps
+  readonly workingDirectory?: string; // shared default for all steps
+  readonly maxRuns?: number;
+  readonly expiresAt?: string; // ISO 8601 string (parsed by service)
+  readonly afterScheduleId?: ScheduleId;
   readonly agent?: AgentProvider; // shared default for all steps
 }
 

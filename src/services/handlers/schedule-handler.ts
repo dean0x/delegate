@@ -5,8 +5,8 @@
  * Rationale: Manages schedule creation, triggering, pausing, and execution tracking
  */
 
-import type { Schedule } from '../../core/domain.js';
-import { createTask, isTerminalState, ScheduleStatus, ScheduleType, updateSchedule } from '../../core/domain.js';
+import type { Schedule, ScheduleId, Task } from '../../core/domain.js';
+import { createTask, isTerminalState, ScheduleStatus, ScheduleType, TaskId, TaskStatus, updateSchedule } from '../../core/domain.js';
 import { BackbeatError, ErrorCode } from '../../core/errors.js';
 import { EventBus } from '../../core/events/event-bus.js';
 import {
@@ -215,7 +215,7 @@ export class ScheduleHandler extends BaseEventHandler {
   }
 
   /**
-   * Handle schedule trigger - create task, record execution, update schedule
+   * Handle schedule trigger - dispatch to single-task or pipeline path
    */
   private async handleScheduleTriggered(event: ScheduleTriggeredEvent): Promise<void> {
     await this.handleEvent(event, async (e) => {
@@ -247,158 +247,337 @@ export class ScheduleHandler extends BaseEventHandler {
         return ok(undefined);
       }
 
-      // afterScheduleId enforcement: inject dependency on chained schedule's latest task
-      let taskTemplate = schedule.taskTemplate;
-
-      if (schedule.afterScheduleId) {
-        const historyResult = await this.scheduleRepo.getExecutionHistory(schedule.afterScheduleId, 1);
-
-        if (historyResult.ok && historyResult.value.length > 0) {
-          const latestExecution = historyResult.value[0];
-
-          if (latestExecution.taskId) {
-            const depTaskResult = await this.taskRepo.findById(latestExecution.taskId);
-
-            if (depTaskResult.ok && depTaskResult.value && !isTerminalState(depTaskResult.value.status)) {
-              taskTemplate = {
-                ...schedule.taskTemplate,
-                dependsOn: [...(schedule.taskTemplate.dependsOn ?? []), latestExecution.taskId],
-              };
-              this.logger.info('Injected afterSchedule dependency', {
-                scheduleId,
-                afterScheduleId: schedule.afterScheduleId,
-                dependsOnTaskId: latestExecution.taskId,
-              });
-            } else {
-              this.logger.info('afterSchedule dependency already resolved, skipping', {
-                scheduleId,
-                afterScheduleId: schedule.afterScheduleId,
-                taskId: latestExecution.taskId,
-                taskStatus: depTaskResult.ok ? (depTaskResult.value?.status ?? 'not-found') : 'lookup-failed',
-              });
-            }
-          }
-          // No taskId on execution (failed before creating task) → skip
-        }
-        // No execution history → nothing to chain after
+      // Dispatch to appropriate trigger path
+      if (schedule.pipelineSteps && schedule.pipelineSteps.length > 0) {
+        return this.handlePipelineTrigger(schedule, triggeredAt);
       }
-
-      // Create task from template
-      const task = createTask(taskTemplate);
-      const taskSaveResult = await this.taskRepo.save(task);
-      if (!taskSaveResult.ok) {
-        // Record failed execution (audit trail - log on failure but don't block)
-        const failedExecResult = await this.scheduleRepo.recordExecution({
-          scheduleId,
-          scheduledFor: schedule.nextRunAt ?? triggeredAt,
-          executedAt: triggeredAt,
-          status: 'failed',
-          errorMessage: `Failed to create task: ${taskSaveResult.error.message}`,
-          createdAt: Date.now(),
-        });
-        if (!failedExecResult.ok) {
-          this.logger.error('Failed to record failed execution', failedExecResult.error, { scheduleId });
-        }
-        return taskSaveResult;
-      }
-
-      // Record successful execution (audit trail - log on failure but don't block)
-      const execResult = await this.scheduleRepo.recordExecution({
-        scheduleId,
-        taskId: task.id,
-        scheduledFor: schedule.nextRunAt ?? triggeredAt,
-        executedAt: triggeredAt,
-        status: 'triggered',
-        createdAt: Date.now(),
-      });
-      if (!execResult.ok) {
-        this.logger.error('Failed to record triggered execution', execResult.error, { scheduleId });
-      }
-
-      // Calculate update fields for schedule
-      const newRunCount = schedule.runCount + 1;
-
-      // Determine new status and nextRunAt
-      let newStatus: ScheduleStatus | undefined;
-      let newNextRunAt: number | undefined;
-
-      // Calculate next run time for CRON schedules
-      if (schedule.scheduleType === ScheduleType.CRON && schedule.cronExpression) {
-        const nextResult = getNextRunTime(schedule.cronExpression, schedule.timezone);
-        if (nextResult.ok) {
-          newNextRunAt = nextResult.value;
-        } else {
-          this.logger.error('Failed to calculate next run, pausing schedule', nextResult.error, {
-            scheduleId,
-            cronExpression: schedule.cronExpression,
-          });
-          newStatus = ScheduleStatus.PAUSED;
-          // newNextRunAt remains undefined -- will be explicitly set below to clear nextRunAt
-        }
-      } else if (schedule.scheduleType === ScheduleType.ONE_TIME) {
-        // ONE_TIME schedules complete after single execution
-        newStatus = ScheduleStatus.COMPLETED;
-        newNextRunAt = undefined;
-      }
-
-      // Check if maxRuns reached
-      if (schedule.maxRuns && newRunCount >= schedule.maxRuns) {
-        newStatus = ScheduleStatus.COMPLETED;
-        newNextRunAt = undefined;
-        this.logger.info('Schedule reached maxRuns, marking completed', {
-          scheduleId,
-          runCount: newRunCount,
-          maxRuns: schedule.maxRuns,
-        });
-      }
-
-      // Check expiration
-      if (schedule.expiresAt && Date.now() >= schedule.expiresAt) {
-        newStatus = ScheduleStatus.EXPIRED;
-        newNextRunAt = undefined;
-        this.logger.info('Schedule expired', { scheduleId, expiresAt: schedule.expiresAt });
-      }
-
-      // Build update object immutably
-      // IMPORTANT: Always include nextRunAt to prevent infinite retrigger when getNextRunTime fails.
-      // If newNextRunAt is undefined (e.g., cron parse failure), this clears the old past nextRunAt
-      // so the schedule is not returned by findDue on every tick.
-      const updates: Partial<Schedule> = {
-        runCount: newRunCount,
-        lastRunAt: triggeredAt,
-        nextRunAt: newNextRunAt,
-        ...(newStatus !== undefined ? { status: newStatus } : {}),
-      };
-
-      // Persist updates
-      const updateResult = await this.scheduleRepo.update(scheduleId, updates);
-      if (!updateResult.ok) {
-        this.logger.error('Failed to update schedule after trigger', updateResult.error, {
-          scheduleId,
-        });
-        return updateResult;
-      }
-
-      // Emit TaskDelegated event for the created task
-      await this.eventBus.emit('TaskDelegated', { task });
-
-      // Emit ScheduleExecuted event
-      await this.eventBus.emit('ScheduleExecuted', {
-        scheduleId,
-        taskId: task.id,
-        executedAt: triggeredAt,
-      });
-
-      this.logger.info('Schedule triggered successfully', {
-        scheduleId,
-        taskId: task.id,
-        runCount: newRunCount,
-        nextRunAt: updates.nextRunAt,
-        newStatus: updates.status ?? schedule.status,
-      });
-
-      return ok(undefined);
+      return this.handleSingleTaskTrigger(schedule, triggeredAt);
     });
+  }
+
+  /**
+   * Handle single-task trigger - existing logic extracted verbatim
+   */
+  private async handleSingleTaskTrigger(schedule: Schedule, triggeredAt: number): Promise<Result<void>> {
+    const scheduleId = schedule.id;
+
+    // afterScheduleId enforcement: inject dependency on chained schedule's latest task
+    const taskTemplate = await this.resolveAfterScheduleDependency(schedule);
+
+    // Create task from template
+    const task = createTask(taskTemplate);
+    const taskSaveResult = await this.taskRepo.save(task);
+    if (!taskSaveResult.ok) {
+      await this.recordFailedExecution(scheduleId, schedule.nextRunAt ?? triggeredAt, triggeredAt, taskSaveResult.error.message);
+      return taskSaveResult;
+    }
+
+    // Record successful execution
+    await this.recordTriggeredExecution(scheduleId, task.id, schedule.nextRunAt ?? triggeredAt, triggeredAt);
+
+    // Update schedule state
+    const updateResult = await this.updateScheduleAfterTrigger(schedule, triggeredAt);
+    if (!updateResult.ok) return updateResult;
+
+    // Emit TaskDelegated event for the created task
+    await this.eventBus.emit('TaskDelegated', { task });
+
+    // Emit ScheduleExecuted with the task ID (for concurrency tracking)
+    await this.eventBus.emit('ScheduleExecuted', {
+      scheduleId,
+      taskId: task.id,
+      executedAt: triggeredAt,
+    });
+
+    this.logger.info('Schedule triggered successfully', {
+      scheduleId,
+      taskId: task.id,
+      runCount: schedule.runCount + 1,
+    });
+
+    return ok(undefined);
+  }
+
+  /**
+   * Handle pipeline trigger - create N tasks with linear dependencies
+   */
+  private async handlePipelineTrigger(schedule: Schedule, triggeredAt: number): Promise<Result<void>> {
+    const scheduleId = schedule.id;
+    const steps = schedule.pipelineSteps!;
+    const defaults = schedule.taskTemplate;
+
+    this.logger.info('Processing pipeline trigger', {
+      scheduleId,
+      stepCount: steps.length,
+    });
+
+    // afterScheduleId handling: resolve predecessor dependency for step 0
+    let step0DependsOn: TaskId[] | undefined;
+    if (schedule.afterScheduleId) {
+      const historyResult = await this.scheduleRepo.getExecutionHistory(schedule.afterScheduleId, 1);
+      if (historyResult.ok && historyResult.value.length > 0) {
+        const latestExecution = historyResult.value[0];
+        if (latestExecution.taskId) {
+          const depTaskResult = await this.taskRepo.findById(latestExecution.taskId);
+          if (depTaskResult.ok && depTaskResult.value && !isTerminalState(depTaskResult.value.status)) {
+            step0DependsOn = [latestExecution.taskId];
+            this.logger.info('Injected afterSchedule dependency on pipeline step 0', {
+              scheduleId,
+              afterScheduleId: schedule.afterScheduleId,
+              dependsOnTaskId: latestExecution.taskId,
+            });
+          }
+        }
+      }
+    }
+
+    // Create tasks for each step with linear dependencies
+    const savedTasks: Task[] = [];
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const dependsOn: TaskId[] = [];
+
+      // Step 0 gets afterScheduleId dependency if present
+      if (i === 0 && step0DependsOn) {
+        dependsOn.push(...step0DependsOn);
+      }
+
+      // Step i depends on step i-1
+      if (i > 0) {
+        dependsOn.push(savedTasks[i - 1].id);
+      }
+
+      const task = createTask({
+        prompt: step.prompt,
+        priority: step.priority ?? defaults.priority,
+        workingDirectory: step.workingDirectory ?? defaults.workingDirectory,
+        agent: step.agent ?? defaults.agent,
+        dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
+      });
+
+      const saveResult = await this.taskRepo.save(task);
+      if (!saveResult.ok) {
+        // Partial save failure: cancel already-saved tasks directly via DB
+        this.logger.error('Pipeline task save failed, cleaning up', saveResult.error, {
+          scheduleId,
+          failedStep: i,
+          savedSteps: savedTasks.length,
+        });
+
+        for (const savedTask of savedTasks) {
+          const cancelResult = await this.taskRepo.update(savedTask.id, { status: TaskStatus.CANCELLED });
+          if (!cancelResult.ok) {
+            this.logger.error('Failed to cancel pipeline task during cleanup', cancelResult.error, {
+              taskId: savedTask.id,
+            });
+          }
+        }
+
+        await this.recordFailedExecution(
+          scheduleId,
+          schedule.nextRunAt ?? triggeredAt,
+          triggeredAt,
+          `Pipeline failed at step ${i + 1}: ${saveResult.error.message}`,
+        );
+        return saveResult;
+      }
+
+      savedTasks.push(task);
+    }
+
+    const allTaskIds = savedTasks.map((t) => t.id);
+    const firstTaskId = savedTasks[0].id;
+    const lastTaskId = savedTasks[savedTasks.length - 1].id;
+
+    // Record execution with all pipeline task IDs
+    await this.recordTriggeredExecution(
+      scheduleId,
+      firstTaskId,
+      schedule.nextRunAt ?? triggeredAt,
+      triggeredAt,
+      allTaskIds,
+    );
+
+    // Update schedule state
+    const updateResult = await this.updateScheduleAfterTrigger(schedule, triggeredAt);
+    if (!updateResult.ok) return updateResult;
+
+    // Emit TaskDelegated for each task (best-effort)
+    for (const task of savedTasks) {
+      const emitResult = await this.eventBus.emit('TaskDelegated', { task });
+      if (!emitResult.ok) {
+        this.logger.error('Failed to emit TaskDelegated for pipeline task', emitResult.error, {
+          taskId: task.id,
+          scheduleId,
+        });
+        // Best-effort: continue with remaining tasks
+      }
+    }
+
+    // Emit ScheduleExecuted with lastTaskId (tail task for concurrency tracking)
+    await this.eventBus.emit('ScheduleExecuted', {
+      scheduleId,
+      taskId: lastTaskId,
+      executedAt: triggeredAt,
+    });
+
+    this.logger.info('Pipeline triggered successfully', {
+      scheduleId,
+      stepCount: steps.length,
+      firstTaskId,
+      lastTaskId,
+      runCount: schedule.runCount + 1,
+    });
+
+    return ok(undefined);
+  }
+
+  // ============================================================================
+  // SHARED HELPERS (extracted from handleScheduleTriggered decomposition)
+  // ============================================================================
+
+  /**
+   * Resolve afterScheduleId dependency and return (possibly modified) task template
+   */
+  private async resolveAfterScheduleDependency(schedule: Schedule): Promise<typeof schedule.taskTemplate> {
+    if (!schedule.afterScheduleId) return schedule.taskTemplate;
+
+    const historyResult = await this.scheduleRepo.getExecutionHistory(schedule.afterScheduleId, 1);
+    if (!historyResult.ok || historyResult.value.length === 0) return schedule.taskTemplate;
+
+    const latestExecution = historyResult.value[0];
+    if (!latestExecution.taskId) return schedule.taskTemplate;
+
+    const depTaskResult = await this.taskRepo.findById(latestExecution.taskId);
+    if (!depTaskResult.ok || !depTaskResult.value || isTerminalState(depTaskResult.value.status)) {
+      this.logger.info('afterSchedule dependency already resolved, skipping', {
+        scheduleId: schedule.id,
+        afterScheduleId: schedule.afterScheduleId,
+        taskId: latestExecution.taskId,
+        taskStatus: depTaskResult.ok ? (depTaskResult.value?.status ?? 'not-found') : 'lookup-failed',
+      });
+      return schedule.taskTemplate;
+    }
+
+    this.logger.info('Injected afterSchedule dependency', {
+      scheduleId: schedule.id,
+      afterScheduleId: schedule.afterScheduleId,
+      dependsOnTaskId: latestExecution.taskId,
+    });
+
+    return {
+      ...schedule.taskTemplate,
+      dependsOn: [...(schedule.taskTemplate.dependsOn ?? []), latestExecution.taskId],
+    };
+  }
+
+  /**
+   * Record a failed execution in the audit trail
+   */
+  private async recordFailedExecution(
+    scheduleId: ScheduleId,
+    scheduledFor: number,
+    triggeredAt: number,
+    errorMessage: string,
+  ): Promise<void> {
+    const result = await this.scheduleRepo.recordExecution({
+      scheduleId,
+      scheduledFor,
+      executedAt: triggeredAt,
+      status: 'failed',
+      errorMessage: `Failed to create task: ${errorMessage}`,
+      createdAt: Date.now(),
+    });
+    if (!result.ok) {
+      this.logger.error('Failed to record failed execution', result.error, { scheduleId });
+    }
+  }
+
+  /**
+   * Record a triggered execution in the audit trail
+   */
+  private async recordTriggeredExecution(
+    scheduleId: ScheduleId,
+    taskId: TaskId,
+    scheduledFor: number,
+    triggeredAt: number,
+    pipelineTaskIds?: readonly TaskId[],
+  ): Promise<void> {
+    const result = await this.scheduleRepo.recordExecution({
+      scheduleId,
+      taskId,
+      scheduledFor,
+      executedAt: triggeredAt,
+      status: 'triggered',
+      pipelineTaskIds,
+      createdAt: Date.now(),
+    });
+    if (!result.ok) {
+      this.logger.error('Failed to record triggered execution', result.error, { scheduleId });
+    }
+  }
+
+  /**
+   * Update schedule state after a trigger (runCount, lastRunAt, nextRunAt, status)
+   */
+  private async updateScheduleAfterTrigger(schedule: Schedule, triggeredAt: number): Promise<Result<void>> {
+    const scheduleId = schedule.id;
+    const newRunCount = schedule.runCount + 1;
+
+    let newStatus: ScheduleStatus | undefined;
+    let newNextRunAt: number | undefined;
+
+    // Calculate next run time for CRON schedules
+    if (schedule.scheduleType === ScheduleType.CRON && schedule.cronExpression) {
+      const nextResult = getNextRunTime(schedule.cronExpression, schedule.timezone);
+      if (nextResult.ok) {
+        newNextRunAt = nextResult.value;
+      } else {
+        this.logger.error('Failed to calculate next run, pausing schedule', nextResult.error, {
+          scheduleId,
+          cronExpression: schedule.cronExpression,
+        });
+        newStatus = ScheduleStatus.PAUSED;
+      }
+    } else if (schedule.scheduleType === ScheduleType.ONE_TIME) {
+      newStatus = ScheduleStatus.COMPLETED;
+      newNextRunAt = undefined;
+    }
+
+    // Check if maxRuns reached
+    if (schedule.maxRuns && newRunCount >= schedule.maxRuns) {
+      newStatus = ScheduleStatus.COMPLETED;
+      newNextRunAt = undefined;
+      this.logger.info('Schedule reached maxRuns, marking completed', {
+        scheduleId,
+        runCount: newRunCount,
+        maxRuns: schedule.maxRuns,
+      });
+    }
+
+    // Check expiration
+    if (schedule.expiresAt && Date.now() >= schedule.expiresAt) {
+      newStatus = ScheduleStatus.EXPIRED;
+      newNextRunAt = undefined;
+      this.logger.info('Schedule expired', { scheduleId, expiresAt: schedule.expiresAt });
+    }
+
+    const updates: Partial<Schedule> = {
+      runCount: newRunCount,
+      lastRunAt: triggeredAt,
+      nextRunAt: newNextRunAt,
+      ...(newStatus !== undefined ? { status: newStatus } : {}),
+    };
+
+    const updateResult = await this.scheduleRepo.update(scheduleId, updates);
+    if (!updateResult.ok) {
+      this.logger.error('Failed to update schedule after trigger', updateResult.error, {
+        scheduleId,
+      });
+      return updateResult;
+    }
+
+    return ok(undefined);
   }
 
   /**

@@ -520,6 +520,16 @@ export class Database {
           db.exec(`ALTER TABLE tasks ADD COLUMN agent TEXT DEFAULT 'claude'`);
         },
       },
+      {
+        version: 8,
+        description: 'Add pipeline_steps to schedules and pipeline_task_ids to executions (v0.6.0)',
+        up: (db) => {
+          // Nullable JSON array of pipeline step definitions
+          db.exec(`ALTER TABLE schedules ADD COLUMN pipeline_steps TEXT`);
+          // Nullable JSON array of TaskIds created by a pipeline trigger
+          db.exec(`ALTER TABLE schedule_executions ADD COLUMN pipeline_task_ids TEXT`);
+        },
+      },
     ];
   }
 

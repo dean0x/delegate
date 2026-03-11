@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { PipelineCreateRequest, ScheduleCreateRequest } from '../../../src/core/domain';
+import type { PipelineCreateRequest, ScheduleCreateRequest, ScheduledPipelineCreateRequest } from '../../../src/core/domain';
 import {
   createSchedule,
   MissedRunPolicy,
@@ -592,6 +592,99 @@ describe('ScheduleManagerService - Unit Tests', () => {
 
       expect(result.ok).toBe(true);
       expect(eventBus.getEventCount('ScheduleCreated')).toBe(3);
+    });
+  });
+
+  describe('createScheduledPipeline()', () => {
+    function scheduledPipelineRequest(
+      overrides: Partial<ScheduledPipelineCreateRequest> = {},
+    ): ScheduledPipelineCreateRequest {
+      return {
+        steps: [{ prompt: 'Step one' }, { prompt: 'Step two' }, { prompt: 'Step three' }],
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        ...overrides,
+      };
+    }
+
+    it('should create a scheduled pipeline with cron', async () => {
+      const request = scheduledPipelineRequest();
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const schedule = result.value;
+      expect(schedule.scheduleType).toBe(ScheduleType.CRON);
+      expect(schedule.cronExpression).toBe('0 9 * * *');
+      expect(schedule.pipelineSteps).toBeDefined();
+      expect(schedule.pipelineSteps).toHaveLength(3);
+      expect(schedule.taskTemplate.prompt).toContain('Pipeline (3 steps)');
+      expect(schedule.taskTemplate.prompt).toContain('Step one');
+      expect(schedule.status).toBe(ScheduleStatus.ACTIVE);
+    });
+
+    it('should create a scheduled pipeline with one_time', async () => {
+      const futureDate = new Date(Date.now() + 3600000); // 1 hour from now
+      const request = scheduledPipelineRequest({
+        steps: [{ prompt: 'First step' }, { prompt: 'Second step' }],
+        scheduleType: ScheduleType.ONE_TIME,
+        cronExpression: undefined,
+        scheduledAt: futureDate.toISOString(),
+      });
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const schedule = result.value;
+      expect(schedule.scheduleType).toBe(ScheduleType.ONE_TIME);
+      expect(schedule.scheduledAt).toBeDefined();
+      expect(schedule.pipelineSteps).toHaveLength(2);
+    });
+
+    it('should reject fewer than 2 steps', async () => {
+      const request = scheduledPipelineRequest({
+        steps: [{ prompt: 'Only one' }],
+      });
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('at least 2 steps');
+    });
+
+    it('should reject more than 20 steps', async () => {
+      const steps = Array.from({ length: 21 }, (_, i) => ({ prompt: `Step ${i + 1}` }));
+      const request = scheduledPipelineRequest({ steps });
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('exceed 20 steps');
+    });
+
+    it('should emit ScheduleCreated event with pipelineSteps', async () => {
+      const request = scheduledPipelineRequest();
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(true);
+      expect(eventBus.hasEmitted('ScheduleCreated')).toBe(true);
+      expect(eventBus.getEventCount('ScheduleCreated')).toBe(1);
+
+      const events = eventBus.getEmittedEvents('ScheduleCreated');
+      const emittedSchedule = events[0].schedule;
+      expect(emittedSchedule.pipelineSteps).toBeDefined();
+      expect(emittedSchedule.pipelineSteps).toHaveLength(3);
+      expect(emittedSchedule.pipelineSteps![0].prompt).toBe('Step one');
+      expect(emittedSchedule.pipelineSteps![1].prompt).toBe('Step two');
+      expect(emittedSchedule.pipelineSteps![2].prompt).toBe('Step three');
     });
   });
 });

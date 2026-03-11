@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Schedule } from '../../../src/core/domain.js';
-import { createSchedule, MissedRunPolicy, ScheduleId, ScheduleStatus, ScheduleType } from '../../../src/core/domain.js';
+import { createSchedule, MissedRunPolicy, ScheduleId, ScheduleStatus, ScheduleType, TaskId } from '../../../src/core/domain.js';
 import { Database } from '../../../src/implementations/database.js';
 import { SQLiteScheduleRepository } from '../../../src/implementations/schedule-repository.js';
 
@@ -546,6 +546,107 @@ describe('SQLiteScheduleRepository - Unit Tests', () => {
 
         expect(result.value?.status).toBe(status);
       }
+    });
+  });
+
+  describe('pipeline_steps round-trip', () => {
+    it('should save and retrieve schedule with pipelineSteps', async () => {
+      const schedule = createTestSchedule({
+        pipelineSteps: [
+          { prompt: 'lint the codebase' },
+          { prompt: 'run the tests' },
+        ],
+      });
+
+      await repo.save(schedule);
+      const findResult = await repo.findById(schedule.id);
+
+      expect(findResult.ok).toBe(true);
+      if (!findResult.ok) return;
+
+      const found = findResult.value!;
+      expect(found.pipelineSteps).toBeDefined();
+      expect(found.pipelineSteps).toHaveLength(2);
+      expect(found.pipelineSteps![0].prompt).toBe('lint the codebase');
+      expect(found.pipelineSteps![1].prompt).toBe('run the tests');
+    });
+
+    it('should return undefined pipelineSteps for non-pipeline schedules', async () => {
+      const schedule = createTestSchedule();
+
+      await repo.save(schedule);
+      const findResult = await repo.findById(schedule.id);
+
+      expect(findResult.ok).toBe(true);
+      if (!findResult.ok) return;
+
+      expect(findResult.value!.pipelineSteps).toBeUndefined();
+    });
+
+    it('should record execution with pipelineTaskIds', async () => {
+      const schedule = createTestSchedule();
+      await repo.save(schedule);
+
+      const now = Date.now();
+      const taskIds = [TaskId('task-aaa-111'), TaskId('task-bbb-222'), TaskId('task-ccc-333')];
+
+      const recordResult = await repo.recordExecution({
+        scheduleId: schedule.id,
+        scheduledFor: now,
+        executedAt: now,
+        status: 'triggered',
+        pipelineTaskIds: taskIds,
+        createdAt: now,
+      });
+
+      expect(recordResult.ok).toBe(true);
+      if (!recordResult.ok) return;
+
+      expect(recordResult.value.pipelineTaskIds).toBeDefined();
+      expect(recordResult.value.pipelineTaskIds).toHaveLength(3);
+      expect(recordResult.value.pipelineTaskIds![0]).toBe('task-aaa-111');
+      expect(recordResult.value.pipelineTaskIds![2]).toBe('task-ccc-333');
+
+      // Also verify via getExecutionHistory
+      const historyResult = await repo.getExecutionHistory(schedule.id);
+      expect(historyResult.ok).toBe(true);
+      if (!historyResult.ok) return;
+
+      expect(historyResult.value).toHaveLength(1);
+      expect(historyResult.value[0].pipelineTaskIds).toHaveLength(3);
+      expect(historyResult.value[0].pipelineTaskIds![1]).toBe('task-bbb-222');
+    });
+
+    it('should update schedule with pipelineSteps', async () => {
+      // Save schedule without pipeline steps
+      const schedule = createTestSchedule();
+      await repo.save(schedule);
+
+      // Verify no pipeline steps initially
+      const initialResult = await repo.findById(schedule.id);
+      expect(initialResult.ok).toBe(true);
+      if (!initialResult.ok) return;
+      expect(initialResult.value!.pipelineSteps).toBeUndefined();
+
+      // Update to add pipeline steps
+      const steps = [
+        { prompt: 'step one' },
+        { prompt: 'step two' },
+        { prompt: 'step three' },
+      ];
+      await repo.update(schedule.id, { pipelineSteps: steps });
+
+      // Verify pipeline steps persisted
+      const updatedResult = await repo.findById(schedule.id);
+      expect(updatedResult.ok).toBe(true);
+      if (!updatedResult.ok) return;
+
+      const found = updatedResult.value!;
+      expect(found.pipelineSteps).toBeDefined();
+      expect(found.pipelineSteps).toHaveLength(3);
+      expect(found.pipelineSteps![0].prompt).toBe('step one');
+      expect(found.pipelineSteps![1].prompt).toBe('step two');
+      expect(found.pipelineSteps![2].prompt).toBe('step three');
     });
   });
 });

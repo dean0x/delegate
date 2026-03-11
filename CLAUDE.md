@@ -134,7 +134,7 @@ When adding task dependencies:
 
 ### MCP Tools
 
-All tools use PascalCase: `DelegateTask`, `TaskStatus`, `TaskLogs`, `CancelTask`, `ScheduleTask`, `ListSchedules`, `GetSchedule`, `CancelSchedule`, `PauseSchedule`, `ResumeSchedule`
+All tools use PascalCase: `DelegateTask`, `TaskStatus`, `TaskLogs`, `CancelTask`, `ScheduleTask`, `ListSchedules`, `GetSchedule`, `CancelSchedule`, `PauseSchedule`, `ResumeSchedule`, `CreatePipeline`, `SchedulePipeline`
 
 ## File Locations
 
@@ -154,6 +154,7 @@ Quick reference for common operations:
 | Schedule repository | `src/implementations/schedule-repository.ts` |
 | Schedule handler | `src/services/handlers/schedule-handler.ts` |
 | Schedule executor | `src/services/schedule-executor.ts` |
+| Schedule manager | `src/services/schedule-manager.ts` |
 | Cron utilities | `src/utils/cron.ts` |
 
 ## Documentation Structure

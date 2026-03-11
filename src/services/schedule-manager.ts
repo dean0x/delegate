@@ -18,6 +18,7 @@ import {
   ScheduleCreateRequest,
   ScheduleId,
   ScheduleStatus,
+  ScheduledPipelineCreateRequest,
   ScheduleType,
 } from '../core/domain.js';
 import { BackbeatError, ErrorCode } from '../core/errors.js';
@@ -234,13 +235,13 @@ export class ScheduleManagerService implements ScheduleService {
     return ok({ schedule, history });
   }
 
-  async cancelSchedule(scheduleId: ScheduleId, reason?: string): Promise<Result<void>> {
+  async cancelSchedule(scheduleId: ScheduleId, reason?: string, cancelTasks?: boolean): Promise<Result<void>> {
     const lookupResult = await this.fetchScheduleOrError(scheduleId);
     if (!lookupResult.ok) {
       return lookupResult;
     }
 
-    this.logger.info('Cancelling schedule', { scheduleId, reason });
+    this.logger.info('Cancelling schedule', { scheduleId, reason, cancelTasks });
 
     const emitResult = await this.eventBus.emit('ScheduleCancelled', {
       scheduleId,
@@ -252,6 +253,32 @@ export class ScheduleManagerService implements ScheduleService {
         scheduleId,
       });
       return err(emitResult.error);
+    }
+
+    // Optionally cancel in-flight pipeline tasks from the latest execution
+    if (cancelTasks) {
+      const historyResult = await this.scheduleRepository.getExecutionHistory(scheduleId, 1);
+      if (historyResult.ok && historyResult.value.length > 0) {
+        const latestExecution = historyResult.value[0];
+        const taskIds = latestExecution.pipelineTaskIds ?? (latestExecution.taskId ? [latestExecution.taskId] : []);
+        for (const taskId of taskIds) {
+          const cancelResult = await this.eventBus.emit('TaskCancellationRequested', {
+            taskId,
+            reason: `Schedule ${scheduleId} cancelled`,
+          });
+          if (!cancelResult.ok) {
+            this.logger.warn('Failed to cancel pipeline task', {
+              taskId,
+              scheduleId,
+              error: cancelResult.error.message,
+            });
+          }
+        }
+        this.logger.info('Cancelled in-flight pipeline tasks', {
+          scheduleId,
+          taskCount: taskIds.length,
+        });
+      }
     }
 
     return ok(undefined);
@@ -293,6 +320,107 @@ export class ScheduleManagerService implements ScheduleService {
     }
 
     return ok(undefined);
+  }
+
+  async createScheduledPipeline(request: ScheduledPipelineCreateRequest): Promise<Result<Schedule>> {
+    const { steps } = request;
+
+    if (steps.length < 2) {
+      return err(
+        new BackbeatError(ErrorCode.INVALID_INPUT, 'Pipeline requires at least 2 steps', {
+          stepCount: steps.length,
+        }),
+      );
+    }
+
+    if (steps.length > 20) {
+      return err(
+        new BackbeatError(ErrorCode.INVALID_INPUT, 'Pipeline cannot exceed 20 steps', {
+          stepCount: steps.length,
+        }),
+      );
+    }
+
+    // Validate schedule timing (reuse shared logic)
+    const timingResult = this.validateScheduleTiming(request);
+    if (!timingResult.ok) return timingResult;
+    const { scheduledAtMs, expiresAtMs, nextRunAt, timezone } = timingResult.value;
+
+    // Validate shared workingDirectory
+    let validatedWorkingDirectory: string | undefined;
+    if (request.workingDirectory) {
+      const pathValidation = validatePath(request.workingDirectory);
+      if (!pathValidation.ok) {
+        return err(
+          new BackbeatError(ErrorCode.INVALID_DIRECTORY, `Invalid working directory: ${pathValidation.error.message}`, {
+            workingDirectory: request.workingDirectory,
+          }),
+        );
+      }
+      validatedWorkingDirectory = pathValidation.value;
+    }
+
+    // Validate per-step workingDirectory
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      if (step.workingDirectory) {
+        const pathValidation = validatePath(step.workingDirectory);
+        if (!pathValidation.ok) {
+          return err(
+            new BackbeatError(
+              ErrorCode.INVALID_DIRECTORY,
+              `Invalid working directory for step ${i + 1}: ${pathValidation.error.message}`,
+              { step: i + 1, workingDirectory: step.workingDirectory },
+            ),
+          );
+        }
+      }
+    }
+
+    // Resolve shared agent
+    const agentResult = resolveDefaultAgent(request.agent, this.config.defaultAgent);
+    if (!agentResult.ok) return agentResult;
+
+    // Build synthetic prompt for display/taskTemplate
+    const stepSummary = steps.map((s, i) => `Step ${i + 1}: ${s.prompt.substring(0, 40)}${s.prompt.length > 40 ? '...' : ''}`).join(' → ');
+    const syntheticPrompt = `Pipeline (${steps.length} steps): ${stepSummary}`;
+
+    // Create schedule with pipelineSteps
+    const schedule = createSchedule({
+      taskTemplate: {
+        prompt: syntheticPrompt,
+        priority: request.priority,
+        workingDirectory: validatedWorkingDirectory,
+        agent: agentResult.value,
+      },
+      pipelineSteps: steps,
+      scheduleType: request.scheduleType,
+      cronExpression: request.cronExpression,
+      scheduledAt: scheduledAtMs,
+      timezone,
+      missedRunPolicy: toMissedRunPolicy(request.missedRunPolicy),
+      maxRuns: request.maxRuns,
+      expiresAt: expiresAtMs,
+      afterScheduleId: request.afterScheduleId,
+    });
+
+    this.logger.info('Creating scheduled pipeline', {
+      scheduleId: schedule.id,
+      scheduleType: schedule.scheduleType,
+      stepCount: steps.length,
+      nextRunAt: new Date(nextRunAt).toISOString(),
+    });
+
+    // Emit event — ScheduleHandler persists with calculated nextRunAt
+    const emitResult = await this.eventBus.emit('ScheduleCreated', { schedule });
+    if (!emitResult.ok) {
+      this.logger.error('Failed to emit ScheduleCreated event', emitResult.error, {
+        scheduleId: schedule.id,
+      });
+      return err(emitResult.error);
+    }
+
+    return ok(schedule);
   }
 
   async createPipeline(request: PipelineCreateRequest): Promise<Result<PipelineResult>> {
@@ -352,6 +480,94 @@ export class ScheduleManagerService implements ScheduleService {
       pipelineId: createdSteps[0].scheduleId,
       steps: createdSteps,
     });
+  }
+
+  /**
+   * Validate schedule timing fields shared between createSchedule and createScheduledPipeline
+   * Returns parsed timestamps and computed nextRunAt
+   */
+  private validateScheduleTiming(
+    request: Pick<ScheduleCreateRequest, 'scheduleType' | 'cronExpression' | 'scheduledAt' | 'expiresAt' | 'timezone'>,
+  ): Result<{ scheduledAtMs?: number; expiresAtMs?: number; nextRunAt: number; timezone: string }> {
+    // Validate schedule type requirements
+    if (request.scheduleType === ScheduleType.CRON && !request.cronExpression) {
+      return err(
+        new BackbeatError(ErrorCode.INVALID_INPUT, 'cronExpression is required for cron schedules', {
+          scheduleType: request.scheduleType,
+        }),
+      );
+    }
+    if (request.scheduleType === ScheduleType.ONE_TIME && !request.scheduledAt) {
+      return err(
+        new BackbeatError(ErrorCode.INVALID_INPUT, 'scheduledAt is required for one-time schedules', {
+          scheduleType: request.scheduleType,
+        }),
+      );
+    }
+
+    // Validate cron expression
+    if (request.cronExpression) {
+      const cronResult = validateCronExpression(request.cronExpression);
+      if (!cronResult.ok) return cronResult;
+    }
+
+    // Validate timezone
+    const tz = request.timezone ?? 'UTC';
+    if (!isValidTimezone(tz)) {
+      return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Invalid timezone: ${tz}`, { timezone: tz }));
+    }
+
+    // Parse scheduledAt
+    let scheduledAtMs: number | undefined;
+    if (request.scheduledAt) {
+      scheduledAtMs = Date.parse(request.scheduledAt);
+      if (isNaN(scheduledAtMs)) {
+        return err(
+          new BackbeatError(ErrorCode.INVALID_INPUT, `Invalid scheduledAt datetime: ${request.scheduledAt}`, {
+            scheduledAt: request.scheduledAt,
+          }),
+        );
+      }
+      if (scheduledAtMs <= Date.now()) {
+        return err(
+          new BackbeatError(ErrorCode.INVALID_INPUT, 'scheduledAt must be in the future', {
+            scheduledAt: request.scheduledAt,
+          }),
+        );
+      }
+    }
+
+    // Parse expiresAt
+    let expiresAtMs: number | undefined;
+    if (request.expiresAt) {
+      expiresAtMs = Date.parse(request.expiresAt);
+      if (isNaN(expiresAtMs)) {
+        return err(
+          new BackbeatError(ErrorCode.INVALID_INPUT, `Invalid expiresAt datetime: ${request.expiresAt}`, {
+            expiresAt: request.expiresAt,
+          }),
+        );
+      }
+    }
+
+    // Calculate nextRunAt
+    let nextRunAt: number;
+    if (request.scheduleType === ScheduleType.CRON && request.cronExpression) {
+      const nextResult = getNextRunTime(request.cronExpression, tz);
+      if (!nextResult.ok) return nextResult;
+      nextRunAt = nextResult.value;
+    } else {
+      if (scheduledAtMs === undefined) {
+        return err(
+          new BackbeatError(ErrorCode.INVALID_INPUT, 'scheduledAt must be provided for one-time schedules', {
+            scheduleType: request.scheduleType,
+          }),
+        );
+      }
+      nextRunAt = scheduledAtMs;
+    }
+
+    return ok({ scheduledAtMs, expiresAtMs, nextRunAt, timezone: tz });
   }
 
   /**
