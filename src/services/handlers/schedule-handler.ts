@@ -274,12 +274,9 @@ export class ScheduleHandler extends BaseEventHandler {
     const dependsOn = afterTaskId
       ? [...(schedule.taskTemplate.dependsOn ?? []), afterTaskId]
       : schedule.taskTemplate.dependsOn;
-    const taskTemplate = dependsOn
-      ? { ...schedule.taskTemplate, dependsOn }
-      : schedule.taskTemplate;
 
     // Create task from template
-    const task = createTask(taskTemplate);
+    const task = createTask({ ...schedule.taskTemplate, dependsOn });
     const taskSaveResult = await this.taskRepo.save(task);
     if (!taskSaveResult.ok) {
       await this.recordFailedExecution(

@@ -62,10 +62,9 @@ export class ScheduleManagerService implements ScheduleService {
   }
 
   async createSchedule(request: ScheduleCreateRequest): Promise<Result<Schedule>> {
-    // Validate schedule timing (reuse shared logic)
     const timingResult = this.validateScheduleTiming(request);
     if (!timingResult.ok) return timingResult;
-    const { scheduledAtMs, expiresAtMs, nextRunAt, timezone: tz } = timingResult.value;
+    const { scheduledAtMs, expiresAtMs, nextRunAt, timezone } = timingResult.value;
 
     // Validate workingDirectory
     let validatedWorkingDirectory: string | undefined;
@@ -96,7 +95,7 @@ export class ScheduleManagerService implements ScheduleService {
       scheduleType: request.scheduleType,
       cronExpression: request.cronExpression,
       scheduledAt: scheduledAtMs,
-      timezone: tz,
+      timezone,
       missedRunPolicy: toMissedRunPolicy(request.missedRunPolicy),
       maxRuns: request.maxRuns,
       expiresAt: expiresAtMs,
@@ -264,7 +263,6 @@ export class ScheduleManagerService implements ScheduleService {
       );
     }
 
-    // Validate schedule timing (reuse shared logic)
     const timingResult = this.validateScheduleTiming(request);
     if (!timingResult.ok) return timingResult;
     const { scheduledAtMs, expiresAtMs, nextRunAt, timezone } = timingResult.value;
@@ -305,9 +303,7 @@ export class ScheduleManagerService implements ScheduleService {
     if (!agentResult.ok) return agentResult;
 
     // Build synthetic prompt for display/taskTemplate
-    const stepSummary = steps
-      .map((s, i) => `Step ${i + 1}: ${s.prompt.substring(0, 40)}${s.prompt.length > 40 ? '...' : ''}`)
-      .join(' → ');
+    const stepSummary = steps.map((s, i) => `Step ${i + 1}: ${truncatePrompt(s.prompt, 40)}`).join(' → ');
     const syntheticPrompt = `Pipeline (${steps.length} steps): ${stepSummary}`;
 
     // Create schedule with pipelineSteps

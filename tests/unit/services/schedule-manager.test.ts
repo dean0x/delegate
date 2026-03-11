@@ -419,9 +419,9 @@ describe('ScheduleManagerService - Unit Tests', () => {
       // Insert a task row to satisfy FK constraint on schedule_executions.task_id
       const taskId = TaskId('task-single');
       const now = Date.now();
-      db.getDatabase().prepare(
-        `INSERT INTO tasks (id, prompt, status, priority, created_at) VALUES (?, ?, ?, ?, ?)`,
-      ).run(taskId, 'single task', 'running', 'P2', now);
+      db.getDatabase()
+        .prepare(`INSERT INTO tasks (id, prompt, status, priority, created_at) VALUES (?, ?, ?, ?, ?)`)
+        .run(taskId, 'single task', 'running', 'P2', now);
 
       // Record an execution with only a single taskId (non-pipeline schedule)
       await scheduleRepo.recordExecution({
