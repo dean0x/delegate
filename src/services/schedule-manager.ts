@@ -62,87 +62,10 @@ export class ScheduleManagerService implements ScheduleService {
   }
 
   async createSchedule(request: ScheduleCreateRequest): Promise<Result<Schedule>> {
-    // Validate schedule type requirements
-    if (request.scheduleType === ScheduleType.CRON && !request.cronExpression) {
-      return err(
-        new BackbeatError(ErrorCode.INVALID_INPUT, 'cronExpression is required for cron schedules', {
-          scheduleType: request.scheduleType,
-        }),
-      );
-    }
-    if (request.scheduleType === ScheduleType.ONE_TIME && !request.scheduledAt) {
-      return err(
-        new BackbeatError(ErrorCode.INVALID_INPUT, 'scheduledAt is required for one-time schedules', {
-          scheduleType: request.scheduleType,
-        }),
-      );
-    }
-
-    // Validate cron expression
-    if (request.cronExpression) {
-      const cronResult = validateCronExpression(request.cronExpression);
-      if (!cronResult.ok) {
-        return cronResult;
-      }
-    }
-
-    // Validate timezone
-    const tz = request.timezone ?? 'UTC';
-    if (!isValidTimezone(tz)) {
-      return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Invalid timezone: ${tz}`, { timezone: tz }));
-    }
-
-    // Parse scheduledAt if provided
-    let scheduledAtMs: number | undefined;
-    if (request.scheduledAt) {
-      scheduledAtMs = Date.parse(request.scheduledAt);
-      if (isNaN(scheduledAtMs)) {
-        return err(
-          new BackbeatError(ErrorCode.INVALID_INPUT, `Invalid scheduledAt datetime: ${request.scheduledAt}`, {
-            scheduledAt: request.scheduledAt,
-          }),
-        );
-      }
-      if (scheduledAtMs <= Date.now()) {
-        return err(
-          new BackbeatError(ErrorCode.INVALID_INPUT, 'scheduledAt must be in the future', {
-            scheduledAt: request.scheduledAt,
-          }),
-        );
-      }
-    }
-
-    // Parse expiresAt if provided
-    let expiresAtMs: number | undefined;
-    if (request.expiresAt) {
-      expiresAtMs = Date.parse(request.expiresAt);
-      if (isNaN(expiresAtMs)) {
-        return err(
-          new BackbeatError(ErrorCode.INVALID_INPUT, `Invalid expiresAt datetime: ${request.expiresAt}`, {
-            expiresAt: request.expiresAt,
-          }),
-        );
-      }
-    }
-
-    // Calculate nextRunAt
-    let nextRunAt: number;
-    if (request.scheduleType === ScheduleType.CRON && request.cronExpression) {
-      const nextResult = getNextRunTime(request.cronExpression, tz);
-      if (!nextResult.ok) {
-        return nextResult;
-      }
-      nextRunAt = nextResult.value;
-    } else {
-      if (scheduledAtMs === undefined) {
-        return err(
-          new BackbeatError(ErrorCode.INVALID_INPUT, 'scheduledAt must be provided for one-time schedules', {
-            scheduleType: request.scheduleType,
-          }),
-        );
-      }
-      nextRunAt = scheduledAtMs;
-    }
+    // Validate schedule timing (reuse shared logic)
+    const timingResult = this.validateScheduleTiming(request);
+    if (!timingResult.ok) return timingResult;
+    const { scheduledAtMs, expiresAtMs, nextRunAt, timezone: tz } = timingResult.value;
 
     // Validate workingDirectory
     let validatedWorkingDirectory: string | undefined;
