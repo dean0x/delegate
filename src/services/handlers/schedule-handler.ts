@@ -521,32 +521,8 @@ export class ScheduleHandler extends BaseEventHandler {
   }
 
   /**
-   * Record a triggered execution in the audit trail
-   */
-  private async recordTriggeredExecution(
-    scheduleId: ScheduleId,
-    taskId: TaskId,
-    scheduledFor: number,
-    triggeredAt: number,
-    pipelineTaskIds?: readonly TaskId[],
-  ): Promise<void> {
-    const result = await this.scheduleRepo.recordExecution({
-      scheduleId,
-      taskId,
-      scheduledFor,
-      executedAt: triggeredAt,
-      status: 'triggered',
-      pipelineTaskIds,
-      createdAt: Date.now(),
-    });
-    if (!result.ok) {
-      this.logger.error('Failed to record triggered execution', result.error, { scheduleId });
-    }
-  }
-
-  /**
    * Compute schedule update fields after a trigger (runCount, lastRunAt, nextRunAt, status).
-   * Pure computation — no side effects. Shared by async and sync trigger paths.
+   * Performs logging but no database writes. Shared by async and sync trigger paths.
    */
   private computeScheduleUpdates(schedule: Schedule, triggeredAt: number): Partial<Schedule> {
     const newRunCount = schedule.runCount + 1;
@@ -594,23 +570,6 @@ export class ScheduleHandler extends BaseEventHandler {
       nextRunAt: newNextRunAt,
       ...(newStatus !== undefined ? { status: newStatus } : {}),
     };
-  }
-
-  /**
-   * Update schedule state after a trigger (async path — used outside transactions)
-   */
-  private async updateScheduleAfterTrigger(schedule: Schedule, triggeredAt: number): Promise<Result<void>> {
-    const updates = this.computeScheduleUpdates(schedule, triggeredAt);
-
-    const updateResult = await this.scheduleRepo.update(schedule.id, updates);
-    if (!updateResult.ok) {
-      this.logger.error('Failed to update schedule after trigger', updateResult.error, {
-        scheduleId: schedule.id,
-      });
-      return updateResult;
-    }
-
-    return ok(undefined);
   }
 
   /**
