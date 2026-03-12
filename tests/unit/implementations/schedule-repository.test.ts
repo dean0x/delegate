@@ -14,6 +14,7 @@ import {
   ScheduleType,
   TaskId,
 } from '../../../src/core/domain.js';
+import { BackbeatError, ErrorCode } from '../../../src/core/errors.js';
 import { Database } from '../../../src/implementations/database.js';
 import { SQLiteScheduleRepository } from '../../../src/implementations/schedule-repository.js';
 
@@ -647,6 +648,122 @@ describe('SQLiteScheduleRepository - Unit Tests', () => {
       expect(found.pipelineSteps![0].prompt).toBe('step one');
       expect(found.pipelineSteps![1].prompt).toBe('step two');
       expect(found.pipelineSteps![2].prompt).toBe('step three');
+    });
+  });
+
+  describe('Sync methods (for transactions)', () => {
+    it('findByIdSync should return schedule when found', async () => {
+      const schedule = createTestSchedule();
+      await repo.save(schedule);
+
+      const found = repo.findByIdSync(schedule.id);
+      expect(found).not.toBeNull();
+      expect(found!.id).toBe(schedule.id);
+    });
+
+    it('findByIdSync should return null when not found', () => {
+      const found = repo.findByIdSync(ScheduleId('no-such-schedule'));
+      expect(found).toBeNull();
+    });
+
+    it('updateSync should merge fields', async () => {
+      const schedule = createTestSchedule();
+      await repo.save(schedule);
+
+      repo.updateSync(schedule.id, { status: ScheduleStatus.PAUSED, runCount: 3 });
+
+      const found = repo.findByIdSync(schedule.id);
+      expect(found).not.toBeNull();
+      expect(found!.status).toBe(ScheduleStatus.PAUSED);
+      expect(found!.runCount).toBe(3);
+    });
+
+    it('updateSync should throw BackbeatError for non-existent schedule', () => {
+      expect(() => {
+        repo.updateSync(ScheduleId('no-such-schedule'), { status: ScheduleStatus.PAUSED });
+      }).toThrow(BackbeatError);
+    });
+
+    it('recordExecutionSync should record and return execution with ID', async () => {
+      const schedule = createTestSchedule();
+      await repo.save(schedule);
+
+      const now = Date.now();
+      const execution = repo.recordExecutionSync({
+        scheduleId: schedule.id,
+        scheduledFor: now,
+        executedAt: now,
+        status: 'triggered',
+        createdAt: now,
+      });
+
+      expect(execution.id).toBeDefined();
+      expect(execution.scheduleId).toBe(schedule.id);
+      expect(execution.status).toBe('triggered');
+    });
+
+    it('recordExecutionSync should record execution with pipelineTaskIds', async () => {
+      const schedule = createTestSchedule();
+      await repo.save(schedule);
+
+      const now = Date.now();
+      const taskIds = [TaskId('task-a'), TaskId('task-b')];
+      const execution = repo.recordExecutionSync({
+        scheduleId: schedule.id,
+        scheduledFor: now,
+        executedAt: now,
+        status: 'triggered',
+        pipelineTaskIds: taskIds,
+        createdAt: now,
+      });
+
+      expect(execution.pipelineTaskIds).toBeDefined();
+      expect(execution.pipelineTaskIds).toHaveLength(2);
+      expect(execution.pipelineTaskIds![0]).toBe('task-a');
+    });
+
+    it('should work correctly inside Database.runInTransaction', async () => {
+      const schedule = createTestSchedule();
+      await repo.save(schedule);
+
+      const now = Date.now();
+      const result = db.runInTransaction(() => {
+        repo.updateSync(schedule.id, { runCount: 1, lastRunAt: now });
+        repo.recordExecutionSync({
+          scheduleId: schedule.id,
+          scheduledFor: now,
+          executedAt: now,
+          status: 'triggered',
+          createdAt: now,
+        });
+      });
+
+      expect(result.ok).toBe(true);
+
+      // Verify both operations committed
+      const found = repo.findByIdSync(schedule.id);
+      expect(found!.runCount).toBe(1);
+
+      const history = await repo.getExecutionHistory(schedule.id);
+      expect(history.ok).toBe(true);
+      if (!history.ok) return;
+      expect(history.value).toHaveLength(1);
+    });
+
+    it('should rollback all operations when transaction fails', async () => {
+      const schedule = createTestSchedule();
+      await repo.save(schedule);
+
+      const result = db.runInTransaction(() => {
+        repo.updateSync(schedule.id, { runCount: 99 });
+        throw new Error('simulated failure');
+      });
+
+      expect(result.ok).toBe(false);
+
+      // runCount should not have changed
+      const found = repo.findByIdSync(schedule.id);
+      expect(found!.runCount).toBe(0);
     });
   });
 });

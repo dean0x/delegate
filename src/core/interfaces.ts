@@ -130,7 +130,6 @@ export interface TaskRepository {
   findByStatus(status: string): Promise<Result<readonly Task[]>>;
   delete(taskId: TaskId): Promise<Result<void>>;
   cleanupOldTasks(olderThanMs: number): Promise<Result<number>>;
-  transaction<T>(fn: (repo: TaskRepository) => Promise<Result<T>>): Promise<Result<T>>;
 }
 
 /**
@@ -410,6 +409,28 @@ export interface ScheduleService {
   resumeSchedule(scheduleId: ScheduleId): Promise<Result<void>>;
   createPipeline(request: PipelineCreateRequest): Promise<Result<PipelineResult>>;
   createScheduledPipeline(request: ScheduledPipelineCreateRequest): Promise<Result<Schedule>>;
+}
+
+/**
+ * Synchronous task operations for use inside Database.runInTransaction().
+ * These methods throw on error (the transaction wrapper catches and converts to Result).
+ * ARCHITECTURE: Narrow interface — only the operations needed inside transactions.
+ */
+export interface SyncTaskOperations {
+  saveSync(task: Task): void;
+  updateSync(taskId: TaskId, update: Partial<Task>): void;
+  findByIdSync(taskId: TaskId): Task | null;
+}
+
+/**
+ * Synchronous schedule operations for use inside Database.runInTransaction().
+ * These methods throw on error (the transaction wrapper catches and converts to Result).
+ * ARCHITECTURE: Narrow interface — only the operations needed inside transactions.
+ */
+export interface SyncScheduleOperations {
+  updateSync(id: ScheduleId, update: Partial<Schedule>): void;
+  recordExecutionSync(execution: Omit<ScheduleExecution, 'id'>): ScheduleExecution;
+  findByIdSync(id: ScheduleId): Schedule | null;
 }
 
 /**

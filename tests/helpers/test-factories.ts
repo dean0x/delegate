@@ -237,7 +237,6 @@ export const MockFactory = {
       delete: vi.fn().mockResolvedValue(ok(undefined)),
       findAll: vi.fn().mockResolvedValue(ok([])),
       cleanupOldTasks: vi.fn().mockResolvedValue(ok(0)),
-      transaction: vi.fn().mockImplementation(async (fn) => await fn({} as TaskRepository)),
     } as TaskRepository;
   },
 

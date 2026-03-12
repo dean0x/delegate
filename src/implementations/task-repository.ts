@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { AGENT_PROVIDERS_TUPLE, AgentProvider } from '../core/agents.js';
 import { Priority, Task, TaskId, TaskStatus, WorkerId } from '../core/domain.js';
 import { BackbeatError, ErrorCode, operationErrorHandler } from '../core/errors.js';
-import { TaskRepository } from '../core/interfaces.js';
+import { SyncTaskOperations, TaskRepository } from '../core/interfaces.js';
 import { err, ok, Result, tryCatchAsync } from '../core/result.js';
 import { Database } from './database.js';
 
@@ -62,7 +62,7 @@ interface TaskRow {
   readonly agent: string | null;
 }
 
-export class SQLiteTaskRepository implements TaskRepository {
+export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations {
   private readonly db: SQLite.Database;
   private readonly saveStmt: SQLite.Statement;
   private readonly updateStmt: SQLite.Statement;
@@ -165,39 +165,44 @@ export class SQLiteTaskRepository implements TaskRepository {
     `);
   }
 
+  /**
+   * Convert Task domain object to database parameter format.
+   * Shared by both async (save/update) and sync (saveSync/updateSync) methods.
+   * Includes createdAt — better-sqlite3 ignores named params not referenced by the statement.
+   */
+  private toDbFormat(task: Task): Record<string, unknown> {
+    return {
+      id: task.id,
+      prompt: task.prompt,
+      status: task.status,
+      priority: task.priority,
+      workingDirectory: task.workingDirectory || null,
+      timeout: task.timeout || null,
+      maxOutputBuffer: task.maxOutputBuffer || null,
+      createdAt: task.createdAt,
+      startedAt: task.startedAt || null,
+      completedAt: task.completedAt || null,
+      workerId: task.workerId || null,
+      exitCode: task.exitCode ?? null,
+      dependencies: null, // Dependencies stored in task_dependencies table
+      parentTaskId: task.parentTaskId || null,
+      retryCount: task.retryCount || null,
+      retryOf: task.retryOf || null,
+      continueFrom: task.continueFrom || null,
+      agent: task.agent || null,
+    };
+  }
+
   async save(task: Task): Promise<Result<void>> {
     return tryCatchAsync(
       async () => {
-        // Convert task to database format
-        const dbTask = {
-          id: task.id,
-          prompt: task.prompt,
-          status: task.status,
-          priority: task.priority,
-          workingDirectory: task.workingDirectory || null,
-          timeout: task.timeout || null,
-          maxOutputBuffer: task.maxOutputBuffer || null,
-          createdAt: task.createdAt,
-          startedAt: task.startedAt || null,
-          completedAt: task.completedAt || null,
-          workerId: task.workerId || null,
-          exitCode: task.exitCode ?? null,
-          dependencies: null, // Dependencies stored in task_dependencies table
-          parentTaskId: task.parentTaskId || null,
-          retryCount: task.retryCount || null,
-          retryOf: task.retryOf || null,
-          continueFrom: task.continueFrom || null,
-          agent: task.agent || null,
-        };
-
-        this.saveStmt.run(dbTask);
+        this.saveStmt.run(this.toDbFormat(task));
       },
       operationErrorHandler('save task', { taskId: task.id }),
     );
   }
 
   async update(taskId: TaskId, update: Partial<Task>): Promise<Result<void>> {
-    // First get the existing task
     const existingResult = await this.findById(taskId);
 
     if (!existingResult.ok) {
@@ -208,34 +213,38 @@ export class SQLiteTaskRepository implements TaskRepository {
       return err(new BackbeatError(ErrorCode.TASK_NOT_FOUND, `Task ${taskId} not found`));
     }
 
-    // Merge updates with existing task
     const updatedTask = { ...existingResult.value, ...update };
 
-    // Use UPDATE (not INSERT OR REPLACE) to preserve child rows
     return tryCatchAsync(
       async () => {
-        this.updateStmt.run({
-          id: updatedTask.id,
-          prompt: updatedTask.prompt,
-          status: updatedTask.status,
-          priority: updatedTask.priority,
-          workingDirectory: updatedTask.workingDirectory || null,
-          timeout: updatedTask.timeout || null,
-          maxOutputBuffer: updatedTask.maxOutputBuffer || null,
-          startedAt: updatedTask.startedAt || null,
-          completedAt: updatedTask.completedAt || null,
-          workerId: updatedTask.workerId || null,
-          exitCode: updatedTask.exitCode ?? null,
-          dependencies: null,
-          parentTaskId: updatedTask.parentTaskId || null,
-          retryCount: updatedTask.retryCount || null,
-          retryOf: updatedTask.retryOf || null,
-          continueFrom: updatedTask.continueFrom || null,
-          agent: updatedTask.agent || null,
-        });
+        this.updateStmt.run(this.toDbFormat(updatedTask));
       },
       operationErrorHandler('update task', { taskId }),
     );
+  }
+
+  // ============================================================================
+  // SYNC METHODS (for use inside Database.runInTransaction())
+  // These throw on error — the transaction wrapper catches and converts to Result.
+  // ============================================================================
+
+  saveSync(task: Task): void {
+    this.saveStmt.run(this.toDbFormat(task));
+  }
+
+  findByIdSync(taskId: TaskId): Task | null {
+    const row = this.findByIdStmt.get(taskId) as TaskRow | undefined;
+    if (!row) return null;
+    return this.rowToTask(row);
+  }
+
+  updateSync(taskId: TaskId, update: Partial<Task>): void {
+    const existing = this.findByIdSync(taskId);
+    if (!existing) {
+      throw new BackbeatError(ErrorCode.TASK_NOT_FOUND, `Task ${taskId} not found`);
+    }
+    const updatedTask = { ...existing, ...update };
+    this.updateStmt.run(this.toDbFormat(updatedTask));
   }
 
   async findById(taskId: TaskId): Promise<Result<Task | null>> {
@@ -304,21 +313,6 @@ export class SQLiteTaskRepository implements TaskRepository {
     }, operationErrorHandler('cleanup old tasks'));
   }
 
-  async transaction<T>(fn: (repo: TaskRepository) => Promise<Result<T>>): Promise<Result<T>> {
-    try {
-      const transactionFn = this.db.transaction(async () => {
-        // Create a transaction-wrapped repository
-        const txRepo = new TransactionTaskRepository(this);
-        return await fn(txRepo);
-      });
-
-      // Execute the transaction and return the result
-      return await transactionFn();
-    } catch (error) {
-      return err(new BackbeatError(ErrorCode.SYSTEM_ERROR, `Transaction failed: ${error}`));
-    }
-  }
-
   /**
    * Convert database row to Task domain object
    * Pattern: Validate at boundary - ensures data integrity from database
@@ -349,51 +343,3 @@ export class SQLiteTaskRepository implements TaskRepository {
   }
 }
 
-/**
- * Transaction-wrapped repository that delegates to the main repository
- * All operations run within the same SQLite transaction
- */
-class TransactionTaskRepository implements TaskRepository {
-  constructor(private readonly mainRepo: SQLiteTaskRepository) {}
-
-  async save(task: Task): Promise<Result<void>> {
-    return this.mainRepo.save(task);
-  }
-
-  async update(taskId: TaskId, update: Partial<Task>): Promise<Result<void>> {
-    return this.mainRepo.update(taskId, update);
-  }
-
-  async findById(taskId: TaskId): Promise<Result<Task | null>> {
-    return this.mainRepo.findById(taskId);
-  }
-
-  async findAll(limit?: number, offset?: number): Promise<Result<readonly Task[]>> {
-    return this.mainRepo.findAll(limit, offset);
-  }
-
-  async findAllUnbounded(): Promise<Result<readonly Task[]>> {
-    return this.mainRepo.findAllUnbounded();
-  }
-
-  async count(): Promise<Result<number>> {
-    return this.mainRepo.count();
-  }
-
-  async findByStatus(status: string): Promise<Result<readonly Task[]>> {
-    return this.mainRepo.findByStatus(status);
-  }
-
-  async delete(taskId: TaskId): Promise<Result<void>> {
-    return this.mainRepo.delete(taskId);
-  }
-
-  async cleanupOldTasks(olderThanMs: number): Promise<Result<number>> {
-    return this.mainRepo.cleanupOldTasks(olderThanMs);
-  }
-
-  async transaction<T>(fn: (repo: TaskRepository) => Promise<Result<T>>): Promise<Result<T>> {
-    // Nested transactions not supported - just execute the function
-    return fn(this);
-  }
-}

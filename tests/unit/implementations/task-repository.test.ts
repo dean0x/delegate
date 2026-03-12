@@ -6,7 +6,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type Task, TaskId } from '../../../src/core/domain.js';
+import { type Task, TaskId, TaskStatus } from '../../../src/core/domain.js';
+import { BackbeatError, ErrorCode } from '../../../src/core/errors.js';
 import { Database } from '../../../src/implementations/database.js';
 import { SQLiteTaskRepository } from '../../../src/implementations/task-repository.js';
 import { createTestTask } from '../../fixtures/test-data.js';
@@ -211,8 +212,6 @@ describe('SQLiteTaskRepository', () => {
     });
 
     it('should apply migration v6 correctly (column exists)', async () => {
-      // The Database constructor applies all migrations automatically
-      // Verify the column exists by saving/retrieving a task with continueFrom
       const task = createTestTask({
         id: 'task-migration-test',
         continueFrom: 'task-parent-migration',
@@ -225,6 +224,81 @@ describe('SQLiteTaskRepository', () => {
       if (findResult.ok && findResult.value) {
         expect(findResult.value.continueFrom).toBe('task-parent-migration');
       }
+    });
+  });
+
+  describe('Sync methods (for transactions)', () => {
+    it('saveSync should persist a task', () => {
+      const task = createTestTask({ id: 'sync-save-1' });
+      repo.saveSync(task);
+
+      const found = repo.findByIdSync(TaskId('sync-save-1'));
+      expect(found).not.toBeNull();
+      expect(found!.prompt).toBe(task.prompt);
+    });
+
+    it('findByIdSync should return null for non-existent task', () => {
+      const found = repo.findByIdSync(TaskId('no-such-task'));
+      expect(found).toBeNull();
+    });
+
+    it('updateSync should merge fields', () => {
+      const task = createTestTask({ id: 'sync-update-1' });
+      repo.saveSync(task);
+
+      repo.updateSync(TaskId('sync-update-1'), { status: TaskStatus.RUNNING });
+
+      const found = repo.findByIdSync(TaskId('sync-update-1'));
+      expect(found).not.toBeNull();
+      expect(found!.status).toBe(TaskStatus.RUNNING);
+      expect(found!.prompt).toBe(task.prompt); // Other fields preserved
+    });
+
+    it('updateSync should throw BackbeatError for non-existent task', () => {
+      expect(() => {
+        repo.updateSync(TaskId('no-such-task'), { status: TaskStatus.CANCELLED });
+      }).toThrow(BackbeatError);
+
+      try {
+        repo.updateSync(TaskId('no-such-task'), { status: TaskStatus.CANCELLED });
+      } catch (e) {
+        expect((e as BackbeatError).code).toBe(ErrorCode.TASK_NOT_FOUND);
+      }
+    });
+
+    it('should work correctly inside Database.runInTransaction', () => {
+      const task1 = createTestTask({ id: 'tx-task-1' });
+      const task2 = createTestTask({ id: 'tx-task-2' });
+
+      const result = database.runInTransaction(() => {
+        repo.saveSync(task1);
+        repo.saveSync(task2);
+        repo.updateSync(TaskId('tx-task-1'), { status: TaskStatus.RUNNING });
+      });
+
+      expect(result.ok).toBe(true);
+
+      // Both tasks committed
+      const found1 = repo.findByIdSync(TaskId('tx-task-1'));
+      const found2 = repo.findByIdSync(TaskId('tx-task-2'));
+      expect(found1).not.toBeNull();
+      expect(found1!.status).toBe(TaskStatus.RUNNING);
+      expect(found2).not.toBeNull();
+    });
+
+    it('should rollback all saves when transaction fails', () => {
+      const task1 = createTestTask({ id: 'tx-rollback-1' });
+
+      const result = database.runInTransaction(() => {
+        repo.saveSync(task1);
+        throw new Error('simulated failure');
+      });
+
+      expect(result.ok).toBe(false);
+
+      // Task should not exist
+      const found = repo.findByIdSync(TaskId('tx-rollback-1'));
+      expect(found).toBeNull();
     });
   });
 });

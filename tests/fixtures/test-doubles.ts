@@ -446,11 +446,6 @@ export class TestTaskRepository implements TaskRepository {
     return ok(deletedCount);
   }
 
-  async transaction<T>(fn: (repo: TaskRepository) => Promise<Result<T>>): Promise<Result<T>> {
-    // In-memory implementation - just execute the function
-    return fn(this);
-  }
-
   async deleteAll(): Promise<Result<void, Error>> {
     this.tasks.clear();
     return ok(undefined);

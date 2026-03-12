@@ -17,6 +17,8 @@ import { BufferedOutputCapture } from '../../../src/implementations/output-captu
 import { ProcessSpawnerAdapter } from '../../../src/implementations/process-spawner-adapter';
 import { SystemResourceMonitor } from '../../../src/implementations/resource-monitor';
 import { PriorityTaskQueue } from '../../../src/implementations/task-queue';
+import { SQLiteCheckpointRepository } from '../../../src/implementations/checkpoint-repository';
+import { SQLiteScheduleRepository } from '../../../src/implementations/schedule-repository';
 import { SQLiteTaskRepository } from '../../../src/implementations/task-repository';
 import {
   extractHandlerDependencies,
@@ -69,6 +71,11 @@ describe('handler-setup', () => {
       new BufferedOutputCapture(config.maxOutputBuffer, eventBus),
     );
     container.registerValue('workerPool', workerPool);
+
+    // Repositories added in v0.4.0+ (scheduleRepository, checkpointRepository, database)
+    container.registerValue('database', database);
+    container.registerValue('scheduleRepository', new SQLiteScheduleRepository(database));
+    container.registerValue('checkpointRepository', new SQLiteCheckpointRepository(database));
   });
 
   afterEach(async () => {
@@ -131,11 +138,26 @@ describe('handler-setup', () => {
       }
     });
 
+    it('should fail with clear error when database missing', () => {
+      const partialContainer = new Container(logger);
+      partialContainer.registerValue('config', config);
+      partialContainer.registerValue('logger', logger);
+      partialContainer.registerValue('eventBus', eventBus);
+
+      const result = extractHandlerDependencies(partialContainer);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain('database');
+      }
+    });
+
     it('should fail with clear error when taskRepository missing', () => {
       const partialContainer = new Container(logger);
       partialContainer.registerValue('config', config);
       partialContainer.registerValue('logger', logger);
       partialContainer.registerValue('eventBus', eventBus);
+      partialContainer.registerValue('database', database);
 
       const result = extractHandlerDependencies(partialContainer);
 

@@ -16,10 +16,13 @@ import {
   OutputCapture,
   ResourceMonitor,
   ScheduleRepository,
+  SyncScheduleOperations,
+  SyncTaskOperations,
   TaskQueue,
   TaskRepository,
   WorkerPool,
 } from '../core/interfaces.js';
+import { Database } from '../implementations/database.js';
 import { err, ok, Result } from '../core/result.js';
 import { CheckpointHandler } from './handlers/checkpoint-handler.js';
 import { DependencyHandler } from './handlers/dependency-handler.js';
@@ -39,13 +42,14 @@ export interface HandlerDependencies {
   readonly config: Configuration;
   readonly logger: Logger;
   readonly eventBus: EventBus;
-  readonly taskRepository: TaskRepository;
+  readonly database: Database;
+  readonly taskRepository: TaskRepository & SyncTaskOperations;
   readonly outputCapture: OutputCapture;
   readonly taskQueue: TaskQueue;
   readonly dependencyRepository: DependencyRepository;
   readonly workerPool: WorkerPool;
   readonly resourceMonitor: ResourceMonitor;
-  readonly scheduleRepository: ScheduleRepository;
+  readonly scheduleRepository: ScheduleRepository & SyncScheduleOperations;
   readonly checkpointRepository: CheckpointRepository;
 }
 
@@ -99,7 +103,7 @@ function getDependency<T>(container: Container, key: string): Result<T> {
  * ```
  */
 export function extractHandlerDependencies(container: Container): Result<HandlerDependencies> {
-  // Extract all 11 dependencies - fail fast on any missing
+  // Extract all 12 dependencies - fail fast on any missing
   const configResult = getDependency<Configuration>(container, 'config');
   if (!configResult.ok) return configResult;
 
@@ -109,7 +113,10 @@ export function extractHandlerDependencies(container: Container): Result<Handler
   const eventBusResult = getDependency<EventBus>(container, 'eventBus');
   if (!eventBusResult.ok) return eventBusResult;
 
-  const taskRepositoryResult = getDependency<TaskRepository>(container, 'taskRepository');
+  const databaseResult = getDependency<Database>(container, 'database');
+  if (!databaseResult.ok) return databaseResult;
+
+  const taskRepositoryResult = getDependency<TaskRepository & SyncTaskOperations>(container, 'taskRepository');
   if (!taskRepositoryResult.ok) return taskRepositoryResult;
 
   const outputCaptureResult = getDependency<OutputCapture>(container, 'outputCapture');
@@ -127,7 +134,10 @@ export function extractHandlerDependencies(container: Container): Result<Handler
   const resourceMonitorResult = getDependency<ResourceMonitor>(container, 'resourceMonitor');
   if (!resourceMonitorResult.ok) return resourceMonitorResult;
 
-  const scheduleRepositoryResult = getDependency<ScheduleRepository>(container, 'scheduleRepository');
+  const scheduleRepositoryResult = getDependency<ScheduleRepository & SyncScheduleOperations>(
+    container,
+    'scheduleRepository',
+  );
   if (!scheduleRepositoryResult.ok) return scheduleRepositoryResult;
 
   const checkpointRepositoryResult = getDependency<CheckpointRepository>(container, 'checkpointRepository');
@@ -137,6 +147,7 @@ export function extractHandlerDependencies(container: Container): Result<Handler
     config: configResult.value,
     logger: loggerResult.value,
     eventBus: eventBusResult.value,
+    database: databaseResult.value,
     taskRepository: taskRepositoryResult.value,
     outputCapture: outputCaptureResult.value,
     taskQueue: taskQueueResult.value,
@@ -254,6 +265,7 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     deps.taskRepository,
     eventBus,
     childLogger('ScheduleHandler'),
+    deps.database,
   );
   if (!scheduleHandlerResult.ok) {
     // Cleanup previous handlers on failure

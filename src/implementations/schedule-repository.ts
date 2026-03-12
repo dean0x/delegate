@@ -19,7 +19,7 @@ import {
   TaskRequest,
 } from '../core/domain.js';
 import { BackbeatError, ErrorCode, operationErrorHandler } from '../core/errors.js';
-import { ScheduleExecution, ScheduleRepository } from '../core/interfaces.js';
+import { ScheduleExecution, ScheduleRepository, SyncScheduleOperations } from '../core/interfaces.js';
 import { err, ok, Result, tryCatchAsync } from '../core/result.js';
 import { Database } from './database.js';
 
@@ -142,7 +142,7 @@ interface ScheduleExecutionRow {
   readonly created_at: number;
 }
 
-export class SQLiteScheduleRepository implements ScheduleRepository {
+export class SQLiteScheduleRepository implements ScheduleRepository, SyncScheduleOperations {
   /** Default pagination limit for findAll() */
   private static readonly DEFAULT_LIMIT = 100;
 
@@ -244,35 +244,39 @@ export class SQLiteScheduleRepository implements ScheduleRepository {
   }
 
   /**
+   * Convert Schedule domain object to database parameter format.
+   * Shared by both async (save/update) and sync (updateSync) methods.
+   * Includes createdAt — better-sqlite3 ignores named params not referenced by the statement.
+   */
+  private toDbFormat(schedule: Schedule): Record<string, unknown> {
+    return {
+      id: schedule.id,
+      taskTemplate: JSON.stringify(schedule.taskTemplate),
+      scheduleType: schedule.scheduleType,
+      cronExpression: schedule.cronExpression ?? null,
+      scheduledAt: schedule.scheduledAt ?? null,
+      timezone: schedule.timezone,
+      missedRunPolicy: schedule.missedRunPolicy,
+      status: schedule.status,
+      maxRuns: schedule.maxRuns ?? null,
+      runCount: schedule.runCount,
+      lastRunAt: schedule.lastRunAt ?? null,
+      nextRunAt: schedule.nextRunAt ?? null,
+      expiresAt: schedule.expiresAt ?? null,
+      afterScheduleId: schedule.afterScheduleId ?? null,
+      pipelineSteps: schedule.pipelineSteps ? JSON.stringify(schedule.pipelineSteps) : null,
+      createdAt: schedule.createdAt,
+      updatedAt: schedule.updatedAt,
+    };
+  }
+
+  /**
    * Save a new schedule
-   *
-   * @param schedule - The schedule to save
-   * @returns Result indicating success or error
    */
   async save(schedule: Schedule): Promise<Result<void>> {
     return tryCatchAsync(
       async () => {
-        const dbSchedule = {
-          id: schedule.id,
-          taskTemplate: JSON.stringify(schedule.taskTemplate),
-          scheduleType: schedule.scheduleType,
-          cronExpression: schedule.cronExpression ?? null,
-          scheduledAt: schedule.scheduledAt ?? null,
-          timezone: schedule.timezone,
-          missedRunPolicy: schedule.missedRunPolicy,
-          status: schedule.status,
-          maxRuns: schedule.maxRuns ?? null,
-          runCount: schedule.runCount,
-          lastRunAt: schedule.lastRunAt ?? null,
-          nextRunAt: schedule.nextRunAt ?? null,
-          expiresAt: schedule.expiresAt ?? null,
-          afterScheduleId: schedule.afterScheduleId ?? null,
-          pipelineSteps: schedule.pipelineSteps ? JSON.stringify(schedule.pipelineSteps) : null,
-          createdAt: schedule.createdAt,
-          updatedAt: schedule.updatedAt,
-        };
-
-        this.saveStmt.run(dbSchedule);
+        this.saveStmt.run(this.toDbFormat(schedule));
       },
       operationErrorHandler('save schedule', { scheduleId: schedule.id }),
     );
@@ -280,13 +284,8 @@ export class SQLiteScheduleRepository implements ScheduleRepository {
 
   /**
    * Update an existing schedule
-   *
-   * @param id - The schedule ID to update
-   * @param update - Partial schedule fields to update
-   * @returns Result indicating success or error
    */
   async update(id: ScheduleId, update: Partial<Schedule>): Promise<Result<void>> {
-    // First get the existing schedule
     const existingResult = await this.findById(id);
 
     if (!existingResult.ok) {
@@ -297,38 +296,58 @@ export class SQLiteScheduleRepository implements ScheduleRepository {
       return err(new BackbeatError(ErrorCode.TASK_NOT_FOUND, `Schedule ${id} not found`));
     }
 
-    // Merge updates with existing schedule
     const updatedSchedule: Schedule = {
       ...existingResult.value,
       ...update,
       updatedAt: Date.now(),
     };
 
-    // Use UPDATE (not INSERT OR REPLACE) to preserve child rows
-    // INSERT OR REPLACE deletes the old row first, triggering ON DELETE CASCADE
     return tryCatchAsync(
       async () => {
-        this.updateStmt.run({
-          id: updatedSchedule.id,
-          taskTemplate: JSON.stringify(updatedSchedule.taskTemplate),
-          scheduleType: updatedSchedule.scheduleType,
-          cronExpression: updatedSchedule.cronExpression ?? null,
-          scheduledAt: updatedSchedule.scheduledAt ?? null,
-          timezone: updatedSchedule.timezone,
-          missedRunPolicy: updatedSchedule.missedRunPolicy,
-          status: updatedSchedule.status,
-          maxRuns: updatedSchedule.maxRuns ?? null,
-          runCount: updatedSchedule.runCount,
-          lastRunAt: updatedSchedule.lastRunAt ?? null,
-          nextRunAt: updatedSchedule.nextRunAt ?? null,
-          expiresAt: updatedSchedule.expiresAt ?? null,
-          afterScheduleId: updatedSchedule.afterScheduleId ?? null,
-          pipelineSteps: updatedSchedule.pipelineSteps ? JSON.stringify(updatedSchedule.pipelineSteps) : null,
-          updatedAt: updatedSchedule.updatedAt,
-        });
+        this.updateStmt.run(this.toDbFormat(updatedSchedule));
       },
       operationErrorHandler('update schedule', { scheduleId: id }),
     );
+  }
+
+  // ============================================================================
+  // SYNC METHODS (for use inside Database.runInTransaction())
+  // These throw on error — the transaction wrapper catches and converts to Result.
+  // ============================================================================
+
+  findByIdSync(id: ScheduleId): Schedule | null {
+    const row = this.findByIdStmt.get(id) as ScheduleRow | undefined;
+    if (!row) return null;
+    return this.rowToSchedule(row);
+  }
+
+  updateSync(id: ScheduleId, update: Partial<Schedule>): void {
+    const existing = this.findByIdSync(id);
+    if (!existing) {
+      throw new BackbeatError(ErrorCode.TASK_NOT_FOUND, `Schedule ${id} not found`);
+    }
+    const updatedSchedule: Schedule = {
+      ...existing,
+      ...update,
+      updatedAt: Date.now(),
+    };
+    this.updateStmt.run(this.toDbFormat(updatedSchedule));
+  }
+
+  recordExecutionSync(execution: Omit<ScheduleExecution, 'id'>): ScheduleExecution {
+    const result = this.recordExecutionStmt.run(
+      execution.scheduleId,
+      execution.taskId ?? null,
+      execution.scheduledFor,
+      execution.executedAt ?? null,
+      execution.status,
+      execution.errorMessage ?? null,
+      execution.pipelineTaskIds ? JSON.stringify(execution.pipelineTaskIds) : null,
+      execution.createdAt,
+    );
+
+    const row = this.getExecutionByIdStmt.get(result.lastInsertRowid) as ScheduleExecutionRow;
+    return this.rowToExecution(row);
   }
 
   /**

@@ -7,7 +7,9 @@ import SQLite from 'better-sqlite3';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { Logger } from '../core/interfaces.js';
+import { Result, tryCatch } from '../core/result.js';
 
 /**
  * Silent no-op logger for when no logger is provided
@@ -531,6 +533,28 @@ export class Database {
         },
       },
     ];
+  }
+
+  /**
+   * Run a synchronous function inside a SQLite transaction.
+   * If the function throws, the transaction is rolled back and an err Result is returned.
+   * If the function returns, the transaction is committed and the return value is wrapped in ok.
+   *
+   * ARCHITECTURE: Uses better-sqlite3's synchronous transaction API.
+   * All operations inside fn must be synchronous (use *Sync repo methods).
+   * BackbeatErrors thrown inside fn are preserved; other errors are wrapped.
+   */
+  runInTransaction<T>(fn: () => T): Result<T> {
+    return tryCatch(
+      () => this.db.transaction(fn)(),
+      (error) =>
+        error instanceof BackbeatError
+          ? error
+          : new BackbeatError(
+              ErrorCode.SYSTEM_ERROR,
+              `Transaction failed: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+    );
   }
 
   /**

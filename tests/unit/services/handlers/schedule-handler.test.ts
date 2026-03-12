@@ -19,6 +19,7 @@ import {
   TaskId,
   TaskStatus,
 } from '../../../../src/core/domain';
+import { BackbeatError, ErrorCode } from '../../../../src/core/errors';
 import { InMemoryEventBus } from '../../../../src/core/events/event-bus';
 import { Database } from '../../../../src/implementations/database';
 import { SQLiteScheduleRepository } from '../../../../src/implementations/schedule-repository';
@@ -45,7 +46,7 @@ describe('ScheduleHandler - Behavioral Tests', () => {
     scheduleRepo = new SQLiteScheduleRepository(database);
     taskRepo = new SQLiteTaskRepository(database);
 
-    const handlerResult = await ScheduleHandler.create(scheduleRepo, taskRepo, eventBus, logger);
+    const handlerResult = await ScheduleHandler.create(scheduleRepo, taskRepo, eventBus, logger, database);
     if (!handlerResult.ok) {
       throw new Error(`Failed to create ScheduleHandler: ${handlerResult.error.message}`);
     }
@@ -82,12 +83,14 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
       const freshLogger = new TestLogger();
 
-      const result = await ScheduleHandler.create(scheduleRepo, taskRepo, freshEventBus, freshLogger);
+      const freshDb = new Database(':memory:');
+      const result = await ScheduleHandler.create(scheduleRepo, taskRepo, freshEventBus, freshLogger, freshDb);
 
       expect(result.ok).toBe(true);
       expect(freshLogger.hasLogContaining('ScheduleHandler initialized')).toBe(true);
 
       freshEventBus.dispose();
+      freshDb.close();
     });
   });
 
@@ -735,22 +738,20 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       expect(step1!.dependsOn).not.toContain(predecessorTask.id);
     });
 
-    it('should handle partial save failure by cancelling saved tasks', async () => {
-      // Arrange: 3-step pipeline where the 3rd save will fail
+    it('should rollback all tasks on partial save failure (transaction atomicity)', async () => {
+      // Arrange: 3-step pipeline where the 3rd saveSync will throw
       const schedule = createPipelineSchedule();
       await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
 
       let saveCallCount = 0;
-      const originalSave = taskRepo.save.bind(taskRepo);
-      const saveSpy = vi.spyOn(taskRepo, 'save').mockImplementation(async (task) => {
+      const originalSaveSync = taskRepo.saveSync.bind(taskRepo);
+      const saveSpy = vi.spyOn(taskRepo, 'saveSync').mockImplementation((task) => {
         saveCallCount++;
         if (saveCallCount === 3) {
-          // Simulate failure on the 3rd task save
-          const { err: mkErr } = await import('../../../../src/core/result');
-          const { BackbeatError, ErrorCode } = await import('../../../../src/core/errors');
-          return mkErr(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Simulated DB failure on step 3'));
+          // Sync methods throw on error (caught by transaction wrapper)
+          throw new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Simulated DB failure on step 3');
         }
-        return originalSave(task);
+        return originalSaveSync(task);
       });
 
       // Act
@@ -758,22 +759,19 @@ describe('ScheduleHandler - Behavioral Tests', () => {
 
       saveSpy.mockRestore();
 
-      // Assert: the 2 tasks that were saved should now be CANCELLED
+      // Assert: 0 tasks exist — transaction rolled back ALL saves
       const allTasksResult = await taskRepo.findAll();
       expect(allTasksResult.ok).toBe(true);
       if (!allTasksResult.ok) return;
+      expect(allTasksResult.value).toHaveLength(0);
 
-      const allTasks = allTasksResult.value;
-      // Only 2 tasks saved (the 3rd failed)
-      expect(allTasks).toHaveLength(2);
-      expect(allTasks.every((t) => t.status === TaskStatus.CANCELLED)).toBe(true);
-
-      // Assert: a failed execution was recorded
+      // Assert: a failed execution was recorded (best-effort, outside transaction)
       const historyResult = await scheduleRepo.getExecutionHistory(schedule.id);
       expect(historyResult.ok).toBe(true);
       if (!historyResult.ok) return;
       expect(historyResult.value).toHaveLength(1);
       expect(historyResult.value[0].status).toBe('failed');
+      expect(historyResult.value[0].errorMessage).toContain('Pipeline failed at step 3');
     });
 
     it('should cancel all tasks when TaskDelegated fails for step 0', async () => {
@@ -842,21 +840,19 @@ describe('ScheduleHandler - Behavioral Tests', () => {
     });
 
     it('should not double-wrap error message in pipeline failure execution record', async () => {
-      // Arrange: 2-step pipeline where the 2nd save will fail
+      // Arrange: 2-step pipeline where the 2nd saveSync will throw
       const twoSteps: readonly PipelineStepRequest[] = [{ prompt: 'step-a' }, { prompt: 'step-b' }];
       const schedule = createPipelineSchedule({ pipelineSteps: twoSteps });
       await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
 
       let saveCallCount = 0;
-      const originalSave = taskRepo.save.bind(taskRepo);
-      const saveSpy = vi.spyOn(taskRepo, 'save').mockImplementation(async (task) => {
+      const originalSaveSync = taskRepo.saveSync.bind(taskRepo);
+      const saveSpy = vi.spyOn(taskRepo, 'saveSync').mockImplementation((task) => {
         saveCallCount++;
         if (saveCallCount === 2) {
-          const { err: mkErr } = await import('../../../../src/core/result');
-          const { BackbeatError, ErrorCode } = await import('../../../../src/core/errors');
-          return mkErr(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'DB write error'));
+          throw new BackbeatError(ErrorCode.SYSTEM_ERROR, 'DB write error');
         }
-        return originalSave(task);
+        return originalSaveSync(task);
       });
 
       // Act
@@ -877,15 +873,13 @@ describe('ScheduleHandler - Behavioral Tests', () => {
     });
 
     it('should include prefix in single-task failure execution record', async () => {
-      // Arrange: single-task schedule where save fails
+      // Arrange: single-task schedule where saveSync throws
       const schedule = createTestSchedule();
       await saveSchedule(schedule);
       await scheduleRepo.update(schedule.id, { nextRunAt: Date.now() - 60000 });
 
-      const saveSpy = vi.spyOn(taskRepo, 'save').mockImplementation(async () => {
-        const { err: mkErr } = await import('../../../../src/core/result');
-        const { BackbeatError, ErrorCode } = await import('../../../../src/core/errors');
-        return mkErr(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'DB write error'));
+      const saveSpy = vi.spyOn(taskRepo, 'saveSync').mockImplementation(() => {
+        throw new BackbeatError(ErrorCode.SYSTEM_ERROR, 'DB write error');
       });
 
       // Act
@@ -902,6 +896,57 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       const errorMessage = historyResult.value[0].errorMessage;
       expect(errorMessage).toBeDefined();
       expect(errorMessage).toContain('Failed to create task:');
+    });
+
+    it('should rollback task on single-task recordExecutionSync failure', async () => {
+      // Arrange: single-task schedule where recordExecutionSync throws
+      const schedule = createTestSchedule();
+      await saveSchedule(schedule);
+      await scheduleRepo.update(schedule.id, { nextRunAt: Date.now() - 60000 });
+
+      const spy = vi.spyOn(scheduleRepo, 'recordExecutionSync').mockImplementation(() => {
+        throw new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Execution record failed');
+      });
+
+      // Act
+      await eventBus.emit('ScheduleTriggered', { scheduleId: schedule.id, triggeredAt: Date.now() });
+      await flushEventLoop();
+      spy.mockRestore();
+
+      // Assert: no task was saved (transaction rolled back)
+      const allTasks = await taskRepo.findAll();
+      expect(allTasks.ok).toBe(true);
+      if (!allTasks.ok) return;
+      expect(allTasks.value).toHaveLength(0);
+    });
+
+    it('should commit all pipeline tasks + execution atomically on success', async () => {
+      // Arrange
+      const schedule = createPipelineSchedule();
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+
+      // Act
+      await triggerSchedule(schedule.id);
+
+      // Assert: all 3 tasks committed
+      const allTasks = await taskRepo.findAll();
+      expect(allTasks.ok).toBe(true);
+      if (!allTasks.ok) return;
+      expect(allTasks.value).toHaveLength(3);
+
+      // Assert: execution record committed
+      const history = await scheduleRepo.getExecutionHistory(schedule.id);
+      expect(history.ok).toBe(true);
+      if (!history.ok) return;
+      expect(history.value).toHaveLength(1);
+      expect(history.value[0].status).toBe('triggered');
+      expect(history.value[0].pipelineTaskIds).toHaveLength(3);
+
+      // Assert: schedule updated
+      const updated = await scheduleRepo.findById(schedule.id);
+      expect(updated.ok).toBe(true);
+      if (!updated.ok) return;
+      expect(updated.value!.runCount).toBe(1);
     });
 
     it('should update schedule state after pipeline trigger', async () => {

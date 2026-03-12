@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { TaskId } from '../../../src/core/domain';
+import { BackbeatError, ErrorCode } from '../../../src/core/errors';
 import { Database } from '../../../src/implementations/database';
 import { TEST_COUNTS } from '../../constants';
 import { TaskFactory } from '../../fixtures/factories';
@@ -290,6 +291,71 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
 
       // Transactions should make bulk inserts very fast
       expect(duration).toBeLessThan(50);
+    });
+  });
+
+  describe('runInTransaction', () => {
+    it('should return ok with callback return value on success', () => {
+      const result = db.runInTransaction(() => {
+        const sqliteDb = db.getDatabase();
+        sqliteDb
+          .prepare(`INSERT INTO tasks (id, prompt, status, priority, created_at) VALUES (?, ?, ?, ?, ?)`)
+          .run('tx-1', 'prompt', 'queued', 'P1', Date.now());
+        return 42;
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBe(42);
+
+      // Verify write was committed
+      const row = db.getDatabase().prepare('SELECT * FROM tasks WHERE id = ?').get('tx-1');
+      expect(row).toBeDefined();
+    });
+
+    it('should return err when callback throws generic error', () => {
+      const result = db.runInTransaction(() => {
+        throw new Error('boom');
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('Transaction failed: boom');
+      expect(result.error.code).toBe(ErrorCode.SYSTEM_ERROR);
+    });
+
+    it('should preserve BackbeatError types thrown inside', () => {
+      const result = db.runInTransaction(() => {
+        throw new BackbeatError(ErrorCode.TASK_NOT_FOUND, 'Task xyz not found');
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBeInstanceOf(BackbeatError);
+      expect(result.error.code).toBe(ErrorCode.TASK_NOT_FOUND);
+      expect(result.error.message).toBe('Task xyz not found');
+    });
+
+    it('should rollback all writes on error', () => {
+      const sqliteDb = db.getDatabase();
+
+      const result = db.runInTransaction(() => {
+        sqliteDb
+          .prepare(`INSERT INTO tasks (id, prompt, status, priority, created_at) VALUES (?, ?, ?, ?, ?)`)
+          .run('rollback-1', 'prompt', 'queued', 'P1', Date.now());
+        sqliteDb
+          .prepare(`INSERT INTO tasks (id, prompt, status, priority, created_at) VALUES (?, ?, ?, ?, ?)`)
+          .run('rollback-2', 'prompt', 'queued', 'P1', Date.now());
+
+        // This write should be rolled back too
+        throw new Error('fail after 2 inserts');
+      });
+
+      expect(result.ok).toBe(false);
+
+      // Verify nothing was committed
+      const count = sqliteDb.prepare('SELECT COUNT(*) as count FROM tasks').get() as { count: number };
+      expect(count.count).toBe(0);
     });
   });
 
