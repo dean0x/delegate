@@ -225,7 +225,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       eventBus.setRequestResponse('NextTaskQuery', ok(task));
 
       await eventBus.emit('TaskQueued', { taskId: task.id, task });
-      await eventBus.waitFor('WorkerSpawned');
+      await eventBus.waitFor('TaskStarted');
 
       expect(workerPool.spawnCalls.length).toBeGreaterThan(0);
     });
@@ -237,12 +237,12 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       eventBus.setRequestResponse('NextTaskQuery', ok(task));
 
       await eventBus.emit('TaskQueued', { taskId: task.id, task });
-      await eventBus.waitFor('WorkerSpawned');
+      await eventBus.waitFor('TaskStarted');
 
       expect(resourceMonitor.workerCount).toBeGreaterThan(0);
     });
 
-    it('should emit WorkerSpawned and TaskStarted events after successful spawn', async () => {
+    it('should emit TaskStarted event after successful spawn', async () => {
       const task = new TaskFactory().withPrompt('test task').withStatus('queued').build();
 
       resourceMonitor.setCanSpawn(true);
@@ -251,7 +251,6 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       await eventBus.emit('TaskQueued', { taskId: task.id, task });
       await eventBus.waitFor('TaskStarted');
 
-      expect(eventBus.hasEmitted('WorkerSpawned')).toBe(true);
       expect(eventBus.hasEmitted('TaskStarted')).toBe(true);
     });
   });
@@ -266,7 +265,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
       // Spawn first task
       await eventBus.emit('TaskQueued', { taskId: task1.id, task: task1 });
-      await eventBus.waitFor('WorkerSpawned');
+      await eventBus.waitFor('TaskStarted');
 
       const firstSpawnTime = Date.now();
 
@@ -604,7 +603,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       await eventBus.emit('TaskQueued', { taskId: task.id, task });
       await eventBus.waitFor('TaskStarting');
 
-      // Should emit TaskStarting, WorkerSpawned, TaskStarted events
+      // Should emit TaskStarting and TaskStarted events
       expect(eventBus.hasEmitted('TaskStarting')).toBe(true);
     });
   });
@@ -680,8 +679,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         expect(requests.length).toBe(0);
       });
 
-      it('INVARIANT: Success path emits WorkerSpawned and TaskStarted together', async () => {
-        // This tests the invariant: both events emitted on success (via Promise.all)
+      it('INVARIANT: Success path emits TaskStarted event', async () => {
         const task = new TaskFactory().withPrompt('test task').build();
 
         resourceMonitor.setCanSpawn(true);
@@ -690,20 +688,13 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         await eventBus.emit('TaskQueued', { taskId: task.id, task });
         await eventBus.waitFor('TaskStarted');
 
-        // Both events should be emitted
-        expect(eventBus.hasEmitted('WorkerSpawned')).toBe(true);
+        // TaskStarted should be emitted on success
         expect(eventBus.hasEmitted('TaskStarted')).toBe(true);
 
-        // Verify they were emitted in close succession (within 10ms of each other)
-        const events = eventBus.getAllEmittedEvents();
-        const workerSpawnedEvent = events.find((e) => e.type === 'WorkerSpawned');
-        const taskStartedEvent = events.find((e) => e.type === 'TaskStarted');
-
-        expect(workerSpawnedEvent).toBeDefined();
-        expect(taskStartedEvent).toBeDefined();
-
-        const timeDiff = Math.abs(workerSpawnedEvent!.timestamp - taskStartedEvent!.timestamp);
-        expect(timeDiff).toBeLessThan(10); // Should be nearly simultaneous
+        // Verify the event contains expected data
+        const events = eventBus.getEmittedEvents('TaskStarted');
+        expect(events.length).toBeGreaterThan(0);
+        expect(events[0].taskId).toBe(task.id);
       });
 
       it('INVARIANT: Worker count incremented only after successful spawn', async () => {
@@ -715,7 +706,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         const initialCount = resourceMonitor.workerCount;
 
         await eventBus.emit('TaskQueued', { taskId: task.id, task });
-        await eventBus.waitFor('WorkerSpawned');
+        await eventBus.waitFor('TaskStarted');
 
         // Worker count should increase by 1
         expect(resourceMonitor.workerCount).toBe(initialCount + 1);
@@ -749,7 +740,6 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
         // Should not emit any task lifecycle events
         expect(eventBus.hasEmitted('TaskStarting')).toBe(false);
-        expect(eventBus.hasEmitted('WorkerSpawned')).toBe(false);
         expect(eventBus.hasEmitted('TaskStarted')).toBe(false);
         expect(eventBus.hasEmitted('RequeueTask')).toBe(false);
         expect(eventBus.hasEmitted('TaskFailed')).toBe(false);
@@ -839,8 +829,8 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
           eventBus.emit('TaskQueued', { taskId: task1.id, task: task1 }),
         ]);
 
-        // Wait for first spawn to complete (we expect at least one WorkerSpawned)
-        await eventBus.waitFor('WorkerSpawned');
+        // Wait for first spawn to complete (we expect at least one TaskStarted)
+        await eventBus.waitFor('TaskStarted');
         // Allow any serialized follow-up spawns to complete
         await eventBus.flushHandlers();
 
@@ -879,7 +869,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         ]);
 
         // Wait for first spawn to complete
-        await eventBus.waitFor('WorkerSpawned');
+        await eventBus.waitFor('TaskStarted');
         await eventBus.flushHandlers();
 
         // With serialization:
@@ -931,7 +921,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         eventBus.clearEmittedEvents(); // Clear previous events
 
         await eventBus.emit('TaskQueued', { taskId: task2.id, task: task2 });
-        await eventBus.waitFor('WorkerSpawned');
+        await eventBus.waitFor('TaskStarted');
 
         // Second spawn should also be attempted (because failed spawn doesn't update lastSpawnTime)
         expect(callCount).toBe(2);

@@ -185,16 +185,7 @@ export class WorkerHandler extends BaseEventHandler {
           return killResult;
         }
 
-        // Emit worker killed event
-        const result = await this.eventBus.emit('WorkerKilled', {
-          workerId: worker.id,
-          taskId,
-        });
-
-        if (!result.ok) {
-          this.logger.error('Failed to emit WorkerKilled event', result.error);
         }
-      }
 
       // Emit TaskCancelled so subscribers (CLI wait, persistence) receive terminal state
       const cancelResult = await this.eventBus.emit<TaskCancelledEvent>('TaskCancelled', {
@@ -341,7 +332,7 @@ export class WorkerHandler extends BaseEventHandler {
    * - lastSpawnTime update
    * - resourceMonitor.incrementWorkerCount()
    * - resourceMonitor.recordSpawn()
-   * - WorkerSpawned and TaskStarted events (parallel)
+   * - TaskStarted event
    */
   private async recordSpawnSuccessAndEmitEvents(worker: Worker, task: Task): Promise<void> {
     // Update spawn time for throttling
@@ -351,17 +342,11 @@ export class WorkerHandler extends BaseEventHandler {
     this.resourceMonitor.incrementWorkerCount();
     this.resourceMonitor.recordSpawn();
 
-    // Emit events in parallel (invariant: both emitted together)
-    await Promise.all([
-      this.eventBus.emit('WorkerSpawned', {
-        worker,
-        taskId: task.id,
-      }),
-      this.eventBus.emit('TaskStarted', {
-        taskId: task.id,
-        workerId: worker.id,
-      }),
-    ]);
+    // Emit TaskStarted event
+    await this.eventBus.emit('TaskStarted', {
+      taskId: task.id,
+      workerId: worker.id,
+    });
 
     this.logger.info('Task started with worker', {
       taskId: task.id,

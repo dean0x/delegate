@@ -417,17 +417,18 @@ describe('SystemResourceMonitor', () => {
       vi.useRealTimers();
     });
 
-    it('should emit SystemResourcesUpdated events on interval', async () => {
-      const events: unknown[] = [];
-      eventBus.on('SystemResourcesUpdated', (data) => events.push(data));
-
+    it('should perform resource checks on interval', async () => {
       monitor.startMonitoring();
 
       // Advance past one monitoring interval (100ms)
       await vi.advanceTimersByTimeAsync(150);
 
-      expect(events.length).toBeGreaterThan(0);
-      expect(events[0]).toEqual(
+      // Verify monitoring loop ran by checking debug logs
+      const debugLogs = logger.logs.filter(
+        (log) => log.level === 'debug' && log.message === 'Resource status published',
+      );
+      expect(debugLogs.length).toBeGreaterThan(0);
+      expect(debugLogs[0].context).toEqual(
         expect.objectContaining({
           cpuPercent: expect.any(Number),
           memoryUsed: expect.any(Number),
@@ -437,16 +438,16 @@ describe('SystemResourceMonitor', () => {
     });
 
     it('should be idempotent when startMonitoring is called twice', async () => {
-      const events: unknown[] = [];
-      eventBus.on('SystemResourcesUpdated', (data) => events.push(data));
-
       monitor.startMonitoring();
       monitor.startMonitoring(); // Second call should be no-op
 
       await vi.advanceTimersByTimeAsync(150);
 
-      // Should have events from one monitoring loop, not two
-      expect(events.length).toBe(1);
+      // Should have logs from one monitoring loop, not two
+      const debugLogs = logger.logs.filter(
+        (log) => log.level === 'debug' && log.message === 'Resource status published',
+      );
+      expect(debugLogs.length).toBe(1);
     });
 
     it('should be safe to call stopMonitoring when not monitoring', () => {
@@ -476,9 +477,6 @@ describe('SystemResourceMonitor', () => {
         return [1.0, 1.0, 1.0];
       };
 
-      const events: unknown[] = [];
-      eventBus.on('SystemResourcesUpdated', (data) => events.push(data));
-
       monitor.startMonitoring();
 
       // First check → error (monitoring should continue via finally)
@@ -488,8 +486,11 @@ describe('SystemResourceMonitor', () => {
       await vi.advanceTimersByTimeAsync(150);
 
       expect(callCount).toBeGreaterThan(1);
-      // Should have at least one successful event after recovery
-      expect(events.length).toBeGreaterThan(0);
+      // Should have at least one successful log after recovery
+      const debugLogs = logger.logs.filter(
+        (log) => log.level === 'debug' && log.message === 'Resource status published',
+      );
+      expect(debugLogs.length).toBeGreaterThan(0);
     });
 
     it('should stop monitoring on command', () => {

@@ -325,22 +325,6 @@ describe('EventDrivenWorkerPool', () => {
       expect(monitor.decrementWorkerCount as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce();
     });
 
-    it('should emit WorkerKilled event', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      if (!spawnResult.ok) return;
-
-      await pool.kill(spawnResult.value.id);
-
-      expect(eventBus.emit as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
-        'WorkerKilled',
-        expect.objectContaining({
-          workerId: spawnResult.value.id,
-          taskId: task.id,
-          reason: 'Explicit kill request',
-        }),
-      );
-    });
   });
 
   // --- killAll ---

@@ -21,7 +21,7 @@ import type { Task, TaskCheckpoint } from '../../src/core/domain.js';
 import { Priority, TaskId, TaskStatus } from '../../src/core/domain.js';
 import { BackbeatError, ErrorCode } from '../../src/core/errors.js';
 import { EventBus } from '../../src/core/events/event-bus.js';
-import type { CheckpointCreatedEvent, TaskResumedEvent } from '../../src/core/events/events.js';
+import type { CheckpointCreatedEvent } from '../../src/core/events/events.js';
 import { CheckpointRepository, TaskManager, TaskRepository } from '../../src/core/interfaces.js';
 import { Database } from '../../src/implementations/database.js';
 import { TestResourceMonitor } from '../../src/implementations/resource-monitor.js';
@@ -369,31 +369,6 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
       expect(secondResume.retryOf).toBe(firstResume.id);
     });
 
-    it('should emit TaskResumed event with correct metadata', async () => {
-      const originalTask = await delegateAndWaitForCompletion('Event emission test');
-
-      // Track TaskResumed events
-      let resumedEvent: TaskResumedEvent | null = null;
-      eventBus.on!('TaskResumed', (event: TaskResumedEvent) => {
-        resumedEvent = event;
-      });
-
-      const resumeResult = await taskManager.resume({
-        taskId: originalTask.id,
-      });
-
-      expect(resumeResult.ok).toBe(true);
-      if (!resumeResult.ok) return;
-
-      await flushEventLoop();
-
-      // Verify TaskResumed event was emitted
-      expect(resumedEvent).not.toBeNull();
-      expect(resumedEvent!.originalTaskId).toBe(originalTask.id);
-      expect(resumedEvent!.newTaskId).toBe(resumeResult.value.id);
-      // checkpointUsed depends on whether auto-checkpoint was created
-      expect(typeof resumedEvent!.checkpointUsed).toBe('boolean');
-    });
   });
 
   describe('Checkpoint Persistence', () => {

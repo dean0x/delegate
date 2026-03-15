@@ -198,7 +198,7 @@ describe('handler-setup', () => {
       }
     });
 
-    it('should setup all 7 handlers (6 standard + DependencyHandler)', async () => {
+    it('should setup all 7 handlers (4 standard + DependencyHandler + ScheduleHandler + CheckpointHandler)', async () => {
       const depsResult = extractHandlerDependencies(container);
       expect(depsResult.ok).toBe(true);
       if (!depsResult.ok) return;

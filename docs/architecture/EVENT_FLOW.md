@@ -16,13 +16,13 @@ Backbeat uses a **pure event-driven architecture** where all components communic
                               ▲ │
         ┌─────────────────────┘ └─────────────────────┐
         │                                              │
-   ┌────▼────┐  ┌──────────┐  ┌──────────┐  ┌─────────▼──────┐
-   │ Persist │  │  Queue   │  │  Worker  │  │     Output     │
-   │ Handler │  │ Handler  │  │ Handler  │  │    Handler     │
-   └─────────┘  └──────────┘  └──────────┘  └────────────────┘
-        │            │              │               │
-        ▼            ▼              ▼               ▼
-   [Database]   [Task Queue]  [Worker Pool]  [Output Capture]
+   ┌────▼────┐  ┌──────────┐  ┌──────────┐
+   │ Persist │  │  Queue   │  │  Worker  │
+   │ Handler │  │ Handler  │  │ Handler  │
+   └─────────┘  └──────────┘  └──────────┘
+        │            │              │
+        ▼            ▼              ▼
+   [Database]   [Task Queue]  [Worker Pool]
 ```
 
 ## Event Types
@@ -34,7 +34,6 @@ Backbeat uses a **pure event-driven architecture** where all components communic
 - `TaskCompleted` - Task finished successfully
 - `TaskFailed` - Task execution failed
 - `TaskCancelled` - Task cancelled by user
-- `WorkerSpawned` - New worker process created
 - `OutputCaptured` - Worker output received
 
 ### Query Events (Request-Response)
@@ -90,9 +89,9 @@ User/MCP Client
     ▼
 ┌───────────────────────────────────────────────────────────────┐
 │ 6. WorkerHandler (continued)                                   │
-│    • Spawns claude-code process                                │
+│    • Spawns worker process                                     │
 │    • Records spawn time (for throttling)                       │
-│    • Emits: WorkerSpawned + TaskStarted                        │
+│    • Emits: TaskStarted                                        │
 └───────────────────────────────────────────────────────────────┘
     │
     ▼
@@ -188,7 +187,6 @@ Server Startup
     ▼
 ┌───────────────────────────────────────────────────────────────┐
 │ 1. RecoveryManager.recover()                                   │
-│    • Emits: RecoveryStarted                                    │
 │    • Queries database for non-terminal tasks                   │
 └───────────────────────────────────────────────────────────────┘
     │
@@ -448,7 +446,7 @@ container.registerValue('dependencyHandler', dependencyHandler);
 
 | Pattern | Handlers | When to Use |
 |---------|----------|-------------|
-| **Standard** (via registry) | PersistenceHandler, QueryHandler, QueueHandler, WorkerHandler, OutputHandler | Synchronous initialization, uses `setup(eventBus)` |
+| **Standard** (via registry) | PersistenceHandler, QueryHandler, QueueHandler, WorkerHandler | Synchronous initialization, uses `setup(eventBus)` |
 | **Factory** (returned separately) | DependencyHandler | Requires async initialization (loading dependency graph from DB) |
 
 ### Adding New Handlers (v0.4.0+)

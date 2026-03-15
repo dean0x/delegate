@@ -377,12 +377,6 @@ export class EventFactory {
     return this;
   }
 
-  workerSpawned(workerId: WorkerId, taskId: TaskId): this {
-    this.eventType = 'WorkerSpawned';
-    this.payload = { workerId, taskId };
-    return this;
-  }
-
   build(): { type: string; payload: Record<string, unknown>; timestamp: number } {
     return {
       type: this.eventType,

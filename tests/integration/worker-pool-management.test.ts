@@ -1,16 +1,12 @@
 /**
  * Integration test for worker pool management
- * Tests worker lifecycle, resource monitoring, and autoscaling decisions
+ * Tests worker lifecycle, resource monitoring, and output capture
  */
 
-import { randomUUID } from 'crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Task } from '../../src/core/domain.js';
+import { describe, expect, it } from 'vitest';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { EventDrivenWorkerPool } from '../../src/implementations/event-driven-worker-pool.js';
 import { BufferedOutputCapture } from '../../src/implementations/output-capture.js';
-import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
-import { AutoscalingManager } from '../../src/services/autoscaling-manager.js';
 import { createTestConfiguration } from '../fixtures/factories.js';
 import { createAgentRegistryFromSpawner } from '../fixtures/mock-agent.js';
 import { MockProcessSpawner } from '../fixtures/mock-process-spawner.js';
@@ -38,50 +34,16 @@ describe('Integration: Worker pool management', () => {
     );
 
     try {
-      // Track worker events and task-worker mappings
+      // Track worker events
       const workerEvents: string[] = [];
-      const activeWorkers = new Set<WorkerId>();
-      const taskToWorker = new Map<string, WorkerId>(); // Map task IDs to worker IDs
 
-      eventBus.on('WorkerSpawned', (data) => {
-        const workerId = data.worker?.id || data.workerId;
-        const taskId = data.task?.id || data.taskId;
-        workerEvents.push(`spawned:${workerId}`);
-        activeWorkers.add(workerId);
-        if (taskId) {
-          taskToWorker.set(taskId, workerId);
-        }
-      });
-
-      // Listen for task completion/failure which affects workers
+      // Listen for task completion/failure
       eventBus.on('TaskCompleted', (data) => {
-        const workerId = taskToWorker.get(data.taskId);
-        if (workerId) {
-          workerEvents.push(`completed:${workerId}`);
-          activeWorkers.delete(workerId);
-          taskToWorker.delete(data.taskId);
-        }
+        workerEvents.push(`completed:${data.taskId}`);
       });
 
       eventBus.on('TaskFailed', (data) => {
-        const workerId = taskToWorker.get(data.taskId);
-        if (workerId) {
-          workerEvents.push(`failed:${workerId}`);
-          activeWorkers.delete(workerId);
-          taskToWorker.delete(data.taskId);
-        }
-      });
-
-      eventBus.on('WorkerKilled', (data) => {
-        workerEvents.push(`killed:${data.workerId}`);
-        activeWorkers.delete(data.workerId);
-        // Remove from task mapping
-        for (const [taskId, workerId] of taskToWorker.entries()) {
-          if (workerId === data.workerId) {
-            taskToWorker.delete(taskId);
-            break;
-          }
-        }
+        workerEvents.push(`failed:${data.taskId}`);
       });
 
       // Test 1: Spawn workers up to limit
@@ -95,18 +57,13 @@ describe('Integration: Worker pool management', () => {
         if (result.ok) {
           // Update worker count in monitor so it knows we have workers
           resourceMonitor.updateWorkerCount(i + 1);
-          // Emit WorkerSpawned event since we're not using WorkerHandler
-          await eventBus.emit('WorkerSpawned', {
-            workerId: result.value.id,
-            taskId: tasks[i].id,
-          });
         }
       }
 
       // Wait for events to process
       await flushEventLoop();
 
-      expect(activeWorkers.size).toBe(3);
+      expect(workerPool.getWorkerCount()).toBe(3);
 
       // Test 2: Cannot spawn beyond limit - simulate resource exhaustion
       resourceMonitor.simulateHighCPU(90); // High CPU prevents spawning
@@ -120,44 +77,36 @@ describe('Integration: Worker pool management', () => {
       // Test 3: Complete a worker to free slot
       processSpawner.simulateCompletion(tasks[0].id, 'Task 0 complete');
       await flushEventLoop();
-      expect(activeWorkers.size).toBe(2);
+      expect(workerPool.getWorkerCount()).toBe(2);
 
       // Test 4: Can spawn new worker after slot freed
       const newResult = await workerPool.spawn(tasks[3]);
       expect(newResult.ok).toBe(true);
-      if (newResult.ok) {
-        // Emit WorkerSpawned event
-        await eventBus.emit('WorkerSpawned', {
-          workerId: newResult.value.id,
-          taskId: tasks[3].id,
-        });
-      }
-      await flushEventLoop(); // Wait for event
-      expect(activeWorkers.size).toBe(3);
+      await flushEventLoop();
+      expect(workerPool.getWorkerCount()).toBe(3);
 
       // Test 5: Handle worker failure
       processSpawner.simulateError(tasks[1].id, new Error('Worker crashed'));
       await flushEventLoop();
 
       expect(workerEvents.some((e) => e.includes('failed'))).toBe(true);
-      expect(activeWorkers.size).toBe(2);
+      expect(workerPool.getWorkerCount()).toBe(2);
 
       // Test 6: Terminate all workers
       await workerPool.killAll();
       await flushEventLoop();
 
-      expect(activeWorkers.size).toBe(0);
+      expect(workerPool.getWorkerCount()).toBe(0);
     } finally {
       await workerPool.killAll();
       eventBus.dispose();
     }
   });
 
-  it('should handle autoscaling with resource monitoring', async () => {
+  it('should respect resource limits when spawning workers', async () => {
     const logger = new TestLogger();
     const config = createTestConfiguration();
     const eventBus = new InMemoryEventBus(config, logger);
-    const queue = new PriorityTaskQueue(logger);
     const resourceMonitor = new MockResourceMonitor();
     const processSpawner = new MockProcessSpawner();
     const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
@@ -171,106 +120,40 @@ describe('Integration: Worker pool management', () => {
       outputCapture, // outputCapture
     );
 
-    const autoscaler = new AutoscalingManager(
-      queue, // queue
-      workerPool, // workers
-      resourceMonitor, // monitor
-      eventBus, // eventBus
-      logger, // logger
-    );
-
     try {
-      // Track worker events
-      let currentWorkerCount = 0;
-      const workerIds = new Set<string>();
+      const tasks = Array.from({ length: 5 }, (_, i) => createTask({ prompt: `Resource task ${i}` }));
 
-      eventBus.on('WorkerSpawned', (data) => {
-        const workerId = data.worker?.id || data.workerId;
-        if (workerId) {
-          workerIds.add(workerId);
-          currentWorkerCount = workerIds.size;
-        }
-      });
-
-      eventBus.on('WorkerCompleted', (data) => {
-        if (data.workerId) {
-          workerIds.delete(data.workerId);
-          currentWorkerCount = workerIds.size;
-        }
-      });
-
-      eventBus.on('WorkerKilled', (data) => {
-        if (data.workerId) {
-          workerIds.delete(data.workerId);
-          currentWorkerCount = workerIds.size;
-        }
-      });
-
-      // Setup autoscaling first
-      await autoscaler.setup();
-      autoscaler.start();
-
-      // Test 1: Workers should NOT spawn automatically just from queueing
-      // (WorkerHandler needs to be set up to respond to TaskQueued events)
-      const tasks = Array.from({ length: 3 }, (_, i) => createTask({ prompt: `Scaling task ${i}` }));
-
-      // Queue tasks
-      tasks.forEach((task) => queue.enqueue(task));
-
-      // Wait a bit - but workers won't spawn without WorkerHandler
+      // Test 1: Spawn workers under normal resources
+      const result1 = await workerPool.spawn(tasks[0]);
+      expect(result1.ok).toBe(true);
+      resourceMonitor.updateWorkerCount(1);
       await flushEventLoop();
+      expect(workerPool.getWorkerCount()).toBe(1);
 
-      // Since we don't have WorkerHandler set up, no workers spawn
-      expect(currentWorkerCount).toBe(0);
-      expect(workerIds.size).toBe(0);
-
-      // Test 2: Respect resource limits
-      // Simulate high CPU usage
-      resourceMonitor.simulateHighCPU(85);
-
-      // Add more tasks
-      const moreTasks = Array.from({ length: 5 }, (_, i) => createTask({ prompt: `More task ${i}` }));
-      moreTasks.forEach((task) => queue.enqueue(task));
-
-      await flushEventLoop();
-
-      // Should not scale beyond resource limits
-      const workerCountUnderLoad = currentWorkerCount;
-      expect(workerCountUnderLoad).toBeLessThanOrEqual(3);
-
-      // Test 3: Scale down when idle
-      // Clear queue and complete all tasks
-      while (queue.size() > 0) {
-        queue.dequeue();
+      // Test 2: Reject spawn under high CPU
+      resourceMonitor.simulateHighCPU(90);
+      const result2 = await workerPool.spawn(tasks[1]);
+      expect(result2.ok).toBe(false);
+      if (!result2.ok) {
+        expect(result2.error.code).toBe('INSUFFICIENT_RESOURCES');
       }
 
-      // Simulate all workers completing
+      // Test 3: Allow spawn after resources recover
+      resourceMonitor.simulateHighCPU(30);
+      const result3 = await workerPool.spawn(tasks[1]);
+      expect(result3.ok).toBe(true);
+      resourceMonitor.updateWorkerCount(2);
+      await flushEventLoop();
+      expect(workerPool.getWorkerCount()).toBe(2);
+
+      // Test 4: Complete all workers and verify count drops
       const activeTasks = processSpawner.getActiveTasks();
       activeTasks.forEach((taskId) => {
         processSpawner.simulateCompletion(taskId, 'Complete');
       });
-
-      // Reset CPU usage
-      resourceMonitor.simulateHighCPU(30);
-
-      // Wait for scale down
       await flushEventLoop();
-
-      expect(currentWorkerCount).toBe(0);
-
-      // Test 4: Queue should have tasks but no workers spawn without WorkerHandler
-      // Add tasks one by one
-      for (let i = 0; i < 3; i++) {
-        queue.enqueue(createTask({ prompt: `Rapid task ${i}` }));
-        await flushEventLoop();
-      }
-
-      // Queue should have tasks (only the 3 we just added, since we cleared earlier)
-      expect(queue.size()).toBe(3);
-
-      // Autoscaler doesn't have stop method, just clean up
+      expect(workerPool.getWorkerCount()).toBe(0);
     } finally {
-      // Clean up resources
       await workerPool.killAll();
       eventBus.dispose();
     }

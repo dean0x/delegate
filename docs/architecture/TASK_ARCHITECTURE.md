@@ -101,11 +101,7 @@ The dependency system integrates at these lifecycle points:
    - **Handler**: `DependencyHandler` (Lines 414-518)
    - **Action**: Resolves dependencies, emits `TaskUnblocked` for dependents
 
-5. **TaskDeleted** → Task removed from system
-   - **Handler**: `DependencyHandler`
-   - **Action**: Removes task from dependency graph to maintain graph-database consistency
-
-6. **TaskUnblocked** → Dependent tasks now ready (all dependencies met)
+5. **TaskUnblocked** → Dependent tasks now ready (all dependencies met)
    - **Handler**: `QueueHandler` (Lines 288-345)
    - **Action**: Enqueues unblocked tasks for execution
 
@@ -180,11 +176,6 @@ export interface TaskDependencyFailedEvent extends BaseEvent {
   requestedDependencies?: readonly TaskId[];  // All deps that were requested
 }
 
-// Event: A task was deleted (for graph cleanup)
-export interface TaskDeletedEvent extends BaseEvent {
-  type: 'TaskDeleted';
-  taskId: TaskId;
-}
 ```
 
 ### 3.2 Event Flow Architecture
@@ -200,9 +191,6 @@ export interface TaskDeletedEvent extends BaseEvent {
 │  TaskCompleted/Failed/Cancelled → Resolves dependencies     │
 │                 Emits: TaskDependencyResolved               │
 │                 Checks dependents → TaskUnblocked           │
-│                                                               │
-│  TaskDeleted → Removes task from graph (consistency)        │
-│                Updates in-memory graph state                │
 │                                                               │
 │  Emits: TaskDependencyFailed if cycle detected              │
 └─────────────────────────────────────────────────────────────┘

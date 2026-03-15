@@ -72,7 +72,7 @@ private async processNextTask(): Promise<void> {
    - `lastSpawnTime = Date.now()` - for throttling
    - `resourceMonitor.incrementWorkerCount()` - track active workers
    - `resourceMonitor.recordSpawn()` - track settling workers
-   - Emit `WorkerSpawned` and `TaskStarted` events (parallel)
+   - Emit `TaskStarted` event
 
 ### Error Handling Invariants
 

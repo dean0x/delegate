@@ -11,7 +11,6 @@ import {
   Task,
   TaskCheckpoint,
   TaskId,
-  Worker,
   WorkerId,
 } from '../domain.js';
 import { BackbeatError } from '../errors.js';
@@ -89,31 +88,6 @@ export interface TaskCancellationRequestedEvent extends BaseEvent {
   reason?: string;
 }
 
-export interface TaskDeletedEvent extends BaseEvent {
-  type: 'TaskDeleted';
-  taskId: TaskId;
-}
-
-export interface LogsRequestedEvent extends BaseEvent {
-  type: 'LogsRequested';
-  taskId: TaskId;
-  tail?: number;
-}
-
-/**
- * Worker lifecycle events
- */
-export interface WorkerSpawnedEvent extends BaseEvent {
-  type: 'WorkerSpawned';
-  worker: Worker;
-  taskId: TaskId;
-}
-
-export interface WorkerKilledEvent extends BaseEvent {
-  type: 'WorkerKilled';
-  workerId: WorkerId;
-  taskId: TaskId;
-}
 
 /**
  * Output and configuration events
@@ -123,15 +97,6 @@ export interface OutputCapturedEvent extends BaseEvent {
   taskId: TaskId;
   outputType: 'stdout' | 'stderr';
   data: string;
-}
-
-export interface TaskConfiguredEvent extends BaseEvent {
-  type: 'TaskConfigured';
-  taskId: TaskId;
-  config: {
-    maxOutputBuffer?: number;
-    timeout?: number;
-  };
 }
 
 /**
@@ -287,32 +252,6 @@ export interface CheckpointCreatedEvent extends BaseEvent {
   checkpoint: TaskCheckpoint;
 }
 
-export interface TaskResumedEvent extends BaseEvent {
-  type: 'TaskResumed';
-  originalTaskId: TaskId;
-  newTaskId: TaskId;
-  checkpointUsed: boolean;
-}
-
-/**
- * System events
- */
-export interface SystemResourcesUpdatedEvent extends BaseEvent {
-  type: 'SystemResourcesUpdated';
-  cpuPercent: number;
-  memoryUsed: number;
-  workerCount: number;
-}
-
-export interface RecoveryStartedEvent extends BaseEvent {
-  type: 'RecoveryStarted';
-}
-
-export interface RecoveryCompletedEvent extends BaseEvent {
-  type: 'RecoveryCompleted';
-  tasksRecovered: number;
-  tasksMarkedFailed: number;
-}
 
 /**
  * Union type of all events
@@ -329,8 +268,6 @@ export type BackbeatEvent =
   | TaskCancelledEvent
   | TaskTimeoutEvent
   | TaskCancellationRequestedEvent
-  | TaskDeletedEvent
-  | LogsRequestedEvent
   // Query events (pure event-driven architecture)
   | TaskStatusQueryEvent
   | TaskStatusResponseEvent
@@ -357,19 +294,10 @@ export type BackbeatEvent =
   // Schedule query events
   | ScheduleQueryEvent
   | ScheduleQueryResponseEvent
-  // Checkpoint and resumption events
+  // Checkpoint events
   | CheckpointCreatedEvent
-  | TaskResumedEvent
-  // Worker events
-  | WorkerSpawnedEvent
-  | WorkerKilledEvent
   // Output events
-  | OutputCapturedEvent
-  | TaskConfiguredEvent
-  // System events
-  | SystemResourcesUpdatedEvent
-  | RecoveryStartedEvent
-  | RecoveryCompletedEvent;
+  | OutputCapturedEvent;
 
 /**
  * Event handler function type

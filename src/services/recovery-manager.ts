@@ -24,12 +24,6 @@ export class RecoveryManager {
   async recover(): Promise<Result<void>> {
     this.logger.info('Starting recovery process');
 
-    // Emit recovery started event
-    const recoveryStartResult = await this.eventBus.emit('RecoveryStarted', {});
-    if (!recoveryStartResult.ok) {
-      this.logger.error('Failed to emit RecoveryStarted event', recoveryStartResult.error);
-    }
-
     // First, cleanup old completed tasks (older than 7 days)
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
     const cleanupResult = await this.repository.cleanupOldTasks(sevenDaysMs);
@@ -178,16 +172,6 @@ export class RecoveryManager {
       requeued: queuedCount,
       markedFailed: failedCount,
     });
-
-    // Emit recovery completed event
-    const recoveryCompleteResult = await this.eventBus.emit('RecoveryCompleted', {
-      tasksRecovered: queuedCount,
-      tasksMarkedFailed: failedCount,
-    });
-
-    if (!recoveryCompleteResult.ok) {
-      this.logger.error('Failed to emit RecoveryCompleted event', recoveryCompleteResult.error);
-    }
 
     return ok(undefined);
   }

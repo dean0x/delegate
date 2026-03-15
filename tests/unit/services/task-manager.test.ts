@@ -738,7 +738,7 @@ describe('TaskManagerService', () => {
       expect(result.value.prompt).toContain('Try a different approach using streams');
     });
 
-    it('should emit TaskDelegated and TaskResumed events', async () => {
+    it('should emit TaskDelegated event on resume', async () => {
       const failed = buildFailedTask({ id: TaskId('res-4') });
       eventBus.request.mockResolvedValue(ok(failed));
 
@@ -747,35 +747,11 @@ describe('TaskManagerService', () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(eventBus.emit).toHaveBeenCalledTimes(2);
+      expect(eventBus.emit).toHaveBeenCalledTimes(1);
       expect(eventBus.emit).toHaveBeenCalledWith(
         'TaskDelegated',
         expect.objectContaining({ task: expect.any(Object) }),
       );
-      expect(eventBus.emit).toHaveBeenCalledWith(
-        'TaskResumed',
-        expect.objectContaining({
-          originalTaskId: TaskId('res-4'),
-          checkpointUsed: false,
-        }),
-      );
-    });
-
-    it('should set checkpointUsed to true when checkpoint was available', async () => {
-      const failed = buildFailedTask({ id: TaskId('res-5') });
-      eventBus.request.mockResolvedValue(ok(failed));
-      (checkpointRepo.findLatest as ReturnType<typeof vi.fn>).mockResolvedValue(
-        ok({
-          id: 1,
-          taskId: TaskId('res-5'),
-          checkpointType: 'failed' as const,
-          createdAt: Date.now(),
-        }),
-      );
-
-      await svcWithCheckpoint.resume({ taskId: TaskId('res-5') });
-
-      expect(eventBus.emit).toHaveBeenCalledWith('TaskResumed', expect.objectContaining({ checkpointUsed: true }));
     });
 
     it('should maintain retry chain tracking', async () => {

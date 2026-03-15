@@ -26,7 +26,6 @@ import {
 import { err, ok, Result } from '../core/result.js';
 import { CheckpointHandler } from './handlers/checkpoint-handler.js';
 import { DependencyHandler } from './handlers/dependency-handler.js';
-import { OutputHandler } from './handlers/output-handler.js';
 import { PersistenceHandler } from './handlers/persistence-handler.js';
 import { QueryHandler } from './handlers/query-handler.js';
 import { QueueHandler } from './handlers/queue-handler.js';
@@ -195,7 +194,7 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
   // Helper for creating child loggers
   const childLogger = (module: string) => logger.child({ module });
 
-  // Create 5 standard handlers that use setup(eventBus) pattern
+  // Create 4 standard handlers that use setup(eventBus) pattern
   // ARCHITECTURE: All handlers are independent - no inter-handler dependencies
   const standardHandlers = [
     // 1. Persistence Handler - manages database operations
@@ -206,8 +205,6 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     new QueueHandler(deps.taskQueue, deps.dependencyRepository, deps.taskRepository, childLogger('QueueHandler')),
     // 4. Worker Handler - manages worker lifecycle
     new WorkerHandler(deps.config, deps.workerPool, deps.resourceMonitor, eventBus, childLogger('WorkerHandler')),
-    // 5. Output Handler - manages output and logs
-    new OutputHandler(deps.outputCapture, childLogger('OutputHandler')),
   ];
 
   // Register all standard handlers

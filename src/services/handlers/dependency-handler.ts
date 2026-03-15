@@ -14,7 +14,6 @@ import {
   TaskCancelledEvent,
   TaskCompletedEvent,
   TaskDelegatedEvent,
-  TaskDeletedEvent,
   TaskFailedEvent,
   TaskTimeoutEvent,
 } from '../../core/events/events.js';
@@ -145,8 +144,6 @@ export class DependencyHandler extends BaseEventHandler {
       this.eventBus.subscribe('TaskFailed', this.handleTaskFailed.bind(this)),
       this.eventBus.subscribe('TaskCancelled', this.handleTaskCancelled.bind(this)),
       this.eventBus.subscribe('TaskTimeout', this.handleTaskTimeout.bind(this)),
-      // Listen for task deletions to maintain graph consistency
-      this.eventBus.subscribe('TaskDeleted', this.handleTaskDeleted.bind(this)),
       // NOTE: No longer subscribe to TaskDependencyAdded - we update graph directly
     ];
 
@@ -408,24 +405,6 @@ export class DependencyHandler extends BaseEventHandler {
   private async handleTaskTimeout(event: TaskTimeoutEvent): Promise<void> {
     await this.handleEvent(event, async (event) => {
       await this.resolveDependencies(event.taskId, 'failed');
-      return ok(undefined);
-    });
-  }
-
-  /**
-   * Handle task deletion - remove task from in-memory graph to maintain consistency
-   * ARCHITECTURE: Maintains graph-database synchronization when tasks are deleted
-   */
-  private async handleTaskDeleted(event: TaskDeletedEvent): Promise<void> {
-    await this.handleEvent(event, async (event) => {
-      const removeResult = this.graph.removeTask(event.taskId);
-      if (!removeResult.ok) {
-        this.logger.error('Failed to remove task from graph', removeResult.error, {
-          taskId: event.taskId,
-        });
-        return removeResult;
-      }
-      this.logger.debug('Graph updated: task removed', { taskId: event.taskId });
       return ok(undefined);
     });
   }

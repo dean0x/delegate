@@ -357,13 +357,6 @@ export class TaskManagerService implements TaskManager {
       return err(delegateResult.error);
     }
 
-    // Emit TaskResumed event
-    await this.eventBus.emit('TaskResumed', {
-      originalTaskId: taskId,
-      newTaskId: newTask.id,
-      checkpointUsed,
-    });
-
     return ok(newTask);
   }
 

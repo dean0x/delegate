@@ -106,28 +106,6 @@ describe('RecoveryManager', () => {
 
   // --- Tests ---
 
-  describe('Recovery events', () => {
-    it('should emit RecoveryStarted event at the beginning', async () => {
-      setupFindByStatus([], []);
-
-      await manager.recover();
-
-      expect(eventBus.emit).toHaveBeenCalledWith('RecoveryStarted', {});
-    });
-
-    it('should emit RecoveryCompleted event with correct counts when no tasks exist', async () => {
-      setupFindByStatus([], []);
-
-      const result = await manager.recover();
-
-      expect(result.ok).toBe(true);
-      expect(eventBus.emit).toHaveBeenCalledWith('RecoveryCompleted', {
-        tasksRecovered: 0,
-        tasksMarkedFailed: 0,
-      });
-    });
-  });
-
   describe('Empty recovery', () => {
     it('should succeed with no operations when no queued or running tasks exist', async () => {
       setupFindByStatus([], []);
@@ -229,17 +207,6 @@ describe('RecoveryManager', () => {
       });
     });
 
-    it('should include re-queued QUEUED tasks in RecoveryCompleted count', async () => {
-      const task = buildQueuedTask('counted-task');
-      setupFindByStatus([task], []);
-
-      await manager.recover();
-
-      expect(eventBus.emit).toHaveBeenCalledWith('RecoveryCompleted', {
-        tasksRecovered: 1,
-        tasksMarkedFailed: 0,
-      });
-    });
   });
 
   describe('RUNNING task recovery - stale tasks', () => {
@@ -310,18 +277,6 @@ describe('RecoveryManager', () => {
       );
     });
 
-    it('should include stale tasks in RecoveryCompleted markedFailed count', async () => {
-      const staleTask = buildStaleRunningTask('stale-counted');
-      setupFindByStatus([], [staleTask]);
-
-      await manager.recover();
-
-      expect(eventBus.emit).toHaveBeenCalledWith('RecoveryCompleted', {
-        tasksRecovered: 0,
-        tasksMarkedFailed: 1,
-      });
-    });
-
     it('should log stale task failure with age in minutes', async () => {
       const staleTask = buildStaleRunningTask('stale-logged');
       setupFindByStatus([], [staleTask]);
@@ -377,18 +332,6 @@ describe('RecoveryManager', () => {
       expect(logger.warn).toHaveBeenCalledWith('Task already in queue, skipping re-queue', { taskId: recentTask.id });
     });
 
-    it('should include re-queued recent tasks in RecoveryCompleted tasksRecovered count', async () => {
-      const recentTask = buildRecentRunningTask('recent-counted');
-      setupFindByStatus([], [recentTask]);
-
-      await manager.recover();
-
-      expect(eventBus.emit).toHaveBeenCalledWith('RecoveryCompleted', {
-        tasksRecovered: 1,
-        tasksMarkedFailed: 0,
-      });
-    });
-
     it('should log enqueue failure for recent running task but continue', async () => {
       const recentTask = buildRecentRunningTask('recent-enqueue-fail');
       setupFindByStatus([], [recentTask]);
@@ -431,34 +374,6 @@ describe('RecoveryManager', () => {
       }
     });
 
-    it('should log error when RecoveryStarted emit fails but continue recovery', async () => {
-      const emitError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Event bus error');
-      eventBus.emit
-        .mockResolvedValueOnce(err(emitError)) // RecoveryStarted fails
-        .mockResolvedValue(ok(undefined)); // All subsequent emits succeed
-      setupFindByStatus([], []);
-
-      const result = await manager.recover();
-
-      // Recovery should still succeed
-      expect(result.ok).toBe(true);
-      expect(logger.error).toHaveBeenCalledWith('Failed to emit RecoveryStarted event', emitError);
-    });
-
-    it('should log error when RecoveryCompleted emit fails', async () => {
-      setupFindByStatus([], []);
-      const emitError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Event bus error');
-      // RecoveryStarted succeeds, RecoveryCompleted fails
-      eventBus.emit
-        .mockResolvedValueOnce(ok(undefined)) // RecoveryStarted
-        .mockResolvedValueOnce(err(emitError)); // RecoveryCompleted
-
-      const result = await manager.recover();
-
-      // Recovery should still return ok (emit failure is logged, not propagated)
-      expect(result.ok).toBe(true);
-      expect(logger.error).toHaveBeenCalledWith('Failed to emit RecoveryCompleted event', emitError);
-    });
   });
 
   describe('Mixed scenario', () => {
@@ -486,12 +401,6 @@ describe('RecoveryManager', () => {
 
       // Recent task re-queued
       expect(queue.enqueue).toHaveBeenCalledWith(recentTask);
-
-      // Correct counts: 2 re-queued (queued + recent), 1 failed (stale)
-      expect(eventBus.emit).toHaveBeenCalledWith('RecoveryCompleted', {
-        tasksRecovered: 2,
-        tasksMarkedFailed: 1,
-      });
     });
 
     it('should handle multiple queued and multiple running tasks', async () => {
@@ -517,12 +426,6 @@ describe('RecoveryManager', () => {
 
       // 2 stale tasks marked FAILED
       expect(repo.update).toHaveBeenCalledTimes(2);
-
-      // 2 re-queued (q1 + recent1), 2 marked failed (stale1 + stale2)
-      expect(eventBus.emit).toHaveBeenCalledWith('RecoveryCompleted', {
-        tasksRecovered: 2,
-        tasksMarkedFailed: 2,
-      });
     });
   });
 
@@ -532,22 +435,14 @@ describe('RecoveryManager', () => {
       setupFindByStatus([task], []);
       const emitError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Event bus error');
 
-      // RecoveryStarted succeeds, TaskQueued fails, RecoveryCompleted succeeds
-      eventBus.emit
-        .mockResolvedValueOnce(ok(undefined)) // RecoveryStarted
-        .mockResolvedValueOnce(err(emitError)) // TaskQueued
-        .mockResolvedValueOnce(ok(undefined)); // RecoveryCompleted
+      // TaskQueued fails
+      eventBus.emit.mockResolvedValueOnce(err(emitError));
 
       const result = await manager.recover();
 
       expect(result.ok).toBe(true);
       expect(logger.error).toHaveBeenCalledWith('Failed to emit TaskQueued event for recovered task', emitError, {
         taskId: task.id,
-      });
-      // Task is still counted despite event emit failure
-      expect(eventBus.emit).toHaveBeenCalledWith('RecoveryCompleted', {
-        tasksRecovered: 1,
-        tasksMarkedFailed: 0,
       });
     });
   });

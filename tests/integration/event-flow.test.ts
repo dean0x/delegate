@@ -3,12 +3,10 @@
  * Tests the coordination between EventBus, handlers, and services
  */
 
-import { randomUUID } from 'crypto';
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Task, WorkerId } from '../../src/core/domain.js';
+import { describe, expect, it } from 'vitest';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { Database } from '../../src/implementations/database.js';
 import { EventDrivenWorkerPool } from '../../src/implementations/event-driven-worker-pool.js';
@@ -62,7 +60,7 @@ describe('Integration: Event-driven task delegation flow', () => {
     // Subscribe to events
     eventBus.on('TaskDelegated', () => events.push('TaskDelegated'));
     eventBus.on('TaskQueued', () => events.push('TaskQueued'));
-    eventBus.on('WorkerSpawned', () => events.push('WorkerSpawned'));
+    eventBus.on('TaskStarted', () => events.push('TaskStarted'));
     eventBus.on('TaskCompleted', (data) => {
       events.push('TaskCompleted');
       taskStates.set(data.taskId, 'completed');
@@ -92,7 +90,7 @@ describe('Integration: Event-driven task delegation flow', () => {
       if (canSpawn) {
         const result = await workerPool.spawn(data.task);
         if (result.ok) {
-          eventBus.emit('WorkerSpawned', { workerId: result.value.id, task: data.task });
+          eventBus.emit('TaskStarted', { taskId: data.task.id, workerId: result.value.id });
         }
       }
     });
@@ -127,7 +125,7 @@ describe('Integration: Event-driven task delegation flow', () => {
       // Verify event sequence
       expect(events).toContain('TaskDelegated');
       expect(events).toContain('TaskQueued');
-      expect(events).toContain('WorkerSpawned');
+      expect(events).toContain('TaskStarted');
 
       // Test 2: Query task status via event bus
       // Give time for the task to be saved to database
