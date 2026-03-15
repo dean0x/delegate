@@ -136,7 +136,7 @@ export class TaskManagerService implements TaskManager {
 
   async cancel(taskId: TaskId, reason?: string): Promise<Result<void>> {
     // ARCHITECTURE: Validation now happens in event handler, not here
-    // This maintains pure event-driven pattern
+    // Commands go through events; queries go direct to repos
     this.logger.info('Cancelling task', { taskId, reason });
 
     // Emit cancellation event - handler will validate and process

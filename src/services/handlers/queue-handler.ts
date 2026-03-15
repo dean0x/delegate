@@ -155,7 +155,7 @@ export class QueueHandler extends BaseEventHandler {
 
   /**
    * Handle requeue task event - event-driven requeue operation
-   * ARCHITECTURE: Pure event-driven pattern - WorkerHandler uses events, not direct calls
+   * ARCHITECTURE: Event-driven pattern - WorkerHandler uses events, not direct calls
    */
   private async handleRequeueTask(event: RequeueTaskEvent): Promise<void> {
     await this.handleEvent(event, async (event) => {

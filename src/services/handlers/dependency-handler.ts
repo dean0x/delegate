@@ -1,7 +1,7 @@
 /**
  * Dependency handler for task dependency management
  * ARCHITECTURE: Event-driven DAG validation and dependency resolution
- * Pattern: Pure event-driven with cycle detection before mutation
+ * Pattern: Event-driven with cycle detection before mutation
  * Rationale: Ensures dependency integrity, prevents deadlocks, enables parallel task execution
  */
 

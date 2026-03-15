@@ -49,7 +49,7 @@ npm run test:coverage       # With coverage
 
 ## Architecture Notes
 
-**Event-Driven System**: All components communicate via EventBus - no direct state management.
+**Hybrid Event-Driven System**: Commands (state changes) flow through EventBus; queries use direct repository access.
 
 **Key Pattern**: Events flow through specialized handlers:
 - `DependencyHandler` → manages task dependencies and DAG validation
@@ -57,7 +57,7 @@ npm run test:coverage       # With coverage
 - `WorkerHandler` → worker lifecycle
 - `PersistenceHandler` → database operations
 - `ScheduleHandler` → schedule lifecycle (create, pause, resume, cancel)
-- `ScheduleExecutor` → cron/one-time execution engine (note: has direct repo writes, architectural exception to pure event-driven pattern)
+- `ScheduleExecutor` → cron/one-time execution engine (note: has direct repo writes, architectural exception to event-driven pattern)
 
 See `docs/architecture/` for implementation details.
 

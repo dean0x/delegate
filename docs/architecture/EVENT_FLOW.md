@@ -1,6 +1,6 @@
 # Event Flow Architecture
 
-Backbeat uses a **pure event-driven architecture** where all components communicate through a central EventBus. This document explains the event flows for common operations.
+Backbeat uses a **hybrid event-driven architecture** where commands (state changes) flow through a central EventBus and queries use direct repository access. This document explains the event flows for common operations.
 
 ## Architecture Overview
 
@@ -36,11 +36,11 @@ Backbeat uses a **pure event-driven architecture** where all components communic
 - `TaskCancelled` - Task cancelled by user
 - `OutputCaptured` - Worker output received
 
-### Query Events (Request-Response)
-- `TaskStatusQuery` - Get task details
-- `TaskLogsQuery` - Fetch task output
-- `NextTaskQuery` - Dequeue next task
-- `ListTasksQuery` - Get all tasks
+### Queries (Direct Repository Access)
+Queries bypass the EventBus and call repositories directly:
+- Task status lookups via `TaskRepository.findById()`
+- Task logs via `OutputCapture.getOutput()`
+- Task listing via `TaskRepository.findAllUnbounded()`
 
 ## Common Event Flows
 
@@ -61,12 +61,13 @@ User/MCP Client
 ┌───────────────────────────────────────────────────────────────┐
 │ 2. PersistenceHandler.handleTaskDelegated()                   │
 │    • Saves task to database                                    │
-│    • Emits: TaskPersisted                                      │
+│    • Calls QueueHandler.enqueueIfReady() directly             │
 └───────────────────────────────────────────────────────────────┘
     │
     ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 3. QueueHandler.handleTaskPersisted()                         │
+│ 3. QueueHandler.enqueueIfReady()                              │
+│    • Checks dependency status (skip if blocked)               │
 │    • Adds task to priority queue                               │
 │    • Emits: TaskQueued                                         │
 └───────────────────────────────────────────────────────────────┘
@@ -76,27 +77,14 @@ User/MCP Client
 │ 4. WorkerHandler.handleTaskQueued()                           │
 │    • Checks resources (canSpawnWorker)                         │
 │    • Enforces 10s spawn delay (burst protection)               │
-│    • Requests: NextTaskQuery                                   │
-└───────────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌───────────────────────────────────────────────────────────────┐
-│ 5. QueueHandler.handleNextTaskQuery()                         │
-│    • Dequeues highest priority task                            │
-│    • Responds with Task via correlation ID                     │
-└───────────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌───────────────────────────────────────────────────────────────┐
-│ 6. WorkerHandler (continued)                                   │
+│    • Dequeues task directly via TaskQueue.dequeue()            │
 │    • Spawns worker process                                     │
-│    • Records spawn time (for throttling)                       │
 │    • Emits: TaskStarted                                        │
 └───────────────────────────────────────────────────────────────┘
     │
     ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 7. PersistenceHandler.handleTaskStarted()                     │
+│ 5. PersistenceHandler.handleTaskStarted()                     │
 │    • Updates task status to RUNNING                            │
 │    • Records worker ID and start time                          │
 └───────────────────────────────────────────────────────────────┘
@@ -111,19 +99,12 @@ Worker Process (claude-code)
 ┌───────────────────────────────────────────────────────────────┐
 │ 1. WorkerPool.onWorkerExit()                                  │
 │    • Captures exit code                                        │
-│    • Requests: TaskStatusQuery (to get full task)             │
+│    • Looks up task via TaskRepository (direct access)         │
 └───────────────────────────────────────────────────────────────┘
     │
     ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 2. QueryHandler.handleTaskStatusQuery()                       │
-│    • Fetches task from database                                │
-│    • Responds with Task via correlation ID                     │
-└───────────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌───────────────────────────────────────────────────────────────┐
-│ 3. WorkerHandler.onWorkerComplete()                           │
+│ 2. WorkerHandler.onWorkerComplete()                           │
 │    • Determines success/failure from exit code                 │
 │    • Emits: TaskCompleted OR TaskFailed                        │
 │    • Decrements worker count                                   │
@@ -131,7 +112,7 @@ Worker Process (claude-code)
     │
     ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 4. PersistenceHandler.handleTaskCompleted/Failed()            │
+│ 3. PersistenceHandler.handleTaskCompleted/Failed()            │
 │    • Updates task status (COMPLETED/FAILED)                    │
 │    • Records completion time and exit code                     │
 └───────────────────────────────────────────────────────────────┘
@@ -156,7 +137,7 @@ User Request
            │
            ▼
        ┌────────────────────────────────────────────┐
-       │ Requests: TaskStatusQuery                   │
+       │ TaskRepository.findById(taskId)            │
        │ • Gets task to find worker ID              │
        └────────────────────────────────────────────┘
            │
@@ -226,29 +207,20 @@ Server Startup
 
 ## Request-Response Pattern Details
 
-The EventBus supports request-response for queries using correlation IDs:
+The EventBus supports request-response using correlation IDs. After Phase 1 simplification,
+queries use direct repository access instead of request-response events. The pattern remains
+available in the EventBus interface for future use.
 
 ```typescript
-// 1. Requester sends event with correlation ID
-const result = await eventBus.request<TaskStatusQueryEvent, Task>(
-  'TaskStatusQuery',
-  { taskId: 'task-123' }
+// Request-response via EventBus (correlation ID pattern)
+const result = await eventBus.request<SomeEvent, ResponseType>(
+  'SomeEvent',
+  { /* payload */ }
 );
-// Internally generates correlationId: 'uuid-abc'
+// Internally generates correlationId, handler responds via eventBus.respond()
 
-// 2. Handler receives event
-handler(event) {
-  const correlationId = event.__correlationId;
-  const task = await database.find(event.taskId);
-
-  // 3. Handler responds via correlation ID
-  eventBus.respond(correlationId, task);
-}
-
-// 4. Requester receives response (or timeout after 5s)
-if (result.ok) {
-  console.log(result.value); // Task object
-}
+// Post-simplification: queries go direct
+const task = await taskRepo.findById(taskId);
 ```
 
 ## Performance Monitoring
@@ -446,8 +418,8 @@ container.registerValue('dependencyHandler', dependencyHandler);
 
 | Pattern | Handlers | When to Use |
 |---------|----------|-------------|
-| **Standard** (via registry) | PersistenceHandler, QueryHandler, QueueHandler, WorkerHandler | Synchronous initialization, uses `setup(eventBus)` |
-| **Factory** (returned separately) | DependencyHandler | Requires async initialization (loading dependency graph from DB) |
+| **Standard** (via registry) | PersistenceHandler, QueueHandler, WorkerHandler | Synchronous initialization, uses `setup(eventBus)` |
+| **Factory** (returned separately) | DependencyHandler, ScheduleHandler, CheckpointHandler | Requires async initialization (loading state from DB) |
 
 ### Adding New Handlers (v0.4.0+)
 
