@@ -1,14 +1,14 @@
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTask, TaskId, TaskStatus } from '../../../../src/core/domain';
 import { BackbeatError, ErrorCode } from '../../../../src/core/errors';
 import { InMemoryEventBus } from '../../../../src/core/events/event-bus';
-import { TaskPersistedEvent } from '../../../../src/core/events/events';
 import { Database } from '../../../../src/implementations/database';
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository';
 import { PersistenceHandler } from '../../../../src/services/handlers/persistence-handler';
+import { QueueHandler } from '../../../../src/services/handlers/queue-handler';
 import { createTestConfiguration } from '../../../fixtures/factories';
 import { TestLogger } from '../../../fixtures/test-doubles';
 import { flushEventLoop } from '../../../utils/event-helpers.js';
@@ -20,6 +20,7 @@ describe('PersistenceHandler', () => {
   let database: Database;
   let tempDir: string;
   let logger: TestLogger;
+  let mockQueueHandler: { enqueueIfReady: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     logger = new TestLogger();
@@ -30,7 +31,11 @@ describe('PersistenceHandler', () => {
     database = new Database(join(tempDir, 'test.db'));
     taskRepo = new SQLiteTaskRepository(database);
 
-    handler = new PersistenceHandler(taskRepo, logger);
+    mockQueueHandler = {
+      enqueueIfReady: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
+    };
+
+    handler = new PersistenceHandler(taskRepo, mockQueueHandler as unknown as QueueHandler, logger);
     const setupResult = await handler.setup(eventBus);
     if (!setupResult.ok) {
       throw new Error(`Failed to setup PersistenceHandler: ${setupResult.error.message}`);
@@ -44,14 +49,8 @@ describe('PersistenceHandler', () => {
   });
 
   describe('TaskDelegated', () => {
-    it('should save task to repository and emit TaskPersisted', async () => {
+    it('should save task to repository and call queueHandler.enqueueIfReady', async () => {
       const task = createTask({ prompt: 'test task' });
-
-      // Subscribe to downstream event before emitting
-      let persistedEvent: TaskPersistedEvent | undefined;
-      eventBus.on('TaskPersisted', (event: TaskPersistedEvent) => {
-        persistedEvent = event;
-      });
 
       await eventBus.emit('TaskDelegated', { task });
       await flushEventLoop();
@@ -62,9 +61,8 @@ describe('PersistenceHandler', () => {
       expect(findResult.value).not.toBeNull();
       expect(findResult.value!.id).toBe(task.id);
 
-      // TaskPersisted event should have been emitted
-      expect(persistedEvent).toBeDefined();
-      expect(persistedEvent!.taskId).toBe(task.id);
+      // QueueHandler.enqueueIfReady should have been called with the task
+      expect(mockQueueHandler.enqueueIfReady).toHaveBeenCalledWith(task);
     });
 
     it('should log error and not crash when repository save fails', async () => {
@@ -80,6 +78,9 @@ describe('PersistenceHandler', () => {
       const errorLogs = logger.getLogsByLevel('error');
       expect(errorLogs.length).toBeGreaterThan(0);
       expect(errorLogs.some((l) => l.message.includes('Failed to persist delegated task'))).toBe(true);
+
+      // QueueHandler should NOT have been called since save failed
+      expect(mockQueueHandler.enqueueIfReady).not.toHaveBeenCalled();
     });
   });
 

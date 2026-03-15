@@ -193,13 +193,20 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
   // Helper for creating child loggers
   const childLogger = (module: string) => logger.child({ module });
 
+  // Create QueueHandler first so PersistenceHandler can call it directly after save
+  const queueHandler = new QueueHandler(
+    deps.taskQueue,
+    deps.dependencyRepository,
+    deps.taskRepository,
+    childLogger('QueueHandler'),
+  );
+
   // Create 3 standard handlers that use setup(eventBus) pattern
-  // ARCHITECTURE: All handlers are independent - no inter-handler dependencies
   const standardHandlers = [
-    // 1. Persistence Handler - manages database operations
-    new PersistenceHandler(deps.taskRepository, childLogger('PersistenceHandler')),
+    // 1. Persistence Handler - saves task, then calls QueueHandler.enqueueIfReady()
+    new PersistenceHandler(deps.taskRepository, queueHandler, childLogger('PersistenceHandler')),
     // 2. Queue Handler - manages task queue operations with dependency awareness
-    new QueueHandler(deps.taskQueue, deps.dependencyRepository, deps.taskRepository, childLogger('QueueHandler')),
+    queueHandler,
     // 3. Worker Handler - manages worker lifecycle
     new WorkerHandler(
       deps.config,

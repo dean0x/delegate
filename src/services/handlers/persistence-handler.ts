@@ -17,12 +17,12 @@ import {
 import { BaseEventHandler } from '../../core/events/handlers.js';
 import { Logger, TaskRepository } from '../../core/interfaces.js';
 import { ok, Result } from '../../core/result.js';
+import { QueueHandler } from './queue-handler.js';
 
 export class PersistenceHandler extends BaseEventHandler {
-  private eventBus?: EventBus;
-
   constructor(
     private readonly repository: TaskRepository,
+    private readonly queueHandler: QueueHandler,
     logger: Logger,
   ) {
     super(logger, 'PersistenceHandler');
@@ -32,8 +32,6 @@ export class PersistenceHandler extends BaseEventHandler {
    * Set up event subscriptions
    */
   async setup(eventBus: EventBus): Promise<Result<void>> {
-    this.eventBus = eventBus; // Store reference for later use
-
     // Subscribe to all task lifecycle events that need persistence
     const subscriptions = [
       eventBus.subscribe('TaskDelegated', this.handleTaskDelegated.bind(this)),
@@ -56,7 +54,7 @@ export class PersistenceHandler extends BaseEventHandler {
   }
 
   /**
-   * Handle task delegation - persist new task to database
+   * Handle task delegation - persist new task to database, then enqueue if ready
    */
   private async handleTaskDelegated(event: TaskDelegatedEvent): Promise<void> {
     await this.handleEvent(event, async (event) => {
@@ -73,13 +71,8 @@ export class PersistenceHandler extends BaseEventHandler {
         taskId: event.task.id,
       });
 
-      // Emit TaskPersisted event with full task for queue handler
-      if (this.eventBus) {
-        await this.eventBus.emit('TaskPersisted', {
-          taskId: event.task.id,
-          task: event.task,
-        });
-      }
+      // Directly call QueueHandler to enqueue task if not blocked by dependencies
+      await this.queueHandler.enqueueIfReady(event.task);
 
       return ok(undefined);
     });

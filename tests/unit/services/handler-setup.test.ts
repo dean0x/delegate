@@ -212,7 +212,7 @@ describe('handler-setup', () => {
 
       // With all handlers setup, we should have multiple event subscriptions
       // PersistenceHandler: TaskDelegated, TaskStarted, TaskCompleted, TaskFailed, etc.
-      // QueueHandler: TaskPersisted, TaskCancellationRequested, RequeueTask, TaskUnblocked
+      // QueueHandler: TaskCancellationRequested, RequeueTask, TaskUnblocked
       // WorkerHandler: TaskQueued, TaskCancellationRequested
       // DependencyHandler: TaskDelegated, TaskCompleted, TaskFailed, TaskCancelled, etc.
       expect(subscriptionCount).toBeGreaterThan(0);

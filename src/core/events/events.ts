@@ -33,12 +33,6 @@ export interface TaskDelegatedEvent extends BaseEvent {
   task: Task;
 }
 
-export interface TaskPersistedEvent extends BaseEvent {
-  type: 'TaskPersisted';
-  taskId: TaskId;
-  task: Task; // Include full task for QueueHandler
-}
-
 export interface TaskQueuedEvent extends BaseEvent {
   type: 'TaskQueued';
   taskId: TaskId;
@@ -208,7 +202,6 @@ export interface CheckpointCreatedEvent extends BaseEvent {
 export type BackbeatEvent =
   // Task lifecycle events
   | TaskDelegatedEvent
-  | TaskPersistedEvent
   | TaskQueuedEvent
   | TaskStartingEvent
   | TaskStartedEvent
