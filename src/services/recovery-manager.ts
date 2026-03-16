@@ -3,7 +3,7 @@
  * Handles loading tasks from database and emits events for recovery actions
  */
 
-import { isTerminalState, TaskStatus } from '../core/domain.js';
+import { TaskStatus } from '../core/domain.js';
 import { EventBus } from '../core/events/event-bus.js';
 import { Logger, TaskQueue, TaskRepository } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
@@ -23,12 +23,6 @@ export class RecoveryManager {
    */
   async recover(): Promise<Result<void>> {
     this.logger.info('Starting recovery process');
-
-    // Emit recovery started event
-    const recoveryStartResult = await this.eventBus.emit('RecoveryStarted', {});
-    if (!recoveryStartResult.ok) {
-      this.logger.error('Failed to emit RecoveryStarted event', recoveryStartResult.error);
-    }
 
     // First, cleanup old completed tasks (older than 7 days)
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
@@ -72,7 +66,6 @@ export class RecoveryManager {
         // CRITICAL: Emit TaskQueued event to trigger worker spawning
         const queuedEventResult = await this.eventBus.emit('TaskQueued', {
           taskId: task.id,
-          task: task,
         });
 
         if (!queuedEventResult.ok) {
@@ -156,7 +149,6 @@ export class RecoveryManager {
           // Emit TaskQueued event to trigger worker spawning
           const queuedEventResult = await this.eventBus.emit('TaskQueued', {
             taskId: task.id,
-            task: task,
           });
 
           if (!queuedEventResult.ok) {
@@ -178,16 +170,6 @@ export class RecoveryManager {
       requeued: queuedCount,
       markedFailed: failedCount,
     });
-
-    // Emit recovery completed event
-    const recoveryCompleteResult = await this.eventBus.emit('RecoveryCompleted', {
-      tasksRecovered: queuedCount,
-      tasksMarkedFailed: failedCount,
-    });
-
-    if (!recoveryCompleteResult.ok) {
-      this.logger.error('Failed to emit RecoveryCompleted event', recoveryCompleteResult.error);
-    }
 
     return ok(undefined);
   }

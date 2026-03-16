@@ -38,9 +38,6 @@ export const ConfigurationSchema = z.object({
   resourceMonitorIntervalMs: z.number().min(1000).max(60000).default(5000), // Default: check every 5 seconds
   minSpawnDelayMs: z.number().min(10).max(60000).default(10000), // Default: 10s minimum delay between spawns (Claude Code is heavyweight)
   settlingWindowMs: z.number().min(5000).max(60000).default(15000), // Default: 15s settling window for newly spawned workers
-  // Event system configuration
-  eventRequestTimeoutMs: z.number().min(1000).max(300000).default(5000), // Default: 5 second timeout
-  eventCleanupIntervalMs: z.number().min(10000).max(600000).default(60000), // Default: cleanup every minute
   // Storage configuration
   fileStorageThresholdBytes: z.number().min(1024).max(10485760).default(102400), // Default: 100KB threshold
   // Retry behavior configuration
@@ -73,9 +70,6 @@ const DEFAULT_CONFIG: Configuration = {
   resourceMonitorIntervalMs: 5000, // Default: check resources every 5 seconds
   minSpawnDelayMs: 10000, // Default: 10s minimum delay between spawns (Claude Code is heavyweight)
   settlingWindowMs: 15000, // Default: 15s settling window for newly spawned workers
-  // Event system defaults
-  eventRequestTimeoutMs: 5000, // Default: 5 second timeout for event requests
-  eventCleanupIntervalMs: 60000, // Default: cleanup event history every minute
   // Storage defaults
   fileStorageThresholdBytes: 102400, // Default: 100KB threshold for file storage
   // Retry behavior defaults
@@ -125,10 +119,6 @@ export function loadConfiguration(): Configuration {
     envConfig.minSpawnDelayMs = parseEnvNumber(process.env.WORKER_MIN_SPAWN_DELAY_MS, 0);
   if (process.env.WORKER_SETTLING_WINDOW_MS)
     envConfig.settlingWindowMs = parseEnvNumber(process.env.WORKER_SETTLING_WINDOW_MS, 0);
-  if (process.env.EVENT_REQUEST_TIMEOUT_MS)
-    envConfig.eventRequestTimeoutMs = parseEnvNumber(process.env.EVENT_REQUEST_TIMEOUT_MS, 0);
-  if (process.env.EVENT_CLEANUP_INTERVAL_MS)
-    envConfig.eventCleanupIntervalMs = parseEnvNumber(process.env.EVENT_CLEANUP_INTERVAL_MS, 0);
   if (process.env.FILE_STORAGE_THRESHOLD_BYTES)
     envConfig.fileStorageThresholdBytes = parseEnvNumber(process.env.FILE_STORAGE_THRESHOLD_BYTES, 0);
   if (process.env.RETRY_INITIAL_DELAY_MS)

@@ -85,9 +85,9 @@ TaskDelegated
   │     └─▶ Validates DAG (cycle detection)
   │     └─▶ Persists dependencies
   │
-  └─▶ TaskPersisted
-        │
-        └─▶ QueueHandler.handleTaskPersisted()
+  └─▶ PersistenceHandler.handleTaskDelegated()
+        └─▶ Persists task
+        └─▶ QueueHandler.enqueueIfReady() (direct call)
               └─▶ Checks if task is blocked
                     ├─ Blocked: Skip enqueueing
                     └─ Not Blocked: Enqueue task
@@ -671,6 +671,6 @@ If dependency operations are slow:
 ### Code References
 
 - Cycle detection: `wouldCreateCycle()` in `src/core/dependency-graph.ts`
-- Dependency-aware queueing: `handleTaskPersisted()` in `src/services/handlers/queue-handler.ts`
+- Dependency-aware queueing: `enqueueIfReady()` in `src/services/handlers/queue-handler.ts`
 - Dependency resolution: `resolveDependencies()` in `src/services/handlers/dependency-handler.ts`
 - Task unblocking: `handleTaskUnblocked()` in `src/services/handlers/queue-handler.ts`

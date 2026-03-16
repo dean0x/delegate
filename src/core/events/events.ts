@@ -1,19 +1,11 @@
 /**
- * Event type definitions for the event-driven architecture
- * All system state changes flow through these events
+ * Event type definitions for the hybrid event-driven architecture.
+ * Commands flow through events (TaskDelegated, TaskQueued, etc.).
+ * Queries use direct repository access (no query events).
+ * 25 event types remain after Phase 1 simplification.
  */
 
-import {
-  MissedRunPolicy,
-  Schedule,
-  ScheduleId,
-  ScheduleStatus,
-  Task,
-  TaskCheckpoint,
-  TaskId,
-  Worker,
-  WorkerId,
-} from '../domain.js';
+import { MissedRunPolicy, Schedule, ScheduleId, Task, TaskCheckpoint, TaskId, WorkerId } from '../domain.js';
 import { BackbeatError } from '../errors.js';
 
 /**
@@ -23,8 +15,6 @@ export interface BaseEvent {
   eventId: string;
   timestamp: number;
   source: string;
-  /** Correlation ID for request-response pattern */
-  __correlationId?: string;
 }
 
 /**
@@ -33,12 +23,6 @@ export interface BaseEvent {
 export interface TaskDelegatedEvent extends BaseEvent {
   type: 'TaskDelegated';
   task: Task;
-}
-
-export interface TaskPersistedEvent extends BaseEvent {
-  type: 'TaskPersisted';
-  taskId: TaskId;
-  task: Task; // Include full task for QueueHandler
 }
 
 export interface TaskQueuedEvent extends BaseEvent {
@@ -89,32 +73,6 @@ export interface TaskCancellationRequestedEvent extends BaseEvent {
   reason?: string;
 }
 
-export interface TaskDeletedEvent extends BaseEvent {
-  type: 'TaskDeleted';
-  taskId: TaskId;
-}
-
-export interface LogsRequestedEvent extends BaseEvent {
-  type: 'LogsRequested';
-  taskId: TaskId;
-  tail?: number;
-}
-
-/**
- * Worker lifecycle events
- */
-export interface WorkerSpawnedEvent extends BaseEvent {
-  type: 'WorkerSpawned';
-  worker: Worker;
-  taskId: TaskId;
-}
-
-export interface WorkerKilledEvent extends BaseEvent {
-  type: 'WorkerKilled';
-  workerId: WorkerId;
-  taskId: TaskId;
-}
-
 /**
  * Output and configuration events
  */
@@ -123,50 +81,6 @@ export interface OutputCapturedEvent extends BaseEvent {
   taskId: TaskId;
   outputType: 'stdout' | 'stderr';
   data: string;
-}
-
-export interface TaskConfiguredEvent extends BaseEvent {
-  type: 'TaskConfigured';
-  taskId: TaskId;
-  config: {
-    maxOutputBuffer?: number;
-    timeout?: number;
-  };
-}
-
-/**
- * Query events - for read operations in pure event-driven architecture
- * ARCHITECTURE: Part of pure event-driven pattern - ALL operations go through events
- */
-export interface TaskStatusQueryEvent extends BaseEvent {
-  type: 'TaskStatusQuery';
-  taskId?: TaskId; // If omitted, return all tasks
-}
-
-export interface TaskStatusResponseEvent extends BaseEvent {
-  type: 'TaskStatusResponse';
-  result: Task | readonly Task[];
-}
-
-export interface TaskLogsQueryEvent extends BaseEvent {
-  type: 'TaskLogsQuery';
-  taskId: TaskId;
-  tail?: number;
-}
-
-export interface TaskLogsResponseEvent extends BaseEvent {
-  type: 'TaskLogsResponse';
-  taskId: TaskId;
-  stdout: readonly string[];
-  stderr: readonly string[];
-  totalSize: number;
-}
-
-/**
- * Queue query events - for pure event-driven queue operations
- */
-export interface NextTaskQueryEvent extends BaseEvent {
-  type: 'NextTaskQuery';
 }
 
 export interface RequeueTaskEvent extends BaseEvent {
@@ -263,21 +177,6 @@ export interface ScheduleUpdatedEvent extends BaseEvent {
 }
 
 /**
- * Schedule query events - for pure event-driven reads
- * ARCHITECTURE: Follows same pattern as TaskStatusQuery/TaskStatusResponse
- */
-export interface ScheduleQueryEvent extends BaseEvent {
-  type: 'ScheduleQuery';
-  scheduleId?: ScheduleId; // If omitted, return all schedules
-  status?: ScheduleStatus; // Optional filter by status
-}
-
-export interface ScheduleQueryResponseEvent extends BaseEvent {
-  type: 'ScheduleQueryResponse';
-  schedules: readonly Schedule[];
-}
-
-/**
  * Checkpoint and resumption events
  * ARCHITECTURE: Part of task resumption system ("smart retry with context")
  */
@@ -287,40 +186,12 @@ export interface CheckpointCreatedEvent extends BaseEvent {
   checkpoint: TaskCheckpoint;
 }
 
-export interface TaskResumedEvent extends BaseEvent {
-  type: 'TaskResumed';
-  originalTaskId: TaskId;
-  newTaskId: TaskId;
-  checkpointUsed: boolean;
-}
-
-/**
- * System events
- */
-export interface SystemResourcesUpdatedEvent extends BaseEvent {
-  type: 'SystemResourcesUpdated';
-  cpuPercent: number;
-  memoryUsed: number;
-  workerCount: number;
-}
-
-export interface RecoveryStartedEvent extends BaseEvent {
-  type: 'RecoveryStarted';
-}
-
-export interface RecoveryCompletedEvent extends BaseEvent {
-  type: 'RecoveryCompleted';
-  tasksRecovered: number;
-  tasksMarkedFailed: number;
-}
-
 /**
  * Union type of all events
  */
 export type BackbeatEvent =
   // Task lifecycle events
   | TaskDelegatedEvent
-  | TaskPersistedEvent
   | TaskQueuedEvent
   | TaskStartingEvent
   | TaskStartedEvent
@@ -329,15 +200,7 @@ export type BackbeatEvent =
   | TaskCancelledEvent
   | TaskTimeoutEvent
   | TaskCancellationRequestedEvent
-  | TaskDeletedEvent
-  | LogsRequestedEvent
-  // Query events (pure event-driven architecture)
-  | TaskStatusQueryEvent
-  | TaskStatusResponseEvent
-  | TaskLogsQueryEvent
-  | TaskLogsResponseEvent
-  // Queue query events
-  | NextTaskQueryEvent
+  // Queue events
   | RequeueTaskEvent
   // Dependency events
   | TaskDependencyAddedEvent
@@ -354,22 +217,10 @@ export type BackbeatEvent =
   | ScheduleResumedEvent
   | ScheduleExpiredEvent
   | ScheduleUpdatedEvent
-  // Schedule query events
-  | ScheduleQueryEvent
-  | ScheduleQueryResponseEvent
-  // Checkpoint and resumption events
+  // Checkpoint events
   | CheckpointCreatedEvent
-  | TaskResumedEvent
-  // Worker events
-  | WorkerSpawnedEvent
-  | WorkerKilledEvent
   // Output events
-  | OutputCapturedEvent
-  | TaskConfiguredEvent
-  // System events
-  | SystemResourcesUpdatedEvent
-  | RecoveryStartedEvent
-  | RecoveryCompletedEvent;
+  | OutputCapturedEvent;
 
 /**
  * Event handler function type

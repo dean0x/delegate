@@ -26,9 +26,7 @@ import {
 import { err, ok, Result } from '../core/result.js';
 import { CheckpointHandler } from './handlers/checkpoint-handler.js';
 import { DependencyHandler } from './handlers/dependency-handler.js';
-import { OutputHandler } from './handlers/output-handler.js';
 import { PersistenceHandler } from './handlers/persistence-handler.js';
-import { QueryHandler } from './handlers/query-handler.js';
 import { QueueHandler } from './handlers/queue-handler.js';
 import { ScheduleHandler } from './handlers/schedule-handler.js';
 import { WorkerHandler } from './handlers/worker-handler.js';
@@ -161,8 +159,8 @@ export function extractHandlerDependencies(container: Container): Result<Handler
 /**
  * Create and setup all event handlers
  *
- * Initializes 8 handlers: 6 standard handlers via EventHandlerRegistry,
- * DependencyHandler and ScheduleHandler via factory pattern. On any failure,
+ * Initializes 6 handlers: 3 standard handlers via EventHandlerRegistry,
+ * plus DependencyHandler, ScheduleHandler, and CheckpointHandler via factory pattern. On any failure,
  * performs cleanup of already-initialized handlers before returning error.
  *
  * ARCHITECTURE: Standard handlers use setup(eventBus) pattern via registry.
@@ -195,19 +193,30 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
   // Helper for creating child loggers
   const childLogger = (module: string) => logger.child({ module });
 
-  // Create 5 standard handlers that use setup(eventBus) pattern
-  // ARCHITECTURE: All handlers are independent - no inter-handler dependencies
+  // Create QueueHandler first so PersistenceHandler can call it directly after save
+  const queueHandler = new QueueHandler(
+    deps.taskQueue,
+    deps.dependencyRepository,
+    deps.taskRepository,
+    childLogger('QueueHandler'),
+  );
+
+  // Create 3 standard handlers that use setup(eventBus) pattern
   const standardHandlers = [
-    // 1. Persistence Handler - manages database operations
-    new PersistenceHandler(deps.taskRepository, childLogger('PersistenceHandler')),
-    // 2. Query Handler - handles read operations for pure event-driven architecture
-    new QueryHandler(deps.taskRepository, deps.outputCapture, eventBus, childLogger('QueryHandler')),
-    // 3. Queue Handler - manages task queue operations with dependency awareness
-    new QueueHandler(deps.taskQueue, deps.dependencyRepository, deps.taskRepository, childLogger('QueueHandler')),
-    // 4. Worker Handler - manages worker lifecycle
-    new WorkerHandler(deps.config, deps.workerPool, deps.resourceMonitor, eventBus, childLogger('WorkerHandler')),
-    // 5. Output Handler - manages output and logs
-    new OutputHandler(deps.outputCapture, childLogger('OutputHandler')),
+    // 1. Persistence Handler - saves task, then calls QueueHandler.enqueueIfReady()
+    new PersistenceHandler(deps.taskRepository, queueHandler, childLogger('PersistenceHandler')),
+    // 2. Queue Handler - manages task queue operations with dependency awareness
+    queueHandler,
+    // 3. Worker Handler - manages worker lifecycle
+    new WorkerHandler(
+      deps.config,
+      deps.workerPool,
+      deps.resourceMonitor,
+      eventBus,
+      deps.taskQueue,
+      deps.taskRepository,
+      childLogger('WorkerHandler'),
+    ),
   ];
 
   // Register all standard handlers
@@ -232,7 +241,7 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     );
   }
 
-  // 7. Dependency Handler - uses factory pattern for async graph initialization
+  // 4. Dependency Handler - uses factory pattern for async graph initialization
   // ARCHITECTURE: Factory pattern ensures handler is fully initialized before use
   // Cannot use registry because create() does its own event subscription
   const dependencyHandlerResult = await DependencyHandler.create(
@@ -256,7 +265,7 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
 
   const dependencyHandler = dependencyHandlerResult.value;
 
-  // 8. Schedule Handler - uses factory pattern for async event subscription
+  // 5. Schedule Handler - uses factory pattern for async event subscription
   // ARCHITECTURE: Factory pattern ensures handler is fully initialized before use
   // Cannot use registry because create() does its own event subscription
   const scheduleHandlerResult = await ScheduleHandler.create(
@@ -280,7 +289,7 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
 
   const scheduleHandler = scheduleHandlerResult.value;
 
-  // 9. Checkpoint Handler - auto-creates checkpoints on task terminal events
+  // 6. Checkpoint Handler - auto-creates checkpoints on task terminal events
   // ARCHITECTURE: Factory pattern ensures handler is fully initialized before use
   const checkpointHandlerResult = await CheckpointHandler.create(
     deps.checkpointRepository,

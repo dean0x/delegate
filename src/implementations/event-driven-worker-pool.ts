@@ -117,8 +117,6 @@ export class EventDrivenWorkerPool implements WorkerPool {
       agent: agentProvider,
     });
 
-    // Note: WorkerSpawned event is emitted by WorkerHandler, not here
-
     return ok(worker);
   }
 
@@ -157,13 +155,6 @@ export class EventDrivenWorkerPool implements WorkerPool {
 
       // Decrement worker count
       this.monitor.decrementWorkerCount();
-
-      // Emit WorkerKilled event
-      await this.eventBus.emit('WorkerKilled', {
-        workerId,
-        taskId: worker.taskId,
-        reason: 'Explicit kill request',
-      });
 
       return ok(undefined);
     } catch (error) {

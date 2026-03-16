@@ -48,7 +48,7 @@ describe('QueueHandler', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  describe('TaskPersisted', () => {
+  describe('enqueueIfReady', () => {
     it('should enqueue task and emit TaskQueued when no dependencies', async () => {
       const task = createTask({ prompt: 'test task' });
 
@@ -57,9 +57,10 @@ describe('QueueHandler', () => {
         queuedEvent = event;
       });
 
-      await eventBus.emit('TaskPersisted', { taskId: task.id, task });
+      const result = await handler.enqueueIfReady(task);
       await flushEventLoop();
 
+      expect(result.ok).toBe(true);
       expect(queue.size()).toBe(1);
       expect(queue.contains(task.id)).toBe(true);
       expect(queuedEvent).toBeDefined();
@@ -81,9 +82,10 @@ describe('QueueHandler', () => {
         queuedEvent = event;
       });
 
-      await eventBus.emit('TaskPersisted', { taskId: childTask.id, task: childTask });
+      const result = await handler.enqueueIfReady(childTask);
       await flushEventLoop();
 
+      expect(result.ok).toBe(true);
       expect(queue.size()).toBe(0);
       expect(queue.contains(childTask.id)).toBe(false);
       expect(queuedEvent).toBeUndefined();
@@ -114,33 +116,6 @@ describe('QueueHandler', () => {
     });
   });
 
-  describe('NextTaskQuery', () => {
-    it('should respond with task when queue has tasks', async () => {
-      const task = createTask({ prompt: 'test task' });
-      queue.enqueue(task);
-
-      const result = await eventBus.request<{ type: 'NextTaskQuery' }, Task | null>('NextTaskQuery', {});
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).not.toBeNull();
-        expect(result.value!.id).toBe(task.id);
-      }
-
-      // Task should have been dequeued
-      expect(queue.size()).toBe(0);
-    });
-
-    it('should respond with null when queue is empty', async () => {
-      const result = await eventBus.request<{ type: 'NextTaskQuery' }, Task | null>('NextTaskQuery', {});
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBeNull();
-      }
-    });
-  });
-
   describe('RequeueTask', () => {
     it('should re-enqueue task and emit TaskQueued', async () => {
       const task = createTask({ prompt: 'retried task' });
@@ -167,11 +142,12 @@ describe('QueueHandler', () => {
       const task = createTask({ prompt: 'blocked task', dependsOn: [parentId] });
       // dependencyState is 'blocked' because dependsOn is set
 
-      // Act - Emit TaskPersisted with the blocked task
-      await eventBus.emit('TaskPersisted', { taskId: task.id, task });
+      // Act - Call enqueueIfReady directly with the blocked task
+      const result = await handler.enqueueIfReady(task);
       await flushEventLoop();
 
       // Assert - Task should NOT be enqueued (fast-path skip)
+      expect(result.ok).toBe(true);
       expect(queue.size()).toBe(0);
       expect(queue.contains(task.id)).toBe(false);
       expect(logger.hasLogContaining('fast-path')).toBe(true);
@@ -187,11 +163,12 @@ describe('QueueHandler', () => {
         queuedEvent = event;
       });
 
-      // Act - Emit TaskPersisted with the unblocked task
-      await eventBus.emit('TaskPersisted', { taskId: task.id, task });
+      // Act - Call enqueueIfReady directly with the unblocked task
+      const result = await handler.enqueueIfReady(task);
       await flushEventLoop();
 
       // Assert - Task should be enqueued normally
+      expect(result.ok).toBe(true);
       expect(queue.size()).toBe(1);
       expect(queue.contains(task.id)).toBe(true);
       expect(queuedEvent).toBeDefined();

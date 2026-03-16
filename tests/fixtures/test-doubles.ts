@@ -27,7 +27,6 @@ import { err, ok } from '../../src/core/result';
  */
 export class TestEventBus implements EventBus {
   private handlers = new Map<string, Set<(event: unknown) => Promise<void>>>();
-  private requestHandlers = new Map<string, (event: unknown) => Promise<Result<unknown, Error>>>();
   private emittedEvents: Array<{ type: string; payload: unknown; timestamp: number }> = [];
   private subscriptionCount = 0;
   private failingEventTypes = new Set<string>();
@@ -117,33 +116,8 @@ export class TestEventBus implements EventBus {
     this.subscriptionCount = 0;
   }
 
-  async request<TRequest, TResponse>(eventType: string, payload: TRequest): Promise<Result<TResponse, Error>> {
-    // Track request events for testing
-    this.emittedEvents.push({
-      type: `request:${eventType}`,
-      payload,
-      timestamp: Date.now(),
-    });
-
-    const handler = this.requestHandlers.get(eventType);
-    if (!handler) {
-      return err(new Error(`No handler for request type: ${eventType}`));
-    }
-
-    return handler(payload) as Promise<Result<TResponse, Error>>;
-  }
-
-  onRequest<TRequest, TResponse>(
-    eventType: string,
-    handler: (event: TRequest) => Promise<Result<TResponse, Error>>,
-  ): Result<string, Error> {
-    this.requestHandlers.set(eventType, handler as (event: unknown) => Promise<Result<unknown, Error>>);
-    return ok(`req-handler-${eventType}`);
-  }
-
   dispose(): void {
     this.unsubscribeAll();
-    this.requestHandlers.clear();
     this.emittedEvents = [];
     this.failingEventTypes.clear();
   }
@@ -177,22 +151,12 @@ export class TestEventBus implements EventBus {
     return () => this.unsubscribe(`mock-unsub`);
   }
 
-  // Additional test helpers for worker-handler tests
-  setRequestResponse<TRequest, TResponse>(eventType: string, response: Result<TResponse, Error>): void {
-    this.requestHandlers.set(eventType, async (payload: TRequest) => response);
-  }
-
   hasSubscription(eventType: string): boolean {
     return this.handlers.has(eventType) && this.handlers.get(eventType)!.size > 0;
   }
 
   getEmittedEvents(eventType: string): unknown[] {
     return this.emittedEvents.filter((e) => e.type === eventType).map((e) => e.payload);
-  }
-
-  getRequestedEvents(eventType: string): unknown[] {
-    // Track requested events (simplified for testing)
-    return this.emittedEvents.filter((e) => e.type === `request:${eventType}`).map((e) => e.payload);
   }
 
   // Event synchronization methods for replacing timing-based waits

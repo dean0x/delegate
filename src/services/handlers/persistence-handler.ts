@@ -5,8 +5,8 @@
 
 import type { Task } from '../../core/domain.js';
 import { TaskStatus } from '../../core/domain.js';
-import { EventBus } from '../../core/events/event-bus.js';
-import {
+import type { EventBus } from '../../core/events/event-bus.js';
+import type {
   TaskCancelledEvent,
   TaskCompletedEvent,
   TaskDelegatedEvent,
@@ -15,14 +15,13 @@ import {
   TaskTimeoutEvent,
 } from '../../core/events/events.js';
 import { BaseEventHandler } from '../../core/events/handlers.js';
-import { Logger, TaskRepository } from '../../core/interfaces.js';
+import { Logger, TaskEnqueuer, TaskRepository } from '../../core/interfaces.js';
 import { ok, Result } from '../../core/result.js';
 
 export class PersistenceHandler extends BaseEventHandler {
-  private eventBus?: EventBus;
-
   constructor(
     private readonly repository: TaskRepository,
+    private readonly taskEnqueuer: TaskEnqueuer,
     logger: Logger,
   ) {
     super(logger, 'PersistenceHandler');
@@ -32,8 +31,6 @@ export class PersistenceHandler extends BaseEventHandler {
    * Set up event subscriptions
    */
   async setup(eventBus: EventBus): Promise<Result<void>> {
-    this.eventBus = eventBus; // Store reference for later use
-
     // Subscribe to all task lifecycle events that need persistence
     const subscriptions = [
       eventBus.subscribe('TaskDelegated', this.handleTaskDelegated.bind(this)),
@@ -56,7 +53,7 @@ export class PersistenceHandler extends BaseEventHandler {
   }
 
   /**
-   * Handle task delegation - persist new task to database
+   * Handle task delegation - persist new task to database, then enqueue if ready
    */
   private async handleTaskDelegated(event: TaskDelegatedEvent): Promise<void> {
     await this.handleEvent(event, async (event) => {
@@ -73,12 +70,14 @@ export class PersistenceHandler extends BaseEventHandler {
         taskId: event.task.id,
       });
 
-      // Emit TaskPersisted event with full task for queue handler
-      if (this.eventBus) {
-        await this.eventBus.emit('TaskPersisted', {
+      // Directly call TaskEnqueuer to enqueue task if not blocked by dependencies
+      const enqueueResult = await this.taskEnqueuer.enqueueIfReady(event.task);
+
+      if (!enqueueResult.ok) {
+        this.logger.error('Failed to enqueue task after persistence', enqueueResult.error, {
           taskId: event.task.id,
-          task: event.task,
         });
+        return enqueueResult;
       }
 
       return ok(undefined);

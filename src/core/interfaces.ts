@@ -462,3 +462,12 @@ export interface CheckpointRepository {
 export interface CheckpointLookup {
   findLatest(taskId: TaskId): Promise<Result<TaskCheckpoint | null>>;
 }
+
+/**
+ * Narrow interface for dependency-aware task enqueuing
+ * ARCHITECTURE: PersistenceHandler depends on this, not full QueueHandler
+ * Rationale: Follows Interface Segregation Principle - handlers only see what they need
+ */
+export interface TaskEnqueuer {
+  enqueueIfReady(task: Task): Promise<Result<void>>;
+}

@@ -1,15 +1,14 @@
 /**
- * Event-driven task manager orchestrator
+ * Task manager orchestrator
  *
- * ARCHITECTURE: Pure event-driven pattern - ALL operations go through EventBus
- * Pattern: Event-Driven Architecture with Request-Response for queries
- * Rationale: Single source of truth, consistency, testability, extensibility
- * Trade-offs: ~1ms overhead for queries vs direct repository access
+ * ARCHITECTURE: Hybrid approach — commands go through EventBus, queries go direct
+ * Pattern: Commands via events (fire-and-forget emit), queries via repository
+ * Rationale: Eliminates unnecessary event indirection for read operations
  *
  * Rules:
- * - NO direct repository access (all data operations via events)
- * - Commands use fire-and-forget emit()
- * - Queries use request-response request()
+ * - Commands (delegate) use fire-and-forget emit()
+ * - Commands with validation (cancel) validate then emit
+ * - Queries (getStatus, getLogs, retry lookup, resume lookup) use direct repository calls
  * - All state changes MUST go through events
  */
 
@@ -26,8 +25,7 @@ import {
 } from '../core/domain.js';
 import { BackbeatError, ErrorCode, taskNotFound } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
-import { TaskLogsQueryEvent, TaskStatusQueryEvent } from '../core/events/events.js';
-import { CheckpointRepository, Logger, TaskManager } from '../core/interfaces.js';
+import { CheckpointRepository, Logger, OutputCapture, TaskManager, TaskRepository } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 
 export class TaskManagerService implements TaskManager {
@@ -35,14 +33,15 @@ export class TaskManagerService implements TaskManager {
     private readonly eventBus: EventBus,
     private readonly logger: Logger,
     private readonly config: Configuration,
+    private readonly taskRepo: TaskRepository,
+    private readonly outputCapture: OutputCapture,
     private readonly checkpointRepo?: CheckpointRepository,
   ) {
-    // ARCHITECTURE: Pure event-driven - ALL operations go through EventBus
-    this.logger.debug('TaskManager initialized with pure event-driven architecture');
+    this.logger.debug('TaskManager initialized with hybrid architecture (commands via events, queries direct)');
   }
 
   /**
-   * Delegate a task - purely event-driven, no direct state management
+   * Delegate a task - commands go through events
    */
   async delegate(request: TaskRequest): Promise<Result<Task>> {
     // Apply configuration defaults to request
@@ -56,11 +55,8 @@ export class TaskManagerService implements TaskManager {
     if (requestWithDefaults.continueFrom) {
       const continueFromId = requestWithDefaults.continueFrom;
 
-      // Validate referenced task exists
-      const lookupResult = await this.eventBus.request<TaskStatusQueryEvent, Task | null | readonly Task[]>(
-        'TaskStatusQuery',
-        { taskId: continueFromId },
-      );
+      // Validate referenced task exists via direct repository call
+      const lookupResult = await this.taskRepo.findById(continueFromId);
       if (!lookupResult.ok || lookupResult.value === null) {
         return err(new BackbeatError(ErrorCode.TASK_NOT_FOUND, `continueFrom task not found: ${continueFromId}`));
       }
@@ -104,43 +100,53 @@ export class TaskManagerService implements TaskManager {
   }
 
   async getStatus(taskId?: TaskId): Promise<Result<Task | readonly Task[]>> {
-    // ARCHITECTURE: Pure event-driven query - no direct repository access
-    // FIXED: QueryHandler returns Task | null for single task, readonly Task[] for all tasks
-    const result = await this.eventBus.request<TaskStatusQueryEvent, Task | null | readonly Task[]>('TaskStatusQuery', {
-      taskId,
-    });
-
-    if (!result.ok) {
-      this.logger.error('Task status query failed', result.error, { taskId });
-      return result;
+    if (taskId) {
+      const result = await this.taskRepo.findById(taskId);
+      if (!result.ok) {
+        this.logger.error('Task status query failed', result.error, { taskId });
+        return result;
+      }
+      if (!result.value) {
+        return err(taskNotFound(taskId));
+      }
+      return ok(result.value);
     }
-
-    // Handle null case when specific task not found
-    if (result.value === null) {
-      return err(taskNotFound(taskId!));
-    }
-
-    return ok(result.value);
+    return this.taskRepo.findAllUnbounded();
   }
 
   async getLogs(taskId: TaskId, tail?: number): Promise<Result<TaskOutput>> {
-    // ARCHITECTURE: Pure event-driven query for logs
-    const result = await this.eventBus.request<TaskLogsQueryEvent, TaskOutput>('TaskLogsQuery', { taskId, tail });
-
-    if (!result.ok) {
-      this.logger.error('Task logs query failed', result.error, { taskId });
-      return result;
+    // Validate task exists first
+    const taskResult = await this.taskRepo.findById(taskId);
+    if (!taskResult.ok) {
+      this.logger.error('Task logs query failed', taskResult.error, { taskId });
+      return taskResult;
+    }
+    if (!taskResult.value) {
+      return err(taskNotFound(taskId));
     }
 
-    return ok(result.value);
+    return this.outputCapture.getOutput(taskId, tail);
   }
 
   async cancel(taskId: TaskId, reason?: string): Promise<Result<void>> {
-    // ARCHITECTURE: Validation now happens in event handler, not here
-    // This maintains pure event-driven pattern
-    this.logger.info('Cancelling task', { taskId, reason });
+    // Validate task exists and is cancellable (consistent with retry pattern)
+    const taskResult = await this.taskRepo.findById(taskId);
+    if (!taskResult.ok) {
+      this.logger.error('Task cancellation check failed', taskResult.error, { taskId });
+      return taskResult;
+    }
+    if (!taskResult.value) {
+      return err(taskNotFound(taskId));
+    }
 
-    // Emit cancellation event - handler will validate and process
+    const task = taskResult.value;
+    if (task.status !== 'queued' && task.status !== 'running') {
+      return err(
+        new BackbeatError(ErrorCode.TASK_CANNOT_CANCEL, `Task ${taskId} cannot be cancelled in state ${task.status}`),
+      );
+    }
+
+    this.logger.info('Cancelling task', { taskId, reason });
     const result = await this.eventBus.emit('TaskCancellationRequested', { taskId, reason });
 
     if (!result.ok) {
@@ -183,20 +189,17 @@ export class TaskManagerService implements TaskManager {
    * // - retryOf: abc-123 (direct parent)
    */
   async retry(taskId: TaskId): Promise<Result<Task>> {
-    // ARCHITECTURE: Use event-driven query to get task
-    // FIXED: QueryHandler now returns Task | null for not-found tasks
-    const taskResult = await this.eventBus.request<TaskStatusQueryEvent, Task | null>('TaskStatusQuery', { taskId });
+    const taskResult = await this.taskRepo.findById(taskId);
 
     if (!taskResult.ok) {
       return err(taskResult.error);
     }
 
-    // FIXED: Check for null task (not found)
     if (taskResult.value === null) {
       return err(taskNotFound(taskId));
     }
 
-    const originalTask = taskResult.value; // Now safely Task, not null
+    const originalTask = taskResult.value;
 
     // Only retry tasks that are in terminal states
     if (!isTerminalState(originalTask.status)) {
@@ -272,8 +275,8 @@ export class TaskManagerService implements TaskManager {
   async resume(request: ResumeTaskRequest): Promise<Result<Task>> {
     const { taskId, additionalContext } = request;
 
-    // Fetch original task via event bus
-    const taskResult = await this.eventBus.request<TaskStatusQueryEvent, Task | null>('TaskStatusQuery', { taskId });
+    // Fetch original task via direct repository call
+    const taskResult = await this.taskRepo.findById(taskId);
 
     if (!taskResult.ok) {
       return err(taskResult.error);
@@ -356,13 +359,6 @@ export class TaskManagerService implements TaskManager {
       });
       return err(delegateResult.error);
     }
-
-    // Emit TaskResumed event
-    await this.eventBus.emit('TaskResumed', {
-      originalTaskId: taskId,
-      newTaskId: newTask.id,
-      checkpointUsed,
-    });
 
     return ok(newTask);
   }

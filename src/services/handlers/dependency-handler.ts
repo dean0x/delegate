@@ -1,7 +1,7 @@
 /**
  * Dependency handler for task dependency management
  * ARCHITECTURE: Event-driven DAG validation and dependency resolution
- * Pattern: Pure event-driven with cycle detection before mutation
+ * Pattern: Event-driven with cycle detection before mutation
  * Rationale: Ensures dependency integrity, prevents deadlocks, enables parallel task execution
  */
 
@@ -14,7 +14,6 @@ import {
   TaskCancelledEvent,
   TaskCompletedEvent,
   TaskDelegatedEvent,
-  TaskDeletedEvent,
   TaskFailedEvent,
   TaskTimeoutEvent,
 } from '../../core/events/events.js';
@@ -37,6 +36,18 @@ export interface DependencyHandlerOptions {
   /** Checkpoint lookup for continueFrom enrichment. Optional - enrichment skipped if absent. */
   readonly checkpointLookup?: CheckpointLookup;
 }
+
+/**
+ * Discriminated union for dependency validation results.
+ * Type-safe: 'ok' has null error, failure variants have non-null error.
+ * Exhaustive checking prevents silent acceptance of new failure variants.
+ */
+type DependencyValidationOk = { depId: TaskId; error: null; type: 'ok' };
+type DependencyValidationFailure =
+  | { depId: TaskId; error: Error; type: 'cycle' }
+  | { depId: TaskId; error: Error; type: 'depth' }
+  | { depId: TaskId; error: Error; type: 'system' };
+type DependencyValidationResult = DependencyValidationOk | DependencyValidationFailure;
 
 export class DependencyHandler extends BaseEventHandler {
   private eventBus: EventBus;
@@ -145,8 +156,6 @@ export class DependencyHandler extends BaseEventHandler {
       this.eventBus.subscribe('TaskFailed', this.handleTaskFailed.bind(this)),
       this.eventBus.subscribe('TaskCancelled', this.handleTaskCancelled.bind(this)),
       this.eventBus.subscribe('TaskTimeout', this.handleTaskTimeout.bind(this)),
-      // Listen for task deletions to maintain graph consistency
-      this.eventBus.subscribe('TaskDeleted', this.handleTaskDeleted.bind(this)),
       // NOTE: No longer subscribe to TaskDependencyAdded - we update graph directly
     ];
 
@@ -169,12 +178,9 @@ export class DependencyHandler extends BaseEventHandler {
    * Validate a single dependency - check for cycles and depth limits
    * PURE: Read-only operation, no side effects
    *
-   * @returns Validation result with type indicating: ok, cycle, depth, or system error
+   * @returns Discriminated union: success (type: 'ok') or failure with error and reason
    */
-  private validateSingleDependency(
-    taskId: TaskId,
-    depId: TaskId,
-  ): { depId: TaskId; error: Error | null; type: 'ok' | 'cycle' | 'depth' | 'system' } {
+  private validateSingleDependency(taskId: TaskId, depId: TaskId): DependencyValidationResult {
     // Cycle detection
     const cycleCheck = this.graph.wouldCreateCycle(taskId, depId);
     if (!cycleCheck.ok) {
@@ -219,7 +225,7 @@ export class DependencyHandler extends BaseEventHandler {
   private async handleValidationFailure(
     taskId: TaskId,
     requestedDependencies: readonly TaskId[],
-    failure: { depId: TaskId; error: Error; type: 'cycle' | 'depth' | 'system' },
+    failure: DependencyValidationFailure,
   ): Promise<void> {
     const context = { taskId, dependsOnTaskId: failure.depId };
 
@@ -338,14 +344,10 @@ export class DependencyHandler extends BaseEventHandler {
       );
 
       // Step 3: Check for validation failures (INVARIANT: fail-fast on first error)
-      const failure = validationResults.find((r) => r.error !== null);
-      if (failure && failure.error) {
-        // Type narrow: failure.error is verified non-null, type is not 'ok'
-        await this.handleValidationFailure(task.id, task.dependsOn, {
-          depId: failure.depId,
-          error: failure.error,
-          type: failure.type as 'cycle' | 'depth' | 'system',
-        });
+      // Discriminated union: type !== 'ok' narrows to failure variants with non-null error
+      const failure = validationResults.find((r): r is DependencyValidationFailure => r.type !== 'ok');
+      if (failure) {
+        await this.handleValidationFailure(task.id, task.dependsOn, failure);
         return err(failure.error);
       }
 
@@ -408,24 +410,6 @@ export class DependencyHandler extends BaseEventHandler {
   private async handleTaskTimeout(event: TaskTimeoutEvent): Promise<void> {
     await this.handleEvent(event, async (event) => {
       await this.resolveDependencies(event.taskId, 'failed');
-      return ok(undefined);
-    });
-  }
-
-  /**
-   * Handle task deletion - remove task from in-memory graph to maintain consistency
-   * ARCHITECTURE: Maintains graph-database synchronization when tasks are deleted
-   */
-  private async handleTaskDeleted(event: TaskDeletedEvent): Promise<void> {
-    await this.handleEvent(event, async (event) => {
-      const removeResult = this.graph.removeTask(event.taskId);
-      if (!removeResult.ok) {
-        this.logger.error('Failed to remove task from graph', removeResult.error, {
-          taskId: event.taskId,
-        });
-        return removeResult;
-      }
-      this.logger.debug('Graph updated: task removed', { taskId: event.taskId });
       return ok(undefined);
     });
   }

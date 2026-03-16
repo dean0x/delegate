@@ -83,11 +83,7 @@ export const EVENT_TYPES = {
   TASK_COMPLETED: 'TaskCompleted',
   TASK_FAILED: 'TaskFailed',
   TASK_CANCELLED: 'TaskCancelled',
-  WORKER_SPAWNED: 'WorkerSpawned',
-  WORKER_TERMINATED: 'WorkerTerminated',
-  WORKER_ERROR: 'WorkerError',
   OUTPUT_CAPTURED: 'OutputCaptured',
-  RESOURCE_WARNING: 'ResourceWarning',
 } as const;
 
 // Database Configuration

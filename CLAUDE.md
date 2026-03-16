@@ -4,7 +4,7 @@ This file provides project-specific guidance for Claude Code when working on Bac
 
 ## Project Overview
 
-Backbeat is an MCP (Model Context Protocol) server that enables task delegation to background Claude Code instances. It uses event-driven architecture with autoscaling workers, task dependencies (DAG-based), and SQLite persistence.
+Backbeat is an MCP (Model Context Protocol) server that enables task delegation to background Claude Code instances. It uses hybrid event-driven architecture with workers, task dependencies (DAG-based), and SQLite persistence.
 
 **Core Concept**: Transform a dedicated server into an AI powerhouse - orchestrate multiple Claude Code instances through one main session for parallel development across repositories.
 
@@ -49,7 +49,7 @@ npm run test:coverage       # With coverage
 
 ## Architecture Notes
 
-**Event-Driven System**: All components communicate via EventBus - no direct state management.
+**Hybrid Event-Driven System**: Commands (state changes) flow through EventBus; queries use direct repository access.
 
 **Key Pattern**: Events flow through specialized handlers:
 - `DependencyHandler` → manages task dependencies and DAG validation
@@ -57,7 +57,7 @@ npm run test:coverage       # With coverage
 - `WorkerHandler` → worker lifecycle
 - `PersistenceHandler` → database operations
 - `ScheduleHandler` → schedule lifecycle (create, pause, resume, cancel)
-- `ScheduleExecutor` → cron/one-time execution engine (note: has direct repo writes, architectural exception to pure event-driven pattern)
+- `ScheduleExecutor` → cron/one-time execution engine (note: has direct repo writes, architectural exception to event-driven pattern)
 
 See `docs/architecture/` for implementation details.
 

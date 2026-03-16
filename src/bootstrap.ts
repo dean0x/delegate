@@ -66,7 +66,6 @@ import { PriorityTaskQueue } from './implementations/task-queue.js';
 import { SQLiteTaskRepository } from './implementations/task-repository.js';
 
 // Services
-import { AutoscalingManager } from './services/autoscaling-manager.js';
 import { extractHandlerDependencies, setupEventHandlers } from './services/handler-setup.js';
 import { RecoveryManager } from './services/recovery-manager.js';
 import { ScheduleExecutor } from './services/schedule-executor.js';
@@ -337,11 +336,13 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   // Register task manager
   container.registerSingleton('taskManager', async () => {
-    // ARCHITECTURE: Pure event-driven TaskManager - checkpoint repo injected for resume()
+    // ARCHITECTURE: Hybrid TaskManager - commands via events, queries via direct repo
     const taskManager = new TaskManagerService(
       getFromContainer<EventBus>(container, 'eventBus'),
       getFromContainer<Logger>(container, 'logger').child({ module: 'TaskManager' }),
       config, // Pass complete config - no partial objects needed
+      getFromContainer<TaskRepository>(container, 'taskRepository'),
+      getFromContainer<OutputCapture>(container, 'outputCapture'),
       getFromContainer<CheckpointRepository>(container, 'checkpointRepository'),
     );
 
@@ -361,25 +362,6 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     container.registerValue('checkpointHandler', setupResult.value.checkpointHandler);
 
     return taskManager;
-  });
-
-  // Register autoscaling manager
-  container.registerSingleton('autoscalingManager', async () => {
-    const autoscaler = new AutoscalingManager(
-      getFromContainer<TaskQueue>(container, 'taskQueue'),
-      getFromContainer<WorkerPool>(container, 'workerPool'),
-      getFromContainer<ResourceMonitor>(container, 'resourceMonitor'),
-      getFromContainer<EventBus>(container, 'eventBus'),
-      getFromContainer<Logger>(container, 'logger').child({ module: 'Autoscaler' }),
-    );
-
-    // Set up event subscriptions
-    const setupResult = await autoscaler.setup();
-    if (!setupResult.ok) {
-      throw new Error(`Failed to setup AutoscalingManager: ${setupResult.error.message}`);
-    }
-
-    return autoscaler;
   });
 
   // Register MCP adapter

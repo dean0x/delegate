@@ -38,12 +38,6 @@ export function configShow() {
   lines.push(ui.bold('Event System'));
   lines.push(`  maxListenersPerEvent   ${config.maxListenersPerEvent}`);
   lines.push(`  maxTotalSubscriptions  ${config.maxTotalSubscriptions}`);
-  lines.push(
-    `  eventRequestTimeoutMs  ${ui.formatMs(config.eventRequestTimeoutMs)} ${ui.dim(`(${config.eventRequestTimeoutMs}ms)`)}`,
-  );
-  lines.push(
-    `  eventCleanupMs         ${ui.formatMs(config.eventCleanupIntervalMs)} ${ui.dim(`(${config.eventCleanupIntervalMs}ms)`)}`,
-  );
   lines.push('');
   lines.push(ui.bold('Storage'));
   lines.push(

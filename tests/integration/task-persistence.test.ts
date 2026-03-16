@@ -7,7 +7,6 @@ import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Task } from '../../src/core/domain.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { Database } from '../../src/implementations/database.js';
 import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
@@ -71,11 +70,9 @@ describe('Integration: Task persistence', () => {
       const eventBus = new InMemoryEventBus(config, logger);
 
       // Track recovery events
-      const requeuedTasks: Task[] = [];
+      const requeuedTaskIds: string[] = [];
       eventBus.on('TaskQueued', (data) => {
-        if (data.task) {
-          requeuedTasks.push(data.task);
-        }
+        requeuedTaskIds.push(data.taskId);
       });
 
       // Create recovery manager
@@ -85,12 +82,19 @@ describe('Integration: Task persistence', () => {
       await recoveryManager.recover();
 
       // Verify recovery
-      expect(requeuedTasks.length).toBe(2); // Should re-queue only QUEUED tasks
+      expect(requeuedTaskIds.length).toBe(2); // Should re-queue only QUEUED tasks
       expect(queue2.size()).toBe(2); // Only QUEUED tasks are re-queued (RUNNING are marked failed)
 
-      // Verify QUEUED tasks were re-queued
-      const queuedTask1 = requeuedTasks.find((t) => t.prompt === 'Task 1');
-      const queuedTask3 = requeuedTasks.find((t) => t.prompt === 'Task 3');
+      // Verify QUEUED tasks were re-queued (look up by taskId from repository)
+      const requeuedTasks = await Promise.all(requeuedTaskIds.map((id) => repository2.findById(id)));
+      const queuedTask1 = requeuedTasks
+        .filter((r) => r.ok && r.value)
+        .map((r) => (r.ok ? r.value : null))
+        .find((t) => t?.prompt === 'Task 1');
+      const queuedTask3 = requeuedTasks
+        .filter((r) => r.ok && r.value)
+        .map((r) => (r.ok ? r.value : null))
+        .find((t) => t?.prompt === 'Task 3');
       expect(queuedTask1).toBeTruthy();
       expect(queuedTask3).toBeTruthy();
       expect(queuedTask1?.status).toBe('queued');
@@ -173,7 +177,7 @@ describe('Integration: Task persistence', () => {
       const updatePromises: Promise<unknown>[] = [];
 
       eventBus.on('TaskQueued', async (data) => {
-        const promise = repository.update(data.task.id, { status: 'queued' });
+        const promise = repository.update(data.taskId, { status: 'queued' });
         updatePromises.push(promise);
         await promise;
       });
@@ -201,7 +205,7 @@ describe('Integration: Task persistence', () => {
         if (!enqueueResult.ok) {
           throw new Error(`Failed to enqueue task: ${enqueueResult.error}`);
         }
-        eventBus.emit('TaskQueued', { task });
+        eventBus.emit('TaskQueued', { taskId: task.id });
       }
 
       // Dequeue and verify priority order
@@ -323,9 +327,9 @@ describe('Integration: Task persistence', () => {
       }
 
       // Track recovery
-      const recovered: Task[] = [];
+      const recoveredTaskIds: string[] = [];
       eventBus.on('TaskQueued', (data) => {
-        if (data.task) recovered.push(data.task);
+        recoveredTaskIds.push(data.taskId);
       });
 
       const recoveryManager = new RecoveryManager(repository, new PriorityTaskQueue(logger), eventBus, logger);
@@ -334,7 +338,7 @@ describe('Integration: Task persistence', () => {
 
       // Should recover: 2 QUEUED + 1 RECENT RUNNING = 3 tasks
       // STALE RUNNING task (1 hour old) should be marked failed, not recovered
-      expect(recovered.length).toBe(3); // 2 QUEUED + 1 RECENT RUNNING
+      expect(recoveredTaskIds.length).toBe(3); // 2 QUEUED + 1 RECENT RUNNING
 
       // Verify STALE running task was marked as failed (not recovered)
       const staleTaskResult = await repository.findById(tasks[3].id); // Second running task (STALE)
@@ -344,8 +348,8 @@ describe('Integration: Task persistence', () => {
       }
 
       // Verify RECENT running task was recovered
-      const recentTask = recovered.find((t) => t.status === 'running' || recovered.length === 3);
-      expect(recentTask).toBeTruthy(); // Should have recovered the recent RUNNING task
+      const recentTaskRecovered = recoveredTaskIds.includes(tasks[2].id); // Recent running task
+      expect(recentTaskRecovered).toBe(true); // Should have recovered the recent RUNNING task
 
       database.close();
       eventBus.dispose();

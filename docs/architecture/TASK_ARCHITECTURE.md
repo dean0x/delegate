@@ -90,10 +90,10 @@ The dependency system integrates at these lifecycle points:
    - **Handler**: `DependencyHandler` (Lines 108-130)
    - **Action**: Validates dependencies for cycles, adds to dependency graph
    
-2. **TaskPersisted** → Task saved to database
-   - **Handler**: `QueueHandler` (Lines 63-110)
+2. **Task saved to database** → PersistenceHandler calls QueueHandler directly
+   - **Handler**: `PersistenceHandler` → `QueueHandler.enqueueIfReady()`
    - **Action**: Checks if task is blocked; only enqueues if not blocked
-   
+
 3. **TaskQueued** → Task ready to execute (only if not blocked)
    - **Handler**: `WorkerHandler` spawns worker
    
@@ -101,11 +101,7 @@ The dependency system integrates at these lifecycle points:
    - **Handler**: `DependencyHandler` (Lines 414-518)
    - **Action**: Resolves dependencies, emits `TaskUnblocked` for dependents
 
-5. **TaskDeleted** → Task removed from system
-   - **Handler**: `DependencyHandler`
-   - **Action**: Removes task from dependency graph to maintain graph-database consistency
-
-6. **TaskUnblocked** → Dependent tasks now ready (all dependencies met)
+5. **TaskUnblocked** → Dependent tasks now ready (all dependencies met)
    - **Handler**: `QueueHandler` (Lines 288-345)
    - **Action**: Enqueues unblocked tasks for execution
 
@@ -118,7 +114,9 @@ User delegates task with dependsOn=[task-A, task-B]
                     ↓
       DependencyHandler checks for cycles (DAG validation)
                     ↓
-           [TaskPersistedEvent] (saved to DB)
+      PersistenceHandler saves to DB
+                    ↓
+      PersistenceHandler → QueueHandler.enqueueIfReady(task)
                     ↓
       QueueHandler checks: isBlocked(task)?
                     ↓
@@ -180,11 +178,6 @@ export interface TaskDependencyFailedEvent extends BaseEvent {
   requestedDependencies?: readonly TaskId[];  // All deps that were requested
 }
 
-// Event: A task was deleted (for graph cleanup)
-export interface TaskDeletedEvent extends BaseEvent {
-  type: 'TaskDeleted';
-  taskId: TaskId;
-}
 ```
 
 ### 3.2 Event Flow Architecture
@@ -201,9 +194,6 @@ export interface TaskDeletedEvent extends BaseEvent {
 │                 Emits: TaskDependencyResolved               │
 │                 Checks dependents → TaskUnblocked           │
 │                                                               │
-│  TaskDeleted → Removes task from graph (consistency)        │
-│                Updates in-memory graph state                │
-│                                                               │
 │  Emits: TaskDependencyFailed if cycle detected              │
 └─────────────────────────────────────────────────────────────┘
         ↓
@@ -211,7 +201,8 @@ export interface TaskDeletedEvent extends BaseEvent {
 │ QUEUE HANDLER - Manages Blocked/Ready Task Queueing         │
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
-│  TaskPersisted → Check: isBlocked(task)?                    │
+│  enqueueIfReady(task) → Check: isBlocked(task)?             │
+│    (called directly by PersistenceHandler after save)       │
 │                 Not blocked → Enqueue                       │
 │                 Blocked → Wait                              │
 │                 Emits: TaskQueued                           │
@@ -312,11 +303,11 @@ export class PriorityTaskQueue implements TaskQueue {
 ### 5.2 Dependency-Aware Queueing
 **File**: `/workspace/backbeat/src/services/handlers/queue-handler.ts`
 
-#### TaskPersisted Handler (Lines 63-110)
+#### enqueueIfReady (called directly by PersistenceHandler)
 ```typescript
-private async handleTaskPersisted(event: TaskPersistedEvent): Promise<void> {
+async enqueueIfReady(task: Task): Promise<Result<void>> {
   // Check if task is blocked by dependencies
-  const isBlockedResult = await this.dependencyRepo.isBlocked(event.task.id);
+  const isBlockedResult = await this.dependencyRepo.isBlocked(task.id);
 
   if (isBlockedResult.value) {
     // Task is blocked - do NOT enqueue yet
@@ -325,7 +316,7 @@ private async handleTaskPersisted(event: TaskPersistedEvent): Promise<void> {
   }
 
   // Task is not blocked - safe to enqueue
-  this.queue.enqueue(event.task);
+  this.queue.enqueue(task);
   this.eventBus.emit('TaskQueued', { taskId, task });
 }
 ```
@@ -695,11 +686,11 @@ const dependencyHandler = handlerResult.value;
 - Follows Result pattern for async initialization
 - Self-documenting API (can't accidentally use uninitialized handler)
 
-### 8.4 Event-Driven Architecture
-All state changes flow through events:
-1. **Commands**: Fire-and-forget `emit()`
-2. **Queries**: Request-response `request()`
-3. **No direct repository access** from outside handlers
+### 8.4 Hybrid Event-Driven Architecture
+Commands (state changes) flow through events; queries use direct repository access:
+1. **Commands**: Fire-and-forget `emit()` for state changes (TaskDelegated, TaskCompleted, etc.)
+2. **Queries**: Direct repository calls (`taskRepo.findById()`, `taskRepo.findAllUnbounded()`)
+3. **Linearized triggers**: Direct handler calls where event indirection adds no value (e.g., `PersistenceHandler` calls `QueueHandler.enqueueIfReady()` directly after save)
 
 ---
 
@@ -784,14 +775,21 @@ async addDependency(taskId, dependsOnTaskId): Promise<Result<TaskDependency>> {
 }
 ```
 
-### Events vs Direct Access
-Use events for all coordination:
+### Hybrid Pattern: Events vs Direct Access
+Commands (state changes) use events; queries use direct repository access:
 ```typescript
-// ✅ GOOD - Event-driven
+// ✅ GOOD - Events for commands/state changes
 this.eventBus.emit('TaskDependencyAdded', { taskId, dependsOnTaskId });
 
-// ❌ BAD - Direct repository access outside handlers
-this.dependencyRepo.addDependency(taskId, dependsOnTaskId);
+// ✅ GOOD - Direct repository access for reads/queries
+const task = await this.taskRepo.findById(taskId);
+const tasks = await this.taskRepo.findAllUnbounded();
+
+// ✅ GOOD - Direct handler calls for linearized trigger chains
+await this.queueHandler.enqueueIfReady(task);
+
+// ❌ BAD - Events for simple queries (unnecessary indirection)
+const task = await this.eventBus.request('GetTask', { taskId });
 ```
 
 ### Atomicity

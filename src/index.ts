@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Backbeat MCP Server - New Architecture
- * Main entry point with autoscaling
+ * Main entry point
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -10,7 +10,6 @@ import { MCPAdapter } from './adapters/mcp-adapter.js';
 import { bootstrap } from './bootstrap.js';
 import { Container } from './core/container.js';
 import { Logger, WorkerPool } from './core/interfaces.js';
-import { AutoscalingManager } from './services/autoscaling-manager.js';
 
 // Handle errors gracefully
 process.on('uncaughtException', (error) => {
@@ -28,7 +27,6 @@ async function main() {
   process.title = 'beat-mcp';
 
   let container: Container | null = null;
-  let autoscaler: AutoscalingManager | null = null;
 
   try {
     // Bootstrap application
@@ -42,26 +40,19 @@ async function main() {
     // Resolve services (async factories require resolve())
     const loggerResult = await container.resolve<Logger>('logger');
     const mcpAdapterResult = await container.resolve<MCPAdapter>('mcpAdapter');
-    const autoscalerResult = await container.resolve<AutoscalingManager>('autoscalingManager');
 
-    if (!loggerResult.ok || !mcpAdapterResult.ok || !autoscalerResult.ok) {
+    if (!loggerResult.ok || !mcpAdapterResult.ok) {
       console.error('Failed to resolve required services:');
       if (!loggerResult.ok) console.error('  logger:', loggerResult.error.message);
       if (!mcpAdapterResult.ok) console.error('  mcpAdapter:', mcpAdapterResult.error.message);
-      if (!autoscalerResult.ok) console.error('  autoscalingManager:', autoscalerResult.error.message);
       process.exit(1);
     }
 
     const logger = loggerResult.value;
     const mcpAdapter = mcpAdapterResult.value;
-    autoscaler = autoscalerResult.value;
 
     // All logs go to stderr to keep stdout clean for MCP protocol
     logger.info(`Starting Backbeat MCP Server v${pkg.version}`);
-
-    // Start autoscaling
-    autoscaler.start();
-    logger.info('Autoscaling enabled');
 
     // Create and start MCP server
     const transport = new StdioServerTransport();
@@ -73,11 +64,6 @@ async function main() {
     // Handle shutdown gracefully
     const shutdown = async (signal: string) => {
       logger.info(`Received ${signal}, shutting down gracefully`);
-
-      // Stop autoscaling
-      if (autoscaler) {
-        autoscaler.stop();
-      }
 
       // Stop schedule executor before killing workers
       const scheduleExecutorResult = container?.get('scheduleExecutor');
@@ -104,7 +90,6 @@ async function main() {
 
     // Log ready state
     logger.info('Backbeat is ready', {
-      autoscaling: true,
       cpuThreshold: process.env.CPU_THRESHOLD || '80',
       memoryReserve: process.env.MEMORY_RESERVE || '1GB',
     });
@@ -113,12 +98,6 @@ async function main() {
     process.stdin.resume();
   } catch (error) {
     console.error('Failed to start server:', error);
-
-    // Clean up if startup failed
-    if (autoscaler) {
-      autoscaler.stop();
-    }
-
     process.exit(1);
   }
 }

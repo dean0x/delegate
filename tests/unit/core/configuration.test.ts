@@ -4,7 +4,6 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _testSetConfigDir,
-  CONFIG_FILE_PATH,
   type Configuration,
   ConfigurationSchema,
   loadConfigFile,
@@ -13,7 +12,7 @@ import {
   saveConfigValue,
   type TaskConfiguration,
 } from '../../../src/core/configuration';
-import { BUFFER_SIZES, TEST_COUNTS, TIMEOUTS } from '../../constants';
+import { BUFFER_SIZES, TIMEOUTS } from '../../constants';
 
 describe('ConfigurationSchema - REAL Validation Behavior', () => {
   describe('Valid configurations', () => {
@@ -312,9 +311,14 @@ describe('ConfigurationSchema - REAL Validation Behavior', () => {
 
 describe('loadConfiguration - REAL Configuration Loading', () => {
   let originalEnv: NodeJS.ProcessEnv;
+  let tempDir: string;
+  let restoreConfigDir: () => void;
 
   beforeEach(() => {
     originalEnv = { ...process.env };
+    tempDir = path.join(tmpdir(), `backbeat-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tempDir, { recursive: true });
+    restoreConfigDir = _testSetConfigDir(tempDir);
     // Clear relevant env vars
     delete process.env.TASK_TIMEOUT;
     delete process.env.MAX_OUTPUT_BUFFER;
@@ -324,7 +328,13 @@ describe('loadConfiguration - REAL Configuration Loading', () => {
   });
 
   afterEach(() => {
+    restoreConfigDir();
     process.env = originalEnv;
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Best effort cleanup
+    }
   });
 
   describe('Default configuration', () => {
@@ -553,13 +563,24 @@ describe('ConfigurationSchema - defaultAgent', () => {
 
 describe('loadConfiguration - BACKBEAT_DEFAULT_AGENT env var', () => {
   let originalEnv: NodeJS.ProcessEnv;
+  let tempDir: string;
+  let restoreConfigDir: () => void;
 
   beforeEach(() => {
     originalEnv = { ...process.env };
+    tempDir = path.join(tmpdir(), `backbeat-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tempDir, { recursive: true });
+    restoreConfigDir = _testSetConfigDir(tempDir);
   });
 
   afterEach(() => {
+    restoreConfigDir();
     process.env = originalEnv;
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Best effort cleanup
+    }
   });
 
   it('should load defaultAgent from BACKBEAT_DEFAULT_AGENT env var', () => {
@@ -631,13 +652,24 @@ describe('TaskConfiguration - Interface Testing', () => {
 
 describe('Real-world configuration scenarios', () => {
   let originalEnv: NodeJS.ProcessEnv;
+  let tempDir: string;
+  let restoreConfigDir: () => void;
 
   beforeEach(() => {
     originalEnv = { ...process.env };
+    tempDir = path.join(tmpdir(), `backbeat-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tempDir, { recursive: true });
+    restoreConfigDir = _testSetConfigDir(tempDir);
   });
 
   afterEach(() => {
+    restoreConfigDir();
     process.env = originalEnv;
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Best effort cleanup
+    }
   });
 
   it('should handle production configuration', () => {

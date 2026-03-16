@@ -6,20 +6,12 @@
 
 import { Task, TaskStatus } from '../../core/domain.js';
 import { EventBus } from '../../core/events/event-bus.js';
-import {
-  createEvent,
-  NextTaskQueryEvent,
-  RequeueTaskEvent,
-  TaskCancellationRequestedEvent,
-  TaskCancelledEvent,
-  TaskPersistedEvent,
-  TaskUnblockedEvent,
-} from '../../core/events/events.js';
+import type { RequeueTaskEvent, TaskCancellationRequestedEvent, TaskUnblockedEvent } from '../../core/events/events.js';
 import { BaseEventHandler } from '../../core/events/handlers.js';
-import { DependencyRepository, Logger, TaskQueue, TaskRepository } from '../../core/interfaces.js';
+import { DependencyRepository, Logger, TaskEnqueuer, TaskQueue, TaskRepository } from '../../core/interfaces.js';
 import { err, ok, Result } from '../../core/result.js';
 
-export class QueueHandler extends BaseEventHandler {
+export class QueueHandler extends BaseEventHandler implements TaskEnqueuer {
   private eventBus?: EventBus;
 
   constructor(
@@ -38,9 +30,7 @@ export class QueueHandler extends BaseEventHandler {
     this.eventBus = eventBus; // Store reference for later use
 
     const subscriptions = [
-      eventBus.subscribe('TaskPersisted', this.handleTaskPersisted.bind(this)),
       eventBus.subscribe('TaskCancellationRequested', this.handleTaskCancellation.bind(this)),
-      eventBus.subscribe('NextTaskQuery', this.handleNextTaskQuery.bind(this)),
       eventBus.subscribe('RequeueTask', this.handleRequeueTask.bind(this)),
       eventBus.subscribe('TaskUnblocked', this.handleTaskUnblocked.bind(this)),
     ];
@@ -57,72 +47,66 @@ export class QueueHandler extends BaseEventHandler {
   }
 
   /**
-   * Handle task persisted - add task to queue only if not blocked by dependencies
+   * Enqueue a task if it is not blocked by dependencies.
+   * Called directly by PersistenceHandler after persisting a task.
    * ARCHITECTURE: Dependency-aware queueing - blocked tasks wait for TaskUnblocked event
+   * INVARIANT: setup() must be called before this method (eventBus required for TaskQueued emission)
    */
-  private async handleTaskPersisted(event: TaskPersistedEvent): Promise<void> {
-    await this.handleEvent(event, async (event) => {
-      // Fast-path: if task was created with dependencies, skip DB check entirely
-      // This eliminates the race condition where DependencyHandler hasn't written
-      // dependency rows yet but isBlocked() returns false
-      if (event.task.dependencyState === 'blocked') {
-        this.logger.info('Task blocked by dependencies (fast-path)', {
-          taskId: event.task.id,
-        });
-        return ok(undefined);
-      }
+  async enqueueIfReady(task: Task): Promise<Result<void>> {
+    // Fail-fast: eventBus is required to emit TaskQueued (set in setup()).
+    // Without it, tasks enqueue silently without triggering worker spawning.
+    if (!this.eventBus) {
+      const message = 'enqueueIfReady() called before setup() - eventBus not initialized';
+      this.logger.error(message, new Error(message), { taskId: task.id });
+      return err(new Error(message));
+    }
 
-      // Check if task is blocked by dependencies
-      const isBlockedResult = await this.dependencyRepo.isBlocked(event.task.id);
-      if (!isBlockedResult.ok) {
-        this.logger.error('Failed to check if task is blocked', isBlockedResult.error, {
-          taskId: event.task.id,
-        });
-        // Fail-safe: enqueue anyway to avoid stuck tasks
-      } else if (isBlockedResult.value) {
-        // Task is blocked - do NOT enqueue yet
-        this.logger.info('Task blocked by dependencies - waiting for TaskUnblocked event', {
-          taskId: event.task.id,
-        });
-        return ok(undefined);
-      }
-
-      // Task is not blocked - safe to enqueue
-      const result = this.queue.enqueue(event.task);
-
-      if (!result.ok) {
-        this.logger.error('Failed to enqueue task', result.error, {
-          taskId: event.task.id,
-        });
-        return result;
-      }
-
-      this.logger.debug('Task enqueued', {
-        taskId: event.task.id,
-        priority: event.task.priority,
-        queueSize: this.queue.size(),
+    // Fast-path: if task was created with dependencies, skip DB check entirely
+    // This eliminates the race condition where DependencyHandler hasn't written
+    // dependency rows yet but isBlocked() returns false
+    if (task.dependencyState === 'blocked') {
+      this.logger.info('Task blocked by dependencies (fast-path)', {
+        taskId: task.id,
       });
-
-      // Emit event that task is now queued - critical for worker spawning
-      if (this.eventBus) {
-        await this.emitEvent(
-          this.eventBus,
-          'TaskQueued',
-          {
-            taskId: event.task.id,
-            task: event.task,
-          },
-          { context: { taskId: event.task.id } },
-        );
-        // Don't fail the enqueue operation - the task is in the queue
-      } else {
-        this.logger.error('No eventBus available to emit TaskQueued event', undefined, {
-          taskId: event.task.id,
-        });
-      }
-
       return ok(undefined);
+    }
+
+    // Check if task is blocked by dependencies
+    const isBlockedResult = await this.dependencyRepo.isBlocked(task.id);
+    if (!isBlockedResult.ok) {
+      this.logger.error('Failed to check if task is blocked', isBlockedResult.error, {
+        taskId: task.id,
+      });
+      // Fail-safe: enqueue anyway to avoid stuck tasks
+    } else if (isBlockedResult.value) {
+      // Task is blocked - do NOT enqueue yet
+      this.logger.info('Task blocked by dependencies - waiting for TaskUnblocked event', {
+        taskId: task.id,
+      });
+      return ok(undefined);
+    }
+
+    // Task is not blocked - safe to enqueue
+    const result = this.queue.enqueue(task);
+
+    if (!result.ok) {
+      this.logger.error('Failed to enqueue task', result.error, {
+        taskId: task.id,
+      });
+      return result;
+    }
+
+    this.logger.debug('Task enqueued', {
+      taskId: task.id,
+      priority: task.priority,
+      queueSize: this.queue.size(),
     });
+
+    // Emit event that task is now queued - critical for worker spawning
+    // eventBus guaranteed non-null by fail-fast guard at method entry
+    await this.emitEvent(this.eventBus, 'TaskQueued', { taskId: task.id }, { context: { taskId: task.id } });
+
+    return ok(undefined);
   }
 
   /**
@@ -161,52 +145,8 @@ export class QueueHandler extends BaseEventHandler {
   }
 
   /**
-   * Handle next task query - event-driven dequeue operation
-   * ARCHITECTURE: Pure event-driven pattern - WorkerHandler uses events, not direct calls
-   */
-  private async handleNextTaskQuery(event: NextTaskQueryEvent): Promise<void> {
-    await this.handleEvent(event, async (event) => {
-      const result = this.queue.dequeue();
-
-      if (!result.ok) {
-        // Respond with error
-        const correlationId = event.__correlationId;
-        if (correlationId && this.eventBus?.respondError) {
-          this.eventBus.respondError(correlationId, result.error);
-        }
-        return result;
-      }
-
-      if (!result.value) {
-        // Respond with null (no tasks)
-        const correlationId = event.__correlationId;
-        if (correlationId && this.eventBus?.respond) {
-          this.eventBus.respond(correlationId, null);
-        }
-        return ok(undefined);
-      }
-
-      const task = result.value;
-
-      this.logger.debug('Task dequeued via event', {
-        taskId: task.id,
-        priority: task.priority,
-        queueSize: this.queue.size(),
-      });
-
-      // Respond with task
-      const correlationId = event.__correlationId;
-      if (correlationId && this.eventBus?.respond) {
-        this.eventBus.respond(correlationId, task);
-      }
-
-      return ok(undefined);
-    });
-  }
-
-  /**
    * Handle requeue task event - event-driven requeue operation
-   * ARCHITECTURE: Pure event-driven pattern - WorkerHandler uses events, not direct calls
+   * ARCHITECTURE: Event-driven pattern - WorkerHandler uses events, not direct calls
    */
   private async handleRequeueTask(event: RequeueTaskEvent): Promise<void> {
     await this.handleEvent(event, async (event) => {
@@ -231,10 +171,7 @@ export class QueueHandler extends BaseEventHandler {
         await this.emitEvent(
           this.eventBus,
           'TaskQueued',
-          {
-            taskId: task.id,
-            task: task,
-          },
+          { taskId: task.id },
           { context: { taskId: task.id, operation: 'requeue' } },
         );
         // Don't fail the requeue operation - the task is in the queue
@@ -301,10 +238,7 @@ export class QueueHandler extends BaseEventHandler {
         await this.emitEvent(
           this.eventBus,
           'TaskQueued',
-          {
-            taskId: task.id,
-            task: task,
-          },
+          { taskId: task.id },
           { context: { taskId: task.id, operation: 'unblocked' } },
         );
       }

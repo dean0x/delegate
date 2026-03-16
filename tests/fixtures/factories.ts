@@ -260,9 +260,6 @@ export class ConfigFactory {
     resourceMonitorIntervalMs: 100, // Fast for tests
     minSpawnDelayMs: 10, // Fast for tests
     settlingWindowMs: 15000, // 15 second settling window
-    // Event system defaults
-    eventRequestTimeoutMs: 5000,
-    eventCleanupIntervalMs: 60000,
     // Storage defaults
     fileStorageThresholdBytes: 102400,
     // Retry defaults
@@ -374,12 +371,6 @@ export class EventFactory {
   taskFailed(taskId: TaskId, error: unknown): this {
     this.eventType = 'TaskFailed';
     this.payload = { taskId, error };
-    return this;
-  }
-
-  workerSpawned(workerId: WorkerId, taskId: TaskId): this {
-    this.eventType = 'WorkerSpawned';
-    this.payload = { workerId, taskId };
     return this;
   }
 

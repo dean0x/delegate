@@ -21,7 +21,6 @@ import {
   ScheduleCancelledEvent,
   ScheduleCreatedEvent,
   SchedulePausedEvent,
-  ScheduleQueryEvent,
   ScheduleResumedEvent,
   ScheduleTriggeredEvent,
   ScheduleUpdatedEvent,
@@ -108,8 +107,6 @@ export class ScheduleHandler extends BaseEventHandler {
       this.eventBus.subscribe('SchedulePaused', this.handleSchedulePaused.bind(this)),
       this.eventBus.subscribe('ScheduleResumed', this.handleScheduleResumed.bind(this)),
       this.eventBus.subscribe('ScheduleUpdated', this.handleScheduleUpdated.bind(this)),
-      // Query events
-      this.eventBus.subscribe('ScheduleQuery', this.handleScheduleQuery.bind(this)),
     ];
 
     // Check if any subscription failed
@@ -721,65 +718,5 @@ export class ScheduleHandler extends BaseEventHandler {
       this.logger.info('Schedule updated', { scheduleId });
       return ok(undefined);
     });
-  }
-
-  // ============================================================================
-  // QUERY EVENT HANDLERS
-  // ============================================================================
-
-  /**
-   * Handle schedule query - respond with schedule(s)
-   */
-  private async handleScheduleQuery(event: ScheduleQueryEvent): Promise<void> {
-    await this.handleEvent(event, async (e) => {
-      const { scheduleId, status } = e;
-      const correlationId = (e as unknown as { __correlationId?: string }).__correlationId;
-
-      this.logger.debug('Processing schedule query', { scheduleId, status, correlationId });
-
-      let schedules: readonly Schedule[];
-
-      if (scheduleId) {
-        const result = await this.scheduleRepo.findById(scheduleId);
-        if (!result.ok) {
-          this.respondWithError(correlationId, result.error);
-          return result;
-        }
-        schedules = result.value ? [result.value] : [];
-      } else if (status) {
-        const result = await this.scheduleRepo.findByStatus(status);
-        if (!result.ok) {
-          this.respondWithError(correlationId, result.error);
-          return result;
-        }
-        schedules = result.value;
-      } else {
-        const result = await this.scheduleRepo.findAll();
-        if (!result.ok) {
-          this.respondWithError(correlationId, result.error);
-          return result;
-        }
-        schedules = result.value;
-      }
-
-      // Respond to request-reply if correlation ID present
-      if (correlationId) {
-        (this.eventBus as { respond?: <T>(id: string, value: T) => void }).respond?.(correlationId, schedules);
-      }
-
-      // Also emit response event for pub/sub consumers
-      await this.eventBus.emit('ScheduleQueryResponse', { schedules });
-
-      return ok(undefined);
-    });
-  }
-
-  /**
-   * Send error response via request-reply correlation if available
-   */
-  private respondWithError(correlationId: string | undefined, error: Error): void {
-    if (correlationId) {
-      (this.eventBus as { respondError?: (id: string, err: Error) => void }).respondError?.(correlationId, error);
-    }
   }
 }

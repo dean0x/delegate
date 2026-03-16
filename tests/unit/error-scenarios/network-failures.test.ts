@@ -134,30 +134,6 @@ describe('Network Failure Scenarios', () => {
       // Good handler should still be called
       expect(goodHandler).toHaveBeenCalledTimes(1);
     });
-
-    it('should handle request/response timeout', async () => {
-      // Set up request handler that never responds
-      eventBus.onRequest('SlowRequest', async () => {
-        await new Promise(() => {}); // Never resolves
-      });
-
-      // Create a timeout wrapper
-      const timeoutPromise = new Promise<{ ok: false; error: Error }>((resolve) => {
-        setTimeout(() => {
-          resolve({ ok: false, error: new Error('Request timeout') });
-        }, TIMEOUTS.SHORT);
-      });
-
-      const requestPromise = eventBus.request('SlowRequest', { data: 'test' });
-
-      // Race between request and timeout
-      const result = await Promise.race([requestPromise, timeoutPromise]);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain('timeout');
-      }
-    });
   });
 
   describe('Worker Communication Failures', () => {

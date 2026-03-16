@@ -266,22 +266,11 @@ export class SystemResourceMonitor implements ResourceMonitor {
       if (resourcesResult.ok) {
         const resources = resourcesResult.value;
 
-        // Emit SystemResourcesUpdated event
-        const eventResult = await this.eventBus.emit('SystemResourcesUpdated', {
+        this.logger?.debug('Resource status published', {
           cpuPercent: resources.cpuUsage,
           memoryUsed: resources.totalMemory - resources.availableMemory,
           workerCount: resources.workerCount,
         });
-
-        if (!eventResult.ok) {
-          this.logger?.error('Failed to emit SystemResourcesUpdated event', eventResult.error);
-        } else {
-          this.logger?.debug('Resource status published', {
-            cpuPercent: resources.cpuUsage,
-            memoryUsed: resources.totalMemory - resources.availableMemory,
-            workerCount: resources.workerCount,
-          });
-        }
       } else {
         this.logger?.error('Failed to get system resources for monitoring', resourcesResult.error);
       }

@@ -10,10 +10,12 @@ import { ErrorCode } from '../../src/core/errors.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { err, ok } from '../../src/core/result.js';
 import { Database } from '../../src/implementations/database.js';
+import { SQLiteDependencyRepository } from '../../src/implementations/dependency-repository.js';
 import { BufferedOutputCapture } from '../../src/implementations/output-capture.js';
+import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { PersistenceHandler } from '../../src/services/handlers/persistence-handler.js';
-import { QueryHandler } from '../../src/services/handlers/query-handler.js';
+import { QueueHandler } from '../../src/services/handlers/queue-handler.js';
 import { TaskManagerService } from '../../src/services/task-manager.js';
 import { BUFFER_SIZES, TIMEOUTS } from '../constants.js';
 import { TestLogger } from '../fixtures/test-doubles.js';
@@ -47,15 +49,15 @@ describe('Retry Functionality', () => {
 
     const outputCapture = new BufferedOutputCapture(BUFFER_SIZES.MEDIUM, eventBus);
 
-    // Initialize task manager with new signature: (eventBus, logger, config)
-    taskManager = new TaskManagerService(eventBus, logger, config);
+    // Initialize task manager with hybrid architecture: direct repository + event bus
+    taskManager = new TaskManagerService(eventBus, logger, config, repository, outputCapture);
 
-    // Set up event handlers (MUST include QueryHandler for pure event-driven architecture)
-    const persistenceHandler = new PersistenceHandler(repository, logger);
+    // Set up persistence handler for task save on TaskDelegated
+    const dependencyRepo = new SQLiteDependencyRepository(database);
+    const taskQueue = new PriorityTaskQueue();
+    const queueHandler = new QueueHandler(taskQueue, dependencyRepo, repository, logger);
+    const persistenceHandler = new PersistenceHandler(repository, queueHandler, logger);
     await persistenceHandler.setup(eventBus);
-
-    const queryHandler = new QueryHandler(repository, outputCapture, eventBus, logger);
-    await queryHandler.setup(eventBus);
   });
 
   afterEach(() => {
