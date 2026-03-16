@@ -6,11 +6,7 @@
 
 import { Task, TaskStatus } from '../../core/domain.js';
 import { EventBus } from '../../core/events/event-bus.js';
-import {
-  RequeueTaskEvent,
-  TaskCancellationRequestedEvent,
-  TaskUnblockedEvent,
-} from '../../core/events/events.js';
+import type { RequeueTaskEvent, TaskCancellationRequestedEvent, TaskUnblockedEvent } from '../../core/events/events.js';
 import { BaseEventHandler } from '../../core/events/handlers.js';
 import { DependencyRepository, Logger, TaskEnqueuer, TaskQueue, TaskRepository } from '../../core/interfaces.js';
 import { err, ok, Result } from '../../core/result.js';
@@ -185,7 +181,7 @@ export class QueueHandler extends BaseEventHandler implements TaskEnqueuer {
           'TaskQueued',
           {
             taskId: task.id,
-            task: task,
+            task,
           },
           { context: { taskId: task.id, operation: 'requeue' } },
         );
@@ -255,7 +251,7 @@ export class QueueHandler extends BaseEventHandler implements TaskEnqueuer {
           'TaskQueued',
           {
             taskId: task.id,
-            task: task,
+            task,
           },
           { context: { taskId: task.id, operation: 'unblocked' } },
         );

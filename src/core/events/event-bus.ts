@@ -320,7 +320,6 @@ export class InMemoryEventBus implements EventBus {
       this.unsubscribe(subscriptionId);
     });
   }
-
 }
 
 /**

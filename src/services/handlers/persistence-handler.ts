@@ -5,8 +5,8 @@
 
 import type { Task } from '../../core/domain.js';
 import { TaskStatus } from '../../core/domain.js';
-import { EventBus } from '../../core/events/event-bus.js';
-import {
+import type { EventBus } from '../../core/events/event-bus.js';
+import type {
   TaskCancelledEvent,
   TaskCompletedEvent,
   TaskDelegatedEvent,
@@ -71,7 +71,14 @@ export class PersistenceHandler extends BaseEventHandler {
       });
 
       // Directly call TaskEnqueuer to enqueue task if not blocked by dependencies
-      await this.taskEnqueuer.enqueueIfReady(event.task);
+      const enqueueResult = await this.taskEnqueuer.enqueueIfReady(event.task);
+
+      if (!enqueueResult.ok) {
+        this.logger.error('Failed to enqueue task after persistence', enqueueResult.error, {
+          taskId: event.task.id,
+        });
+        return enqueueResult;
+      }
 
       return ok(undefined);
     });
