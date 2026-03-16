@@ -6,7 +6,8 @@
  * Rationale: Eliminates unnecessary event indirection for read operations
  *
  * Rules:
- * - Commands (delegate, cancel) use fire-and-forget emit()
+ * - Commands (delegate) use fire-and-forget emit()
+ * - Commands with validation (cancel) validate then emit
  * - Queries (getStatus, getLogs, retry lookup, resume lookup) use direct repository calls
  * - All state changes MUST go through events
  */
@@ -128,11 +129,27 @@ export class TaskManagerService implements TaskManager {
   }
 
   async cancel(taskId: TaskId, reason?: string): Promise<Result<void>> {
-    // ARCHITECTURE: Validation now happens in event handler, not here
-    // Commands go through events; queries go direct to repos
-    this.logger.info('Cancelling task', { taskId, reason });
+    // Validate task exists and is cancellable (consistent with retry pattern)
+    const taskResult = await this.taskRepo.findById(taskId);
+    if (!taskResult.ok) {
+      this.logger.error('Task cancellation check failed', taskResult.error, { taskId });
+      return taskResult;
+    }
+    if (!taskResult.value) {
+      return err(taskNotFound(taskId));
+    }
 
-    // Emit cancellation event - handler will validate and process
+    const task = taskResult.value;
+    if (task.status !== 'queued' && task.status !== 'running') {
+      return err(
+        new BackbeatError(
+          ErrorCode.TASK_CANNOT_CANCEL,
+          `Task ${taskId} cannot be cancelled in state ${task.status}`,
+        ),
+      );
+    }
+
+    this.logger.info('Cancelling task', { taskId, reason });
     const result = await this.eventBus.emit('TaskCancellationRequested', { taskId, reason });
 
     if (!result.ok) {

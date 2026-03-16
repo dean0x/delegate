@@ -467,7 +467,10 @@ describe('TaskManagerService', () => {
   // cancel()
   // ---------------------------------------------------------------------------
   describe('cancel()', () => {
-    it('should emit TaskCancellationRequested event', async () => {
+    it('should emit TaskCancellationRequested event for cancellable task', async () => {
+      const task = buildMockTask({ id: TaskId('cancel-1'), status: TaskStatus.QUEUED });
+      (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(task));
+
       const result = await service.cancel(TaskId('cancel-1'));
 
       expect(result.ok).toBe(true);
@@ -478,6 +481,9 @@ describe('TaskManagerService', () => {
     });
 
     it('should pass reason through to event', async () => {
+      const task = buildRunningTask({ id: TaskId('cancel-1') });
+      (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(task));
+
       await service.cancel(TaskId('cancel-1'), 'user requested');
 
       expect(eventBus.emit).toHaveBeenCalledWith('TaskCancellationRequested', {
@@ -487,6 +493,8 @@ describe('TaskManagerService', () => {
     });
 
     it('should return error when event emission fails', async () => {
+      const task = buildRunningTask({ id: TaskId('cancel-1') });
+      (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(task));
       const emitError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'emit failed');
       eventBus.emit.mockResolvedValue(err(emitError));
 
@@ -495,6 +503,51 @@ describe('TaskManagerService', () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error).toBe(emitError);
+    });
+
+    it('should return taskNotFound when task does not exist', async () => {
+      // Default mock returns ok(null)
+      const result = await service.cancel(TaskId('nonexistent'));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect((result.error as BackbeatError).code).toBe(ErrorCode.TASK_NOT_FOUND);
+      expect(eventBus.emit).not.toHaveBeenCalled();
+    });
+
+    it('should return TASK_CANNOT_CANCEL for terminal-state task', async () => {
+      const completedTask = buildCompletedTask({ id: TaskId('done-1') });
+      (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(completedTask));
+
+      const result = await service.cancel(TaskId('done-1'));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect((result.error as BackbeatError).code).toBe(ErrorCode.TASK_CANNOT_CANCEL);
+      expect(eventBus.emit).not.toHaveBeenCalled();
+    });
+
+    it('should return TASK_CANNOT_CANCEL for cancelled task', async () => {
+      const cancelledTask = buildMockTask({ id: TaskId('cancelled-1'), status: TaskStatus.CANCELLED });
+      (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(cancelledTask));
+
+      const result = await service.cancel(TaskId('cancelled-1'));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect((result.error as BackbeatError).code).toBe(ErrorCode.TASK_CANNOT_CANCEL);
+    });
+
+    it('should propagate repository errors on cancel', async () => {
+      const repoError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'db down');
+      (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(err(repoError));
+
+      const result = await service.cancel(TaskId('any'));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBe(repoError);
+      expect(eventBus.emit).not.toHaveBeenCalled();
     });
   });
 

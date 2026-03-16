@@ -37,6 +37,13 @@ const args = process.argv.slice(2);
 const mainCommand = args[0];
 const subCommand = args[1];
 
+// Early --help/-h interception for subcommands
+const subArgs = args.slice(1);
+if (mainCommand && (subArgs.includes('--help') || subArgs.includes('-h'))) {
+  showHelp(__dirname);
+  process.exit(0);
+}
+
 if (mainCommand === 'mcp') {
   if (subCommand === 'start') {
     handleMcpStart(__dirname);
