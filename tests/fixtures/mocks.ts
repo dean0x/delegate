@@ -9,8 +9,11 @@ import type {
   ResourceMonitor,
   TaskQueue,
   TaskRepository,
+  WorkerRepository,
 } from '../../src/core/interfaces';
+import type { OutputRepository } from '../../src/implementations/output-repository';
 import type { Result } from '../../src/core/result';
+import { ok } from '../../src/core/result';
 import { createMockTask, createMockWorker } from './mock-data.js';
 
 export const createMockLogger = (): Logger => ({
@@ -100,4 +103,29 @@ export const createMockTaskQueue = (): TaskQueue => ({
   size: vi.fn(async (): Promise<Result<number>> => ({ ok: true, value: 0 })),
   isEmpty: vi.fn(async (): Promise<Result<boolean>> => ({ ok: true, value: true })),
   clear: vi.fn(async (): Promise<Result<void>> => ({ ok: true, value: undefined })),
+});
+
+/**
+ * Create a mock WorkerRepository with vi.fn() stubs.
+ * All methods return successful defaults (ok with empty/zero values).
+ */
+export const createMockWorkerRepository = (): WorkerRepository => ({
+  register: vi.fn().mockReturnValue(ok(undefined)),
+  unregister: vi.fn().mockReturnValue(ok(undefined)),
+  findByTaskId: vi.fn().mockReturnValue(ok(null)),
+  findByOwnerPid: vi.fn().mockReturnValue(ok([])),
+  findAll: vi.fn().mockReturnValue(ok([])),
+  getGlobalCount: vi.fn().mockReturnValue(ok(0)),
+  deleteByOwnerPid: vi.fn().mockReturnValue(ok(0)),
+});
+
+/**
+ * Create a mock OutputRepository with vi.fn() stubs.
+ * All methods return successful defaults (ok with empty/null values).
+ */
+export const createMockOutputRepository = (): OutputRepository => ({
+  save: vi.fn().mockResolvedValue(ok(undefined)),
+  append: vi.fn().mockResolvedValue(ok(undefined)),
+  get: vi.fn().mockResolvedValue(ok(null)),
+  delete: vi.fn().mockResolvedValue(ok(undefined)),
 });

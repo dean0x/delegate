@@ -9,7 +9,6 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Container } from '../../../src/core/container';
 import { InMemoryEventBus } from '../../../src/core/events/event-bus';
-import { WorkerRepository } from '../../../src/core/interfaces';
 import { ok } from '../../../src/core/result';
 import { InMemoryAgentRegistry } from '../../../src/implementations/agent-registry';
 import { SQLiteCheckpointRepository } from '../../../src/implementations/checkpoint-repository';
@@ -17,7 +16,6 @@ import { Database } from '../../../src/implementations/database';
 import { SQLiteDependencyRepository } from '../../../src/implementations/dependency-repository';
 import { EventDrivenWorkerPool } from '../../../src/implementations/event-driven-worker-pool';
 import { BufferedOutputCapture } from '../../../src/implementations/output-capture';
-import { OutputRepository } from '../../../src/implementations/output-repository';
 import { ProcessSpawnerAdapter } from '../../../src/implementations/process-spawner-adapter';
 import { SystemResourceMonitor } from '../../../src/implementations/resource-monitor';
 import { SQLiteScheduleRepository } from '../../../src/implementations/schedule-repository';
@@ -29,24 +27,8 @@ import {
   setupEventHandlers,
 } from '../../../src/services/handler-setup';
 import { createTestConfiguration } from '../../fixtures/factories';
+import { createMockOutputRepository, createMockWorkerRepository } from '../../fixtures/mocks';
 import { TestLogger, TestProcessSpawner } from '../../fixtures/test-doubles';
-
-const createMockWorkerRepo = () => ({
-  register: vi.fn().mockReturnValue(ok(undefined)),
-  unregister: vi.fn().mockReturnValue(ok(undefined)),
-  findByTaskId: vi.fn().mockReturnValue(ok(null)),
-  findByOwnerPid: vi.fn().mockReturnValue(ok([])),
-  findAll: vi.fn().mockReturnValue(ok([])),
-  getGlobalCount: vi.fn().mockReturnValue(ok(0)),
-  deleteByOwnerPid: vi.fn().mockReturnValue(ok(0)),
-});
-
-const createMockOutputRepo = (): OutputRepository => ({
-  save: vi.fn().mockResolvedValue(ok(undefined)),
-  append: vi.fn().mockResolvedValue(ok(undefined)),
-  get: vi.fn().mockResolvedValue(ok(null)),
-  delete: vi.fn().mockResolvedValue(ok(undefined)),
-});
 
 describe('handler-setup', () => {
   let container: Container;
@@ -78,7 +60,7 @@ describe('handler-setup', () => {
     container.registerValue('outputCapture', new BufferedOutputCapture(config.maxOutputBuffer, eventBus));
 
     // Resource monitor with mocked system resources
-    const mockWorkerRepo = createMockWorkerRepo();
+    const mockWorkerRepo = createMockWorkerRepository();
     const resourceMonitor = new SystemResourceMonitor(
       config,
       mockWorkerRepo,
@@ -96,7 +78,7 @@ describe('handler-setup', () => {
       eventBus,
       new BufferedOutputCapture(config.maxOutputBuffer, eventBus),
       mockWorkerRepo,
-      createMockOutputRepo(),
+      createMockOutputRepository(),
     );
     container.registerValue('workerPool', workerPool);
 

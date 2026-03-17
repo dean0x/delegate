@@ -8,25 +8,15 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
-import { WorkerRepository } from '../../src/core/interfaces.js';
 import { ok } from '../../src/core/result.js';
 import { Database } from '../../src/implementations/database.js';
 import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { RecoveryManager } from '../../src/services/recovery-manager.js';
 import { createTestConfiguration } from '../fixtures/factories.js';
+import { createMockWorkerRepository } from '../fixtures/mocks.js';
 import { createTestTask as createTask } from '../fixtures/test-data.js';
 import { TestLogger } from '../fixtures/test-doubles.js';
-
-const createMockWorkerRepo = (): WorkerRepository => ({
-  register: vi.fn().mockReturnValue(ok(undefined)),
-  unregister: vi.fn().mockReturnValue(ok(undefined)),
-  findByTaskId: vi.fn().mockReturnValue(ok(null)),
-  findByOwnerPid: vi.fn().mockReturnValue(ok([])),
-  findAll: vi.fn().mockReturnValue(ok([])),
-  getGlobalCount: vi.fn().mockReturnValue(ok(0)),
-  deleteByOwnerPid: vi.fn().mockReturnValue(ok(0)),
-});
 
 describe('Integration: Task persistence', () => {
   it('should persist tasks across restarts', async () => {
@@ -88,7 +78,7 @@ describe('Integration: Task persistence', () => {
       });
 
       // Create recovery manager
-      const recoveryManager = new RecoveryManager(repository2, queue2, eventBus, logger, createMockWorkerRepo());
+      const recoveryManager = new RecoveryManager(repository2, queue2, eventBus, logger, createMockWorkerRepository());
 
       // Perform recovery
       await recoveryManager.recover();
@@ -349,7 +339,7 @@ describe('Integration: Task persistence', () => {
         new PriorityTaskQueue(logger),
         eventBus,
         logger,
-        createMockWorkerRepo(),
+        createMockWorkerRepository(),
       );
 
       await recoveryManager.recover();

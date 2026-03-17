@@ -1,20 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryEventBus } from '../../../src/core/events/event-bus';
-import { WorkerRepository } from '../../../src/core/interfaces';
+import type { WorkerRepository } from '../../../src/core/interfaces';
 import { ok } from '../../../src/core/result';
 import { TestLogger } from '../../../src/implementations/logger';
 import { SystemResourceMonitor } from '../../../src/implementations/resource-monitor';
 import { createTestConfiguration } from '../../fixtures/factories';
-
-const createMockWorkerRepo = (): WorkerRepository => ({
-  register: vi.fn().mockReturnValue(ok(undefined)),
-  unregister: vi.fn().mockReturnValue(ok(undefined)),
-  findByTaskId: vi.fn().mockReturnValue(ok(null)),
-  findByOwnerPid: vi.fn().mockReturnValue(ok([])),
-  findAll: vi.fn().mockReturnValue(ok([])),
-  getGlobalCount: vi.fn().mockReturnValue(ok(0)),
-  deleteByOwnerPid: vi.fn().mockReturnValue(ok(0)),
-});
+import { createMockWorkerRepository } from '../../fixtures/mocks';
 
 // Mock os module
 let mockTotalmem = () => 16_000_000_000;
@@ -48,7 +39,7 @@ describe('SystemResourceMonitor', () => {
   beforeEach(() => {
     logger = new TestLogger();
     eventBus = new InMemoryEventBus(createTestConfiguration(), logger);
-    workerRepo = createMockWorkerRepo();
+    workerRepo = createMockWorkerRepository();
 
     // Setup default mock values
     mockTotalmem = () => MEMORY_16GB;
@@ -253,7 +244,7 @@ describe('SystemResourceMonitor', () => {
           memoryReserve: MEMORY_1GB,
         });
         // getGlobalCount returns 0 initially, then 1 after spawn
-        const limitedWorkerRepo = createMockWorkerRepo();
+        const limitedWorkerRepo = createMockWorkerRepository();
         const limitedMonitor = new SystemResourceMonitor(limitedConfig, limitedWorkerRepo, eventBus, logger);
 
         // Before recordSpawn, should be able to spawn
@@ -292,7 +283,7 @@ describe('SystemResourceMonitor', () => {
           cpuCoresReserved: 2,
           memoryReserve: MEMORY_1GB,
         });
-        const limitedWorkerRepo = createMockWorkerRepo();
+        const limitedWorkerRepo = createMockWorkerRepository();
         const limitedMonitor = new SystemResourceMonitor(limitedConfig, limitedWorkerRepo, eventBus, logger);
 
         // Record spawns up to but not exceeding limit
@@ -334,7 +325,7 @@ describe('SystemResourceMonitor', () => {
           cpuCoresReserved: 2,
           memoryReserve: MEMORY_1GB,
         });
-        const limitedWorkerRepo = createMockWorkerRepo();
+        const limitedWorkerRepo = createMockWorkerRepository();
         const limitedMonitor = new SystemResourceMonitor(limitedConfig, limitedWorkerRepo, eventBus, logger);
 
         // Record a spawn (fills the 1-worker limit)
@@ -379,7 +370,7 @@ describe('SystemResourceMonitor', () => {
           cpuCoresReserved: 2,
           memoryReserve: MEMORY_1GB,
         });
-        const limitedWorkerRepo = createMockWorkerRepo();
+        const limitedWorkerRepo = createMockWorkerRepository();
         const limitedMonitor = new SystemResourceMonitor(limitedConfig, limitedWorkerRepo, eventBus, logger);
 
         // Record a spawn (fills the 1-worker limit)
@@ -416,7 +407,7 @@ describe('SystemResourceMonitor', () => {
           cpuCoresReserved: 2,
           memoryReserve: MEMORY_1GB,
         });
-        const limitedWorkerRepo = createMockWorkerRepo();
+        const limitedWorkerRepo = createMockWorkerRepository();
         const limitedMonitor = new SystemResourceMonitor(limitedConfig, limitedWorkerRepo, eventBus, logger);
 
         // Record spawns up to the limit (2 workers = max)

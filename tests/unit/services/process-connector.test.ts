@@ -11,8 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskId } from '../../../src/core/domain.js';
 import type { Logger, OutputCapture } from '../../../src/core/interfaces.js';
 import { ok } from '../../../src/core/result.js';
-import type { OutputRepository } from '../../../src/implementations/output-repository.js';
 import { ProcessConnector } from '../../../src/services/process-connector.js';
+import { createMockOutputRepository } from '../../fixtures/mocks.js';
 
 function createMockProcess(): EventEmitter & {
   stdout: EventEmitter | null;
@@ -42,15 +42,6 @@ function createMockOutputCapture(): OutputCapture {
     capture: vi.fn().mockReturnValue(ok(undefined)),
     getOutput: vi.fn().mockReturnValue(ok({ taskId: 'test', stdout: [], stderr: [], totalSize: 0 })),
     clear: vi.fn().mockReturnValue(ok(undefined)),
-  };
-}
-
-function createMockOutputRepository(): OutputRepository {
-  return {
-    save: vi.fn().mockResolvedValue(ok(undefined)),
-    append: vi.fn().mockResolvedValue(ok(undefined)),
-    get: vi.fn().mockResolvedValue(ok(null)),
-    delete: vi.fn().mockResolvedValue(ok(undefined)),
   };
 }
 

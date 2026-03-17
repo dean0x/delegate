@@ -10,15 +10,13 @@ import type {
   OutputCapture,
   ProcessSpawner,
   ResourceMonitor,
-  WorkerRepository,
 } from '../../../src/core/interfaces';
 import { err, ok } from '../../../src/core/result';
 import { InMemoryAgentRegistry } from '../../../src/implementations/agent-registry';
 import { EventDrivenWorkerPool } from '../../../src/implementations/event-driven-worker-pool';
-import type { OutputRepository } from '../../../src/implementations/output-repository';
 import { ProcessSpawnerAdapter } from '../../../src/implementations/process-spawner-adapter';
 import { TaskFactory } from '../../fixtures/factories';
-import { createMockLogger } from '../../fixtures/mocks';
+import { createMockLogger, createMockOutputRepository, createMockWorkerRepository } from '../../fixtures/mocks';
 
 // --- Mock Factories ---
 
@@ -81,22 +79,6 @@ const createTestEventBus = () =>
     dispose: vi.fn(),
   }) as unknown as EventBus;
 
-const createMockWorkerRepository = () => ({
-  register: vi.fn().mockReturnValue(ok(undefined)),
-  unregister: vi.fn().mockReturnValue(ok(undefined)),
-  findByTaskId: vi.fn().mockReturnValue(ok(null)),
-  findByOwnerPid: vi.fn().mockReturnValue(ok([])),
-  findAll: vi.fn().mockReturnValue(ok([])),
-  getGlobalCount: vi.fn().mockReturnValue(ok(0)),
-  deleteByOwnerPid: vi.fn().mockReturnValue(ok(0)),
-});
-
-const createMockOutputRepository = () => ({
-  save: vi.fn().mockResolvedValue(ok(undefined)),
-  append: vi.fn().mockResolvedValue(ok(undefined)),
-  get: vi.fn().mockResolvedValue(ok(null)),
-  delete: vi.fn().mockResolvedValue(ok(undefined)),
-});
 
 /**
  * Helper to build a Task object without using withId() (which mutates a frozen object).

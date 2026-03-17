@@ -19,7 +19,7 @@ import type { Logger, TaskQueue, TaskRepository, WorkerRepository } from '../../
 import { err, ok } from '../../../src/core/result';
 import { RecoveryManager } from '../../../src/services/recovery-manager';
 import { TaskFactory } from '../../fixtures/factories';
-import { createMockLogger } from '../../fixtures/mocks';
+import { createMockLogger, createMockWorkerRepository } from '../../fixtures/mocks';
 
 // --- Mock factories ---
 
@@ -56,16 +56,6 @@ const createTestEventBus = () => ({
   subscribeAll: vi.fn(),
   unsubscribeAll: vi.fn(),
   dispose: vi.fn(),
-});
-
-const createMockWorkerRepository = () => ({
-  register: vi.fn().mockReturnValue(ok(undefined)),
-  unregister: vi.fn().mockReturnValue(ok(undefined)),
-  findByTaskId: vi.fn().mockReturnValue(ok(null)),
-  findByOwnerPid: vi.fn().mockReturnValue(ok([])),
-  findAll: vi.fn().mockReturnValue(ok([])),
-  getGlobalCount: vi.fn().mockReturnValue(ok(0)),
-  deleteByOwnerPid: vi.fn().mockReturnValue(ok(0)),
 });
 
 describe('RecoveryManager', () => {

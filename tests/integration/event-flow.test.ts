@@ -8,38 +8,20 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it, vi } from 'vitest';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
-import { WorkerRepository } from '../../src/core/interfaces.js';
 import { ok } from '../../src/core/result.js';
 import { Database } from '../../src/implementations/database.js';
 import { EventDrivenWorkerPool } from '../../src/implementations/event-driven-worker-pool.js';
 import { BufferedOutputCapture } from '../../src/implementations/output-capture.js';
-import { OutputRepository } from '../../src/implementations/output-repository.js';
 import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { TaskManagerService } from '../../src/services/task-manager.js';
 import { createTestConfiguration } from '../fixtures/factories.js';
 import { createAgentRegistryFromSpawner } from '../fixtures/mock-agent.js';
 import { MockProcessSpawner } from '../fixtures/mock-process-spawner.js';
+import { createMockOutputRepository, createMockWorkerRepository } from '../fixtures/mocks.js';
 import { createTestTask as createTask } from '../fixtures/test-data.js';
 import { TestLogger } from '../fixtures/test-doubles.js';
 import { flushEventLoop } from '../utils/event-helpers.js';
-
-const createMockWorkerRepo = (): WorkerRepository => ({
-  register: vi.fn().mockReturnValue(ok(undefined)),
-  unregister: vi.fn().mockReturnValue(ok(undefined)),
-  findByTaskId: vi.fn().mockReturnValue(ok(null)),
-  findByOwnerPid: vi.fn().mockReturnValue(ok([])),
-  findAll: vi.fn().mockReturnValue(ok([])),
-  getGlobalCount: vi.fn().mockReturnValue(ok(0)),
-  deleteByOwnerPid: vi.fn().mockReturnValue(ok(0)),
-});
-
-const createMockOutputRepo = (): OutputRepository => ({
-  save: vi.fn().mockResolvedValue(ok(undefined)),
-  append: vi.fn().mockResolvedValue(ok(undefined)),
-  get: vi.fn().mockResolvedValue(ok(null)),
-  delete: vi.fn().mockResolvedValue(ok(undefined)),
-});
 
 describe('Integration: Event-driven task delegation flow', () => {
   it('should coordinate task delegation through events', async () => {
@@ -61,7 +43,7 @@ describe('Integration: Event-driven task delegation flow', () => {
     const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
 
     const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const mockWorkerRepo = createMockWorkerRepo();
+    const mockWorkerRepo = createMockWorkerRepository();
     const workerPool = new EventDrivenWorkerPool(
       agentRegistry, // agentRegistry
       resourceMonitor, // monitor
@@ -69,12 +51,12 @@ describe('Integration: Event-driven task delegation flow', () => {
       eventBus, // eventBus
       outputCapture, // outputCapture
       mockWorkerRepo, // workerRepository
-      createMockOutputRepo(), // outputRepository
+      createMockOutputRepository(), // outputRepository
     );
 
     // Initialize task manager with hybrid architecture: (eventBus, logger, config, taskRepo, outputCapture, outputRepository)
     const config = createTestConfiguration();
-    const mockOutputRepo = createMockOutputRepo();
+    const mockOutputRepo = createMockOutputRepository();
     const taskManager = new TaskManagerService(eventBus, logger, config, repository, outputCapture, mockOutputRepo);
 
     // Track events

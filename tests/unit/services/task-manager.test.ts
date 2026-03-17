@@ -18,7 +18,7 @@ import { err, ok } from '../../../src/core/result';
 import type { OutputRepository } from '../../../src/implementations/output-repository';
 import { TaskManagerService } from '../../../src/services/task-manager';
 import { ConfigFactory } from '../../fixtures/factories';
-import { createMockLogger } from '../../fixtures/mocks';
+import { createMockLogger, createMockOutputRepository } from '../../fixtures/mocks';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -62,13 +62,6 @@ const createMockOutputCapture = (): OutputCapture => ({
     }),
   ),
   clear: vi.fn().mockReturnValue(ok(undefined)),
-});
-
-const createMockOutputRepository = () => ({
-  save: vi.fn().mockResolvedValue(ok(undefined)),
-  append: vi.fn().mockResolvedValue(ok(undefined)),
-  get: vi.fn().mockResolvedValue(ok(null)),
-  delete: vi.fn().mockResolvedValue(ok(undefined)),
 });
 
 /**

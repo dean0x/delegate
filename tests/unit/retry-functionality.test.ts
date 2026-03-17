@@ -12,7 +12,6 @@ import { err, ok } from '../../src/core/result.js';
 import { Database } from '../../src/implementations/database.js';
 import { SQLiteDependencyRepository } from '../../src/implementations/dependency-repository.js';
 import { BufferedOutputCapture } from '../../src/implementations/output-capture.js';
-import { OutputRepository } from '../../src/implementations/output-repository.js';
 import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { PersistenceHandler } from '../../src/services/handlers/persistence-handler.js';
@@ -20,13 +19,7 @@ import { QueueHandler } from '../../src/services/handlers/queue-handler.js';
 import { TaskManagerService } from '../../src/services/task-manager.js';
 import { BUFFER_SIZES, TIMEOUTS } from '../constants.js';
 import { TestLogger } from '../fixtures/test-doubles.js';
-
-const createMockOutputRepo = (): OutputRepository => ({
-  save: vi.fn().mockResolvedValue(ok(undefined)),
-  append: vi.fn().mockResolvedValue(ok(undefined)),
-  get: vi.fn().mockResolvedValue(ok(null)),
-  delete: vi.fn().mockResolvedValue(ok(undefined)),
-});
+import { createMockOutputRepository } from '../fixtures/mocks.js';
 
 describe('Retry Functionality', () => {
   let taskManager: TaskManagerService;
@@ -58,7 +51,7 @@ describe('Retry Functionality', () => {
     const outputCapture = new BufferedOutputCapture(BUFFER_SIZES.MEDIUM, eventBus);
 
     // Initialize task manager with hybrid architecture: direct repository + event bus
-    taskManager = new TaskManagerService(eventBus, logger, config, repository, outputCapture, createMockOutputRepo());
+    taskManager = new TaskManagerService(eventBus, logger, config, repository, outputCapture, createMockOutputRepository());
 
     // Set up persistence handler for task save on TaskDelegated
     const dependencyRepo = new SQLiteDependencyRepository(database);
