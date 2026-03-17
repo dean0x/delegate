@@ -11,7 +11,7 @@ import SQLite from 'better-sqlite3';
 import { TaskId, WorkerId, WorkerRegistration } from '../core/domain.js';
 import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { WorkerRepository } from '../core/interfaces.js';
-import { err, ok, Result, tryCatch } from '../core/result.js';
+import { Result, tryCatch } from '../core/result.js';
 import { Database } from './database.js';
 
 /**

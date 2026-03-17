@@ -18,11 +18,6 @@ export class RecoveryManager {
   ) {}
 
   /**
-   * Recover tasks on startup
-   * - Re-queue QUEUED tasks
-   * - Mark RUNNING tasks as FAILED (crashed)
-   */
-  /**
    * Check if a process is alive using signal 0 (existence check).
    * Returns true if the process exists, false if it doesn't.
    */
@@ -43,12 +38,22 @@ export class RecoveryManager {
     if (allWorkers.ok) {
       for (const reg of allWorkers.value) {
         if (!this.isProcessAlive(reg.ownerPid)) {
-          this.workerRepository.unregister(reg.workerId);
-          await this.repository.update(reg.taskId, {
+          const unregResult = this.workerRepository.unregister(reg.workerId);
+          if (!unregResult.ok) {
+            this.logger.error('Failed to unregister dead worker', unregResult.error, {
+              workerId: reg.workerId,
+            });
+          }
+          const updateResult = await this.repository.update(reg.taskId, {
             status: TaskStatus.FAILED,
             completedAt: Date.now(),
             exitCode: -1, // Crash indicator
           });
+          if (!updateResult.ok) {
+            this.logger.error('Failed to mark dead worker task as failed', updateResult.error, {
+              taskId: reg.taskId,
+            });
+          }
           this.logger.info('Cleaned up dead worker and failed its task', {
             workerId: reg.workerId,
             taskId: reg.taskId,
@@ -137,19 +142,15 @@ export class RecoveryManager {
 
     // Mark RUNNING tasks as FAILED if their worker is dead
     for (const task of runningResult.value) {
-      // Check if this task has a live worker
       const workerResult = this.workerRepository.findByTaskId(task.id);
-      let hasLiveWorker = false;
-
-      if (workerResult.ok && workerResult.value) {
-        hasLiveWorker = this.isProcessAlive(workerResult.value.ownerPid);
-      }
+      const workerRegistration = workerResult.ok ? workerResult.value : null;
+      const hasLiveWorker = workerRegistration !== null && this.isProcessAlive(workerRegistration.ownerPid);
 
       if (hasLiveWorker) {
         // Worker is alive in another process — leave it alone
         this.logger.info('Running task has live worker in another process, skipping', {
           taskId: task.id,
-          ownerPid: workerResult.ok && workerResult.value ? workerResult.value.ownerPid : undefined,
+          ownerPid: workerRegistration!.ownerPid,
         });
         continue;
       }

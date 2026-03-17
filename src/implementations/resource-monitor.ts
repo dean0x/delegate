@@ -71,10 +71,17 @@ export class SystemResourceMonitor implements ResourceMonitor {
     );
   }
 
-  async canSpawnWorker(): Promise<Result<boolean>> {
-    // Clean up old spawn timestamps (outside settling window)
+  /**
+   * Remove spawn timestamps older than the settling window.
+   * Prevents unbounded array growth and gives accurate settling count.
+   */
+  private pruneExpiredTimestamps(): void {
     const now = Date.now();
     this.recentSpawnTimestamps = this.recentSpawnTimestamps.filter((t) => now - t < this.settlingWindowMs);
+  }
+
+  async canSpawnWorker(): Promise<Result<boolean>> {
+    this.pruneExpiredTimestamps();
     const settlingWorkers = this.recentSpawnTimestamps.length;
 
     // MAX WORKERS: Use DB count (accurate global truth) — no settling adjustment needed
@@ -169,10 +176,8 @@ export class SystemResourceMonitor implements ResourceMonitor {
    * Call this immediately after spawning a worker to track it during settling period
    */
   recordSpawn(): void {
-    const now = Date.now();
-    // Clean up expired timestamps to prevent unbounded array growth
-    this.recentSpawnTimestamps = this.recentSpawnTimestamps.filter((t) => now - t < this.settlingWindowMs);
-    this.recentSpawnTimestamps.push(now);
+    this.pruneExpiredTimestamps();
+    this.recentSpawnTimestamps.push(Date.now());
     this.logger?.debug('Recorded spawn for settling tracking', {
       settlingWorkers: this.recentSpawnTimestamps.length,
       settlingWindowMs: this.settlingWindowMs,

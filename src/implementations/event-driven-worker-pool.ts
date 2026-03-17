@@ -175,18 +175,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
         }, 5000);
       }
 
-      // Clean up worker state
-      this.workers.delete(workerId);
-      this.taskToWorker.delete(worker.taskId);
-
-      // Decrement worker count
-      this.monitor.decrementWorkerCount();
-
-      // Unregister from DB (log and continue on error — stale rows cleaned on next startup)
-      const unregResult = this.workerRepository.unregister(workerId);
-      if (!unregResult.ok) {
-        this.logger.error('Failed to unregister worker from DB', unregResult.error, { workerId });
-      }
+      this.cleanupWorkerState(workerId, worker.taskId);
 
       return ok(undefined);
     } catch (error) {
@@ -237,6 +226,22 @@ export class EventDrivenWorkerPool implements WorkerPool {
 
     const worker = this.workers.get(workerId);
     return ok(worker || null);
+  }
+
+  /**
+   * Remove worker from in-memory maps, decrement monitor count,
+   * and unregister from DB. Shared by kill() and handleWorkerCompletion().
+   */
+  private cleanupWorkerState(workerId: WorkerId, taskId: TaskId): void {
+    this.workers.delete(workerId);
+    this.taskToWorker.delete(taskId);
+    this.monitor.decrementWorkerCount();
+
+    // Unregister from DB (log and continue on error — stale rows cleaned on next startup)
+    const unregResult = this.workerRepository.unregister(workerId);
+    if (!unregResult.ok) {
+      this.logger.error('Failed to unregister worker from DB', unregResult.error, { workerId });
+    }
   }
 
   /**
@@ -301,16 +306,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Calculate duration
     const duration = Date.now() - worker.startedAt;
 
-    // Clean up worker state
-    this.workers.delete(workerId);
-    this.taskToWorker.delete(taskId);
-    this.monitor.decrementWorkerCount();
-
-    // Unregister from DB (log and continue on error — stale rows cleaned on next startup)
-    const unregResult = this.workerRepository.unregister(workerId);
-    if (!unregResult.ok) {
-      this.logger.error('Failed to unregister worker from DB', unregResult.error, { workerId });
-    }
+    this.cleanupWorkerState(workerId, taskId);
 
     // Emit appropriate events
     if (exitCode === 0) {
