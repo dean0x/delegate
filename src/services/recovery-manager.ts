@@ -144,13 +144,12 @@ export class RecoveryManager {
     for (const task of runningResult.value) {
       const workerResult = this.workerRepository.findByTaskId(task.id);
       const workerRegistration = workerResult.ok ? workerResult.value : null;
-      const hasLiveWorker = workerRegistration !== null && this.isProcessAlive(workerRegistration.ownerPid);
 
-      if (hasLiveWorker) {
+      if (workerRegistration !== null && this.isProcessAlive(workerRegistration.ownerPid)) {
         // Worker is alive in another process — leave it alone
         this.logger.info('Running task has live worker in another process, skipping', {
           taskId: task.id,
-          ownerPid: workerRegistration!.ownerPid,
+          ownerPid: workerRegistration.ownerPid,
         });
         continue;
       }
