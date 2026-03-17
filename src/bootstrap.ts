@@ -334,7 +334,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   // Register worker pool (v0.5.0: uses AgentRegistry instead of ProcessSpawner)
   container.registerSingleton('workerPool', () => {
-    const pool = new EventDrivenWorkerPool(
+    return new EventDrivenWorkerPool(
       getFromContainer<AgentRegistry>(container, 'agentRegistry'),
       getFromContainer<ResourceMonitor>(container, 'resourceMonitor'),
       getFromContainer<Logger>(container, 'logger').child({ module: 'WorkerPool' }),
@@ -344,7 +344,6 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       getFromContainer<OutputRepository>(container, 'outputRepository'),
       config.outputFlushIntervalMs,
     );
-    return pool;
   });
 
   // Register task manager

@@ -28,18 +28,8 @@ const WorkerRowSchema = z.object({
   started_at: z.number(),
 });
 
-/**
- * Database row type for workers table
- * TYPE-SAFETY: Explicit typing instead of Record<string, any>
- */
-interface WorkerRow {
-  readonly worker_id: string;
-  readonly task_id: string;
-  readonly pid: number;
-  readonly owner_pid: number;
-  readonly agent: string;
-  readonly started_at: number;
-}
+/** Database row type inferred from Zod schema (single source of truth) */
+type WorkerRow = z.infer<typeof WorkerRowSchema>;
 
 export class SQLiteWorkerRepository implements WorkerRepository {
   private readonly db: SQLite.Database;

@@ -8,6 +8,10 @@ import { TaskId } from '../core/domain.js';
 import { Logger, OutputCapture } from '../core/interfaces.js';
 import { OutputRepository } from '../implementations/output-repository.js';
 
+function toError(e: unknown): Error {
+  return e instanceof Error ? e : new Error(String(e));
+}
+
 export class ProcessConnector {
   private readonly flushIntervals = new Map<TaskId, NodeJS.Timeout>();
   private readonly flushingInProgress = new Set<TaskId>();
@@ -39,7 +43,7 @@ export class ProcessConnector {
       this.flushOutput(taskId)
         .then(() => this.outputCapture.clear(taskId)) // Free in-memory buffer after persist
         .catch((e) =>
-          this.logger.error('Final flush failed', e instanceof Error ? e : new Error(String(e)), { taskId }),
+          this.logger.error('Final flush failed', toError(e), { taskId }),
         )
         .finally(() => onExit(code ?? null)); // Use nullish coalescing to preserve 0
     };
@@ -79,7 +83,7 @@ export class ProcessConnector {
       this.flushingInProgress.add(taskId);
       this.flushOutput(taskId)
         .catch((e) =>
-          this.logger.error('Periodic flush failed', e instanceof Error ? e : new Error(String(e)), { taskId }),
+          this.logger.error('Periodic flush failed', toError(e), { taskId }),
         )
         .finally(() => {
           this.flushingInProgress.delete(taskId);
