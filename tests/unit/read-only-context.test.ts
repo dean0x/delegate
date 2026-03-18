@@ -53,8 +53,10 @@ describe('ReadOnlyContext', () => {
     expect(findResult.ok).toBe(true);
     if (!findResult.ok) return;
     expect(findResult.value).not.toBeNull();
-    expect(findResult.value!.prompt).toBe('test read-only context');
-    expect(findResult.value!.status).toBe(TaskStatus.QUEUED);
+    const foundTask = findResult.value;
+    if (!foundTask) return;
+    expect(foundTask.prompt).toBe('test read-only context');
+    expect(foundTask.status).toBe(TaskStatus.QUEUED);
 
     ctx.close();
   });
@@ -130,8 +132,10 @@ describe('ReadOnlyContext', () => {
     expect(outputResult.ok).toBe(true);
     if (!outputResult.ok) return;
     expect(outputResult.value).not.toBeNull();
-    expect(outputResult.value!.stdout).toEqual(['line 1', 'line 2']);
-    expect(outputResult.value!.stderr).toEqual(['err 1']);
+    const output = outputResult.value;
+    if (!output) return;
+    expect(output.stdout).toEqual(['line 1', 'line 2']);
+    expect(output.stderr).toEqual(['err 1']);
 
     ctx.close();
   });
