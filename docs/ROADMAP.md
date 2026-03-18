@@ -64,10 +64,10 @@ Agent registry with pluggable adapters (Claude, Codex, Gemini), per-task agent s
 Architectural simplification (hybrid event model, SQLite worker coordination, ReadOnlyContext CLI), scheduled pipelines, bug fixes, and tech debt cleanup.
 
 #### Features (merged)
+- Scheduled pipelines — `SchedulePipeline` MCP tool, `--pipeline --step` CLI, dependency failure cascade, `cancelTasks` on `CancelSchedule` (#78)
 - Simplify Event System — replace 18 overhead events with direct calls (#91)
 - SQLite worker coordination + output persistence (#94)
 - ReadOnlyContext for lightweight CLI query commands (#100)
-- Scheduled pipelines with dependency cascade fix (#78)
 - `runInTransaction` for atomic multi-step DB operations (#85)
 
 #### Remaining (bugs + tech debt)
