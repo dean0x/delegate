@@ -57,14 +57,30 @@ Agent registry with pluggable adapters (Claude, Codex, Gemini), per-task agent s
 
 ---
 
-### v0.6.0 - Scheduled Pipelines ✅
-**Status**: **RELEASED** (2026-03-18)
+### v0.6.0 - Architectural Simplification + Bug Fixes
+**Status**: 🎯 In Progress
+**Issue**: [#105](https://github.com/dean0x/backbeat/issues/105)
 
-Scheduled pipelines (`SchedulePipeline` MCP tool, `--pipeline --step` CLI), dependency failure cascade fix, queue handler race condition fix, `cancelTasks` on `CancelSchedule`. See [FEATURES.md](./FEATURES.md) for details.
+Architectural simplification (hybrid event model, SQLite worker coordination, ReadOnlyContext CLI), scheduled pipelines, bug fixes, and tech debt cleanup.
+
+#### Features (merged)
+- Simplify Event System — replace 18 overhead events with direct calls (#91)
+- SQLite worker coordination + output persistence (#94)
+- ReadOnlyContext for lightweight CLI query commands (#100)
+- Scheduled pipelines with dependency cascade fix (#78)
+- `runInTransaction` for atomic multi-step DB operations (#85)
+
+#### Remaining (bugs + tech debt)
+1. #84 — RecoveryManager dependency checks (bug)
+2. #82 — cancelTasks scope fix (bug)
+3. #83 — ScheduleExecutor transaction wrapping (tech-debt)
+4. #101 — Move OutputRepository to core/interfaces.ts (tech-debt)
+5. #104 — BootstrapOptions mode enum (tech-debt)
+6. #95 — Output totalSize fix (bug)
 
 ---
 
-### v0.6.1 - Task/Pipeline Loops
+### v0.7.0 - Task/Pipeline Loops
 **Goal**: Condition-driven iteration
 **Priority**: High — completes the orchestration story
 **Issue**: [#79](https://github.com/dean0x/backbeat/issues/79)
@@ -87,11 +103,11 @@ beat loop "implement next item from spec.md" \
 - v0.4.0 schedules (cron/one-time), checkpoints, `continueFrom`
 - v0.4.1 pipelines (`CreatePipeline`)
 - v0.5.0 multi-agent per-task selection
-- v0.6.0 scheduled pipelines
+- v0.6.0 architectural simplification + scheduled pipelines
 
 ---
 
-### v0.7.0 - Agent Failover & Smart Routing
+### v0.8.0 - Agent Failover & Smart Routing
 **Goal**: Automatic agent switching on rate limits, intelligent task routing
 **Priority**: High — makes multi-agent practically useful
 
@@ -109,7 +125,7 @@ beat loop "implement next item from spec.md" \
 
 ---
 
-### v0.8.0 - Workflow Recipes & Templates
+### v0.9.0 - Workflow Recipes & Templates
 **Goal**: Reusable multi-step workflows with predefined DAGs
 **Priority**: Medium — power user productivity
 
@@ -161,11 +177,11 @@ beat recipe create my-workflow  # interactive recipe builder
 #### Builds On
 - v0.4.0 task dependencies (DAG), scheduling, `continueFrom`
 - v0.5.0 per-task agent selection
-- v0.6.0 scheduled pipelines, loops
+- v0.7.0 task/pipeline loops, loops
 
 ---
 
-### v0.9.0 - Monitoring & REST API
+### v0.10.0 - Monitoring & REST API
 **Goal**: Production observability and external integrations
 **Priority**: Medium — production readiness
 
@@ -218,11 +234,11 @@ beat recipe create my-workflow  # interactive recipe builder
 | v0.3.1–3 | ✅ Released | Dependency optimizations + security |
 | v0.4.0 | ✅ Released | Scheduling, Resumption, Rename to Backbeat |
 | v0.5.0 | ✅ Released | Multi-Agent Support |
-| v0.6.0 | ✅ Released | Scheduled Pipelines |
-| v0.6.1 | 🎯 Next | Task/Pipeline Loops |
-| v0.7.0 | 📋 Planned | Agent Failover + Smart Routing |
-| v0.8.0 | 📋 Planned | Workflow Recipes & Templates |
-| v0.9.0 | 💭 Research | Monitoring + REST API + Dashboard |
+| v0.6.0 | 🎯 In Progress | Architectural Simplification + Bug Fixes |
+| v0.7.0 | 📋 Planned | Task/Pipeline Loops |
+| v0.8.0 | 📋 Planned | Agent Failover + Smart Routing |
+| v0.9.0 | 📋 Planned | Workflow Recipes & Templates |
+| v0.10.0 | 💭 Research | Monitoring + REST API + Dashboard |
 | v1.0.0 | 💭 Research | Distributed Processing |
 
 ---
