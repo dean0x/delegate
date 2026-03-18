@@ -3,7 +3,7 @@
  * Handles loading tasks from database and emits events for recovery actions
  */
 
-import { Task, TaskStatus } from '../core/domain.js';
+import { isTerminalState, Task, TaskStatus } from '../core/domain.js';
 import { EventBus } from '../core/events/event-bus.js';
 import { Logger, TaskQueue, TaskRepository, WorkerRepository } from '../core/interfaces.js';
 import { ok, Result } from '../core/result.js';
@@ -25,7 +25,12 @@ export class RecoveryManager {
     try {
       process.kill(pid, 0);
       return true;
-    } catch {
+    } catch (e) {
+      // EPERM means the process exists but we lack permission to signal it
+      if ((e as NodeJS.ErrnoException).code === 'EPERM') {
+        return true;
+      }
+      // ESRCH means the process does not exist
       return false;
     }
   }
@@ -79,21 +84,43 @@ export class RecoveryManager {
             workerId: reg.workerId,
           });
         }
+
+        // Guard: only update non-terminal tasks
+        const taskResult = await this.repository.findById(reg.taskId);
+        if (!taskResult.ok) {
+          this.logger.error('Failed to look up task for dead worker', taskResult.error, {
+            taskId: reg.taskId,
+          });
+          continue;
+        }
+
+        if (taskResult.value !== null && isTerminalState(taskResult.value.status)) {
+          this.logger.info('Dead worker row cleaned, task already terminal', {
+            workerId: reg.workerId,
+            taskId: reg.taskId,
+            currentStatus: taskResult.value.status,
+            deadPid: reg.ownerPid,
+          });
+          continue;
+        }
+
+        // Task is non-terminal (or deleted) — mark as FAILED
         const updateResult = await this.repository.update(reg.taskId, {
           status: TaskStatus.FAILED,
           completedAt: Date.now(),
           exitCode: -1, // Crash indicator
         });
-        if (!updateResult.ok) {
+        if (updateResult.ok) {
+          this.logger.info('Cleaned up dead worker and failed its task', {
+            workerId: reg.workerId,
+            taskId: reg.taskId,
+            deadPid: reg.ownerPid,
+          });
+        } else {
           this.logger.error('Failed to mark dead worker task as failed', updateResult.error, {
             taskId: reg.taskId,
           });
         }
-        this.logger.info('Cleaned up dead worker and failed its task', {
-          workerId: reg.workerId,
-          taskId: reg.taskId,
-          deadPid: reg.ownerPid,
-        });
       }
     }
   }
@@ -175,6 +202,16 @@ export class RecoveryManager {
         this.logger.info('Running task has live worker in another process, skipping', {
           taskId: task.id,
           ownerPid: workerRegistration.ownerPid,
+        });
+        continue;
+      }
+
+      // Guard: verify task is still RUNNING (TOCTOU — another process may have completed it)
+      const freshResult = await this.repository.findById(task.id);
+      if (freshResult.ok && freshResult.value !== null && isTerminalState(freshResult.value.status)) {
+        this.logger.info('Running task already terminal, skipping recovery', {
+          taskId: task.id,
+          currentStatus: freshResult.value.status,
         });
         continue;
       }

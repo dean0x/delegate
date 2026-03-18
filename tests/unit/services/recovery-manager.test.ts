@@ -26,7 +26,7 @@ import { createMockLogger, createMockWorkerRepository } from '../../fixtures/moc
 const createMockRepo = () => ({
   save: vi.fn(),
   update: vi.fn().mockResolvedValue(ok(undefined)),
-  findById: vi.fn(),
+  findById: vi.fn().mockResolvedValue(ok(null)),
   findAll: vi.fn(),
   findAllUnbounded: vi.fn(),
   count: vi.fn(),
@@ -119,6 +119,7 @@ describe('RecoveryManager', () => {
         startedAt: Date.now(),
       };
       workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead')));
       setupFindByStatus([], []);
 
       await manager.recover();
@@ -174,12 +175,114 @@ describe('RecoveryManager', () => {
         startedAt: Date.now(),
       };
       workerRepo.findAll.mockReturnValue(ok([deadWorker, aliveWorker]));
+      repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead')));
       setupFindByStatus([], []);
 
       await manager.recover();
 
       expect(workerRepo.unregister).toHaveBeenCalledTimes(1);
       expect(workerRepo.unregister).toHaveBeenCalledWith(WorkerId('w-dead'));
+    });
+
+    it('should treat EPERM as process-alive (no permission to signal)', async () => {
+      const epermWorker = {
+        workerId: WorkerId('w-eperm'),
+        taskId: TaskId('task-eperm'),
+        pid: 42,
+        ownerPid: 42,
+        agent: 'claude',
+        startedAt: Date.now(),
+      };
+      workerRepo.findAll.mockReturnValue(ok([epermWorker]));
+      setupFindByStatus([], []);
+
+      const killSpy = vi.spyOn(process, 'kill');
+      try {
+        const epermError = Object.assign(new Error('EPERM'), { code: 'EPERM' });
+        killSpy.mockImplementation((pid: number) => {
+          if (pid === 42) throw epermError;
+          return true;
+        });
+
+        await manager.recover();
+
+        // Worker should NOT be unregistered — EPERM means process is alive
+        expect(workerRepo.unregister).not.toHaveBeenCalled();
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
+    it('should skip status update when dead worker task is already COMPLETED', async () => {
+      const deadWorker = {
+        workerId: WorkerId('w-dead-completed'),
+        taskId: TaskId('task-completed'),
+        pid: DEAD_PID,
+        ownerPid: DEAD_PID,
+        agent: 'claude',
+        startedAt: Date.now(),
+      };
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      const completedTask = new TaskFactory().withStatus(TaskStatus.COMPLETED).build();
+      repo.findById.mockResolvedValue(ok({ ...completedTask, id: TaskId('task-completed') }));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // Worker should be unregistered (dead PID)
+      expect(workerRepo.unregister).toHaveBeenCalledWith(WorkerId('w-dead-completed'));
+      // But task should NOT be updated (already terminal)
+      expect(repo.update).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith('Dead worker row cleaned, task already terminal', {
+        workerId: WorkerId('w-dead-completed'),
+        taskId: TaskId('task-completed'),
+        currentStatus: TaskStatus.COMPLETED,
+        deadPid: DEAD_PID,
+      });
+    });
+
+    it('should skip status update when dead worker task is already CANCELLED', async () => {
+      const deadWorker = {
+        workerId: WorkerId('w-dead-cancelled'),
+        taskId: TaskId('task-cancelled'),
+        pid: DEAD_PID,
+        ownerPid: DEAD_PID,
+        agent: 'claude',
+        startedAt: Date.now(),
+      };
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      const cancelledTask = new TaskFactory().withStatus(TaskStatus.CANCELLED).build();
+      repo.findById.mockResolvedValue(ok({ ...cancelledTask, id: TaskId('task-cancelled') }));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      expect(workerRepo.unregister).toHaveBeenCalledWith(WorkerId('w-dead-cancelled'));
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('should handle findById failure gracefully in Phase 0', async () => {
+      const deadWorker = {
+        workerId: WorkerId('w-dead-err'),
+        taskId: TaskId('task-err'),
+        pid: DEAD_PID,
+        ownerPid: DEAD_PID,
+        agent: 'claude',
+        startedAt: Date.now(),
+      };
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      const findError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'DB read failed');
+      repo.findById.mockResolvedValue(err(findError));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // Worker unregistered, but task update skipped due to findById failure
+      expect(workerRepo.unregister).toHaveBeenCalledWith(WorkerId('w-dead-err'));
+      expect(repo.update).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith('Failed to look up task for dead worker', findError, {
+        taskId: TaskId('task-err'),
+      });
     });
   });
 
@@ -391,6 +494,25 @@ describe('RecoveryManager', () => {
 
       expect(logger.error).toHaveBeenCalledWith('Failed to update crashed task', updateError, {
         taskId: task.id,
+      });
+    });
+
+    it('should skip RUNNING task when it became terminal between fetch and update', async () => {
+      const task = buildRunningTask('race-completed');
+      setupFindByStatus([], [task]);
+      // No worker row → would normally mark as FAILED
+      workerRepo.findByTaskId.mockReturnValue(ok(null));
+      // But task has since been completed by another process (TOCTOU)
+      const completedTask = new TaskFactory().withStatus(TaskStatus.COMPLETED).build();
+      repo.findById.mockResolvedValue(ok({ ...completedTask, id: TaskId('race-completed') }));
+
+      await manager.recover();
+
+      // Task should NOT be updated — it's already terminal
+      expect(repo.update).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith('Running task already terminal, skipping recovery', {
+        taskId: TaskId('race-completed'),
+        currentStatus: TaskStatus.COMPLETED,
       });
     });
   });
