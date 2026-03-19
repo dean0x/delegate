@@ -399,7 +399,7 @@ describe('RecoveryManager', () => {
       });
     });
 
-    it('should skip enqueue on dependency check failure', async () => {
+    it('should enqueue conservatively on dependency check failure', async () => {
       const task = buildQueuedTask('dep-error');
       setupFindByStatus([task], []);
       const depError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'DB read failed');
@@ -408,11 +408,14 @@ describe('RecoveryManager', () => {
       const result = await manager.recover();
 
       expect(result.ok).toBe(true);
-      expect(queue.enqueue).not.toHaveBeenCalled();
-      expect(logger.warn).toHaveBeenCalledWith('Failed to check task dependencies during recovery, skipping enqueue', {
-        taskId: task.id,
-        error: 'DB read failed',
-      });
+      expect(queue.enqueue).toHaveBeenCalledWith(task);
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Failed to check task dependencies during recovery, re-queuing conservatively',
+        {
+          taskId: task.id,
+          error: 'DB read failed',
+        },
+      );
     });
 
     it('should handle mix of blocked and unblocked QUEUED tasks', async () => {

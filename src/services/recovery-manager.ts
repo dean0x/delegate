@@ -164,17 +164,16 @@ export class RecoveryManager {
       }
 
       // Check if task is blocked by unresolved dependencies
-      // Fail-safe: skip enqueue on DB error (task stays QUEUED in DB,
-      // will be enqueued via TaskUnblocked when dependencies complete)
       const isBlockedResult = await this.dependencyRepo.isBlocked(task.id);
       if (!isBlockedResult.ok) {
-        this.logger.warn('Failed to check task dependencies during recovery, skipping enqueue', {
+        this.logger.warn('Failed to check task dependencies during recovery, re-queuing conservatively', {
           taskId: task.id,
           error: isBlockedResult.error.message,
         });
-        continue;
+        // Fall through to enqueue — avoids stranding dependency-free tasks.
+        // If task is actually blocked, premature execution fails and is retryable.
       }
-      if (isBlockedResult.value) {
+      if (isBlockedResult.ok && isBlockedResult.value) {
         blockedCount++;
         this.logger.info('Task blocked by dependencies, skipping recovery enqueue', { taskId: task.id });
         continue;
