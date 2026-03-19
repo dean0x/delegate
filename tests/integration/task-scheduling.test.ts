@@ -245,6 +245,7 @@ describe('Integration: Task Scheduling - End-to-End Flow', () => {
       const executorCreateResult = ScheduleExecutor.create(
         scheduleRepo,
         eventBus,
+        database,
         (loggerResult.value as import('../../src/core/interfaces.js').Logger).child({ module: 'TestExecutor' }),
         {
           checkIntervalMs: 50,
@@ -307,6 +308,7 @@ describe('Integration: Task Scheduling - End-to-End Flow', () => {
       const executorCreateResult = ScheduleExecutor.create(
         scheduleRepo,
         eventBus,
+        database,
         (loggerResult.value as import('../../src/core/interfaces.js').Logger).child({ module: 'TestExecutor' }),
         { checkIntervalMs: 50, missedRunGracePeriodMs: 60_000 },
       );
@@ -520,6 +522,7 @@ describe('Integration: Task Scheduling - End-to-End Flow', () => {
       const executorCreateResult = ScheduleExecutor.create(
         scheduleRepo,
         eventBus,
+        database,
         (loggerResult.value as import('../../src/core/interfaces.js').Logger).child({ module: 'TestExecutor' }),
         { checkIntervalMs: 50, missedRunGracePeriodMs: 60_000 },
       );
@@ -579,6 +582,7 @@ describe('Integration: Task Scheduling - End-to-End Flow', () => {
       const executorCreateResult = ScheduleExecutor.create(
         scheduleRepo,
         eventBus,
+        database,
         (loggerResult.value as import('../../src/core/interfaces.js').Logger).child({ module: 'TestExecutor' }),
         { checkIntervalMs: 50, missedRunGracePeriodMs: 60_000 },
       );

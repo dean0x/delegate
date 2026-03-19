@@ -16,7 +16,7 @@ import type {
   TaskFailedEvent,
   TaskTimeoutEvent,
 } from '../core/events/events.js';
-import { Logger, ScheduleRepository } from '../core/interfaces.js';
+import { Logger, ScheduleRepository, SyncScheduleOperations, TransactionRunner } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { getNextRunTime } from '../utils/cron.js';
 
@@ -70,8 +70,9 @@ export class ScheduleExecutor {
    * matching ScheduleHandler's pattern
    */
   private constructor(
-    private readonly scheduleRepo: ScheduleRepository,
+    private readonly scheduleRepo: ScheduleRepository & SyncScheduleOperations,
     private readonly eventBus: EventBus,
+    private readonly database: TransactionRunner,
     private readonly logger: Logger,
     options?: ScheduleExecutorOptions,
   ) {
@@ -86,12 +87,13 @@ export class ScheduleExecutor {
    * Matches ScheduleHandler's factory pattern.
    */
   static create(
-    scheduleRepo: ScheduleRepository,
+    scheduleRepo: ScheduleRepository & SyncScheduleOperations,
     eventBus: EventBus,
+    database: TransactionRunner,
     logger: Logger,
     options?: ScheduleExecutorOptions,
   ): Result<ScheduleExecutor, BackbeatError> {
-    const executor = new ScheduleExecutor(scheduleRepo, eventBus, logger, options);
+    const executor = new ScheduleExecutor(scheduleRepo, eventBus, database, logger, options);
 
     const subscribeResult = executor.subscribeToTaskEvents();
     if (!subscribeResult.ok) {
@@ -383,15 +385,28 @@ export class ScheduleExecutor {
         break;
 
       case MissedRunPolicy.FAIL: {
-        // Mark schedule as cancelled due to missed run
-        const cancelResult = await this.scheduleRepo.update(schedule.id, {
-          status: ScheduleStatus.CANCELLED,
-          nextRunAt: undefined,
+        // Cancel schedule + record audit trail atomically
+        // Without transaction: if update() succeeds but recordExecution() fails,
+        // schedule is cancelled with no audit trail
+        const txResult = this.database.runInTransaction(() => {
+          this.scheduleRepo.updateSync(schedule.id, {
+            status: ScheduleStatus.CANCELLED,
+            nextRunAt: undefined,
+          });
+          this.scheduleRepo.recordExecutionSync({
+            scheduleId: schedule.id,
+            scheduledFor: missedAt,
+            status: 'missed',
+            errorMessage: `Schedule missed by ${now - missedAt}ms, policy: FAIL`,
+            createdAt: now,
+          });
         });
-        if (!cancelResult.ok) {
-          this.logger.error('Failed to cancel schedule on missed run', cancelResult.error, {
+
+        if (!txResult.ok) {
+          this.logger.error('Failed to cancel schedule on missed run', txResult.error, {
             scheduleId: schedule.id,
           });
+          break;
         }
 
         await this.eventBus.emit('ScheduleMissed', {
@@ -399,20 +414,6 @@ export class ScheduleExecutor {
           missedAt,
           policy: MissedRunPolicy.FAIL,
         });
-
-        // Record failed execution (audit trail - log on failure but don't block)
-        const execResult = await this.scheduleRepo.recordExecution({
-          scheduleId: schedule.id,
-          scheduledFor: missedAt,
-          status: 'missed',
-          errorMessage: `Schedule missed by ${now - missedAt}ms, policy: FAIL`,
-          createdAt: now,
-        });
-        if (!execResult.ok) {
-          this.logger.error('Failed to record missed execution', execResult.error, {
-            scheduleId: schedule.id,
-          });
-        }
 
         this.logger.info('Schedule failed due to missed run', { scheduleId: schedule.id });
         break;

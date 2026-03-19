@@ -18,9 +18,11 @@ import {
   ResourceMonitor,
   ScheduleRepository,
   ScheduleService,
+  SyncScheduleOperations,
   TaskManager,
   TaskQueue,
   TaskRepository,
+  TransactionRunner,
   WorkerPool,
   OutputRepository,
   WorkerRepository,
@@ -433,17 +435,19 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // ARCHITECTURE: ScheduleExecutor runs timer-based tick loop for due schedules
   // Uses factory pattern (ScheduleExecutor.create()) to keep constructor pure
   container.registerSingleton('scheduleExecutor', () => {
-    const scheduleRepoResult = container.get<ScheduleRepository>('scheduleRepository');
+    const scheduleRepoResult = container.get<ScheduleRepository & SyncScheduleOperations>('scheduleRepository');
     const eventBusResult = container.get<EventBus>('eventBus');
+    const databaseResult = container.get<TransactionRunner>('database');
     const loggerResult = container.get<Logger>('logger');
 
-    if (!scheduleRepoResult.ok || !eventBusResult.ok || !loggerResult.ok) {
+    if (!scheduleRepoResult.ok || !eventBusResult.ok || !databaseResult.ok || !loggerResult.ok) {
       throw new Error('Failed to get dependencies for ScheduleExecutor');
     }
 
     const createResult = ScheduleExecutor.create(
       scheduleRepoResult.value,
       eventBusResult.value,
+      databaseResult.value,
       loggerResult.value.child({ module: 'ScheduleExecutor' }),
     );
 

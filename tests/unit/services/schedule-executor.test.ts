@@ -34,7 +34,7 @@ describe('ScheduleExecutor - Unit Tests', () => {
     database = new Database(':memory:');
     scheduleRepo = new SQLiteScheduleRepository(database);
 
-    const result = ScheduleExecutor.create(scheduleRepo, eventBus, logger, {
+    const result = ScheduleExecutor.create(scheduleRepo, eventBus, database, logger, {
       checkIntervalMs: 100,
       missedRunGracePeriodMs: GRACE_PERIOD_MS,
     });
@@ -86,7 +86,7 @@ describe('ScheduleExecutor - Unit Tests', () => {
 
   describe('Factory create()', () => {
     it('should succeed and return executor', () => {
-      const result = ScheduleExecutor.create(scheduleRepo, eventBus, logger, {
+      const result = ScheduleExecutor.create(scheduleRepo, eventBus, database, logger, {
         checkIntervalMs: 100,
         missedRunGracePeriodMs: 1000,
       });
@@ -362,6 +362,35 @@ describe('ScheduleExecutor - Unit Tests', () => {
       expect(missedEvents[0].policy).toBe(MissedRunPolicy.FAIL);
 
       expect(logger.hasLogContaining('Schedule failed due to missed run')).toBe(true);
+    });
+
+    it('should roll back schedule cancellation if execution recording fails', async () => {
+      const schedule = await createDueSchedule({
+        missedRunPolicy: MissedRunPolicy.FAIL,
+        nextRunAt: Date.now() - GRACE_PERIOD_MS - 60000,
+      });
+
+      // Sabotage recordExecutionSync to throw mid-transaction
+      const original = scheduleRepo.recordExecutionSync.bind(scheduleRepo);
+      scheduleRepo.recordExecutionSync = () => {
+        throw new Error('Simulated DB failure');
+      };
+
+      await executor.triggerTick();
+      await flushEventLoop();
+      scheduleRepo.recordExecutionSync = original;
+
+      // Schedule NOT cancelled — transaction rolled back
+      const found = await scheduleRepo.findById(schedule.id);
+      expect(found.ok).toBe(true);
+      if (!found.ok) return;
+      expect(found.value!.status).toBe(ScheduleStatus.ACTIVE);
+
+      // No execution history — transaction rolled back
+      const history = await scheduleRepo.getExecutionHistory(schedule.id);
+      expect(history.ok).toBe(true);
+      if (!history.ok) return;
+      expect(history.value).toHaveLength(0);
     });
 
     it('should trigger normally when within grace period', async () => {
