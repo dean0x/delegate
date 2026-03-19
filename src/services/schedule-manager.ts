@@ -20,6 +20,7 @@ import {
   ScheduleId,
   ScheduleStatus,
   ScheduleType,
+  TaskId,
 } from '../core/domain.js';
 import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
@@ -177,13 +178,15 @@ export class ScheduleManagerService implements ScheduleService {
       return err(emitResult.error);
     }
 
-    // Optionally cancel in-flight pipeline tasks from the latest execution
+    // Optionally cancel in-flight tasks from all active executions
     if (cancelTasks) {
-      const historyResult = await this.scheduleRepository.getExecutionHistory(scheduleId, 1);
-      if (historyResult.ok && historyResult.value.length > 0) {
-        const latestExecution = historyResult.value[0];
-        const taskIds = latestExecution.pipelineTaskIds ?? (latestExecution.taskId ? [latestExecution.taskId] : []);
-        for (const taskId of taskIds) {
+      const historyResult = await this.scheduleRepository.getExecutionHistory(scheduleId);
+      if (historyResult.ok) {
+        const activeExecutions = historyResult.value.filter((e) => e.status === 'triggered');
+        const allTaskIds: TaskId[] = activeExecutions.flatMap(
+          (execution) => execution.pipelineTaskIds ?? (execution.taskId ? [execution.taskId] : []),
+        );
+        for (const taskId of allTaskIds) {
           const cancelResult = await this.eventBus.emit('TaskCancellationRequested', {
             taskId,
             reason: `Schedule ${scheduleId} cancelled`,
@@ -196,9 +199,10 @@ export class ScheduleManagerService implements ScheduleService {
             });
           }
         }
-        this.logger.info('Cancelled in-flight pipeline tasks', {
+        this.logger.info('Cancelled in-flight tasks from active schedule executions', {
           scheduleId,
-          taskCount: taskIds.length,
+          taskCount: allTaskIds.length,
+          activeExecutions: activeExecutions.length,
         });
       }
     }

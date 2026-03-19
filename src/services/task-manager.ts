@@ -28,6 +28,7 @@ import { EventBus } from '../core/events/event-bus.js';
 import { CheckpointRepository, Logger, OutputCapture, TaskManager, TaskRepository } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { OutputRepository } from '../implementations/output-repository.js';
+import { linesByteSize } from '../utils/output.js';
 
 export class TaskManagerService implements TaskManager {
   constructor(
@@ -139,11 +140,13 @@ export class TaskManagerService implements TaskManager {
       const output = dbResult.value;
       // Apply tail slicing if requested
       if (tail && tail > 0) {
+        const slicedStdout = output.stdout.slice(-tail);
+        const slicedStderr = output.stderr.slice(-tail);
         return ok({
           taskId: output.taskId,
-          stdout: output.stdout.slice(-tail),
-          stderr: output.stderr.slice(-tail),
-          totalSize: output.totalSize,
+          stdout: slicedStdout,
+          stderr: slicedStderr,
+          totalSize: linesByteSize(slicedStdout) + linesByteSize(slicedStderr),
         });
       }
       return ok(output);

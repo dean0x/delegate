@@ -1,6 +1,5 @@
 /**
  * Utility module exports
- * ARCHITECTURE: Barrel file for clean imports
  */
 
 // Cron utilities for task scheduling
@@ -12,6 +11,8 @@ export {
   validateCronExpression,
   validateTimezone,
 } from './cron.js';
+// Output measurement utilities
+export { linesByteSize } from './output.js';
 export type { RetryOptions } from './retry.js';
 // Retry utilities
 export {

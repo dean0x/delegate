@@ -467,6 +467,83 @@ describe('ScheduleManagerService - Unit Tests', () => {
       expect(eventBus.hasEmitted('TaskCancellationRequested')).toBe(false);
     });
 
+    it('should cancel tasks from ALL active executions, not just the latest', async () => {
+      const schedule = createSchedule({
+        taskTemplate: { prompt: 'overlapping pipeline' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '*/5 * * * *',
+      });
+      await scheduleRepo.save(schedule);
+
+      // Record two overlapping triggered executions with different pipelineTaskIds
+      const now = Date.now();
+      await scheduleRepo.recordExecution({
+        scheduleId: schedule.id,
+        scheduledFor: now - 300000,
+        executedAt: now - 300000,
+        status: 'triggered',
+        pipelineTaskIds: [TaskId('old-task-1'), TaskId('old-task-2')],
+        createdAt: now - 300000,
+      });
+      await scheduleRepo.recordExecution({
+        scheduleId: schedule.id,
+        scheduledFor: now,
+        executedAt: now,
+        status: 'triggered',
+        pipelineTaskIds: [TaskId('new-task-1'), TaskId('new-task-2')],
+        createdAt: now,
+      });
+
+      const result = await service.cancelSchedule(schedule.id, 'stop all', true);
+
+      expect(result.ok).toBe(true);
+      expect(eventBus.getEventCount('TaskCancellationRequested')).toBe(4);
+
+      const cancelEvents = eventBus.getEmittedEvents('TaskCancellationRequested');
+      const cancelledIds = cancelEvents.map((e: { taskId: string }) => e.taskId);
+      expect(cancelledIds).toContain('old-task-1');
+      expect(cancelledIds).toContain('old-task-2');
+      expect(cancelledIds).toContain('new-task-1');
+      expect(cancelledIds).toContain('new-task-2');
+    });
+
+    it('should skip completed executions when cancelling tasks', async () => {
+      const schedule = createSchedule({
+        taskTemplate: { prompt: 'mixed executions' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '*/5 * * * *',
+      });
+      await scheduleRepo.save(schedule);
+
+      const now = Date.now();
+      // One completed execution (should be skipped)
+      await scheduleRepo.recordExecution({
+        scheduleId: schedule.id,
+        scheduledFor: now - 600000,
+        executedAt: now - 600000,
+        status: 'completed',
+        pipelineTaskIds: [TaskId('done-task-1')],
+        createdAt: now - 600000,
+      });
+      // One active triggered execution (should be cancelled)
+      await scheduleRepo.recordExecution({
+        scheduleId: schedule.id,
+        scheduledFor: now,
+        executedAt: now,
+        status: 'triggered',
+        pipelineTaskIds: [TaskId('active-task-1')],
+        createdAt: now,
+      });
+
+      const result = await service.cancelSchedule(schedule.id, 'stop active only', true);
+
+      expect(result.ok).toBe(true);
+      expect(eventBus.getEventCount('TaskCancellationRequested')).toBe(1);
+
+      const cancelEvents = eventBus.getEmittedEvents('TaskCancellationRequested');
+      expect(cancelEvents[0].taskId).toBe('active-task-1');
+    });
+
     it('should return error for non-existent schedule', async () => {
       const result = await service.cancelSchedule(ScheduleId('non-existent'));
 

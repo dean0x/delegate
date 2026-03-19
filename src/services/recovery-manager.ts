@@ -4,8 +4,9 @@
  */
 
 import { isTerminalState, Task, TaskStatus } from '../core/domain.js';
+import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
-import { Logger, TaskQueue, TaskRepository, WorkerRepository } from '../core/interfaces.js';
+import { DependencyRepository, Logger, TaskQueue, TaskRepository, WorkerRepository } from '../core/interfaces.js';
 import { ok, Result } from '../core/result.js';
 
 export class RecoveryManager {
@@ -15,6 +16,7 @@ export class RecoveryManager {
     private readonly eventBus: EventBus,
     private readonly logger: Logger,
     private readonly workerRepository: WorkerRepository,
+    private readonly dependencyRepo: DependencyRepository,
   ) {}
 
   /**
@@ -59,13 +61,14 @@ export class RecoveryManager {
     }
 
     // Phase 2 & 3: Recover tasks
-    const queuedCount = await this.recoverQueuedTasks(queuedResult.value);
+    const { queuedCount, blockedCount } = await this.recoverQueuedTasks(queuedResult.value);
     const failedCount = await this.recoverRunningTasks(runningResult.value);
 
     this.logger.info('Recovery complete', {
       queuedTasks: queuedResult.value.length,
       runningTasks: runningResult.value.length,
       requeued: queuedCount,
+      blockedByDependencies: blockedCount,
       markedFailed: failedCount,
     });
 
@@ -104,7 +107,10 @@ export class RecoveryManager {
           continue;
         }
 
-        // Task is non-terminal (or deleted) — mark as FAILED
+        // ARCHITECTURE EXCEPTION: Direct repository write + TaskFailed emit (double-write).
+        // Recovery runs during startup before event handlers are guaranteed to be ready,
+        // so we write status directly rather than relying on PersistenceHandler to handle
+        // TaskFailed. The subsequent emit notifies DependencyHandler to unblock downstream tasks.
         const updateResult = await this.repository.update(reg.taskId, {
           status: TaskStatus.FAILED,
           completedAt: Date.now(),
@@ -116,6 +122,18 @@ export class RecoveryManager {
             taskId: reg.taskId,
             deadPid: reg.ownerPid,
           });
+
+          // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
+          const failedEmitResult = await this.eventBus.emit('TaskFailed', {
+            taskId: reg.taskId,
+            error: new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Worker process died (dead PID detected)'),
+            exitCode: -1,
+          });
+          if (!failedEmitResult.ok) {
+            this.logger.error('Failed to emit TaskFailed event for dead worker task', failedEmitResult.error, {
+              taskId: reg.taskId,
+            });
+          }
         } else {
           this.logger.error('Failed to mark dead worker task as failed', updateResult.error, {
             taskId: reg.taskId,
@@ -134,13 +152,30 @@ export class RecoveryManager {
     }
   }
 
-  private async recoverQueuedTasks(tasks: readonly Task[]): Promise<number> {
+  private async recoverQueuedTasks(tasks: readonly Task[]): Promise<{ queuedCount: number; blockedCount: number }> {
     let queuedCount = 0;
+    let blockedCount = 0;
 
     for (const task of tasks) {
       // Safety check: don't re-queue if already in queue
       if (this.queue.contains(task.id)) {
         this.logger.warn('Task already in queue, skipping re-queue', { taskId: task.id });
+        continue;
+      }
+
+      // Check if task is blocked by unresolved dependencies
+      const isBlockedResult = await this.dependencyRepo.isBlocked(task.id);
+      if (!isBlockedResult.ok) {
+        this.logger.warn('Failed to check task dependencies during recovery, re-queuing conservatively', {
+          taskId: task.id,
+          error: isBlockedResult.error.message,
+        });
+        // Fall through to enqueue — avoids stranding dependency-free tasks.
+        // If task is actually blocked, premature execution fails and is retryable.
+      }
+      if (isBlockedResult.ok && isBlockedResult.value) {
+        blockedCount++;
+        this.logger.info('Task blocked by dependencies, skipping recovery enqueue', { taskId: task.id });
         continue;
       }
 
@@ -165,7 +200,7 @@ export class RecoveryManager {
       }
     }
 
-    return queuedCount;
+    return { queuedCount, blockedCount };
   }
 
   /**
@@ -216,7 +251,10 @@ export class RecoveryManager {
         continue;
       }
 
-      // No live worker — definitively crashed, mark as failed
+      // ARCHITECTURE EXCEPTION: Direct repository write + TaskFailed emit (double-write).
+      // Recovery runs during startup before event handlers are guaranteed to be ready,
+      // so we write status directly rather than relying on PersistenceHandler to handle
+      // TaskFailed. The subsequent emit notifies DependencyHandler to unblock downstream tasks.
       const updateResult = await this.repository.update(task.id, {
         status: TaskStatus.FAILED,
         completedAt: now,
@@ -228,6 +266,18 @@ export class RecoveryManager {
         this.logger.info('Marked crashed task as failed (no live worker)', {
           taskId: task.id,
         });
+
+        // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
+        const failedEmitResult = await this.eventBus.emit('TaskFailed', {
+          taskId: task.id,
+          error: new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Worker process crashed during execution'),
+          exitCode: -1,
+        });
+        if (!failedEmitResult.ok) {
+          this.logger.error('Failed to emit TaskFailed event for crashed task', failedEmitResult.error, {
+            taskId: task.id,
+          });
+        }
       } else {
         this.logger.error('Failed to update crashed task', updateResult.error, {
           taskId: task.id,

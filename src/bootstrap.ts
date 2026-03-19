@@ -409,6 +409,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       getFromContainer<EventBus>(container, 'eventBus'),
       getFromContainer<Logger>(container, 'logger').child({ module: 'Recovery' }),
       getFromContainer<WorkerRepository>(container, 'workerRepository'),
+      getFromContainer<DependencyRepository>(container, 'dependencyRepository'),
     );
   });
 

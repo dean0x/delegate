@@ -8,6 +8,7 @@ import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
 import { OutputCapture } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
+import { linesByteSize } from '../utils/output.js';
 
 interface OutputBuffer {
   stdout: string[];
@@ -107,11 +108,16 @@ export class BufferedOutputCapture implements OutputCapture {
       stderr = stderr.slice(-tail);
     }
 
+    const frozenStdout = Object.freeze([...stdout]);
+    const frozenStderr = Object.freeze([...stderr]);
+    const wasTailSliced = tail !== undefined && tail > 0;
+    const totalSize = wasTailSliced ? linesByteSize(frozenStdout) + linesByteSize(frozenStderr) : buffer.totalSize;
+
     return ok({
       taskId,
-      stdout: Object.freeze([...stdout]),
-      stderr: Object.freeze([...stderr]),
-      totalSize: buffer.totalSize,
+      stdout: frozenStdout,
+      stderr: frozenStderr,
+      totalSize,
     });
   }
 
@@ -199,7 +205,7 @@ export class TestOutputCapture implements OutputCapture {
       stderr = stderr.slice(-tail);
     }
 
-    const totalSize = stdout.join('').length + stderr.join('').length;
+    const totalSize = linesByteSize(stdout) + linesByteSize(stderr);
 
     return ok({
       taskId,

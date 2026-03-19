@@ -255,6 +255,20 @@ describe('BufferedOutputCapture - REAL Buffer Management', () => {
       }
     });
 
+    it('should recalculate totalSize after tail-slicing', () => {
+      for (let i = 1; i <= 10; i++) {
+        capture.capture('task-tail-size', 'stdout', `Line ${i}`);
+      }
+
+      const output = capture.getOutput('task-tail-size', 2);
+      expect(output.ok).toBe(true);
+      if (output.ok) {
+        expect(output.value.stdout).toEqual(['Line 9', 'Line 10']);
+        // totalSize should reflect only the 2 returned lines: 'Line 9'(6) + 'Line 10'(7) = 13
+        expect(output.value.totalSize).toBe(13);
+      }
+    });
+
     it('should return all output when tail is 0 or undefined', () => {
       capture.capture('task-tail', 'stdout', 'Line 1');
       capture.capture('task-tail', 'stdout', 'Line 2');

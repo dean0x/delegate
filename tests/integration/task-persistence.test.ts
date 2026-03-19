@@ -7,9 +7,11 @@ import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TaskId } from '../../src/core/domain.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { ok } from '../../src/core/result.js';
 import { Database } from '../../src/implementations/database.js';
+import { SQLiteDependencyRepository } from '../../src/implementations/dependency-repository.js';
 import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { RecoveryManager } from '../../src/services/recovery-manager.js';
@@ -78,7 +80,15 @@ describe('Integration: Task persistence', () => {
       });
 
       // Create recovery manager
-      const recoveryManager = new RecoveryManager(repository2, queue2, eventBus, logger, createMockWorkerRepository());
+      const dependencyRepo2 = new SQLiteDependencyRepository(database2);
+      const recoveryManager = new RecoveryManager(
+        repository2,
+        queue2,
+        eventBus,
+        logger,
+        createMockWorkerRepository(),
+        dependencyRepo2,
+      );
 
       // Perform recovery
       await recoveryManager.recover();
@@ -334,12 +344,14 @@ describe('Integration: Task persistence', () => {
         recoveredTaskIds.push(data.taskId);
       });
 
+      const dependencyRepo = new SQLiteDependencyRepository(database);
       const recoveryManager = new RecoveryManager(
         repository,
         new PriorityTaskQueue(logger),
         eventBus,
         logger,
         createMockWorkerRepository(),
+        dependencyRepo,
       );
 
       await recoveryManager.recover();
@@ -359,6 +371,85 @@ describe('Integration: Task persistence', () => {
       expect(recentTaskResult.ok).toBe(true);
       if (recentTaskResult.ok && recentTaskResult.value) {
         expect(recentTaskResult.value.status).toBe('failed'); // No live worker → marked failed
+      }
+
+      database.close();
+      eventBus.dispose();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('should skip re-queuing QUEUED tasks blocked by unresolved dependencies', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'backbeat-test-'));
+    const dbPath = join(tempDir, 'test.db');
+    const logger = new TestLogger();
+
+    try {
+      const database = new Database(dbPath);
+      const repository = new SQLiteTaskRepository(database);
+      const dependencyRepo = new SQLiteDependencyRepository(database);
+      const queue = new PriorityTaskQueue(logger);
+      const config = createTestConfiguration();
+      const eventBus = new InMemoryEventBus(config, logger);
+
+      // Create parent task (completed) and two child tasks (QUEUED)
+      const parentTask = createTask({ prompt: 'Parent task', status: 'completed', completedAt: Date.now() });
+      const blockedTask = createTask({ prompt: 'Blocked child', status: 'queued' });
+      const unblockedTask = createTask({ prompt: 'Unblocked child', status: 'queued' });
+
+      // Persist all tasks
+      await repository.save(parentTask);
+      await repository.save(blockedTask);
+      await repository.save(unblockedTask);
+
+      // Add an unresolved dependency: blockedTask depends on parentTask (pending)
+      const addDepResult = await dependencyRepo.addDependency(blockedTask.id, parentTask.id);
+      expect(addDepResult.ok).toBe(true);
+
+      // Verify blockedTask is actually blocked via real SQL query
+      const isBlockedResult = await dependencyRepo.isBlocked(blockedTask.id);
+      expect(isBlockedResult.ok).toBe(true);
+      if (isBlockedResult.ok) {
+        expect(isBlockedResult.value).toBe(true);
+      }
+
+      // Verify unblockedTask is NOT blocked (no dependencies)
+      const isUnblockedResult = await dependencyRepo.isBlocked(unblockedTask.id);
+      expect(isUnblockedResult.ok).toBe(true);
+      if (isUnblockedResult.ok) {
+        expect(isUnblockedResult.value).toBe(false);
+      }
+
+      // Track which tasks get re-queued during recovery
+      const requeuedTaskIds: string[] = [];
+      eventBus.on('TaskQueued', (data) => {
+        requeuedTaskIds.push(data.taskId);
+      });
+
+      // Run recovery with real dependency repository
+      const recoveryManager = new RecoveryManager(
+        repository,
+        queue,
+        eventBus,
+        logger,
+        createMockWorkerRepository(),
+        dependencyRepo,
+      );
+
+      await recoveryManager.recover();
+
+      // CRITICAL: Only unblockedTask should be re-queued
+      // blockedTask has an unresolved dependency and must NOT be re-queued
+      expect(requeuedTaskIds).toHaveLength(1);
+      expect(requeuedTaskIds[0]).toBe(unblockedTask.id);
+
+      // Verify queue contains only the unblocked task
+      expect(queue.size()).toBe(1);
+      const dequeued = queue.dequeue();
+      expect(dequeued.ok).toBe(true);
+      if (dequeued.ok && dequeued.value) {
+        expect(dequeued.value.id).toBe(unblockedTask.id);
       }
 
       database.close();

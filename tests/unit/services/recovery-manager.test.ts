@@ -15,7 +15,13 @@ import type { Task } from '../../../src/core/domain';
 import { TaskId, TaskStatus, WorkerId } from '../../../src/core/domain';
 import { BackbeatError, ErrorCode } from '../../../src/core/errors';
 import type { EventBus } from '../../../src/core/events/event-bus';
-import type { Logger, TaskQueue, TaskRepository, WorkerRepository } from '../../../src/core/interfaces';
+import type {
+  DependencyRepository,
+  Logger,
+  TaskQueue,
+  TaskRepository,
+  WorkerRepository,
+} from '../../../src/core/interfaces';
 import { err, ok } from '../../../src/core/result';
 import { RecoveryManager } from '../../../src/services/recovery-manager';
 import { TaskFactory } from '../../fixtures/factories';
@@ -58,6 +64,18 @@ const createTestEventBus = () => ({
   dispose: vi.fn(),
 });
 
+const createMockDependencyRepo = () => ({
+  isBlocked: vi.fn().mockResolvedValue(ok(false)),
+  addDependency: vi.fn(),
+  addDependencies: vi.fn(),
+  getDependencies: vi.fn(),
+  getDependents: vi.fn(),
+  resolveDependency: vi.fn(),
+  resolveDependenciesBatch: vi.fn(),
+  getUnresolvedDependencies: vi.fn(),
+  findAll: vi.fn(),
+});
+
 describe('RecoveryManager', () => {
   let manager: RecoveryManager;
   let repo: ReturnType<typeof createMockRepo>;
@@ -65,6 +83,7 @@ describe('RecoveryManager', () => {
   let eventBus: ReturnType<typeof createTestEventBus>;
   let logger: ReturnType<typeof createMockLogger>;
   let workerRepo: ReturnType<typeof createMockWorkerRepository>;
+  let dependencyRepo: ReturnType<typeof createMockDependencyRepo>;
 
   beforeEach(() => {
     repo = createMockRepo();
@@ -72,6 +91,7 @@ describe('RecoveryManager', () => {
     eventBus = createTestEventBus();
     logger = createMockLogger();
     workerRepo = createMockWorkerRepository();
+    dependencyRepo = createMockDependencyRepo();
 
     manager = new RecoveryManager(
       repo as unknown as TaskRepository,
@@ -79,6 +99,7 @@ describe('RecoveryManager', () => {
       eventBus as unknown as EventBus,
       logger as unknown as Logger,
       workerRepo as unknown as WorkerRepository,
+      dependencyRepo as unknown as DependencyRepository,
     );
   });
 
@@ -364,6 +385,55 @@ describe('RecoveryManager', () => {
       expect(logger.warn).toHaveBeenCalledWith('Task already in queue, skipping re-queue', { taskId: task.id });
     });
 
+    it('should skip re-queuing QUEUED tasks that are blocked by dependencies', async () => {
+      const task = buildQueuedTask('blocked-task');
+      setupFindByStatus([task], []);
+      dependencyRepo.isBlocked.mockResolvedValue(ok(true));
+
+      const result = await manager.recover();
+
+      expect(result.ok).toBe(true);
+      expect(queue.enqueue).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith('Task blocked by dependencies, skipping recovery enqueue', {
+        taskId: task.id,
+      });
+    });
+
+    it('should enqueue conservatively on dependency check failure', async () => {
+      const task = buildQueuedTask('dep-error');
+      setupFindByStatus([task], []);
+      const depError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'DB read failed');
+      dependencyRepo.isBlocked.mockResolvedValue(err(depError));
+
+      const result = await manager.recover();
+
+      expect(result.ok).toBe(true);
+      expect(queue.enqueue).toHaveBeenCalledWith(task);
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Failed to check task dependencies during recovery, re-queuing conservatively',
+        {
+          taskId: task.id,
+          error: 'DB read failed',
+        },
+      );
+    });
+
+    it('should handle mix of blocked and unblocked QUEUED tasks', async () => {
+      const blockedTask = buildQueuedTask('blocked-1');
+      const unblockedTask = buildQueuedTask('unblocked-1');
+      setupFindByStatus([blockedTask, unblockedTask], []);
+      dependencyRepo.isBlocked
+        .mockResolvedValueOnce(ok(true)) // blocked-1 is blocked
+        .mockResolvedValueOnce(ok(false)); // unblocked-1 is not
+
+      const result = await manager.recover();
+
+      expect(result.ok).toBe(true);
+      expect(queue.enqueue).toHaveBeenCalledTimes(1);
+      expect(queue.enqueue).toHaveBeenCalledWith(unblockedTask);
+      expect(queue.enqueue).not.toHaveBeenCalledWith(blockedTask);
+    });
+
     it('should log enqueue failures but continue recovery', async () => {
       const task1 = buildQueuedTask('fail-enqueue');
       const task2 = buildQueuedTask('succeed-enqueue');
@@ -513,6 +583,96 @@ describe('RecoveryManager', () => {
       expect(logger.info).toHaveBeenCalledWith('Running task already terminal, skipping recovery', {
         taskId: TaskId('race-completed'),
         currentStatus: TaskStatus.COMPLETED,
+      });
+    });
+  });
+
+  describe('TaskFailed event emission', () => {
+    it('should emit TaskFailed event when marking crashed RUNNING task as failed', async () => {
+      const task = buildRunningTask('crashed-emit');
+      setupFindByStatus([], [task]);
+      // No worker row → crash
+      workerRepo.findByTaskId.mockReturnValue(ok(null));
+
+      await manager.recover();
+
+      expect(eventBus.emit).toHaveBeenCalledWith('TaskFailed', {
+        taskId: task.id,
+        error: expect.objectContaining({ message: 'Worker process crashed during execution' }),
+        exitCode: -1,
+      });
+    });
+
+    it('should log error and continue recovery when TaskFailed emit fails for dead worker task', async () => {
+      const deadWorker = {
+        workerId: WorkerId('w-dead-fail'),
+        taskId: TaskId('task-dead-fail'),
+        pid: DEAD_PID,
+        ownerPid: DEAD_PID,
+        agent: 'claude',
+        startedAt: Date.now(),
+      };
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead-fail')));
+      setupFindByStatus([], []);
+
+      const emitError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Event bus error');
+      // First emit call is TaskFailed for dead worker — make it fail
+      eventBus.emit.mockResolvedValueOnce(err(emitError));
+
+      const result = await manager.recover();
+
+      // Recovery should succeed despite emit failure
+      expect(result.ok).toBe(true);
+      expect(logger.error).toHaveBeenCalledWith('Failed to emit TaskFailed event for dead worker task', emitError, {
+        taskId: TaskId('task-dead-fail'),
+      });
+      // Task was still marked as FAILED in the repository
+      expect(repo.update).toHaveBeenCalledWith(
+        TaskId('task-dead-fail'),
+        expect.objectContaining({ status: TaskStatus.FAILED }),
+      );
+    });
+
+    it('should log error and continue recovery when TaskFailed emit fails for crashed running task', async () => {
+      const task = buildRunningTask('crashed-emit-fail');
+      setupFindByStatus([], [task]);
+      workerRepo.findByTaskId.mockReturnValue(ok(null));
+
+      const emitError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Event bus error');
+      // TaskFailed emit for crashed running task — make it fail
+      eventBus.emit.mockResolvedValueOnce(err(emitError));
+
+      const result = await manager.recover();
+
+      // Recovery should succeed despite emit failure
+      expect(result.ok).toBe(true);
+      expect(logger.error).toHaveBeenCalledWith('Failed to emit TaskFailed event for crashed task', emitError, {
+        taskId: task.id,
+      });
+      // Task was still marked as FAILED in the repository
+      expect(repo.update).toHaveBeenCalledWith(task.id, expect.objectContaining({ status: TaskStatus.FAILED }));
+    });
+
+    it('should emit TaskFailed event when failing dead worker task', async () => {
+      const deadWorker = {
+        workerId: WorkerId('w-dead-emit'),
+        taskId: TaskId('task-dead-emit'),
+        pid: DEAD_PID,
+        ownerPid: DEAD_PID,
+        agent: 'claude',
+        startedAt: Date.now(),
+      };
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead-emit')));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      expect(eventBus.emit).toHaveBeenCalledWith('TaskFailed', {
+        taskId: TaskId('task-dead-emit'),
+        error: expect.objectContaining({ message: 'Worker process died (dead PID detected)' }),
+        exitCode: -1,
       });
     });
   });

@@ -531,7 +531,31 @@ describe('TaskManagerService', () => {
       if (!result.ok) return;
       expect(result.value.stdout).toEqual(['line 4', 'line 5']);
       expect(result.value.stderr).toEqual(['err 2', 'err 3']);
-      expect(result.value.totalSize).toBe(100);
+      // totalSize recalculated from sliced arrays: 'line 4'(6) + 'line 5'(6) + 'err 2'(5) + 'err 3'(5) = 22
+      expect(result.value.totalSize).toBe(22);
+    });
+
+    it('should recalculate totalSize from sliced arrays when tail applied to DB result', async () => {
+      const task = buildMockTask({ id: TaskId('logs-recalc') });
+      (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(task));
+
+      // DB output with inflated totalSize
+      const dbOutput = {
+        taskId: TaskId('logs-recalc'),
+        stdout: ['aaaa', 'bbbb', 'cccc'],
+        stderr: ['xxxx'],
+        totalSize: 999, // Pre-slice totalSize (stale)
+      };
+      (outputRepository.get as ReturnType<typeof vi.fn>).mockResolvedValue(ok(dbOutput));
+
+      const result = await service.getLogs(TaskId('logs-recalc'), 1);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.stdout).toEqual(['cccc']);
+      expect(result.value.stderr).toEqual(['xxxx']);
+      // totalSize should reflect sliced content: 'cccc'(4) + 'xxxx'(4) = 8
+      expect(result.value.totalSize).toBe(8);
     });
 
     it('should return empty output when both in-memory and DB are empty', async () => {
