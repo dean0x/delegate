@@ -107,7 +107,10 @@ export class RecoveryManager {
           continue;
         }
 
-        // Task is non-terminal (or deleted) — mark as FAILED
+        // ARCHITECTURE EXCEPTION: Direct repository write + TaskFailed emit (double-write).
+        // Recovery runs during startup before event handlers are guaranteed to be ready,
+        // so we write status directly rather than relying on PersistenceHandler to handle
+        // TaskFailed. The subsequent emit notifies DependencyHandler to unblock downstream tasks.
         const updateResult = await this.repository.update(reg.taskId, {
           status: TaskStatus.FAILED,
           completedAt: Date.now(),
@@ -249,7 +252,10 @@ export class RecoveryManager {
         continue;
       }
 
-      // No live worker — definitively crashed, mark as failed
+      // ARCHITECTURE EXCEPTION: Direct repository write + TaskFailed emit (double-write).
+      // Recovery runs during startup before event handlers are guaranteed to be ready,
+      // so we write status directly rather than relying on PersistenceHandler to handle
+      // TaskFailed. The subsequent emit notifies DependencyHandler to unblock downstream tasks.
       const updateResult = await this.repository.update(task.id, {
         status: TaskStatus.FAILED,
         completedAt: now,

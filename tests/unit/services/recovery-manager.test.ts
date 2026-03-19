@@ -594,6 +594,64 @@ describe('RecoveryManager', () => {
       });
     });
 
+    it('should log error and continue recovery when TaskFailed emit fails for dead worker task', async () => {
+      const deadWorker = {
+        workerId: WorkerId('w-dead-fail'),
+        taskId: TaskId('task-dead-fail'),
+        pid: DEAD_PID,
+        ownerPid: DEAD_PID,
+        agent: 'claude',
+        startedAt: Date.now(),
+      };
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead-fail')));
+      setupFindByStatus([], []);
+
+      const emitError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Event bus error');
+      // First emit call is TaskFailed for dead worker — make it fail
+      eventBus.emit.mockResolvedValueOnce(err(emitError));
+
+      const result = await manager.recover();
+
+      // Recovery should succeed despite emit failure
+      expect(result.ok).toBe(true);
+      expect(logger.error).toHaveBeenCalledWith(
+        'Failed to emit TaskFailed event for dead worker task',
+        emitError,
+        { taskId: TaskId('task-dead-fail') },
+      );
+      // Task was still marked as FAILED in the repository
+      expect(repo.update).toHaveBeenCalledWith(
+        TaskId('task-dead-fail'),
+        expect.objectContaining({ status: TaskStatus.FAILED }),
+      );
+    });
+
+    it('should log error and continue recovery when TaskFailed emit fails for crashed running task', async () => {
+      const task = buildRunningTask('crashed-emit-fail');
+      setupFindByStatus([], [task]);
+      workerRepo.findByTaskId.mockReturnValue(ok(null));
+
+      const emitError = new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Event bus error');
+      // TaskFailed emit for crashed running task — make it fail
+      eventBus.emit.mockResolvedValueOnce(err(emitError));
+
+      const result = await manager.recover();
+
+      // Recovery should succeed despite emit failure
+      expect(result.ok).toBe(true);
+      expect(logger.error).toHaveBeenCalledWith(
+        'Failed to emit TaskFailed event for crashed task',
+        emitError,
+        { taskId: task.id },
+      );
+      // Task was still marked as FAILED in the repository
+      expect(repo.update).toHaveBeenCalledWith(
+        task.id,
+        expect.objectContaining({ status: TaskStatus.FAILED }),
+      );
+    });
+
     it('should emit TaskFailed event when failing dead worker task', async () => {
       const deadWorker = {
         workerId: WorkerId('w-dead-emit'),
