@@ -3,6 +3,9 @@
  * ARCHITECTURE: Barrel file for clean imports
  */
 
+// Output measurement utilities
+export { linesByteSize } from './output.js';
+
 // Cron utilities for task scheduling
 export {
   getNextRunTime,

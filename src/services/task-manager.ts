@@ -28,11 +28,7 @@ import { EventBus } from '../core/events/event-bus.js';
 import { CheckpointRepository, Logger, OutputCapture, TaskManager, TaskRepository } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { OutputRepository } from '../implementations/output-repository.js';
-
-/** Sum the character lengths of all lines in an array */
-function linesSize(lines: readonly string[]): number {
-  return lines.reduce((sum, line) => sum + line.length, 0);
-}
+import { linesByteSize } from '../utils/output.js';
 
 export class TaskManagerService implements TaskManager {
   constructor(
@@ -150,7 +146,7 @@ export class TaskManagerService implements TaskManager {
           taskId: output.taskId,
           stdout: slicedStdout,
           stderr: slicedStderr,
-          totalSize: linesSize(slicedStdout) + linesSize(slicedStderr),
+          totalSize: linesByteSize(slicedStdout) + linesByteSize(slicedStderr),
         });
       }
       return ok(output);

@@ -8,11 +8,7 @@ import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
 import { OutputCapture } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
-
-/** Sum the character lengths of all lines in an array */
-function linesSize(lines: readonly string[]): number {
-  return lines.reduce((sum, line) => sum + line.length, 0);
-}
+import { linesByteSize } from '../utils/output.js';
 
 interface OutputBuffer {
   stdout: string[];
@@ -116,7 +112,7 @@ export class BufferedOutputCapture implements OutputCapture {
     const frozenStderr = Object.freeze([...stderr]);
     const wasTailSliced = tail !== undefined && tail > 0;
     const totalSize = wasTailSliced
-      ? linesSize(frozenStdout) + linesSize(frozenStderr)
+      ? linesByteSize(frozenStdout) + linesByteSize(frozenStderr)
       : buffer.totalSize;
     return ok({
       taskId,
@@ -210,7 +206,7 @@ export class TestOutputCapture implements OutputCapture {
       stderr = stderr.slice(-tail);
     }
 
-    const totalSize = stdout.join('').length + stderr.join('').length;
+    const totalSize = linesByteSize(stdout) + linesByteSize(stderr);
 
     return ok({
       taskId,
