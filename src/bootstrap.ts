@@ -10,7 +10,6 @@ import { BackbeatError, ErrorCode } from './core/errors.js';
 import { EventBus, InMemoryEventBus } from './core/events/event-bus.js';
 import {
   CheckpointRepository,
-  Config,
   DependencyRepository,
   Logger,
   OutputCapture,
@@ -75,20 +74,6 @@ import { RecoveryManager } from './services/recovery-manager.js';
 import { ScheduleExecutor } from './services/schedule-executor.js';
 import { ScheduleManagerService } from './services/schedule-manager.js';
 import { TaskManagerService } from './services/task-manager.js';
-
-// Convert new configuration format to existing Config interface
-const getConfig = (): Config => {
-  const config = loadConfiguration();
-  return {
-    maxOutputBuffer: config.maxOutputBuffer,
-    taskTimeout: config.timeout, // Note: renamed from timeout to taskTimeout
-    cpuCoresReserved: config.cpuCoresReserved,
-    memoryReserve: config.memoryReserve,
-    logLevel: config.logLevel,
-    maxListenersPerEvent: config.maxListenersPerEvent,
-    maxTotalSubscriptions: config.maxTotalSubscriptions,
-  };
-};
 
 /**
  * Helper for dependency injection in factory functions

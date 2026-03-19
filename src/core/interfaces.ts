@@ -466,7 +466,6 @@ export interface CheckpointLookup {
 
 /**
  * Output persistence for task stdout/stderr
- * ARCHITECTURE: Moved from implementations layer to core (DIP compliance)
  * Pattern: Repository pattern — all repo interfaces live in core/interfaces.ts
  */
 export interface OutputRepository {
