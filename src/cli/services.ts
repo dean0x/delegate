@@ -45,7 +45,7 @@ export async function withServices(s?: Spinner): Promise<{
   scheduleService: ScheduleService;
 }> {
   s?.message('Initializing...');
-  const containerResult = await bootstrap({ skipScheduleExecutor: true, skipRecovery: true });
+  const containerResult = await bootstrap({ mode: 'cli' });
   if (!containerResult.ok) {
     s?.stop('Initialization failed');
     ui.error(`Bootstrap failed: ${containerResult.error.message}`);

@@ -214,10 +214,7 @@ export async function runTask(
   const s = ui.createSpinner();
   try {
     s.start('Initializing...');
-    const containerResult = await bootstrap({
-      skipScheduleExecutor: true,
-      skipResourceMonitoring: true,
-    });
+    const containerResult = await bootstrap({ mode: 'run' });
     if (!containerResult.ok) {
       s.stop('Initialization failed');
       ui.error(`Bootstrap failed: ${containerResult.error.message}`);

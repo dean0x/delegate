@@ -29,7 +29,6 @@ describe('Integration: Task Dependencies - End-to-End Flow', () => {
     const result = await bootstrap({
       processSpawner: new NoOpProcessSpawner(),
       resourceMonitor: new TestResourceMonitor(),
-      skipResourceMonitoring: true,
     });
     if (!result.ok) {
       throw new Error(`Bootstrap failed: ${result.error.message}`);

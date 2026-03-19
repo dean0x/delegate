@@ -13,7 +13,7 @@ import { Container } from '../../src/core/container.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { Database } from '../../src/implementations/database.js';
 import { EventDrivenWorkerPool } from '../../src/implementations/event-driven-worker-pool.js';
-import { SystemResourceMonitor } from '../../src/implementations/resource-monitor.js';
+import { SystemResourceMonitor, TestResourceMonitor } from '../../src/implementations/resource-monitor.js';
 import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { TaskManagerService } from '../../src/services/task-manager.js';
@@ -31,7 +31,7 @@ describe('Integration: Service initialization', () => {
       // Bootstrap returns Result<Container>
       const result = await bootstrap({
         processSpawner: new NoOpProcessSpawner(),
-        skipResourceMonitoring: true,
+        resourceMonitor: new TestResourceMonitor(),
       });
 
       // Verify bootstrap succeeded
@@ -157,7 +157,7 @@ describe('Integration: Service initialization', () => {
       // Bootstrap the system
       const result = await bootstrap({
         processSpawner: new NoOpProcessSpawner(),
-        skipResourceMonitoring: true,
+        resourceMonitor: new TestResourceMonitor(),
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('Bootstrap failed');
@@ -224,7 +224,7 @@ describe('Integration: Service initialization', () => {
 
       const result = await bootstrap({
         processSpawner: new NoOpProcessSpawner(),
-        skipResourceMonitoring: true,
+        resourceMonitor: new TestResourceMonitor(),
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('Bootstrap failed');
@@ -244,7 +244,7 @@ describe('Integration: Service initialization', () => {
         const eventBus = eventBusResult.value as InMemoryEventBus;
         const repository = repoResult.value as SQLiteTaskRepository;
         const queue = queueResult.value as PriorityTaskQueue;
-        const monitor = monitorResult.value as SystemResourceMonitor;
+        const monitor = monitorResult.value as TestResourceMonitor;
 
         // Test that services are healthy
 
@@ -296,7 +296,7 @@ describe('Integration: Service initialization', () => {
 
       const result = await bootstrap({
         processSpawner: new NoOpProcessSpawner(),
-        skipResourceMonitoring: true,
+        resourceMonitor: new TestResourceMonitor(),
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('Bootstrap failed');
@@ -382,5 +382,18 @@ describe('Integration: Service initialization', () => {
       delete process.env.BACKBEAT_DATABASE_PATH;
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  describe('BootstrapMode flag derivation', () => {
+    it.each([
+      ['server', { skipResourceMonitoring: false, skipScheduleExecutor: false, skipRecovery: false }],
+      ['cli',    { skipResourceMonitoring: false, skipScheduleExecutor: true,  skipRecovery: true  }],
+      ['run',    { skipResourceMonitoring: true,  skipScheduleExecutor: true,  skipRecovery: false }],
+    ] as const)('mode "%s" produces correct flags', (mode, expected) => {
+      const skipResourceMonitoring = mode === 'run';
+      const skipScheduleExecutor = mode === 'cli' || mode === 'run';
+      const skipRecovery = mode === 'cli';
+      expect({ skipResourceMonitoring, skipScheduleExecutor, skipRecovery }).toEqual(expected);
+    });
   });
 });

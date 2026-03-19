@@ -28,20 +28,17 @@ import {
 import { err, ok, Result } from './core/result.js';
 
 /**
- * Options for bootstrapping the application
- * Use dependency injection to provide test doubles instead of environment variables
+ * Bootstrap mode determines which subsystems are initialized.
+ * - 'server': All subsystems (MCP daemon — recovery, executor, monitoring)
+ * - 'cli': Skip executor + recovery (mutation commands: cancel, retry, schedule ops)
+ * - 'run': Skip executor + monitoring (single-task `beat run` with crash recovery)
  */
+export type BootstrapMode = 'server' | 'cli' | 'run';
+
 export interface BootstrapOptions {
-  /** Custom ProcessSpawner implementation (e.g., NoOpProcessSpawner for tests) */
+  mode?: BootstrapMode;
   processSpawner?: ProcessSpawner;
-  /** Custom ResourceMonitor implementation (e.g., TestResourceMonitor for tests) */
   resourceMonitor?: ResourceMonitor;
-  /** Skip starting resource monitoring (useful for tests to prevent CPU/memory overhead) */
-  skipResourceMonitoring?: boolean;
-  /** Skip starting ScheduleExecutor (for short-lived CLI commands that exit before workers finish) */
-  skipScheduleExecutor?: boolean;
-  /** Skip running RecoveryManager on startup (for short-lived CLI commands) */
-  skipRecovery?: boolean;
 }
 
 // Adapters
@@ -132,6 +129,11 @@ const getFromContainerSafe = <T>(container: Container, key: string): Result<T> =
  * ARCHITECTURE: Returns Result instead of throwing - follows Result pattern
  */
 export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<Container>> {
+  const mode = options.mode ?? 'server';
+  const skipResourceMonitoring = mode === 'run';
+  const skipScheduleExecutor = mode === 'cli' || mode === 'run';
+  const skipRecovery = mode === 'cli';
+
   const container = new Container();
   const config = loadConfiguration();
 
@@ -319,12 +321,10 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       getFromContainer<Logger>(container, 'logger').child({ module: 'ResourceMonitor' }),
     );
 
-    // Skip resource monitoring if requested (e.g., in tests to prevent CPU/memory overhead)
-    if (!options.skipResourceMonitoring) {
-      // Start monitoring after a brief delay to allow system startup
+    if (!skipResourceMonitoring) {
       setTimeout(() => monitor.startMonitoring(), 2000);
     } else {
-      logger.info('Skipping resource monitoring (skipResourceMonitoring=true)');
+      logger.info(`Skipping resource monitoring (mode=${mode})`);
     }
 
     return monitor;
@@ -415,7 +415,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   });
 
   // Run recovery on startup (skip for short-lived CLI commands)
-  if (!options.skipRecovery) {
+  if (!skipRecovery) {
     const recoveryResult = container.get('recoveryManager');
     if (recoveryResult.ok) {
       const recovery = recoveryResult.value as RecoveryManager;
@@ -426,7 +426,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       });
     }
   } else {
-    logger.info('Skipping recovery (skipRecovery=true)');
+    logger.info(`Skipping recovery (mode=${mode})`);
   }
 
   // Register schedule executor for task scheduling (v0.4.0)
@@ -457,7 +457,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // Initialize schedule executor after recovery completes
   // ARCHITECTURE: Starts the 60-second tick loop for checking due schedules
   // Skip for short-lived CLI commands — only the MCP server daemon needs the executor
-  if (!options?.skipScheduleExecutor) {
+  if (!skipScheduleExecutor) {
     const executorResult = container.get<ScheduleExecutor>('scheduleExecutor');
     if (executorResult.ok) {
       const executor = executorResult.value;
@@ -471,7 +471,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       logger.error('Failed to get ScheduleExecutor', executorResult.error);
     }
   } else {
-    logger.info('Skipping ScheduleExecutor (skipScheduleExecutor=true)');
+    logger.info(`Skipping ScheduleExecutor (mode=${mode})`);
   }
 
   logger.info('Bootstrap complete');
