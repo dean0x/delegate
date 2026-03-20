@@ -241,11 +241,10 @@ export class LoopManagerService implements LoopService {
     const loop = lookupResult.value;
     if (loop.status !== LoopStatus.RUNNING) {
       return err(
-        new BackbeatError(
-          ErrorCode.INVALID_OPERATION,
-          `Loop ${loopId} is not running (status: ${loop.status})`,
-          { loopId, status: loop.status },
-        ),
+        new BackbeatError(ErrorCode.INVALID_OPERATION, `Loop ${loopId} is not running (status: ${loop.status})`, {
+          loopId,
+          status: loop.status,
+        }),
       );
     }
 
@@ -297,9 +296,7 @@ export class LoopManagerService implements LoopService {
   private async fetchLoopOrError(loopId: LoopId): Promise<Result<Loop>> {
     const result = await this.loopRepository.findById(loopId);
     if (!result.ok) {
-      return err(
-        new BackbeatError(ErrorCode.SYSTEM_ERROR, `Failed to get loop: ${result.error.message}`, { loopId }),
-      );
+      return err(new BackbeatError(ErrorCode.SYSTEM_ERROR, `Failed to get loop: ${result.error.message}`, { loopId }));
     }
 
     if (!result.value) {

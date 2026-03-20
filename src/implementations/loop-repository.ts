@@ -286,15 +286,12 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
   }
 
   async findAll(limit?: number, offset?: number): Promise<Result<readonly Loop[]>> {
-    return tryCatchAsync(
-      async () => {
-        const effectiveLimit = limit ?? SQLiteLoopRepository.DEFAULT_LIMIT;
-        const effectiveOffset = offset ?? 0;
-        const rows = this.findAllPaginatedStmt.all(effectiveLimit, effectiveOffset) as LoopRow[];
-        return rows.map((row) => this.rowToLoop(row));
-      },
-      operationErrorHandler('find all loops'),
-    );
+    return tryCatchAsync(async () => {
+      const effectiveLimit = limit ?? SQLiteLoopRepository.DEFAULT_LIMIT;
+      const effectiveOffset = offset ?? 0;
+      const rows = this.findAllPaginatedStmt.all(effectiveLimit, effectiveOffset) as LoopRow[];
+      return rows.map((row) => this.rowToLoop(row));
+    }, operationErrorHandler('find all loops'));
   }
 
   async findByStatus(status: LoopStatus, limit?: number, offset?: number): Promise<Result<readonly Loop[]>> {
@@ -310,13 +307,10 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
   }
 
   async count(): Promise<Result<number>> {
-    return tryCatchAsync(
-      async () => {
-        const result = this.countStmt.get() as { count: number };
-        return result.count;
-      },
-      operationErrorHandler('count loops'),
-    );
+    return tryCatchAsync(async () => {
+      const result = this.countStmt.get() as { count: number };
+      return result.count;
+    }, operationErrorHandler('count loops'));
   }
 
   async delete(id: LoopId): Promise<Result<void>> {
@@ -379,13 +373,10 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
   }
 
   async findRunningIterations(): Promise<Result<readonly LoopIteration[]>> {
-    return tryCatchAsync(
-      async () => {
-        const rows = this.findRunningIterationsStmt.all() as LoopIterationRow[];
-        return rows.map((row) => this.rowToIteration(row));
-      },
-      operationErrorHandler('find running iterations'),
-    );
+    return tryCatchAsync(async () => {
+      const rows = this.findRunningIterationsStmt.all() as LoopIterationRow[];
+      return rows.map((row) => this.rowToIteration(row));
+    }, operationErrorHandler('find running iterations'));
   }
 
   async updateIteration(iteration: LoopIteration): Promise<Result<void>> {
