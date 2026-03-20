@@ -1,10 +1,10 @@
 # Backbeat Development Roadmap
 
-## Current Status: v0.5.0 ✅
+## Current Status: v0.6.0 ✅
 
-**Status**: Released (2026-03-10)
+**Status**: Released (2026-03-20)
 
-Backbeat v0.5.0 adds multi-agent support — pluggable agent registry with adapters for Claude, Codex, and Gemini, per-task agent selection, `beat init` interactive setup, and comprehensive test coverage. See [FEATURES.md](./FEATURES.md) for complete list of current capabilities.
+Backbeat v0.6.0 delivers architectural simplification (hybrid event model, SQLite worker coordination, ReadOnlyContext), scheduled pipelines, bug fixes, and tech debt cleanup. See [FEATURES.md](./FEATURES.md) for complete list of current capabilities.
 
 ---
 
@@ -57,26 +57,31 @@ Agent registry with pluggable adapters (Claude, Codex, Gemini), per-task agent s
 
 ---
 
-### v0.6.0 - Architectural Simplification + Bug Fixes
-**Status**: 🎯 In Progress
+### v0.6.0 - Architectural Simplification + Bug Fixes ✅
+**Status**: **RELEASED** (2026-03-20)
 **Issue**: [#105](https://github.com/dean0x/backbeat/issues/105)
 
 Architectural simplification (hybrid event model, SQLite worker coordination, ReadOnlyContext CLI), scheduled pipelines, bug fixes, and tech debt cleanup.
 
-#### Features (merged)
+#### Features
 - Scheduled pipelines — `SchedulePipeline` MCP tool, `--pipeline --step` CLI, dependency failure cascade, `cancelTasks` on `CancelSchedule` (#78)
 - Simplify Event System — replace 18 overhead events with direct calls (#91)
 - SQLite worker coordination + output persistence (#94)
 - ReadOnlyContext for lightweight CLI query commands (#100)
 - `runInTransaction` for atomic multi-step DB operations (#85)
+- Neutralize Claude-specific branding for multi-provider positioning (#86)
 
-#### Remaining (bugs + tech debt)
-1. #84 — RecoveryManager dependency checks (bug)
-2. #82 — cancelTasks scope fix (bug)
-3. #83 — ScheduleExecutor transaction wrapping (tech-debt)
-4. #101 — Move OutputRepository to core/interfaces.ts (tech-debt)
-5. #104 — BootstrapOptions mode enum (tech-debt)
-6. #95 — Output totalSize fix (bug)
+#### Bug Fixes
+- RecoveryManager dependency-aware crash recovery (#84)
+- CancelSchedule scope: cancel tasks from ALL active executions (#82)
+- Output totalSize recalculated after tail-slicing (#95)
+- ScheduleExecutor FAIL policy atomicity (#83)
+
+#### Tech Debt
+- OutputRepository interface moved to core/interfaces.ts — DIP compliance (#101)
+- BootstrapOptions boolean flags replaced with BootstrapMode enum (#104)
+
+See [RELEASE_NOTES_v0.6.0.md](./releases/RELEASE_NOTES_v0.6.0.md) for full details.
 
 ---
 
@@ -234,7 +239,7 @@ beat recipe create my-workflow  # interactive recipe builder
 | v0.3.1–3 | ✅ Released | Dependency optimizations + security |
 | v0.4.0 | ✅ Released | Scheduling, Resumption, Rename to Backbeat |
 | v0.5.0 | ✅ Released | Multi-Agent Support |
-| v0.6.0 | 🎯 In Progress | Architectural Simplification + Bug Fixes |
+| v0.6.0 | ✅ Released | Architectural Simplification + Bug Fixes |
 | v0.7.0 | 📋 Planned | Task/Pipeline Loops |
 | v0.8.0 | 📋 Planned | Agent Failover + Smart Routing |
 | v0.9.0 | 📋 Planned | Workflow Recipes & Templates |

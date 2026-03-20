@@ -148,19 +148,20 @@ Last Updated: March 2026
 ### Core Components
 - **MCP Adapter**: JSON-RPC 2.0 protocol implementation
 - **Task Manager**: Orchestrates task lifecycle
-- **Autoscaling Manager**: Dynamic worker pool management
-- **Recovery Manager**: Startup task recovery
+- **Recovery Manager**: Startup task recovery with dependency-aware crash detection
 - **Resource Monitor**: System resource tracking
+- **ReadOnlyContext**: Lightweight bootstrap for CLI query commands (~200-400ms faster)
 
-### Design Patterns (v0.2.1 Event-Driven Architecture)
-- **Event-Driven Architecture**: Complete event-based coordination via EventBus
-- **Event Handlers**: Specialized handlers (Persistence, Queue, Worker, Output)
-- **Singleton EventBus**: Shared event bus across all system components
-- **Zero Direct State**: TaskManager emits events, handlers manage state
+### Design Patterns (v0.6.0 Hybrid Event Model)
+- **Hybrid Event-Driven Architecture**: Commands (state changes) flow through EventBus; queries use direct repository access
+- **Event Handlers**: Specialized handlers (Persistence, Queue, Worker, Dependency, Schedule, Checkpoint)
+- **Singleton EventBus**: Shared event bus across all system components (25 events)
 - **Dependency Injection**: Container-based DI with Result types
 - **Result Pattern**: No exceptions in business logic
 - **Immutable Domain**: Readonly data structures
 - **Database-First Pattern**: Single source of truth with no memory-database divergence
+- **SQLite Worker Coordination**: `workers` table with PID-based crash detection for cross-process visibility
+- **Atomic Transactions**: `runInTransaction` for multi-step DB operations with rollback
 - **Proper Process Handling**: Fixed stdin management (`stdio: ['ignore', 'pipe', 'pipe']`)
 
 ## ✅ Task Dependencies (v0.3.0)
@@ -309,12 +310,34 @@ Last Updated: March 2026
 - **GetSchedule Enhancement**: Response includes full `pipelineSteps` when present
 - **CLI**: `--pipeline --step "..." --step "..."` flags for creating scheduled pipelines
 
+### Architectural Simplification
+- **Event System Simplification** (#91): 18 overhead events removed, 3 services removed (QueryHandler, OutputHandler, AutoscalingManager). Query operations use direct repository calls instead of events. EventBus reduced from 42 to 25 events.
+- **SQLite Worker Coordination** (#94): New `workers` table with PID-based crash detection. Cross-process output visibility via persistent output storage. `WorkerRepository` and `OutputRepository` now required in constructors.
+- **ReadOnlyContext** (#100): Lightweight bootstrap for CLI query commands (`status`, `list`, `logs`). Skips EventBus, worker pool, and schedule executor initialization. ~200-400ms faster startup.
+- **Atomic Transactions** (#85): `runInTransaction` for atomic multi-step DB operations. Synchronous schedule operations with partial failure rollback.
+
 ### Bug Fixes
 - **Dependency Failure Cascade**: When upstream task fails or is cancelled, dependent tasks are now cancelled instead of incorrectly unblocked (**breaking change**)
 - **Queue Handler Race Condition**: Fast-path `dependencyState` check prevents blocked tasks from being enqueued before dependency rows are written to DB
+- **RecoveryManager Dependency Checks** (#84): Crash recovery now validates dependency state before re-queuing tasks
+- **CancelSchedule Scope** (#82): `cancelTasks` now cancels tasks from ALL active executions, not just the latest
+- **Output totalSize** (#95): `totalSize` recalculated after tail-slicing via shared `linesByteSize` utility
+- **FAIL Policy Atomicity** (#83): ScheduleExecutor FAIL policy wrapped in transaction — atomic cancel+audit, event emission after transaction commits
+
+### Tech Debt / Refactoring
+- **OutputRepository DIP Compliance** (#101): Interface moved from implementations to `core/interfaces.ts`
+- **BootstrapMode Enum** (#104): Boolean flags (`isCli`, `isRun`, `isReadOnly`) replaced with `mode: BootstrapMode` (`'server'` | `'cli'` | `'run'`)
+- **Multi-Provider Branding** (#86): Neutralize Claude-specific branding for multi-provider positioning
+
+### Breaking Changes
+- **Dependency Failure Cascade**: Failed/cancelled upstream tasks cascade cancellation to dependents (was incorrectly unblocking)
+- **Constructor Changes**: `WorkerRepository` and `OutputRepository` now required in constructors (#94)
+- **Event System**: EventBus reduced from 42 to 25 events; query operations use direct calls (#91)
+- **BootstrapOptions**: Drops boolean flags, adds `mode: BootstrapMode` (#104)
 
 ### Database
 - **Migration 8**: `pipeline_steps` column on `schedules` table, `pipeline_task_ids` column on `schedule_executions` table
+- **Migration 9**: `workers` table for cross-process worker tracking (#94)
 
 ---
 
