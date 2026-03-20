@@ -18,6 +18,8 @@ vi.mock('../../src/cli/ui.js', () => ({
 import * as ui from '../../src/cli/ui.js';
 import { errorMessage, exitOnError, exitOnNull } from '../../src/cli/services';
 
+const mockError = vi.mocked(ui.error);
+
 // ============================================================================
 // Test Helpers
 // ============================================================================
@@ -62,7 +64,7 @@ describe('exitOnError', () => {
 
   beforeEach(() => {
     mockExit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-    vi.mocked(ui.error).mockClear();
+    mockError.mockClear();
   });
 
   afterEach(() => {
@@ -88,14 +90,14 @@ describe('exitOnError', () => {
     const result: Result<string> = err(new Error('connection refused'));
     exitOnError(result);
 
-    expect(ui.error).toHaveBeenCalledWith('connection refused');
+    expect(mockError).toHaveBeenCalledWith('connection refused');
   });
 
   it('prepends prefix to error message', () => {
     const result: Result<string> = err(new Error('connection refused'));
     exitOnError(result, undefined, 'Bootstrap failed');
 
-    expect(ui.error).toHaveBeenCalledWith('Bootstrap failed: connection refused');
+    expect(mockError).toHaveBeenCalledWith('Bootstrap failed: connection refused');
   });
 
   it('stops spinner with default "Failed" message', () => {
@@ -116,7 +118,6 @@ describe('exitOnError', () => {
 
   it('does not call spinner.stop when spinner is undefined', () => {
     const result: Result<string> = err(new Error('oops'));
-    // Should not throw when spinner is undefined
     exitOnError(result, undefined);
 
     expect(mockExit).toHaveBeenCalledWith(1);
@@ -140,7 +141,7 @@ describe('exitOnNull', () => {
 
   beforeEach(() => {
     mockExit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-    vi.mocked(ui.error).mockClear();
+    mockError.mockClear();
   });
 
   afterEach(() => {
@@ -183,7 +184,7 @@ describe('exitOnNull', () => {
   it('calls ui.error with provided message', () => {
     exitOnNull(null, undefined, 'Schedule abc-123 not found');
 
-    expect(ui.error).toHaveBeenCalledWith('Schedule abc-123 not found');
+    expect(mockError).toHaveBeenCalledWith('Schedule abc-123 not found');
   });
 
   it('stops spinner with default "Not found" message', () => {
