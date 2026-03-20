@@ -558,6 +558,66 @@ export class Database implements TransactionRunner {
           `);
         },
       },
+      {
+        version: 10,
+        description: 'Add loops and loop_iterations tables for iterative task execution (v0.7.0)',
+        up: (db) => {
+          // Loops table - stores loop definitions and current state
+          // ARCHITECTURE: Supports retry and optimize strategies with exit condition evaluation
+          // Pattern: task_template stored as JSON for TaskRequest serialization (same as schedules)
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS loops (
+              id TEXT PRIMARY KEY,
+              strategy TEXT NOT NULL CHECK(strategy IN ('retry', 'optimize')),
+              task_template TEXT NOT NULL,
+              pipeline_steps TEXT,
+              exit_condition TEXT NOT NULL,
+              eval_direction TEXT,
+              eval_timeout INTEGER NOT NULL DEFAULT 60000,
+              working_directory TEXT NOT NULL,
+              max_iterations INTEGER NOT NULL DEFAULT 10,
+              max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+              cooldown_ms INTEGER NOT NULL DEFAULT 0,
+              fresh_context INTEGER NOT NULL DEFAULT 1,
+              status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running', 'completed', 'failed', 'cancelled')),
+              current_iteration INTEGER NOT NULL DEFAULT 0,
+              best_score REAL,
+              best_iteration_id INTEGER,
+              consecutive_failures INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              completed_at TEXT
+            )
+          `);
+
+          // Loop iterations table - tracks individual iteration execution and results
+          // ARCHITECTURE: Each iteration spawns a task; results evaluated by exit condition
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS loop_iterations (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              loop_id TEXT NOT NULL REFERENCES loops(id) ON DELETE CASCADE,
+              iteration_number INTEGER NOT NULL,
+              task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+              pipeline_task_ids TEXT,
+              status TEXT NOT NULL CHECK(status IN ('running', 'pass', 'fail', 'keep', 'discard', 'crash', 'cancelled')),
+              score REAL,
+              exit_code INTEGER,
+              error_message TEXT,
+              started_at TEXT NOT NULL,
+              completed_at TEXT,
+              UNIQUE(loop_id, iteration_number)
+            )
+          `);
+
+          // Performance indexes for loop queries
+          db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_loop_iterations_loop_id ON loop_iterations(loop_id);
+            CREATE INDEX IF NOT EXISTS idx_loop_iterations_task_id ON loop_iterations(task_id);
+            CREATE INDEX IF NOT EXISTS idx_loop_iterations_status ON loop_iterations(status);
+            CREATE INDEX IF NOT EXISTS idx_loop_iterations_loop_iteration ON loop_iterations(loop_id, iteration_number DESC);
+          `);
+        },
+      },
     ];
   }
 
