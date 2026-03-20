@@ -318,7 +318,7 @@ backbeat/
 - [x] v0.3.3 - Test infrastructure and memory management
 - [x] v0.4.0 - Task scheduling and task resumption
 - [x] v0.5.0 - Multi-agent support (Claude, Codex, Gemini)
-- [x] v0.6.0 - Scheduled pipelines
+- [x] v0.6.0 - Architectural simplification + scheduled pipelines
 - [ ] v0.7.0 - Task/pipeline loops
 
 See **[ROADMAP.md](./docs/ROADMAP.md)** for detailed plans and timelines.

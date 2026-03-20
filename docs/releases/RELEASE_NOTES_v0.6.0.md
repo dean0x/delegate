@@ -47,7 +47,7 @@ beat schedule create --pipeline \
 
 ### Cancel Schedule with In-Flight Tasks
 
-`CancelSchedule` now supports a `cancelTasks` flag to also cancel in-flight pipeline tasks from the current execution.
+`CancelSchedule` now supports a `cancelTasks` flag to also cancel in-flight pipeline tasks from all active executions.
 
 **MCP:**
 ```typescript
