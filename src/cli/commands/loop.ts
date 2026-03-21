@@ -323,8 +323,8 @@ async function handleLoopGet(loopArgs: string[]): Promise<void> {
     lines.push(`Cooldown:      ${loop.cooldownMs}ms`);
     lines.push(`Fresh Context: ${loop.freshContext}`);
     lines.push(`Working Dir:   ${loop.workingDirectory}`);
-    lines.push(`Created:       ${loop.createdAt.toISOString()}`);
-    if (loop.completedAt) lines.push(`Completed:     ${loop.completedAt.toISOString()}`);
+    lines.push(`Created:       ${new Date(loop.createdAt).toISOString()}`);
+    if (loop.completedAt) lines.push(`Completed:     ${new Date(loop.completedAt).toISOString()}`);
 
     const promptDisplay = loop.taskTemplate.prompt
       ? truncatePrompt(loop.taskTemplate.prompt, 100)

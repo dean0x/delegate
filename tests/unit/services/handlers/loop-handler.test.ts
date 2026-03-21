@@ -546,7 +546,7 @@ describe('LoopHandler - Behavioral Tests', () => {
       await loopRepo.save(loop);
 
       // Manually set currentIteration=1 and save an iteration
-      const updatedLoop = { ...loop, currentIteration: 1, updatedAt: new Date() };
+      const updatedLoop = { ...loop, currentIteration: 1, updatedAt: Date.now() };
       await loopRepo.update(updatedLoop);
 
       const taskId = TaskId('task-recovery-test');
@@ -556,7 +556,7 @@ describe('LoopHandler - Behavioral Tests', () => {
         iterationNumber: 1,
         taskId,
         status: 'running',
-        startedAt: new Date(),
+        startedAt: Date.now(),
       });
 
       // Also save the task in task repo (needed for recovery)

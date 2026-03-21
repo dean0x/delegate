@@ -521,9 +521,9 @@ export interface Loop {
   readonly bestIterationId?: number;
   readonly consecutiveFailures: number;
   readonly status: LoopStatus;
-  readonly createdAt: Date;
-  readonly updatedAt: Date;
-  readonly completedAt?: Date;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly completedAt?: number;
 }
 
 /**
@@ -540,8 +540,8 @@ export interface LoopIteration {
   readonly score?: number;
   readonly exitCode?: number;
   readonly errorMessage?: string;
-  readonly startedAt: Date;
-  readonly completedAt?: Date;
+  readonly startedAt: number;
+  readonly completedAt?: number;
 }
 
 /**
@@ -570,7 +570,7 @@ export interface LoopCreateRequest {
  * Pattern: Follows createSchedule() convention
  */
 export const createLoop = (request: LoopCreateRequest, workingDirectory: string): Loop => {
-  const now = new Date();
+  const now = Date.now();
   return Object.freeze({
     id: LoopId(`loop-${crypto.randomUUID()}`),
     strategy: request.strategy,
@@ -609,6 +609,6 @@ export const updateLoop = (loop: Loop, update: Partial<Loop>): Loop => {
   return Object.freeze({
     ...loop,
     ...update,
-    updatedAt: new Date(),
+    updatedAt: Date.now(),
   });
 };

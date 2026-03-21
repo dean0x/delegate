@@ -312,7 +312,7 @@ describe('LoopManagerService - Unit Tests', () => {
       const loop = await saveLoopInRepo();
 
       // Update status to completed
-      const updated = { ...loop, status: LoopStatus.COMPLETED, updatedAt: new Date() };
+      const updated = { ...loop, status: LoopStatus.COMPLETED, updatedAt: Date.now() };
       await loopRepo.update(updated);
 
       const cancelResult = await service.cancelLoop(loop.id);

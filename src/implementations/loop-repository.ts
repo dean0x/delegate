@@ -47,9 +47,9 @@ const LoopRowSchema = z.object({
   best_score: z.number().nullable(),
   best_iteration_id: z.number().nullable(),
   consecutive_failures: z.number(),
-  created_at: z.string(),
-  updated_at: z.string(),
-  completed_at: z.string().nullable(),
+  created_at: z.number(),
+  updated_at: z.number(),
+  completed_at: z.number().nullable(),
 });
 
 const LoopIterationRowSchema = z.object({
@@ -62,8 +62,8 @@ const LoopIterationRowSchema = z.object({
   score: z.number().nullable(),
   exit_code: z.number().nullable(),
   error_message: z.string().nullable(),
-  started_at: z.string(),
-  completed_at: z.string().nullable(),
+  started_at: z.number(),
+  completed_at: z.number().nullable(),
 });
 
 /**
@@ -117,9 +117,9 @@ interface LoopRow {
   readonly best_score: number | null;
   readonly best_iteration_id: number | null;
   readonly consecutive_failures: number;
-  readonly created_at: string;
-  readonly updated_at: string;
-  readonly completed_at: string | null;
+  readonly created_at: number;
+  readonly updated_at: number;
+  readonly completed_at: number | null;
 }
 
 interface LoopIterationRow {
@@ -132,8 +132,8 @@ interface LoopIterationRow {
   readonly score: number | null;
   readonly exit_code: number | null;
   readonly error_message: string | null;
-  readonly started_at: string;
-  readonly completed_at: string | null;
+  readonly started_at: number;
+  readonly completed_at: number | null;
 }
 
 export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations {
@@ -338,8 +338,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
           iteration.score ?? null,
           iteration.exitCode ?? null,
           iteration.errorMessage ?? null,
-          iteration.startedAt.toISOString(),
-          iteration.completedAt?.toISOString() ?? null,
+          iteration.startedAt,
+          iteration.completedAt ?? null,
         );
       },
       operationErrorHandler('record loop iteration', {
@@ -388,7 +388,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
           score: iteration.score ?? null,
           exitCode: iteration.exitCode ?? null,
           errorMessage: iteration.errorMessage ?? null,
-          completedAt: iteration.completedAt?.toISOString() ?? null,
+          completedAt: iteration.completedAt ?? null,
         });
       },
       operationErrorHandler('update loop iteration', {
@@ -417,8 +417,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       iteration.score ?? null,
       iteration.exitCode ?? null,
       iteration.errorMessage ?? null,
-      iteration.startedAt.toISOString(),
-      iteration.completedAt?.toISOString() ?? null,
+      iteration.startedAt,
+      iteration.completedAt ?? null,
     );
   }
 
@@ -435,7 +435,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       score: iteration.score ?? null,
       exitCode: iteration.exitCode ?? null,
       errorMessage: iteration.errorMessage ?? null,
-      completedAt: iteration.completedAt?.toISOString() ?? null,
+      completedAt: iteration.completedAt ?? null,
     });
   }
 
@@ -467,9 +467,9 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       bestScore: loop.bestScore ?? null,
       bestIterationId: loop.bestIterationId ?? null,
       consecutiveFailures: loop.consecutiveFailures,
-      createdAt: loop.createdAt.toISOString(),
-      updatedAt: loop.updatedAt.toISOString(),
-      completedAt: loop.completedAt?.toISOString() ?? null,
+      createdAt: loop.createdAt,
+      updatedAt: loop.updatedAt,
+      completedAt: loop.completedAt ?? null,
     };
   }
 
@@ -519,9 +519,9 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       bestScore: data.best_score ?? undefined,
       bestIterationId: data.best_iteration_id ?? undefined,
       consecutiveFailures: data.consecutive_failures,
-      createdAt: new Date(data.created_at),
-      updatedAt: new Date(data.updated_at),
-      completedAt: data.completed_at ? new Date(data.completed_at) : undefined,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+      completedAt: data.completed_at ?? undefined,
     };
   }
 
@@ -555,8 +555,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       score: data.score ?? undefined,
       exitCode: data.exit_code ?? undefined,
       errorMessage: data.error_message ?? undefined,
-      startedAt: new Date(data.started_at),
-      completedAt: data.completed_at ? new Date(data.completed_at) : undefined,
+      startedAt: data.started_at,
+      completedAt: data.completed_at ?? undefined,
     };
   }
 

@@ -71,7 +71,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       iterationNumber,
       taskId: TaskId(`task-iter-${iterationNumber}`),
       status: 'running',
-      startedAt: new Date(),
+      startedAt: Date.now(),
       ...overrides,
     };
   }
@@ -149,7 +149,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       const loop = createTestLoop();
       await repo.save(loop);
 
-      const updated = { ...loop, status: LoopStatus.COMPLETED, completedAt: new Date(), updatedAt: new Date() };
+      const updated = { ...loop, status: LoopStatus.COMPLETED, completedAt: Date.now(), updatedAt: Date.now() };
       const updateResult = await repo.update(updated);
       expect(updateResult.ok).toBe(true);
 
@@ -165,7 +165,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       const loop = createTestLoop();
       await repo.save(loop);
 
-      const updated = { ...loop, currentIteration: 5, consecutiveFailures: 2, updatedAt: new Date() };
+      const updated = { ...loop, currentIteration: 5, consecutiveFailures: 2, updatedAt: Date.now() };
       await repo.update(updated);
 
       const findResult = await repo.findById(loop.id);
@@ -183,7 +183,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       });
       await repo.save(loop);
 
-      const updated = { ...loop, bestScore: 0.95, bestIterationId: 3, updatedAt: new Date() };
+      const updated = { ...loop, bestScore: 0.95, bestIterationId: 3, updatedAt: Date.now() };
       await repo.update(updated);
 
       const findResult = await repo.findById(loop.id);
@@ -206,8 +206,8 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       const updatedCompleted = {
         ...completed,
         status: LoopStatus.COMPLETED,
-        completedAt: new Date(),
-        updatedAt: new Date(),
+        completedAt: Date.now(),
+        updatedAt: Date.now(),
       };
       await repo.update(updatedCompleted);
 
@@ -443,7 +443,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       await repo.save(completed);
 
       // Complete the second loop
-      const updatedCompleted = { ...completed, status: LoopStatus.COMPLETED, updatedAt: new Date() };
+      const updatedCompleted = { ...completed, status: LoopStatus.COMPLETED, updatedAt: Date.now() };
       await repo.update(updatedCompleted);
 
       // Add running iterations to both loops (need unique task IDs)
@@ -490,7 +490,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       if (!iters.ok) return;
 
       const iteration = iters.value[0];
-      const now = new Date();
+      const now = Date.now();
       const updateResult = await repo.updateIteration({
         ...iteration,
         status: 'pass',
@@ -526,7 +526,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
         status: 'fail',
         errorMessage: 'Exit condition failed',
         exitCode: 1,
-        completedAt: new Date(),
+        completedAt: Date.now(),
       });
 
       const updated = await repo.getIterations(loop.id);
@@ -543,7 +543,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       const loop = createTestLoop();
       await repo.save(loop);
 
-      const updated = { ...loop, currentIteration: 3, consecutiveFailures: 1, updatedAt: new Date() };
+      const updated = { ...loop, currentIteration: 3, consecutiveFailures: 1, updatedAt: Date.now() };
       repo.updateSync(updated);
 
       const found = repo.findByIdSync(loop.id);
@@ -587,7 +587,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
         ...iteration,
         status: 'pass',
         exitCode: 0,
-        completedAt: new Date(),
+        completedAt: Date.now(),
       });
 
       const updated = await repo.getIterations(loop.id);
@@ -605,7 +605,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       await createTaskInRepo(taskId);
 
       const result = db.runInTransaction(() => {
-        const updated = { ...loop, currentIteration: 1, updatedAt: new Date() };
+        const updated = { ...loop, currentIteration: 1, updatedAt: Date.now() };
         repo.updateSync(updated);
         repo.recordIterationSync(createTestIteration(loop.id, 1, { taskId }));
       });
@@ -627,7 +627,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       await repo.save(loop);
 
       const result = db.runInTransaction(() => {
-        const updated = { ...loop, currentIteration: 99, updatedAt: new Date() };
+        const updated = { ...loop, currentIteration: 99, updatedAt: Date.now() };
         repo.updateSync(updated);
         throw new Error('simulated failure');
       });
@@ -721,7 +721,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       for (const status of statuses) {
         const loop = createTestLoop();
         await repo.save(loop);
-        const updated = { ...loop, status, updatedAt: new Date() };
+        const updated = { ...loop, status, updatedAt: Date.now() };
         await repo.update(updated);
 
         const result = await repo.findById(loop.id);

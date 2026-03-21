@@ -584,9 +584,9 @@ export class Database implements TransactionRunner {
               best_score REAL,
               best_iteration_id INTEGER,
               consecutive_failures INTEGER NOT NULL DEFAULT 0,
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL,
-              completed_at TEXT
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              completed_at INTEGER
             )
           `);
 
@@ -603,8 +603,8 @@ export class Database implements TransactionRunner {
               score REAL,
               exit_code INTEGER,
               error_message TEXT,
-              started_at TEXT NOT NULL,
-              completed_at TEXT,
+              started_at INTEGER NOT NULL,
+              completed_at INTEGER,
               UNIQUE(loop_id, iteration_number)
             )
           `);

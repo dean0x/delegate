@@ -228,7 +228,7 @@ export class LoopHandler extends BaseEventHandler {
           status: 'fail',
           exitCode: failedEvent.exitCode,
           errorMessage: failedEvent.error?.message ?? 'Task failed',
-          completedAt: new Date(),
+          completedAt: Date.now(),
         });
 
         // Check maxConsecutiveFailures limit
@@ -286,7 +286,7 @@ export class LoopHandler extends BaseEventHandler {
         await this.loopRepo.updateIteration({
           ...iterationResult.value,
           status: 'cancelled',
-          completedAt: new Date(),
+          completedAt: Date.now(),
         });
         this.cleanupPipelineTasks(loopId, iterationResult.value.iterationNumber);
       }
@@ -318,7 +318,7 @@ export class LoopHandler extends BaseEventHandler {
       // Update loop status to CANCELLED
       const updatedLoop = updateLoop(loop, {
         status: LoopStatus.CANCELLED,
-        completedAt: new Date(),
+        completedAt: Date.now(),
       });
       await this.loopRepo.update(updatedLoop);
 
@@ -344,7 +344,7 @@ export class LoopHandler extends BaseEventHandler {
           await this.loopRepo.updateIteration({
             ...latestIteration,
             status: 'cancelled',
-            completedAt: new Date(),
+            completedAt: Date.now(),
           });
         }
       }
@@ -436,7 +436,7 @@ export class LoopHandler extends BaseEventHandler {
       iterationNumber,
       taskId: task.id,
       status: 'running',
-      startedAt: new Date(),
+      startedAt: Date.now(),
     };
     await this.loopRepo.recordIteration(iteration);
 
@@ -514,7 +514,7 @@ export class LoopHandler extends BaseEventHandler {
         taskId: lastTaskId,
         pipelineTaskIds: allTaskIds,
         status: 'running',
-        startedAt: new Date(),
+        startedAt: Date.now(),
       });
     });
 
@@ -661,7 +661,7 @@ export class LoopHandler extends BaseEventHandler {
         ...iteration,
         status: 'pass',
         exitCode: evalResult.exitCode,
-        completedAt: new Date(),
+        completedAt: Date.now(),
       });
 
       await this.completeLoop(loop, LoopStatus.COMPLETED, 'Exit condition passed');
@@ -676,7 +676,7 @@ export class LoopHandler extends BaseEventHandler {
       status: 'fail',
       exitCode: evalResult.exitCode,
       errorMessage: evalResult.error,
-      completedAt: new Date(),
+      completedAt: Date.now(),
     });
 
     // Emit iteration completed event
@@ -717,7 +717,7 @@ export class LoopHandler extends BaseEventHandler {
         status: 'crash',
         exitCode: evalResult.exitCode,
         errorMessage: evalResult.error,
-        completedAt: new Date(),
+        completedAt: Date.now(),
       });
 
       await this.eventBus.emit('LoopIterationCompleted', {
@@ -745,7 +745,7 @@ export class LoopHandler extends BaseEventHandler {
         status: 'keep',
         score,
         exitCode: evalResult.exitCode,
-        completedAt: new Date(),
+        completedAt: Date.now(),
       });
 
       const updatedLoop = updateLoop(loop, {
@@ -782,7 +782,7 @@ export class LoopHandler extends BaseEventHandler {
         status: 'keep',
         score,
         exitCode: evalResult.exitCode,
-        completedAt: new Date(),
+        completedAt: Date.now(),
       });
 
       const updatedLoop = updateLoop(loop, {
@@ -819,7 +819,7 @@ export class LoopHandler extends BaseEventHandler {
         status: 'discard',
         score,
         exitCode: evalResult.exitCode,
-        completedAt: new Date(),
+        completedAt: Date.now(),
       });
 
       await this.eventBus.emit('LoopIterationCompleted', {
@@ -890,7 +890,7 @@ export class LoopHandler extends BaseEventHandler {
   ): Promise<void> {
     const updatedLoop = updateLoop(loop, {
       status,
-      completedAt: new Date(),
+      completedAt: Date.now(),
       ...extraUpdate,
     });
     await this.loopRepo.update(updatedLoop);
@@ -1100,7 +1100,7 @@ export class LoopHandler extends BaseEventHandler {
             await this.loopRepo.updateIteration({
               ...latestIteration,
               status: 'fail',
-              completedAt: new Date(),
+              completedAt: Date.now(),
             });
 
             if (loop.maxConsecutiveFailures > 0 && newConsecutiveFailures >= loop.maxConsecutiveFailures) {
@@ -1117,7 +1117,7 @@ export class LoopHandler extends BaseEventHandler {
             await this.loopRepo.updateIteration({
               ...latestIteration,
               status: 'cancelled',
-              completedAt: new Date(),
+              completedAt: Date.now(),
             });
           }
         }

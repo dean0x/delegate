@@ -1947,9 +1947,9 @@ export class MCPAdapter {
             freshContext: loop.freshContext,
             promptPreview: truncatePrompt(loop.taskTemplate.prompt, 50),
             workingDirectory: loop.workingDirectory,
-            createdAt: loop.createdAt.toISOString(),
-            updatedAt: loop.updatedAt.toISOString(),
-            completedAt: loop.completedAt?.toISOString() ?? null,
+            createdAt: new Date(loop.createdAt).toISOString(),
+            updatedAt: new Date(loop.updatedAt).toISOString(),
+            completedAt: loop.completedAt ? new Date(loop.completedAt).toISOString() : null,
             ...(loop.pipelineSteps && loop.pipelineSteps.length > 0
               ? {
                   isPipeline: true,
@@ -1970,8 +1970,8 @@ export class MCPAdapter {
             score: iter.score ?? null,
             exitCode: iter.exitCode ?? null,
             errorMessage: iter.errorMessage ?? null,
-            startedAt: iter.startedAt.toISOString(),
-            completedAt: iter.completedAt?.toISOString() ?? null,
+            startedAt: new Date(iter.startedAt).toISOString(),
+            completedAt: iter.completedAt ? new Date(iter.completedAt).toISOString() : null,
           }));
         }
 
@@ -2018,7 +2018,7 @@ export class MCPAdapter {
           maxIterations: l.maxIterations,
           promptPreview: truncatePrompt(l.taskTemplate.prompt, 50),
           isPipeline: !!(l.pipelineSteps && l.pipelineSteps.length > 0),
-          createdAt: l.createdAt.toISOString(),
+          createdAt: new Date(l.createdAt).toISOString(),
         }));
 
         return {
