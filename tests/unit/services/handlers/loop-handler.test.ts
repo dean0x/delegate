@@ -483,6 +483,106 @@ describe('LoopHandler - Behavioral Tests', () => {
       const loopAfterTail = await getLoop(loop.id);
       expect(loopAfterTail!.status).toBe(LoopStatus.COMPLETED);
     });
+
+    it('should fail iteration and cancel remaining tasks when intermediate pipeline task fails', async () => {
+      const loop = await createAndEmitLoop({
+        pipelineSteps: ['lint the code', 'run the tests', 'deploy'],
+        prompt: undefined,
+        maxConsecutiveFailures: 5,
+      });
+
+      const iteration = await getLatestIteration(loop.id);
+      expect(iteration).toBeDefined();
+      const taskIds = iteration!.pipelineTaskIds!;
+      expect(taskIds.length).toBe(3);
+
+      // First (intermediate) task FAILS
+      await eventBus.emit('TaskFailed', {
+        taskId: taskIds[0],
+        error: { message: 'Lint failed', code: 'SYSTEM_ERROR' },
+        exitCode: 1,
+      });
+      await flushEventLoop();
+
+      // Iteration 1 should be marked as 'fail'
+      const allIters = await loopRepo.getIterations(loop.id, 10);
+      expect(allIters.ok).toBe(true);
+      if (!allIters.ok) return;
+      const iter1 = allIters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1!.status).toBe('fail');
+      expect(iter1!.errorMessage).toContain('Pipeline step failed');
+
+      // Loop should still be running (not at max failures) and have started next iteration
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+      expect(updatedLoop!.consecutiveFailures).toBe(1);
+    });
+
+    it('should be no-op when intermediate pipeline task completes successfully', async () => {
+      const loop = await createAndEmitLoop({
+        pipelineSteps: ['lint the code', 'run the tests'],
+        prompt: undefined,
+      });
+
+      const iteration = await getLatestIteration(loop.id);
+      expect(iteration).toBeDefined();
+      const taskIds = iteration!.pipelineTaskIds!;
+
+      // Complete intermediate task — should be a no-op (just cleanup from taskToLoop)
+      await eventBus.emit('TaskCompleted', { taskId: taskIds[0], exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Iteration should still be running
+      const updatedIteration = await getLatestIteration(loop.id);
+      expect(updatedIteration!.status).toBe('running');
+
+      // Loop should still be running, same iteration
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+      expect(updatedLoop!.currentIteration).toBe(1);
+    });
+
+    it('should only process first intermediate failure when concurrent failures occur', async () => {
+      const loop = await createAndEmitLoop({
+        pipelineSteps: ['step1', 'step2', 'step3'],
+        prompt: undefined,
+        maxConsecutiveFailures: 5,
+      });
+
+      const iteration = await getLatestIteration(loop.id);
+      expect(iteration).toBeDefined();
+      const taskIds = iteration!.pipelineTaskIds!;
+
+      // First intermediate task fails
+      await eventBus.emit('TaskFailed', {
+        taskId: taskIds[0],
+        error: { message: 'step1 failed', code: 'SYSTEM_ERROR' },
+        exitCode: 1,
+      });
+      await flushEventLoop();
+
+      // Iteration should be marked as 'fail' (from first failure)
+      const afterFirst = await getLatestIteration(loop.id);
+      // The latest iteration is now iteration 2 (next one started)
+      // We need to check the original iteration
+      const allIters = await loopRepo.getIterations(loop.id, 10);
+      expect(allIters.ok).toBe(true);
+      if (!allIters.ok) return;
+      const iter1 = allIters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1!.status).toBe('fail');
+
+      // Second intermediate task also fails — should be a no-op since iteration is already terminal
+      await eventBus.emit('TaskFailed', {
+        taskId: taskIds[1],
+        error: { message: 'step2 failed', code: 'SYSTEM_ERROR' },
+        exitCode: 1,
+      });
+      await flushEventLoop();
+
+      // consecutiveFailures should still be 1 (only the first failure counted)
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.consecutiveFailures).toBe(1);
+    });
   });
 
   describe('Cooldown', () => {

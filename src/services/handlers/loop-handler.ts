@@ -208,11 +208,12 @@ export class LoopHandler extends BaseEventHandler {
         return ok(undefined);
       }
 
-      // Get the iteration record for this task
+      // Get the iteration record for this task (only matches if this is the tail task)
       const iterationResult = await this.loopRepo.findIterationByTaskId(taskId);
       if (!iterationResult.ok || !iterationResult.value) {
-        this.logger.error('Iteration not found for terminal task', undefined, { taskId, loopId });
-        return ok(undefined);
+        // Not the tail task — check if it's a non-tail pipeline intermediate task
+        const intermediateResult = await this.handlePipelineIntermediateTask(event, taskId, loop);
+        return intermediateResult;
       }
 
       const iteration = iterationResult.value;
@@ -251,7 +252,8 @@ export class LoopHandler extends BaseEventHandler {
           await this.scheduleNextIteration(updatedLoop);
         }
 
-        // Clean up tracking
+        // Clean up all pipeline task tracking for this iteration
+        this.cleanupPipelineTaskTracking(iteration);
         this.taskToLoop.delete(taskId);
         this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
         return ok(undefined);
@@ -262,7 +264,8 @@ export class LoopHandler extends BaseEventHandler {
 
       await this.handleIterationResult(loop, iteration, evalResult);
 
-      // Clean up tracking
+      // Clean up all pipeline task tracking for this iteration
+      this.cleanupPipelineTaskTracking(iteration);
       this.taskToLoop.delete(taskId);
       this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
 
@@ -481,7 +484,7 @@ export class LoopHandler extends BaseEventHandler {
    * Start a pipeline iteration
    * ARCHITECTURE: Replicates ScheduleHandler.handlePipelineTrigger() pattern
    * Pre-creates N task objects with linear dependsOn chain, saves atomically,
-   * emits TaskDelegated for each, tracks only TAIL task in taskToLoop (R4)
+   * emits TaskDelegated for each, tracks ALL tasks in taskToLoop for intermediate failure handling
    */
   private async startPipelineIteration(loop: Loop, iterationNumber: number): Promise<void> {
     const loopId = loop.id;
@@ -543,8 +546,10 @@ export class LoopHandler extends BaseEventHandler {
       return;
     }
 
-    // Track TAIL task only in taskToLoop (R4)
-    this.taskToLoop.set(lastTaskId, loopId);
+    // Track ALL pipeline tasks in taskToLoop for intermediate failure handling
+    for (const t of tasks) {
+      this.taskToLoop.set(t.id, loopId);
+    }
 
     // Track all pipeline tasks for cleanup
     const pipelineKey = `${loopId}:${iterationNumber}`;
@@ -990,6 +995,135 @@ export class LoopHandler extends BaseEventHandler {
   }
 
   /**
+   * Handle a non-tail pipeline task terminal event
+   * ARCHITECTURE: Intermediate task completion is a no-op; intermediate failure cancels remaining tasks
+   * and fails the iteration to prevent the loop from getting stuck
+   */
+  private async handlePipelineIntermediateTask(
+    event: TaskCompletedEvent | TaskFailedEvent,
+    taskId: TaskId,
+    loop: Loop,
+  ): Promise<Result<void>> {
+    const loopId = loop.id;
+
+    // Get the latest iteration for this loop to verify this is indeed a pipeline intermediate task
+    const iterationsResult = await this.loopRepo.getIterations(loopId, 1);
+    if (!iterationsResult.ok || iterationsResult.value.length === 0) {
+      this.taskToLoop.delete(taskId);
+      return ok(undefined);
+    }
+
+    const iteration = iterationsResult.value[0];
+
+    // Verify: must be a pipeline iteration with this taskId in pipelineTaskIds but NOT the tail task
+    if (!iteration.pipelineTaskIds || !iteration.pipelineTaskIds.includes(taskId) || iteration.taskId === taskId) {
+      this.logger.error('Iteration not found for terminal task', undefined, { taskId, loopId });
+      this.taskToLoop.delete(taskId);
+      return ok(undefined);
+    }
+
+    // Intermediate task completed successfully — just clean up tracking, no-op
+    if (event.type === 'TaskCompleted') {
+      this.logger.debug('Pipeline intermediate task completed', { taskId, loopId });
+      this.taskToLoop.delete(taskId);
+      return ok(undefined);
+    }
+
+    // Intermediate task FAILED — concurrent failure guard: only process if iteration is still running
+    if (iteration.status !== 'running') {
+      this.logger.debug('Pipeline iteration already terminal, ignoring intermediate failure', {
+        taskId,
+        loopId,
+        iterationStatus: iteration.status,
+      });
+      this.taskToLoop.delete(taskId);
+      return ok(undefined);
+    }
+
+    // Cancel remaining pipeline tasks
+    const failedEvent = event as TaskFailedEvent;
+    this.logger.info('Pipeline intermediate task failed, failing iteration', {
+      taskId,
+      loopId,
+      iterationNumber: iteration.iterationNumber,
+    });
+
+    await this.cancelRemainingPipelineTasks(iteration.pipelineTaskIds, taskId, loopId);
+
+    // Mark iteration as failed
+    await this.loopRepo.updateIteration({
+      ...iteration,
+      status: 'fail',
+      exitCode: failedEvent.exitCode,
+      errorMessage: `Pipeline step failed: ${failedEvent.error?.message ?? 'Task failed'}`,
+      completedAt: Date.now(),
+    });
+
+    // Increment consecutive failures and check limits
+    const newConsecutiveFailures = loop.consecutiveFailures + 1;
+
+    if (loop.maxConsecutiveFailures > 0 && newConsecutiveFailures >= loop.maxConsecutiveFailures) {
+      await this.completeLoop(loop, LoopStatus.FAILED, 'Max consecutive failures reached', {
+        consecutiveFailures: newConsecutiveFailures,
+      });
+    } else {
+      const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
+      await this.loopRepo.update(updatedLoop);
+      await this.scheduleNextIteration(updatedLoop);
+    }
+
+    // Clean up all pipeline task tracking
+    this.cleanupPipelineTaskTracking(iteration);
+    this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
+
+    return ok(undefined);
+  }
+
+  /**
+   * Cancel remaining pipeline tasks after an intermediate step failure
+   * Emits TaskCancellationRequested for each non-terminal pipeline task except the failed one
+   */
+  private async cancelRemainingPipelineTasks(
+    pipelineTaskIds: readonly TaskId[],
+    failedTaskId: TaskId,
+    loopId: string,
+  ): Promise<void> {
+    for (const ptId of pipelineTaskIds) {
+      if (ptId === failedTaskId) continue;
+
+      // Check if task is still running before cancelling
+      const taskResult = await this.taskRepo.findById(ptId);
+      if (!taskResult.ok || !taskResult.value) continue;
+      if (isTerminalState(taskResult.value.status)) continue;
+
+      const cancelResult = await this.eventBus.emit('TaskCancellationRequested', {
+        taskId: ptId,
+        reason: `Pipeline step ${failedTaskId} failed in loop ${loopId}`,
+      });
+      if (!cancelResult.ok) {
+        this.logger.warn('Failed to cancel pipeline task', {
+          taskId: ptId,
+          loopId,
+          error: cancelResult.error.message,
+        });
+      }
+
+      this.taskToLoop.delete(ptId);
+    }
+  }
+
+  /**
+   * Clean up all pipeline task entries from taskToLoop for a completed/failed iteration
+   */
+  private cleanupPipelineTaskTracking(iteration: LoopIteration): void {
+    if (iteration.pipelineTaskIds) {
+      for (const ptId of iteration.pipelineTaskIds) {
+        this.taskToLoop.delete(ptId);
+      }
+    }
+  }
+
+  /**
    * Clean up pipeline task entries for a completed iteration
    */
   private cleanupPipelineTasks(loopId: string, iterationNumber: number): void {
@@ -1016,12 +1150,16 @@ export class LoopHandler extends BaseEventHandler {
     for (const iteration of runningResult.value) {
       // Skip iterations with cleaned-up tasks (ON DELETE SET NULL)
       if (!iteration.taskId) continue;
-      this.taskToLoop.set(iteration.taskId, iteration.loopId);
 
-      // Rebuild pipeline task entries
+      // Register ALL pipeline task IDs in taskToLoop for intermediate failure handling
       if (iteration.pipelineTaskIds && iteration.pipelineTaskIds.length > 0) {
+        for (const ptId of iteration.pipelineTaskIds) {
+          this.taskToLoop.set(ptId, iteration.loopId);
+        }
         const key = `${iteration.loopId}:${iteration.iterationNumber}`;
         this.pipelineTasks.set(key, new Set(iteration.pipelineTaskIds));
+      } else {
+        this.taskToLoop.set(iteration.taskId, iteration.loopId);
       }
     }
 
