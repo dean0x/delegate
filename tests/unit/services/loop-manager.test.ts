@@ -158,9 +158,7 @@ describe('LoopManagerService - Unit Tests', () => {
     });
 
     it('should return error when evalDirection provided with retry strategy', async () => {
-      const result = await service.createLoop(
-        retryRequest({ evalDirection: OptimizeDirection.MAXIMIZE }),
-      );
+      const result = await service.createLoop(retryRequest({ evalDirection: OptimizeDirection.MAXIMIZE }));
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
@@ -184,9 +182,7 @@ describe('LoopManagerService - Unit Tests', () => {
     });
 
     it('should return error when pipelineSteps has fewer than 2 steps', async () => {
-      const result = await service.createLoop(
-        retryRequest({ pipelineSteps: ['only one step'] }),
-      );
+      const result = await service.createLoop(retryRequest({ pipelineSteps: ['only one step'] }));
 
       expect(result.ok).toBe(false);
       if (result.ok) return;

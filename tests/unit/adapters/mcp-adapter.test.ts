@@ -782,7 +782,14 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
   describe('ListAgents tool', () => {
     it('should return agent list without registry', () => {
       // Adapter created without agentRegistry
-      const adapterNoRegistry = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, stubLoopService, undefined, testConfig);
+      const adapterNoRegistry = new MCPAdapter(
+        mockTaskManager,
+        mockLogger,
+        stubScheduleService,
+        stubLoopService,
+        undefined,
+        testConfig,
+      );
       // The handleListAgents is private, so we verify via schema/tool listing
       // This is a structural test — actual handler is tested via integration
       expect(adapterNoRegistry).toBeTruthy();
@@ -815,7 +822,14 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
     it('should exist as a constructable adapter method', () => {
       // ConfigureAgent is exposed via MCP tool registration
       // Structural test — actual handler is private
-      const adapterInstance = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, stubLoopService, undefined, testConfig);
+      const adapterInstance = new MCPAdapter(
+        mockTaskManager,
+        mockLogger,
+        stubScheduleService,
+        stubLoopService,
+        undefined,
+        testConfig,
+      );
       expect(adapterInstance).toBeTruthy();
       expect(adapterInstance.getServer()).toBeTruthy();
     });

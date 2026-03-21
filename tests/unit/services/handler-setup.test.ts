@@ -14,8 +14,8 @@ import { InMemoryAgentRegistry } from '../../../src/implementations/agent-regist
 import { SQLiteCheckpointRepository } from '../../../src/implementations/checkpoint-repository';
 import { Database } from '../../../src/implementations/database';
 import { SQLiteDependencyRepository } from '../../../src/implementations/dependency-repository';
-import { SQLiteLoopRepository } from '../../../src/implementations/loop-repository';
 import { EventDrivenWorkerPool } from '../../../src/implementations/event-driven-worker-pool';
+import { SQLiteLoopRepository } from '../../../src/implementations/loop-repository';
 import { BufferedOutputCapture } from '../../../src/implementations/output-capture';
 import { ProcessSpawnerAdapter } from '../../../src/implementations/process-spawner-adapter';
 import { SystemResourceMonitor } from '../../../src/implementations/resource-monitor';

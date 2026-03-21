@@ -17,12 +17,7 @@ import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  LoopId,
-  LoopStatus,
-  LoopStrategy,
-  OptimizeDirection,
-} from '../../src/core/domain.js';
+import { LoopId, LoopStatus, LoopStrategy, OptimizeDirection } from '../../src/core/domain.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { Database } from '../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../src/implementations/loop-repository.js';

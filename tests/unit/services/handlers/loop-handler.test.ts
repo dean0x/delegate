@@ -21,6 +21,7 @@ import {
   TaskId,
   TaskStatus,
 } from '../../../../src/core/domain.js';
+import { InMemoryEventBus } from '../../../../src/core/events/event-bus.js';
 import { Database } from '../../../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../../../src/implementations/loop-repository.js';
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository.js';
@@ -28,7 +29,6 @@ import { LoopHandler } from '../../../../src/services/handlers/loop-handler.js';
 import { createTestConfiguration } from '../../../fixtures/factories.js';
 import { TestLogger } from '../../../fixtures/test-doubles.js';
 import { flushEventLoop } from '../../../utils/event-helpers.js';
-import { InMemoryEventBus } from '../../../../src/core/events/event-bus.js';
 
 // Mock child_process.execSync for exit condition evaluation
 vi.mock('child_process', () => ({
@@ -79,14 +79,7 @@ describe('LoopHandler - Behavioral Tests', () => {
     // Reset execSync mock
     vi.mocked(execSync).mockReset();
 
-    const handlerResult = await LoopHandler.create(
-      loopRepo,
-      taskRepo,
-      mockCheckpointRepo,
-      eventBus,
-      database,
-      logger,
-    );
+    const handlerResult = await LoopHandler.create(loopRepo, taskRepo, mockCheckpointRepo, eventBus, database, logger);
     if (!handlerResult.ok) {
       throw new Error(`Failed to create LoopHandler: ${handlerResult.error.message}`);
     }
@@ -321,7 +314,7 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(iters.ok).toBe(true);
       if (!iters.ok) return;
       // Find iteration 1 (latest is at index 0 if only 1, or we need to look by number)
-      const iter1 = iters.value.find(i => i.iterationNumber === 1);
+      const iter1 = iters.value.find((i) => i.iterationNumber === 1);
       expect(iter1).toBeDefined();
       expect(iter1!.status).toBe('keep');
       expect(iter1!.score).toBe(42.5);
@@ -381,7 +374,7 @@ describe('LoopHandler - Behavioral Tests', () => {
       const iters = await loopRepo.getIterations(loop.id);
       expect(iters.ok).toBe(true);
       if (!iters.ok) return;
-      const iter2 = iters.value.find(i => i.iterationNumber === 2);
+      const iter2 = iters.value.find((i) => i.iterationNumber === 2);
       expect(iter2!.status).toBe('discard');
     });
 
@@ -403,7 +396,7 @@ describe('LoopHandler - Behavioral Tests', () => {
       const iters = await loopRepo.getIterations(loop.id);
       expect(iters.ok).toBe(true);
       if (!iters.ok) return;
-      const iter1 = iters.value.find(i => i.iterationNumber === 1);
+      const iter1 = iters.value.find((i) => i.iterationNumber === 1);
       expect(iter1!.status).toBe('crash');
     });
 

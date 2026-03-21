@@ -60,7 +60,11 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
   }
 
   // Helper to create a loop iteration (must call createTaskInRepo first for taskId)
-  function createTestIteration(loopId: LoopId, iterationNumber: number, overrides: Partial<LoopIteration> = {}): LoopIteration {
+  function createTestIteration(
+    loopId: LoopId,
+    iterationNumber: number,
+    overrides: Partial<LoopIteration> = {},
+  ): LoopIteration {
     return {
       id: 0, // Auto-increment
       loopId,
@@ -73,7 +77,11 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
   }
 
   // Helper: create task in repo, then record iteration
-  async function saveIteration(loopId: LoopId, iterationNumber: number, overrides: Partial<LoopIteration> = {}): Promise<void> {
+  async function saveIteration(
+    loopId: LoopId,
+    iterationNumber: number,
+    overrides: Partial<LoopIteration> = {},
+  ): Promise<void> {
     const iteration = createTestIteration(loopId, iterationNumber, overrides);
     await createTaskInRepo(iteration.taskId);
     await repo.recordIteration(iteration);
@@ -195,7 +203,12 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       await repo.save(completed);
 
       // Complete the second loop
-      const updatedCompleted = { ...completed, status: LoopStatus.COMPLETED, completedAt: new Date(), updatedAt: new Date() };
+      const updatedCompleted = {
+        ...completed,
+        status: LoopStatus.COMPLETED,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      };
       await repo.update(updatedCompleted);
 
       const result = await repo.findByStatus(LoopStatus.RUNNING);
@@ -703,12 +716,7 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
 
   describe('LoopStatus mapping', () => {
     it('should correctly map all status values', async () => {
-      const statuses = [
-        LoopStatus.RUNNING,
-        LoopStatus.COMPLETED,
-        LoopStatus.FAILED,
-        LoopStatus.CANCELLED,
-      ];
+      const statuses = [LoopStatus.RUNNING, LoopStatus.COMPLETED, LoopStatus.FAILED, LoopStatus.CANCELLED];
 
       for (const status of statuses) {
         const loop = createTestLoop();
