@@ -33,6 +33,7 @@ describe('ReadOnlyContext', () => {
     expect(ctx.taskRepository).toBeDefined();
     expect(ctx.outputRepository).toBeDefined();
     expect(ctx.scheduleRepository).toBeDefined();
+    expect(ctx.loopRepository).toBeDefined();
     expect(ctx.close).toBeInstanceOf(Function);
 
     ctx.close();
@@ -107,6 +108,12 @@ describe('ReadOnlyContext', () => {
     expect(schedResult.ok).toBe(true);
     if (!schedResult.ok) return;
     expect(schedResult.value.length).toBe(0);
+
+    // Query loops (none stored yet)
+    const loopResult = await ctx.loopRepository.findAll();
+    expect(loopResult.ok).toBe(true);
+    if (!loopResult.ok) return;
+    expect(loopResult.value.length).toBe(0);
 
     ctx.close();
   });

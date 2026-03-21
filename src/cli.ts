@@ -19,6 +19,7 @@ import { showHelp } from './cli/commands/help.js';
 import { initCommand } from './cli/commands/init.js';
 import { getTaskLogs } from './cli/commands/logs.js';
 import { handleMcpStart, handleMcpTest, showConfig } from './cli/commands/mcp.js';
+import { handleLoopCommand } from './cli/commands/loop.js';
 import { handlePipelineCommand } from './cli/commands/pipeline.js';
 import { handleResumeCommand } from './cli/commands/resume.js';
 import { retryTask } from './cli/commands/retry.js';
@@ -249,6 +250,8 @@ if (mainCommand === 'mcp') {
   await handleScheduleCommand(subCommand, args.slice(2));
 } else if (mainCommand === 'pipeline') {
   await handlePipelineCommand(args.slice(1));
+} else if (mainCommand === 'loop') {
+  await handleLoopCommand(subCommand, args.slice(2));
 } else if (mainCommand === 'agents') {
   if (subCommand === 'list' || !subCommand) {
     await listAgents();

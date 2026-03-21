@@ -1,0 +1,399 @@
+import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
+import { LoopId, LoopStatus, LoopStrategy, OptimizeDirection, Priority } from '../../core/domain.js';
+import type { LoopRepository, LoopService } from '../../core/interfaces.js';
+import { truncatePrompt } from '../../utils/format.js';
+import { validatePath } from '../../utils/validation.js';
+import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../services.js';
+import * as ui from '../ui.js';
+
+export async function handleLoopCommand(subCmd: string | undefined, loopArgs: string[]): Promise<void> {
+  // Subcommand routing
+  if (subCmd === 'list') {
+    await handleLoopList(loopArgs);
+    return;
+  }
+
+  if (subCmd === 'get') {
+    await handleLoopGet(loopArgs);
+    return;
+  }
+
+  if (subCmd === 'cancel') {
+    await handleLoopCancel(loopArgs);
+    return;
+  }
+
+  // Default: create a loop (subCmd is the first word of the prompt or a flag)
+  // Re-insert subCmd back into args for prompt parsing
+  const createArgs = subCmd ? [subCmd, ...loopArgs] : loopArgs;
+  await handleLoopCreate(createArgs);
+}
+
+// ============================================================================
+// Loop create — full bootstrap with event bus
+// ============================================================================
+
+async function handleLoopCreate(loopArgs: string[]): Promise<void> {
+  let promptWords: string[] = [];
+  let untilCmd: string | undefined;
+  let evalCmd: string | undefined;
+  let direction: 'minimize' | 'maximize' | undefined;
+  let maxIterations: number | undefined;
+  let maxFailures: number | undefined;
+  let cooldown: number | undefined;
+  let evalTimeout: number | undefined;
+  let continueContext = false;
+  let isPipeline = false;
+  const pipelineSteps: string[] = [];
+  let priority: 'P0' | 'P1' | 'P2' | undefined;
+  let workingDirectory: string | undefined;
+  let agent: AgentProvider | undefined;
+
+  for (let i = 0; i < loopArgs.length; i++) {
+    const arg = loopArgs[i];
+    const next = loopArgs[i + 1];
+
+    if (arg === '--until' && next) {
+      untilCmd = next;
+      i++;
+    } else if (arg === '--eval' && next) {
+      evalCmd = next;
+      i++;
+    } else if (arg === '--direction' && next) {
+      if (next !== 'minimize' && next !== 'maximize') {
+        ui.error('--direction must be "minimize" or "maximize"');
+        process.exit(1);
+      }
+      direction = next;
+      i++;
+    } else if (arg === '--max-iterations' && next) {
+      maxIterations = parseInt(next);
+      if (isNaN(maxIterations) || maxIterations < 0) {
+        ui.error('--max-iterations must be >= 0 (0 = unlimited)');
+        process.exit(1);
+      }
+      i++;
+    } else if (arg === '--max-failures' && next) {
+      maxFailures = parseInt(next);
+      if (isNaN(maxFailures) || maxFailures < 0) {
+        ui.error('--max-failures must be >= 0');
+        process.exit(1);
+      }
+      i++;
+    } else if (arg === '--cooldown' && next) {
+      cooldown = parseInt(next);
+      if (isNaN(cooldown) || cooldown < 0) {
+        ui.error('--cooldown must be >= 0 (ms)');
+        process.exit(1);
+      }
+      i++;
+    } else if (arg === '--eval-timeout' && next) {
+      evalTimeout = parseInt(next);
+      if (isNaN(evalTimeout) || evalTimeout < 1000) {
+        ui.error('--eval-timeout must be >= 1000 (ms)');
+        process.exit(1);
+      }
+      i++;
+    } else if (arg === '--continue-context') {
+      continueContext = true;
+    } else if (arg === '--pipeline') {
+      isPipeline = true;
+    } else if (arg === '--step' && next) {
+      pipelineSteps.push(next);
+      i++;
+    } else if ((arg === '--priority' || arg === '-p') && next) {
+      if (!['P0', 'P1', 'P2'].includes(next)) {
+        ui.error('Priority must be P0, P1, or P2');
+        process.exit(1);
+      }
+      priority = next as 'P0' | 'P1' | 'P2';
+      i++;
+    } else if ((arg === '--working-directory' || arg === '-w') && next) {
+      const pathResult = validatePath(next);
+      if (!pathResult.ok) {
+        ui.error(`Invalid working directory: ${pathResult.error.message}`);
+        process.exit(1);
+      }
+      workingDirectory = pathResult.value;
+      i++;
+    } else if ((arg === '--agent' || arg === '-a') && next) {
+      if (!next || next.startsWith('-')) {
+        ui.error(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
+        process.exit(1);
+      }
+      if (!isAgentProvider(next)) {
+        ui.error(`Unknown agent: "${next}". Available agents: ${AGENT_PROVIDERS.join(', ')}`);
+        process.exit(1);
+      }
+      agent = next;
+      i++;
+    } else if (arg.startsWith('-')) {
+      ui.error(`Unknown flag: ${arg}`);
+      process.exit(1);
+    } else {
+      promptWords.push(arg);
+    }
+  }
+
+  // Strategy inference from flags
+  if (untilCmd && evalCmd) {
+    ui.error('Cannot specify both --until and --eval. Use --until for retry strategy, --eval for optimize strategy.');
+    process.exit(1);
+  }
+  if (!untilCmd && !evalCmd) {
+    ui.error('Provide --until <cmd> for retry strategy or --eval <cmd> --direction minimize|maximize for optimize strategy.');
+    process.exit(1);
+  }
+
+  const isOptimize = !!evalCmd;
+  // Non-null assertions safe: we validated above that exactly one of untilCmd/evalCmd is set
+  const exitCondition = isOptimize ? evalCmd! : untilCmd!;
+
+  // Validate direction for optimize
+  if (isOptimize && !direction) {
+    ui.error('--direction minimize|maximize is required with --eval (optimize strategy)');
+    process.exit(1);
+  }
+  if (!isOptimize && direction) {
+    ui.error('--direction is only valid with --eval (optimize strategy)');
+    process.exit(1);
+  }
+
+  // Pipeline mode
+  if (isPipeline) {
+    if (promptWords.length > 0) {
+      ui.info(`Ignoring positional prompt text in --pipeline mode: "${promptWords.join(' ')}". Use --step flags only.`);
+    }
+    if (pipelineSteps.length < 2) {
+      ui.error('Pipeline requires at least 2 --step flags');
+      process.exit(1);
+    }
+  } else if (pipelineSteps.length > 0) {
+    ui.error('--step requires --pipeline. Did you mean: beat loop --pipeline --step "..." --step "..." --until "..."');
+    process.exit(1);
+  }
+
+  // Non-pipeline mode: prompt is required
+  const prompt = promptWords.join(' ');
+  if (!isPipeline && !prompt) {
+    ui.error('Usage: beat loop <prompt> --until <cmd> [options]');
+    ui.info('  Optimize: beat loop <prompt> --eval <cmd> --direction minimize|maximize');
+    ui.info('  Pipeline: beat loop --pipeline --step "..." --step "..." --until <cmd>');
+    process.exit(1);
+  }
+
+  const s = ui.createSpinner();
+  s.start('Creating loop...');
+  const { loopService } = await withServices(s);
+
+  const result = await loopService.createLoop({
+    prompt: isPipeline ? undefined : prompt,
+    strategy: isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
+    exitCondition,
+    evalDirection: direction === 'minimize' ? OptimizeDirection.MINIMIZE : direction === 'maximize' ? OptimizeDirection.MAXIMIZE : undefined,
+    evalTimeout,
+    workingDirectory,
+    maxIterations,
+    maxConsecutiveFailures: maxFailures,
+    cooldownMs: cooldown,
+    freshContext: !continueContext,
+    pipelineSteps: isPipeline ? pipelineSteps : undefined,
+    priority: priority ? Priority[priority] : undefined,
+    agent,
+  });
+
+  const loop = exitOnError(result, s, 'Failed to create loop');
+  s.stop('Loop created');
+
+  ui.success(`Loop created: ${loop.id}`);
+  const details = [
+    `Strategy: ${loop.strategy}`,
+    `Status: ${loop.status}`,
+    `Max iterations: ${loop.maxIterations === 0 ? 'unlimited' : loop.maxIterations}`,
+  ];
+  if (loop.pipelineSteps && loop.pipelineSteps.length > 0) {
+    details.push(`Pipeline steps: ${loop.pipelineSteps.length}`);
+  }
+  if (agent) details.push(`Agent: ${agent}`);
+  ui.info(details.join(' | '));
+  process.exit(0);
+}
+
+// ============================================================================
+// Loop list — read-only context
+// ============================================================================
+
+async function handleLoopList(loopArgs: string[]): Promise<void> {
+  let status: string | undefined;
+  let limit: number | undefined;
+
+  for (let i = 0; i < loopArgs.length; i++) {
+    const arg = loopArgs[i];
+    const next = loopArgs[i + 1];
+
+    if (arg === '--status' && next) {
+      status = next;
+      i++;
+    } else if (arg === '--limit' && next) {
+      limit = parseInt(next);
+      i++;
+    }
+  }
+
+  const validStatuses = Object.values(LoopStatus);
+
+  let statusValue: LoopStatus | undefined;
+  if (status) {
+    const normalized = status.toLowerCase();
+    statusValue = validStatuses.find((v) => v === normalized);
+    if (!statusValue) {
+      ui.error(`Invalid status: ${status}. Valid values: ${validStatuses.join(', ')}`);
+      process.exit(1);
+    }
+  }
+
+  const s = ui.createSpinner();
+  s.start('Fetching loops...');
+  const ctx = withReadOnlyContext(s);
+  s.stop('Ready');
+
+  try {
+    const result = statusValue
+      ? await ctx.loopRepository.findByStatus(statusValue, limit)
+      : await ctx.loopRepository.findAll(limit);
+    const loops = exitOnError(result, undefined, 'Failed to list loops');
+
+    if (loops.length === 0) {
+      ui.info('No loops found');
+    } else {
+      for (const l of loops) {
+        const prompt = truncatePrompt(l.taskTemplate.prompt || `Pipeline (${l.pipelineSteps?.length ?? 0} steps)`, 50);
+        ui.step(
+          `${ui.dim(l.id)}  ${ui.colorStatus(l.status.padEnd(10))}  ${l.strategy}  iter: ${l.currentIteration}${l.maxIterations > 0 ? '/' + l.maxIterations : ''}  ${prompt}`,
+        );
+      }
+      ui.info(`${loops.length} loop${loops.length === 1 ? '' : 's'}`);
+    }
+  } finally {
+    ctx.close();
+  }
+  process.exit(0);
+}
+
+// ============================================================================
+// Loop get — read-only context
+// ============================================================================
+
+async function handleLoopGet(loopArgs: string[]): Promise<void> {
+  const loopId = loopArgs[0];
+  if (!loopId) {
+    ui.error('Usage: beat loop get <loop-id> [--history] [--history-limit N]');
+    process.exit(1);
+  }
+
+  const includeHistory = loopArgs.includes('--history');
+  let historyLimit: number | undefined;
+  const hlIdx = loopArgs.indexOf('--history-limit');
+  if (hlIdx !== -1 && loopArgs[hlIdx + 1]) {
+    historyLimit = parseInt(loopArgs[hlIdx + 1]);
+  }
+
+  const s = ui.createSpinner();
+  s.start('Fetching loop...');
+  const ctx = withReadOnlyContext(s);
+  s.stop('Ready');
+
+  try {
+    const loopResult = await ctx.loopRepository.findById(LoopId(loopId));
+    const found = exitOnError(loopResult, undefined, 'Failed to get loop');
+    const loop = exitOnNull(found, undefined, `Loop ${loopId} not found`);
+
+    const lines: string[] = [];
+    lines.push(`ID:            ${loop.id}`);
+    lines.push(`Status:        ${ui.colorStatus(loop.status)}`);
+    lines.push(`Strategy:      ${loop.strategy}`);
+    lines.push(`Iteration:     ${loop.currentIteration}${loop.maxIterations > 0 ? '/' + loop.maxIterations : ''}`);
+    lines.push(`Failures:      ${loop.consecutiveFailures}/${loop.maxConsecutiveFailures}`);
+    if (loop.bestScore !== undefined) lines.push(`Best Score:    ${loop.bestScore}`);
+    if (loop.evalDirection) lines.push(`Direction:     ${loop.evalDirection}`);
+    lines.push(`Exit Cond:     ${loop.exitCondition}`);
+    lines.push(`Cooldown:      ${loop.cooldownMs}ms`);
+    lines.push(`Fresh Context: ${loop.freshContext}`);
+    lines.push(`Working Dir:   ${loop.workingDirectory}`);
+    lines.push(`Created:       ${loop.createdAt.toISOString()}`);
+    if (loop.completedAt) lines.push(`Completed:     ${loop.completedAt.toISOString()}`);
+
+    const promptDisplay = loop.taskTemplate.prompt
+      ? truncatePrompt(loop.taskTemplate.prompt, 100)
+      : `Pipeline (${loop.pipelineSteps?.length ?? 0} steps)`;
+    lines.push(`Prompt:        ${promptDisplay}`);
+    if (loop.taskTemplate.agent) lines.push(`Agent:         ${loop.taskTemplate.agent}`);
+
+    if (loop.pipelineSteps && loop.pipelineSteps.length > 0) {
+      lines.push(`Pipeline:      ${loop.pipelineSteps.length} steps`);
+      for (let i = 0; i < loop.pipelineSteps.length; i++) {
+        lines.push(`  Step ${i + 1}: ${truncatePrompt(loop.pipelineSteps[i], 60)}`);
+      }
+    }
+
+    ui.note(lines.join('\n'), 'Loop Details');
+
+    if (includeHistory) {
+      const iterationsResult = await ctx.loopRepository.getIterations(LoopId(loopId), historyLimit);
+      const iterations = exitOnError(iterationsResult, undefined, 'Failed to fetch iteration history');
+
+      if (iterations.length > 0) {
+        ui.step(`Iteration History (${iterations.length} entries)`);
+        for (const iter of iterations) {
+          const score = iter.score !== undefined ? ` | score: ${iter.score}` : '';
+          const task = iter.taskId ? ` | task: ${iter.taskId}` : '';
+          const error = iter.errorMessage ? ` | error: ${iter.errorMessage}` : '';
+          process.stderr.write(
+            `  #${iter.iterationNumber} ${ui.colorStatus(iter.status)}${score}${task}${error}\n`,
+          );
+        }
+      } else {
+        ui.info('No iterations yet');
+      }
+    }
+  } finally {
+    ctx.close();
+  }
+  process.exit(0);
+}
+
+// ============================================================================
+// Loop cancel — full bootstrap
+// ============================================================================
+
+async function handleLoopCancel(loopArgs: string[]): Promise<void> {
+  let cancelTasks = false;
+  const filteredArgs: string[] = [];
+
+  for (const arg of loopArgs) {
+    if (arg === '--cancel-tasks') {
+      cancelTasks = true;
+    } else {
+      filteredArgs.push(arg);
+    }
+  }
+
+  const loopId = filteredArgs[0];
+  if (!loopId) {
+    ui.error('Usage: beat loop cancel <loop-id> [--cancel-tasks] [reason]');
+    process.exit(1);
+  }
+  const reason = filteredArgs.slice(1).join(' ') || undefined;
+
+  const s = ui.createSpinner();
+  s.start('Cancelling loop...');
+  const { loopService } = await withServices(s);
+  s.stop('Ready');
+
+  const result = await loopService.cancelLoop(LoopId(loopId), reason, cancelTasks);
+  exitOnError(result, undefined, 'Failed to cancel loop');
+  ui.success(`Loop ${loopId} cancelled`);
+  if (cancelTasks) ui.info('In-flight tasks also cancelled');
+  if (reason) ui.info(`Reason: ${reason}`);
+  process.exit(0);
+}

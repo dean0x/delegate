@@ -77,6 +77,22 @@ ${bold('Pipeline Commands:')}
   ${cyan('pipeline')} <prompt> [<prompt>]...   Create chained one-time schedules
     Example: pipeline "set up db" "run migrations" "seed data"
 
+${bold('Loop Commands:')}
+  ${cyan('loop')} <prompt> --until <cmd>           Retry loop (run until exit condition passes)
+  ${cyan('loop')} <prompt> --eval <cmd> --direction minimize|maximize
+                                         Optimize loop (minimize/maximize a score)
+  ${cyan('loop')} --pipeline --step "..." --step "..." --until <cmd>
+                                         Pipeline loop (multi-step iterations)
+    --max-iterations N                   Max iterations (0 = unlimited, default: 10)
+    --max-failures N                     Max consecutive failures (default: 3)
+    --cooldown N                         Cooldown between iterations in ms (default: 0)
+    --eval-timeout N                     Eval script timeout in ms (default: 60000)
+    --continue-context                   Continue from checkpoint (default: fresh context)
+
+  ${cyan('loop list')} [--status running|completed|failed|cancelled]
+  ${cyan('loop get')} <loop-id> [--history] [--history-limit N]
+  ${cyan('loop cancel')} <loop-id> [--cancel-tasks] [reason]
+
 ${bold('Configuration:')}
   ${cyan('config show')}                Show current configuration (resolved values)
   ${cyan('config set')} <key> <value>   Set a config value (persisted to ~/.backbeat/config.json)
