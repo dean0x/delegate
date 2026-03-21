@@ -324,11 +324,9 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     // Cleanup previous handlers on failure
     await registry.shutdown();
     return err(
-      new BackbeatError(
-        ErrorCode.SYSTEM_ERROR,
-        `Failed to create LoopHandler: ${loopHandlerResult.error.message}`,
-        { error: loopHandlerResult.error },
-      ),
+      new BackbeatError(ErrorCode.SYSTEM_ERROR, `Failed to create LoopHandler: ${loopHandlerResult.error.message}`, {
+        error: loopHandlerResult.error,
+      }),
     );
   }
 

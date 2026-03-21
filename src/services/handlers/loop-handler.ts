@@ -939,9 +939,13 @@ export class LoopHandler extends BaseEventHandler {
 
       const timer = setTimeout(() => {
         this.startNextIteration(loop).catch((error) => {
-          this.logger.error('Failed to start next iteration after cooldown', error instanceof Error ? error : undefined, {
-            loopId: loop.id,
-          });
+          this.logger.error(
+            'Failed to start next iteration after cooldown',
+            error instanceof Error ? error : undefined,
+            {
+              loopId: loop.id,
+            },
+          );
         });
       }, loop.cooldownMs);
 

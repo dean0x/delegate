@@ -81,6 +81,7 @@ import { SQLiteDependencyRepository } from './implementations/dependency-reposit
 import { EventDrivenWorkerPool } from './implementations/event-driven-worker-pool.js';
 import { GeminiAdapter } from './implementations/gemini-adapter.js';
 import { ConsoleLogger, LogLevel, StructuredLogger } from './implementations/logger.js';
+import { SQLiteLoopRepository } from './implementations/loop-repository.js';
 import { BufferedOutputCapture } from './implementations/output-capture.js';
 import { SQLiteOutputRepository } from './implementations/output-repository.js';
 import { ClaudeProcessSpawner } from './implementations/process-spawner.js';
@@ -89,14 +90,13 @@ import { SystemResourceMonitor } from './implementations/resource-monitor.js';
 import { SQLiteScheduleRepository } from './implementations/schedule-repository.js';
 import { PriorityTaskQueue } from './implementations/task-queue.js';
 import { SQLiteTaskRepository } from './implementations/task-repository.js';
-import { SQLiteLoopRepository } from './implementations/loop-repository.js';
 import { SQLiteWorkerRepository } from './implementations/worker-repository.js';
 
 // Services
 import { extractHandlerDependencies, setupEventHandlers } from './services/handler-setup.js';
+import { LoopManagerService } from './services/loop-manager.js';
 import { RecoveryManager } from './services/recovery-manager.js';
 import { ScheduleExecutor } from './services/schedule-executor.js';
-import { LoopManagerService } from './services/loop-manager.js';
 import { ScheduleManagerService } from './services/schedule-manager.js';
 import { TaskManagerService } from './services/task-manager.js';
 
