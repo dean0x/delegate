@@ -257,7 +257,7 @@ export class LoopHandler extends BaseEventHandler {
       // Task COMPLETED — run exit condition evaluation
       const evalResult = this.evaluateExitCondition(loop, taskId);
 
-      await this.handleIterationResult(loop, iteration, taskId, evalResult);
+      await this.handleIterationResult(loop, iteration, evalResult);
 
       // Clean up tracking
       this.taskToLoop.delete(taskId);
@@ -634,12 +634,7 @@ export class LoopHandler extends BaseEventHandler {
    * Process the result of an iteration's exit condition evaluation
    * ARCHITECTURE: Determines whether to continue, complete, or fail the loop
    */
-  private async handleIterationResult(
-    loop: Loop,
-    iteration: LoopIteration,
-    _taskId: TaskId,
-    evalResult: EvalResult,
-  ): Promise<void> {
+  private async handleIterationResult(loop: Loop, iteration: LoopIteration, evalResult: EvalResult): Promise<void> {
     if (loop.strategy === LoopStrategy.RETRY) {
       await this.handleRetryResult(loop, iteration, evalResult);
     } else {
@@ -1073,7 +1068,7 @@ export class LoopHandler extends BaseEventHandler {
 
           if (task.status === TaskStatus.COMPLETED) {
             const evalResult = this.evaluateExitCondition(loop, task.id);
-            await this.handleIterationResult(loop, latestIteration, task.id, evalResult);
+            await this.handleIterationResult(loop, latestIteration, evalResult);
           } else if (task.status === TaskStatus.FAILED) {
             // Record as fail and continue
             const newConsecutiveFailures = loop.consecutiveFailures + 1;
