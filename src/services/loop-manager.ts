@@ -203,6 +203,7 @@ export class LoopManagerService implements LoopService {
   async getLoop(
     loopId: LoopId,
     includeHistory?: boolean,
+    historyLimit?: number,
   ): Promise<Result<{ loop: Loop; iterations?: readonly LoopIteration[] }>> {
     const lookupResult = await this.fetchLoopOrError(loopId);
     if (!lookupResult.ok) return lookupResult;
@@ -211,7 +212,7 @@ export class LoopManagerService implements LoopService {
     let iterations: readonly LoopIteration[] | undefined;
 
     if (includeHistory) {
-      const iterationsResult = await this.loopRepository.getIterations(loopId);
+      const iterationsResult = await this.loopRepository.getIterations(loopId, historyLimit);
       if (iterationsResult.ok) {
         iterations = iterationsResult.value;
       }

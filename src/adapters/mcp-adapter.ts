@@ -17,6 +17,11 @@ import {
 } from '../core/agents.js';
 import { type Configuration, loadAgentConfig, resetAgentConfig, saveAgentConfig } from '../core/configuration.js';
 import {
+  LoopCreateRequest,
+  LoopId,
+  LoopStatus,
+  LoopStrategy,
+  OptimizeDirection,
   PipelineCreateRequest,
   Priority,
   ResumeTaskRequest,
@@ -29,9 +34,10 @@ import {
   TaskId,
   TaskRequest,
 } from '../core/domain.js';
-import { Logger, ScheduleService, TaskManager } from '../core/interfaces.js';
+import { Logger, LoopService, ScheduleService, TaskManager } from '../core/interfaces.js';
 import { match } from '../core/result.js';
 import { toMissedRunPolicy } from '../services/schedule-manager.js';
+import { truncatePrompt } from '../utils/format.js';
 import { validatePath } from '../utils/validation.js';
 
 // Zod schemas for MCP protocol validation
@@ -198,6 +204,60 @@ const ConfigureAgentSchema = z.object({
   apiKey: z.string().min(1).optional().describe('API key to store (required for set action)'),
 });
 
+// Loop-related Zod schemas (v0.7.0 Task/Pipeline Loops)
+const CreateLoopSchema = z.object({
+  prompt: z.string().min(1).max(4000).optional().describe('Task prompt for each iteration'),
+  strategy: z.enum(['retry', 'optimize']).describe('Loop strategy'),
+  exitCondition: z.string().min(1).describe('Shell command to evaluate after each iteration'),
+  evalDirection: z
+    .enum(['minimize', 'maximize'])
+    .optional()
+    .describe('Score direction for optimize strategy'),
+  evalTimeout: z.number().min(1000).optional().default(60000).describe('Eval script timeout in ms'),
+  workingDirectory: z.string().optional().describe('Working directory for task and eval'),
+  maxIterations: z.number().min(0).optional().default(10).describe('Max iterations (0 = unlimited)'),
+  maxConsecutiveFailures: z
+    .number()
+    .min(0)
+    .optional()
+    .default(3)
+    .describe('Max consecutive failures before stopping'),
+  cooldownMs: z.number().min(0).optional().default(0).describe('Cooldown between iterations in ms'),
+  freshContext: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Start each iteration fresh (true) or continue from checkpoint'),
+  pipelineSteps: z
+    .array(z.string().min(1))
+    .min(2)
+    .max(20)
+    .optional()
+    .describe('Pipeline step prompts (creates pipeline loop)'),
+  priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Task priority'),
+  agent: z
+    .enum(AGENT_PROVIDERS_TUPLE)
+    .optional()
+    .describe('Agent provider'),
+});
+
+const LoopStatusSchema = z.object({
+  loopId: z.string().min(1).describe('Loop ID'),
+  includeHistory: z.boolean().optional().default(false).describe('Include iteration history'),
+  historyLimit: z.number().min(1).optional().default(20).describe('Max iterations to return'),
+});
+
+const ListLoopsSchema = z.object({
+  status: z.enum(['running', 'completed', 'failed', 'cancelled']).optional().describe('Filter by status'),
+  limit: z.number().min(1).max(100).optional().default(20).describe('Results limit'),
+});
+
+const CancelLoopSchema = z.object({
+  loopId: z.string().min(1).describe('Loop ID'),
+  reason: z.string().optional().describe('Cancellation reason'),
+  cancelTasks: z.boolean().optional().default(true).describe('Also cancel in-flight tasks'),
+});
+
 /** Standard MCP tool response shape */
 interface MCPToolResponse {
   [key: string]: unknown;
@@ -212,6 +272,7 @@ export class MCPAdapter {
     private readonly taskManager: TaskManager,
     private readonly logger: Logger,
     private readonly scheduleService: ScheduleService,
+    private readonly loopService: LoopService,
     private readonly agentRegistry: AgentRegistry | undefined,
     private readonly config: Configuration,
   ) {
@@ -286,6 +347,15 @@ export class MCPAdapter {
             return await this.handleCreatePipeline(args);
           case 'SchedulePipeline':
             return await this.handleSchedulePipeline(args);
+          // Loop tools (v0.7.0 Task/Pipeline Loops)
+          case 'CreateLoop':
+            return await this.handleCreateLoop(args);
+          case 'LoopStatus':
+            return await this.handleLoopStatus(args);
+          case 'ListLoops':
+            return await this.handleListLoops(args);
+          case 'CancelLoop':
+            return await this.handleCancelLoop(args);
           case 'ListAgents':
             return this.handleListAgents();
           case 'ConfigureAgent':
@@ -768,6 +838,149 @@ export class MCPAdapter {
                   },
                 },
                 required: ['steps', 'scheduleType'],
+              },
+            },
+            // Loop tools (v0.7.0 Task/Pipeline Loops)
+            {
+              name: 'CreateLoop',
+              description:
+                'Create an iterative loop that runs a task repeatedly until an exit condition is met. Supports retry (pass/fail) and optimize (score-based) strategies.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  prompt: {
+                    type: 'string',
+                    description: 'Task prompt for each iteration',
+                    minLength: 1,
+                    maxLength: 4000,
+                  },
+                  strategy: {
+                    type: 'string',
+                    enum: ['retry', 'optimize'],
+                    description: 'Loop strategy: retry (pass/fail exit condition) or optimize (score-based)',
+                  },
+                  exitCondition: {
+                    type: 'string',
+                    description: 'Shell command to evaluate after each iteration (exit code 0 = pass for retry, stdout = score for optimize)',
+                  },
+                  evalDirection: {
+                    type: 'string',
+                    enum: ['minimize', 'maximize'],
+                    description: 'Score direction for optimize strategy',
+                  },
+                  evalTimeout: {
+                    type: 'number',
+                    description: 'Eval script timeout in ms (default: 60000)',
+                    minimum: 1000,
+                  },
+                  workingDirectory: {
+                    type: 'string',
+                    description: 'Working directory for task and eval execution',
+                  },
+                  maxIterations: {
+                    type: 'number',
+                    description: 'Max iterations (0 = unlimited, default: 10)',
+                    minimum: 0,
+                  },
+                  maxConsecutiveFailures: {
+                    type: 'number',
+                    description: 'Max consecutive failures before stopping (default: 3)',
+                    minimum: 0,
+                  },
+                  cooldownMs: {
+                    type: 'number',
+                    description: 'Cooldown between iterations in ms (default: 0)',
+                    minimum: 0,
+                  },
+                  freshContext: {
+                    type: 'boolean',
+                    description: 'Start each iteration fresh (true) or continue from checkpoint (default: true)',
+                  },
+                  pipelineSteps: {
+                    type: 'array',
+                    description: 'Pipeline step prompts (creates pipeline loop, 2-20 steps)',
+                    items: { type: 'string', minLength: 1 },
+                    minItems: 2,
+                    maxItems: 20,
+                  },
+                  priority: {
+                    type: 'string',
+                    enum: ['P0', 'P1', 'P2'],
+                    description: 'Task priority (P0=critical, P1=high, P2=normal)',
+                  },
+                  agent: {
+                    type: 'string',
+                    enum: [...AGENT_PROVIDERS],
+                    description: `AI agent to execute iterations (${this.config.defaultAgent ? `default: ${this.config.defaultAgent}` : 'required if no default configured'})`,
+                  },
+                },
+                required: ['strategy', 'exitCondition'],
+              },
+            },
+            {
+              name: 'LoopStatus',
+              description: 'Get details of a specific loop including optional iteration history',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  loopId: {
+                    type: 'string',
+                    description: 'Loop ID',
+                  },
+                  includeHistory: {
+                    type: 'boolean',
+                    description: 'Include iteration history (default: false)',
+                  },
+                  historyLimit: {
+                    type: 'number',
+                    description: 'Max iterations to return (default: 20)',
+                    minimum: 1,
+                  },
+                },
+                required: ['loopId'],
+              },
+            },
+            {
+              name: 'ListLoops',
+              description: 'List loops with optional status filter',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  status: {
+                    type: 'string',
+                    enum: ['running', 'completed', 'failed', 'cancelled'],
+                    description: 'Filter by status',
+                  },
+                  limit: {
+                    type: 'number',
+                    description: 'Max results (default: 20)',
+                    minimum: 1,
+                    maximum: 100,
+                  },
+                },
+              },
+            },
+            {
+              name: 'CancelLoop',
+              description: 'Cancel an active loop. Optionally cancel in-flight iteration tasks.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  loopId: {
+                    type: 'string',
+                    description: 'Loop ID to cancel',
+                  },
+                  reason: {
+                    type: 'string',
+                    description: 'Cancellation reason',
+                  },
+                  cancelTasks: {
+                    type: 'boolean',
+                    description: 'Also cancel in-flight iteration tasks (default: true)',
+                    default: true,
+                  },
+                },
+                required: ['loopId'],
               },
             },
             // Agent tools (v0.5.0 Multi-Agent Support)
@@ -1616,6 +1829,263 @@ export class MCPAdapter {
                 nextRunAt: schedule.nextRunAt ? new Date(schedule.nextRunAt).toISOString() : null,
                 status: schedule.status,
                 timezone: schedule.timezone,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  // ============================================================================
+  // LOOP HANDLERS (v0.7.0 Task/Pipeline Loops)
+  // Thin wrappers: Zod parse -> service call -> format MCP response
+  // ============================================================================
+
+  /**
+   * Handle CreateLoop tool call
+   * Creates a new iterative loop (retry or optimize strategy)
+   */
+  private async handleCreateLoop(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = CreateLoopSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const data = parseResult.data;
+
+    // SECURITY: Validate workingDirectory to prevent path traversal attacks
+    if (data.workingDirectory) {
+      const pathValidation = validatePath(data.workingDirectory);
+      if (!pathValidation.ok) {
+        return {
+          content: [{ type: 'text', text: `Invalid working directory: ${pathValidation.error.message}` }],
+          isError: true,
+        };
+      }
+    }
+
+    const request: LoopCreateRequest = {
+      prompt: data.prompt,
+      strategy: data.strategy === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE,
+      exitCondition: data.exitCondition,
+      evalDirection:
+        data.evalDirection === 'minimize'
+          ? OptimizeDirection.MINIMIZE
+          : data.evalDirection === 'maximize'
+            ? OptimizeDirection.MAXIMIZE
+            : undefined,
+      evalTimeout: data.evalTimeout,
+      workingDirectory: data.workingDirectory,
+      maxIterations: data.maxIterations,
+      maxConsecutiveFailures: data.maxConsecutiveFailures,
+      cooldownMs: data.cooldownMs,
+      freshContext: data.freshContext,
+      pipelineSteps: data.pipelineSteps,
+      priority: data.priority as Priority | undefined,
+      agent: data.agent as AgentProvider | undefined,
+    };
+
+    const result = await this.loopService.createLoop(request);
+
+    return match(result, {
+      ok: (loop) => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                loopId: loop.id,
+                strategy: loop.strategy,
+                status: loop.status,
+                maxIterations: loop.maxIterations,
+                message: 'Loop created successfully',
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle LoopStatus tool call
+   * Gets details of a specific loop with optional iteration history
+   */
+  private async handleLoopStatus(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = LoopStatusSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const { loopId, includeHistory, historyLimit } = parseResult.data;
+
+    const result = await this.loopService.getLoop(LoopId(loopId), includeHistory, historyLimit);
+
+    return match(result, {
+      ok: ({ loop, iterations }) => {
+        const response: Record<string, unknown> = {
+          success: true,
+          loop: {
+            id: loop.id,
+            strategy: loop.strategy,
+            status: loop.status,
+            currentIteration: loop.currentIteration,
+            maxIterations: loop.maxIterations,
+            consecutiveFailures: loop.consecutiveFailures,
+            maxConsecutiveFailures: loop.maxConsecutiveFailures,
+            bestScore: loop.bestScore,
+            exitCondition: loop.exitCondition,
+            evalDirection: loop.evalDirection,
+            cooldownMs: loop.cooldownMs,
+            freshContext: loop.freshContext,
+            promptPreview: truncatePrompt(loop.taskTemplate.prompt, 50),
+            workingDirectory: loop.workingDirectory,
+            createdAt: loop.createdAt.toISOString(),
+            updatedAt: loop.updatedAt.toISOString(),
+            completedAt: loop.completedAt?.toISOString() ?? null,
+            ...(loop.pipelineSteps && loop.pipelineSteps.length > 0
+              ? {
+                  isPipeline: true,
+                  pipelineSteps: loop.pipelineSteps.map((s, i) => ({
+                    index: i,
+                    prompt: truncatePrompt(s, 80),
+                  })),
+                }
+              : {}),
+          },
+        };
+
+        if (iterations) {
+          response.iterations = iterations.map((iter) => ({
+            iterationNumber: iter.iterationNumber,
+            status: iter.status,
+            taskId: iter.taskId,
+            score: iter.score ?? null,
+            exitCode: iter.exitCode ?? null,
+            errorMessage: iter.errorMessage ?? null,
+            startedAt: iter.startedAt.toISOString(),
+            completedAt: iter.completedAt?.toISOString() ?? null,
+          }));
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(response, null, 2),
+            },
+          ],
+        };
+      },
+      err: (error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle ListLoops tool call
+   * Lists loops with optional status filter
+   */
+  private async handleListLoops(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = ListLoopsSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const { status, limit } = parseResult.data;
+
+    const result = await this.loopService.listLoops(status as LoopStatus | undefined, limit);
+
+    return match(result, {
+      ok: (loops) => {
+        const summaries = loops.map((l) => ({
+          id: l.id,
+          strategy: l.strategy,
+          status: l.status,
+          currentIteration: l.currentIteration,
+          maxIterations: l.maxIterations,
+          promptPreview: truncatePrompt(l.taskTemplate.prompt, 50),
+          isPipeline: !!(l.pipelineSteps && l.pipelineSteps.length > 0),
+          createdAt: l.createdAt.toISOString(),
+        }));
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  success: true,
+                  loops: summaries,
+                  count: summaries.length,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      },
+      err: (error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle CancelLoop tool call
+   * Cancels an active loop with optional task cancellation
+   */
+  private async handleCancelLoop(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = CancelLoopSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const { loopId, reason, cancelTasks } = parseResult.data;
+
+    const result = await this.loopService.cancelLoop(LoopId(loopId), reason, cancelTasks);
+
+    return match(result, {
+      ok: () => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                message: `Loop ${loopId} cancelled`,
+                reason,
+                cancelTasksRequested: cancelTasks,
               },
               null,
               2,

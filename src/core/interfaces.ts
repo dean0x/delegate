@@ -626,6 +626,7 @@ export interface LoopService {
   getLoop(
     loopId: LoopId,
     includeHistory?: boolean,
+    historyLimit?: number,
   ): Promise<Result<{ loop: Loop; iterations?: readonly LoopIteration[] }>>;
   listLoops(status?: LoopStatus, limit?: number, offset?: number): Promise<Result<readonly Loop[]>>;
   cancelLoop(loopId: LoopId, reason?: string, cancelTasks?: boolean): Promise<Result<void>>;

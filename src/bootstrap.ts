@@ -13,6 +13,7 @@ import {
   DependencyRepository,
   Logger,
   LoopRepository,
+  LoopService,
   OutputCapture,
   OutputRepository,
   ProcessSpawner,
@@ -419,6 +420,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       taskManagerResult.value,
       getFromContainer<Logger>(container, 'logger').child({ module: 'MCP' }),
       getFromContainer<ScheduleService>(container, 'scheduleService'),
+      getFromContainer<LoopService>(container, 'loopService'),
       getFromContainer<AgentRegistry>(container, 'agentRegistry'),
       config,
     );

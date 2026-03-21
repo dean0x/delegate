@@ -24,7 +24,7 @@ import type {
 } from '../../../src/core/domain';
 import { MissedRunPolicy, Priority, ScheduleId, ScheduleStatus, ScheduleType } from '../../../src/core/domain';
 import { BackbeatError, ErrorCode, taskNotFound } from '../../../src/core/errors';
-import type { Logger, ScheduleService, TaskManager } from '../../../src/core/interfaces';
+import type { Logger, LoopService, ScheduleService, TaskManager } from '../../../src/core/interfaces';
 import type { Result } from '../../../src/core/result';
 import { err, ok } from '../../../src/core/result';
 import { createTestConfiguration, TaskFactory } from '../../fixtures/factories';
@@ -183,6 +183,14 @@ const stubScheduleService: ScheduleService = {
   createScheduledPipeline: vi.fn().mockResolvedValue(ok(null)),
 };
 
+// Stub LoopService — task-focused tests do not exercise loop features
+const stubLoopService: LoopService = {
+  createLoop: vi.fn().mockResolvedValue(ok(null)),
+  getLoop: vi.fn().mockResolvedValue(ok({ loop: null })),
+  listLoops: vi.fn().mockResolvedValue(ok([])),
+  cancelLoop: vi.fn().mockResolvedValue(ok(undefined)),
+};
+
 describe('MCPAdapter - Protocol Compliance', () => {
   let adapter: MCPAdapter;
   let mockTaskManager: MockTaskManager;
@@ -191,7 +199,7 @@ describe('MCPAdapter - Protocol Compliance', () => {
   beforeEach(() => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
-    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, undefined, testConfig);
+    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, stubLoopService, undefined, testConfig);
   });
 
   afterEach(() => {
@@ -644,6 +652,7 @@ describe('MCPAdapter - CreatePipeline Tool', () => {
       mockTaskManager,
       mockLogger,
       mockScheduleService as unknown as ScheduleService,
+      stubLoopService,
       undefined,
       testConfig,
     );
@@ -724,7 +733,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
   beforeEach(() => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
-    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, undefined, testConfig);
+    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, stubLoopService, undefined, testConfig);
   });
 
   afterEach(() => {
@@ -773,7 +782,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
   describe('ListAgents tool', () => {
     it('should return agent list without registry', () => {
       // Adapter created without agentRegistry
-      const adapterNoRegistry = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, undefined, testConfig);
+      const adapterNoRegistry = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, stubLoopService, undefined, testConfig);
       // The handleListAgents is private, so we verify via schema/tool listing
       // This is a structural test — actual handler is tested via integration
       expect(adapterNoRegistry).toBeTruthy();
@@ -792,6 +801,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
         mockTaskManager,
         mockLogger,
         stubScheduleService,
+        stubLoopService,
         mockRegistry,
         testConfig,
       );
@@ -805,7 +815,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
     it('should exist as a constructable adapter method', () => {
       // ConfigureAgent is exposed via MCP tool registration
       // Structural test — actual handler is private
-      const adapterInstance = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, undefined, testConfig);
+      const adapterInstance = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, stubLoopService, undefined, testConfig);
       expect(adapterInstance).toBeTruthy();
       expect(adapterInstance.getServer()).toBeTruthy();
     });
@@ -822,6 +832,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
         mockTaskManager,
         mockLogger,
         stubScheduleService,
+        stubLoopService,
         mockRegistry,
         testConfig,
       );
@@ -844,6 +855,7 @@ describe('MCPAdapter - SchedulePipeline & Enhanced Schedule Tools', () => {
       mockTaskManager,
       mockLogger,
       mockScheduleService as unknown as ScheduleService,
+      stubLoopService,
       undefined,
       testConfig,
     );
