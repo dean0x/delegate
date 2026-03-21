@@ -1,11 +1,182 @@
 import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
 import { LoopId, LoopStatus, LoopStrategy, Priority } from '../../core/domain.js';
 import type { LoopRepository, LoopService } from '../../core/interfaces.js';
+import { err, ok, type Result } from '../../core/result.js';
 import { toOptimizeDirection } from '../../services/loop-manager.js';
 import { truncatePrompt } from '../../utils/format.js';
 import { validatePath } from '../../utils/validation.js';
 import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';
+
+/**
+ * Parsed arguments from CLI loop create command
+ */
+interface ParsedLoopArgs {
+  readonly prompt?: string;
+  readonly strategy: LoopStrategy;
+  readonly exitCondition: string;
+  readonly evalDirection?: 'minimize' | 'maximize';
+  readonly evalTimeout?: number;
+  readonly workingDirectory?: string;
+  readonly maxIterations?: number;
+  readonly maxConsecutiveFailures?: number;
+  readonly cooldownMs?: number;
+  readonly freshContext: boolean;
+  readonly pipelineSteps?: readonly string[];
+  readonly priority?: 'P0' | 'P1' | 'P2';
+  readonly agent?: AgentProvider;
+}
+
+/**
+ * Parse and validate loop create arguments
+ * ARCHITECTURE: Pure function — no side effects, returns Result for testability
+ */
+export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, string> {
+  const promptWords: string[] = [];
+  let untilCmd: string | undefined;
+  let evalCmd: string | undefined;
+  let direction: 'minimize' | 'maximize' | undefined;
+  let maxIterations: number | undefined;
+  let maxFailures: number | undefined;
+  let cooldown: number | undefined;
+  let evalTimeout: number | undefined;
+  let continueContext = false;
+  let isPipeline = false;
+  const pipelineSteps: string[] = [];
+  let priority: 'P0' | 'P1' | 'P2' | undefined;
+  let workingDirectory: string | undefined;
+  let agent: AgentProvider | undefined;
+
+  for (let i = 0; i < loopArgs.length; i++) {
+    const arg = loopArgs[i];
+    const next = loopArgs[i + 1];
+
+    if (arg === '--until' && next) {
+      untilCmd = next;
+      i++;
+    } else if (arg === '--eval' && next) {
+      evalCmd = next;
+      i++;
+    } else if (arg === '--direction' && next) {
+      if (next !== 'minimize' && next !== 'maximize') {
+        return err('--direction must be "minimize" or "maximize"');
+      }
+      direction = next;
+      i++;
+    } else if (arg === '--max-iterations' && next) {
+      maxIterations = parseInt(next);
+      if (isNaN(maxIterations) || maxIterations < 0) {
+        return err('--max-iterations must be >= 0 (0 = unlimited)');
+      }
+      i++;
+    } else if (arg === '--max-failures' && next) {
+      maxFailures = parseInt(next);
+      if (isNaN(maxFailures) || maxFailures < 0) {
+        return err('--max-failures must be >= 0');
+      }
+      i++;
+    } else if (arg === '--cooldown' && next) {
+      cooldown = parseInt(next);
+      if (isNaN(cooldown) || cooldown < 0) {
+        return err('--cooldown must be >= 0 (ms)');
+      }
+      i++;
+    } else if (arg === '--eval-timeout' && next) {
+      evalTimeout = parseInt(next);
+      if (isNaN(evalTimeout) || evalTimeout < 1000) {
+        return err('--eval-timeout must be >= 1000 (ms)');
+      }
+      i++;
+    } else if (arg === '--continue-context') {
+      continueContext = true;
+    } else if (arg === '--pipeline') {
+      isPipeline = true;
+    } else if (arg === '--step' && next) {
+      pipelineSteps.push(next);
+      i++;
+    } else if ((arg === '--priority' || arg === '-p') && next) {
+      if (!['P0', 'P1', 'P2'].includes(next)) {
+        return err('Priority must be P0, P1, or P2');
+      }
+      priority = next as 'P0' | 'P1' | 'P2';
+      i++;
+    } else if ((arg === '--working-directory' || arg === '-w') && next) {
+      const pathResult = validatePath(next);
+      if (!pathResult.ok) {
+        return err(`Invalid working directory: ${pathResult.error.message}`);
+      }
+      workingDirectory = pathResult.value;
+      i++;
+    } else if ((arg === '--agent' || arg === '-a') && next) {
+      if (!next || next.startsWith('-')) {
+        return err(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
+      }
+      if (!isAgentProvider(next)) {
+        return err(`Unknown agent: "${next}". Available agents: ${AGENT_PROVIDERS.join(', ')}`);
+      }
+      agent = next;
+      i++;
+    } else if (arg.startsWith('-')) {
+      return err(`Unknown flag: ${arg}`);
+    } else {
+      promptWords.push(arg);
+    }
+  }
+
+  // Strategy inference from flags
+  if (untilCmd && evalCmd) {
+    return err('Cannot specify both --until and --eval. Use --until for retry strategy, --eval for optimize strategy.');
+  }
+  if (!untilCmd && !evalCmd) {
+    return err(
+      'Provide --until <cmd> for retry strategy or --eval <cmd> --direction minimize|maximize for optimize strategy.',
+    );
+  }
+
+  const isOptimize = !!evalCmd;
+  const exitCondition = isOptimize ? evalCmd! : untilCmd!;
+
+  // Validate direction for optimize
+  if (isOptimize && !direction) {
+    return err('--direction minimize|maximize is required with --eval (optimize strategy)');
+  }
+  if (!isOptimize && direction) {
+    return err('--direction is only valid with --eval (optimize strategy)');
+  }
+
+  // Pipeline mode
+  if (isPipeline) {
+    if (pipelineSteps.length < 2) {
+      return err('Pipeline requires at least 2 --step flags');
+    }
+  } else if (pipelineSteps.length > 0) {
+    return err(
+      '--step requires --pipeline. Did you mean: beat loop --pipeline --step "..." --step "..." --until "..."',
+    );
+  }
+
+  // Non-pipeline mode: prompt is required
+  const prompt = promptWords.join(' ');
+  if (!isPipeline && !prompt) {
+    return err('Usage: beat loop <prompt> --until <cmd> [options]');
+  }
+
+  return ok({
+    prompt: isPipeline ? undefined : prompt,
+    strategy: isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
+    exitCondition,
+    evalDirection: direction,
+    evalTimeout,
+    workingDirectory,
+    maxIterations,
+    maxConsecutiveFailures: maxFailures,
+    cooldownMs: cooldown,
+    freshContext: !continueContext,
+    pipelineSteps: isPipeline ? pipelineSteps : undefined,
+    priority,
+    agent,
+  });
+}
 
 export async function handleLoopCommand(subCmd: string | undefined, loopArgs: string[]): Promise<void> {
   // Subcommand routing
@@ -35,174 +206,31 @@ export async function handleLoopCommand(subCmd: string | undefined, loopArgs: st
 // ============================================================================
 
 async function handleLoopCreate(loopArgs: string[]): Promise<void> {
-  let promptWords: string[] = [];
-  let untilCmd: string | undefined;
-  let evalCmd: string | undefined;
-  let direction: 'minimize' | 'maximize' | undefined;
-  let maxIterations: number | undefined;
-  let maxFailures: number | undefined;
-  let cooldown: number | undefined;
-  let evalTimeout: number | undefined;
-  let continueContext = false;
-  let isPipeline = false;
-  const pipelineSteps: string[] = [];
-  let priority: 'P0' | 'P1' | 'P2' | undefined;
-  let workingDirectory: string | undefined;
-  let agent: AgentProvider | undefined;
-
-  for (let i = 0; i < loopArgs.length; i++) {
-    const arg = loopArgs[i];
-    const next = loopArgs[i + 1];
-
-    if (arg === '--until' && next) {
-      untilCmd = next;
-      i++;
-    } else if (arg === '--eval' && next) {
-      evalCmd = next;
-      i++;
-    } else if (arg === '--direction' && next) {
-      if (next !== 'minimize' && next !== 'maximize') {
-        ui.error('--direction must be "minimize" or "maximize"');
-        process.exit(1);
-      }
-      direction = next;
-      i++;
-    } else if (arg === '--max-iterations' && next) {
-      maxIterations = parseInt(next);
-      if (isNaN(maxIterations) || maxIterations < 0) {
-        ui.error('--max-iterations must be >= 0 (0 = unlimited)');
-        process.exit(1);
-      }
-      i++;
-    } else if (arg === '--max-failures' && next) {
-      maxFailures = parseInt(next);
-      if (isNaN(maxFailures) || maxFailures < 0) {
-        ui.error('--max-failures must be >= 0');
-        process.exit(1);
-      }
-      i++;
-    } else if (arg === '--cooldown' && next) {
-      cooldown = parseInt(next);
-      if (isNaN(cooldown) || cooldown < 0) {
-        ui.error('--cooldown must be >= 0 (ms)');
-        process.exit(1);
-      }
-      i++;
-    } else if (arg === '--eval-timeout' && next) {
-      evalTimeout = parseInt(next);
-      if (isNaN(evalTimeout) || evalTimeout < 1000) {
-        ui.error('--eval-timeout must be >= 1000 (ms)');
-        process.exit(1);
-      }
-      i++;
-    } else if (arg === '--continue-context') {
-      continueContext = true;
-    } else if (arg === '--pipeline') {
-      isPipeline = true;
-    } else if (arg === '--step' && next) {
-      pipelineSteps.push(next);
-      i++;
-    } else if ((arg === '--priority' || arg === '-p') && next) {
-      if (!['P0', 'P1', 'P2'].includes(next)) {
-        ui.error('Priority must be P0, P1, or P2');
-        process.exit(1);
-      }
-      priority = next as 'P0' | 'P1' | 'P2';
-      i++;
-    } else if ((arg === '--working-directory' || arg === '-w') && next) {
-      const pathResult = validatePath(next);
-      if (!pathResult.ok) {
-        ui.error(`Invalid working directory: ${pathResult.error.message}`);
-        process.exit(1);
-      }
-      workingDirectory = pathResult.value;
-      i++;
-    } else if ((arg === '--agent' || arg === '-a') && next) {
-      if (!next || next.startsWith('-')) {
-        ui.error(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
-        process.exit(1);
-      }
-      if (!isAgentProvider(next)) {
-        ui.error(`Unknown agent: "${next}". Available agents: ${AGENT_PROVIDERS.join(', ')}`);
-        process.exit(1);
-      }
-      agent = next;
-      i++;
-    } else if (arg.startsWith('-')) {
-      ui.error(`Unknown flag: ${arg}`);
-      process.exit(1);
-    } else {
-      promptWords.push(arg);
-    }
-  }
-
-  // Strategy inference from flags
-  if (untilCmd && evalCmd) {
-    ui.error('Cannot specify both --until and --eval. Use --until for retry strategy, --eval for optimize strategy.');
+  const parsed = parseLoopCreateArgs(loopArgs);
+  if (!parsed.ok) {
+    ui.error(parsed.error);
     process.exit(1);
   }
-  if (!untilCmd && !evalCmd) {
-    ui.error(
-      'Provide --until <cmd> for retry strategy or --eval <cmd> --direction minimize|maximize for optimize strategy.',
-    );
-    process.exit(1);
-  }
-
-  const isOptimize = !!evalCmd;
-  // Non-null assertions safe: we validated above that exactly one of untilCmd/evalCmd is set
-  const exitCondition = isOptimize ? evalCmd! : untilCmd!;
-
-  // Validate direction for optimize
-  if (isOptimize && !direction) {
-    ui.error('--direction minimize|maximize is required with --eval (optimize strategy)');
-    process.exit(1);
-  }
-  if (!isOptimize && direction) {
-    ui.error('--direction is only valid with --eval (optimize strategy)');
-    process.exit(1);
-  }
-
-  // Pipeline mode
-  if (isPipeline) {
-    if (promptWords.length > 0) {
-      ui.info(`Ignoring positional prompt text in --pipeline mode: "${promptWords.join(' ')}". Use --step flags only.`);
-    }
-    if (pipelineSteps.length < 2) {
-      ui.error('Pipeline requires at least 2 --step flags');
-      process.exit(1);
-    }
-  } else if (pipelineSteps.length > 0) {
-    ui.error('--step requires --pipeline. Did you mean: beat loop --pipeline --step "..." --step "..." --until "..."');
-    process.exit(1);
-  }
-
-  // Non-pipeline mode: prompt is required
-  const prompt = promptWords.join(' ');
-  if (!isPipeline && !prompt) {
-    ui.error('Usage: beat loop <prompt> --until <cmd> [options]');
-    ui.info('  Optimize: beat loop <prompt> --eval <cmd> --direction minimize|maximize');
-    ui.info('  Pipeline: beat loop --pipeline --step "..." --step "..." --until <cmd>');
-    process.exit(1);
-  }
+  const args = parsed.value;
 
   const s = ui.createSpinner();
   s.start('Creating loop...');
   const { loopService } = await withServices(s);
 
   const result = await loopService.createLoop({
-    prompt: isPipeline ? undefined : prompt,
-    strategy: isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
-    exitCondition,
-    evalDirection: toOptimizeDirection(direction),
-    evalTimeout,
-    workingDirectory,
-    maxIterations,
-    maxConsecutiveFailures: maxFailures,
-    cooldownMs: cooldown,
-    freshContext: !continueContext,
-    pipelineSteps: isPipeline ? pipelineSteps : undefined,
-    priority: priority ? Priority[priority] : undefined,
-    agent,
+    prompt: args.prompt,
+    strategy: args.strategy,
+    exitCondition: args.exitCondition,
+    evalDirection: toOptimizeDirection(args.evalDirection),
+    evalTimeout: args.evalTimeout,
+    workingDirectory: args.workingDirectory,
+    maxIterations: args.maxIterations,
+    maxConsecutiveFailures: args.maxConsecutiveFailures,
+    cooldownMs: args.cooldownMs,
+    freshContext: args.freshContext,
+    pipelineSteps: args.pipelineSteps,
+    priority: args.priority ? Priority[args.priority] : undefined,
+    agent: args.agent,
   });
 
   const loop = exitOnError(result, s, 'Failed to create loop');
@@ -217,7 +245,7 @@ async function handleLoopCreate(loopArgs: string[]): Promise<void> {
   if (loop.pipelineSteps && loop.pipelineSteps.length > 0) {
     details.push(`Pipeline steps: ${loop.pipelineSteps.length}`);
   }
-  if (agent) details.push(`Agent: ${agent}`);
+  if (args.agent) details.push(`Agent: ${args.agent}`);
   ui.info(details.join(' | '));
   process.exit(0);
 }
