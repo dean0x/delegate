@@ -14,6 +14,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MCPAdapter } from '../../../src/adapters/mcp-adapter';
 import type {
+  Loop,
+  LoopCreateRequest,
+  LoopIteration,
   PipelineCreateRequest,
   PipelineResult,
   PipelineStepRequest,
@@ -22,7 +25,17 @@ import type {
   Task,
   TaskRequest,
 } from '../../../src/core/domain';
-import { MissedRunPolicy, Priority, ScheduleId, ScheduleStatus, ScheduleType } from '../../../src/core/domain';
+import {
+  createLoop,
+  LoopId,
+  LoopStatus,
+  LoopStrategy,
+  MissedRunPolicy,
+  Priority,
+  ScheduleId,
+  ScheduleStatus,
+  ScheduleType,
+} from '../../../src/core/domain';
 import { BackbeatError, ErrorCode, taskNotFound } from '../../../src/core/errors';
 import type { Logger, LoopService, ScheduleService, TaskManager } from '../../../src/core/interfaces';
 import type { Result } from '../../../src/core/result';
@@ -183,13 +196,90 @@ const stubScheduleService: ScheduleService = {
   createScheduledPipeline: vi.fn().mockResolvedValue(ok(null)),
 };
 
-// Stub LoopService — task-focused tests do not exercise loop features
-const stubLoopService: LoopService = {
-  createLoop: vi.fn().mockResolvedValue(ok(null)),
-  getLoop: vi.fn().mockResolvedValue(ok({ loop: null })),
-  listLoops: vi.fn().mockResolvedValue(ok([])),
-  cancelLoop: vi.fn().mockResolvedValue(ok(undefined)),
-};
+// TODO: All MCP adapter tests use simulate* helpers that bypass the adapter's
+// Zod schema validation, tool routing, and response formatting. Consider adding
+// integration-level tests that call through the MCP server's request handler
+// to verify the full pipeline end-to-end.
+
+/**
+ * Mock LoopService for MCP adapter testing
+ */
+class MockLoopService implements LoopService {
+  createLoopCalls: LoopCreateRequest[] = [];
+  getLoopCalls: Array<{ loopId: LoopId; includeHistory?: boolean; historyLimit?: number }> = [];
+  listLoopsCalls: Array<{ status?: LoopStatus; limit?: number; offset?: number }> = [];
+  cancelLoopCalls: Array<{ loopId: LoopId; reason?: string; cancelTasks?: boolean }> = [];
+
+  private createLoopResult: Result<Loop> = ok(this.makeLoop());
+  private getLoopResult: Result<{ loop: Loop; iterations?: readonly LoopIteration[] }> = ok({
+    loop: this.makeLoop(),
+  });
+  private listLoopsResult: Result<readonly Loop[]> = ok([]);
+  private cancelLoopResult: Result<void> = ok(undefined);
+
+  makeLoop(overrides?: Partial<Parameters<typeof createLoop>[0]>): Loop {
+    return createLoop(
+      {
+        prompt: 'test loop prompt',
+        strategy: LoopStrategy.RETRY,
+        exitCondition: 'test -f done',
+        ...overrides,
+      },
+      '/tmp',
+    );
+  }
+
+  setCreateLoopResult(result: Result<Loop>) {
+    this.createLoopResult = result;
+  }
+  setGetLoopResult(result: Result<{ loop: Loop; iterations?: readonly LoopIteration[] }>) {
+    this.getLoopResult = result;
+  }
+  setListLoopsResult(result: Result<readonly Loop[]>) {
+    this.listLoopsResult = result;
+  }
+  setCancelLoopResult(result: Result<void>) {
+    this.cancelLoopResult = result;
+  }
+
+  async createLoop(request: LoopCreateRequest): Promise<Result<Loop>> {
+    this.createLoopCalls.push(request);
+    return this.createLoopResult;
+  }
+
+  async getLoop(
+    loopId: LoopId,
+    includeHistory?: boolean,
+    historyLimit?: number,
+  ): Promise<Result<{ loop: Loop; iterations?: readonly LoopIteration[] }>> {
+    this.getLoopCalls.push({ loopId, includeHistory, historyLimit });
+    return this.getLoopResult;
+  }
+
+  async listLoops(status?: LoopStatus, limit?: number, offset?: number): Promise<Result<readonly Loop[]>> {
+    this.listLoopsCalls.push({ status, limit, offset });
+    return this.listLoopsResult;
+  }
+
+  async cancelLoop(loopId: LoopId, reason?: string, cancelTasks?: boolean): Promise<Result<void>> {
+    this.cancelLoopCalls.push({ loopId, reason, cancelTasks });
+    return this.cancelLoopResult;
+  }
+
+  reset() {
+    this.createLoopCalls = [];
+    this.getLoopCalls = [];
+    this.listLoopsCalls = [];
+    this.cancelLoopCalls = [];
+    this.createLoopResult = ok(this.makeLoop());
+    this.getLoopResult = ok({ loop: this.makeLoop() });
+    this.listLoopsResult = ok([]);
+    this.cancelLoopResult = ok(undefined);
+  }
+}
+
+// Default stub for tests that don't exercise loop features
+const stubLoopService = new MockLoopService();
 
 describe('MCPAdapter - Protocol Compliance', () => {
   let adapter: MCPAdapter;
@@ -1655,3 +1745,333 @@ async function simulateGetSchedule(
     ],
   };
 }
+
+// ============================================================================
+// Loop Tool Simulate Helpers
+// ============================================================================
+
+async function simulateCreateLoop(
+  loopService: MockLoopService,
+  args: {
+    prompt?: string;
+    strategy?: string;
+    exitCondition: string;
+    evalDirection?: string;
+    pipelineSteps?: string[];
+    maxIterations?: number;
+  },
+): Promise<MCPToolResponse> {
+  const result = await loopService.createLoop({
+    prompt: args.prompt ?? 'test prompt',
+    strategy: args.strategy === 'optimize' ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
+    exitCondition: args.exitCondition,
+    evalDirection: undefined,
+    maxIterations: args.maxIterations,
+    pipelineSteps: args.pipelineSteps,
+  });
+
+  if (!result.ok) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
+    };
+  }
+
+  return {
+    isError: false,
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          loopId: result.value.id,
+          strategy: result.value.strategy,
+          status: result.value.status,
+          maxIterations: result.value.maxIterations,
+        }),
+      },
+    ],
+  };
+}
+
+async function simulateLoopStatus(
+  loopService: MockLoopService,
+  args: { loopId: string; includeHistory?: boolean; historyLimit?: number },
+): Promise<MCPToolResponse> {
+  const result = await loopService.getLoop(LoopId(args.loopId), args.includeHistory, args.historyLimit);
+
+  if (!result.ok) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
+    };
+  }
+
+  const { loop, iterations } = result.value;
+  const response: Record<string, unknown> = {
+    success: true,
+    loop: {
+      id: loop.id,
+      strategy: loop.strategy,
+      status: loop.status,
+      currentIteration: loop.currentIteration,
+      maxIterations: loop.maxIterations,
+    },
+  };
+
+  if (iterations) {
+    response.iterations = iterations.map((iter) => ({
+      iterationNumber: iter.iterationNumber,
+      status: iter.status,
+      taskId: iter.taskId ?? null,
+      score: iter.score ?? null,
+    }));
+  }
+
+  return {
+    isError: false,
+    content: [{ type: 'text', text: JSON.stringify(response) }],
+  };
+}
+
+async function simulateListLoops(
+  loopService: MockLoopService,
+  args: { status?: string; limit?: number },
+): Promise<MCPToolResponse> {
+  const result = await loopService.listLoops(args.status as LoopStatus | undefined, args.limit);
+
+  if (!result.ok) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
+    };
+  }
+
+  const summaries = result.value.map((l) => ({
+    id: l.id,
+    strategy: l.strategy,
+    status: l.status,
+    currentIteration: l.currentIteration,
+    isPipeline: !!(l.pipelineSteps && l.pipelineSteps.length > 0),
+  }));
+
+  return {
+    isError: false,
+    content: [{ type: 'text', text: JSON.stringify({ success: true, loops: summaries, count: summaries.length }) }],
+  };
+}
+
+async function simulateCancelLoop(
+  loopService: MockLoopService,
+  args: { loopId: string; reason?: string; cancelTasks?: boolean },
+): Promise<MCPToolResponse> {
+  const result = await loopService.cancelLoop(LoopId(args.loopId), args.reason, args.cancelTasks);
+
+  if (!result.ok) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
+    };
+  }
+
+  return {
+    isError: false,
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          message: `Loop ${args.loopId} cancelled`,
+          reason: args.reason,
+          cancelTasksRequested: args.cancelTasks,
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// Loop Tool Tests
+// ============================================================================
+
+describe('MCPAdapter - Loop Tools', () => {
+  let mockLoopService: MockLoopService;
+
+  beforeEach(() => {
+    mockLoopService = new MockLoopService();
+  });
+
+  afterEach(() => {
+    mockLoopService.reset();
+  });
+
+  describe('CreateLoop', () => {
+    it('should create a loop and return loop details', async () => {
+      const loop = mockLoopService.makeLoop({ prompt: 'Fix all failing tests' });
+      mockLoopService.setCreateLoopResult(ok(loop));
+
+      const result = await simulateCreateLoop(mockLoopService, {
+        prompt: 'Fix all failing tests',
+        exitCondition: 'npm test',
+      });
+
+      expect(result.isError).toBe(false);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.loopId).toBe(loop.id);
+      expect(response.strategy).toBe(LoopStrategy.RETRY);
+    });
+
+    it('should pass correct request to service', async () => {
+      await simulateCreateLoop(mockLoopService, {
+        prompt: 'Optimize performance',
+        strategy: 'optimize',
+        exitCondition: 'node benchmark.js',
+        maxIterations: 20,
+      });
+
+      expect(mockLoopService.createLoopCalls).toHaveLength(1);
+      expect(mockLoopService.createLoopCalls[0].exitCondition).toBe('node benchmark.js');
+      expect(mockLoopService.createLoopCalls[0].maxIterations).toBe(20);
+    });
+
+    it('should propagate service errors', async () => {
+      mockLoopService.setCreateLoopResult(
+        err(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Failed to create loop', {})),
+      );
+
+      const result = await simulateCreateLoop(mockLoopService, {
+        exitCondition: 'true',
+      });
+
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Failed to create loop');
+    });
+  });
+
+  describe('LoopStatus', () => {
+    it('should return loop details', async () => {
+      const loop = mockLoopService.makeLoop();
+      mockLoopService.setGetLoopResult(ok({ loop }));
+
+      const result = await simulateLoopStatus(mockLoopService, { loopId: loop.id });
+
+      expect(result.isError).toBe(false);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.loop.id).toBe(loop.id);
+      expect(response.loop.strategy).toBe(LoopStrategy.RETRY);
+    });
+
+    it('should include iteration history when requested', async () => {
+      const loop = mockLoopService.makeLoop();
+      const iterations: LoopIteration[] = [
+        {
+          id: 1,
+          loopId: loop.id,
+          iterationNumber: 1,
+          taskId: 'task-1' as unknown as import('../../../src/core/domain').TaskId,
+          status: 'pass',
+          startedAt: Date.now() - 5000,
+          completedAt: Date.now(),
+          score: 42,
+        },
+      ];
+      mockLoopService.setGetLoopResult(ok({ loop, iterations }));
+
+      const result = await simulateLoopStatus(mockLoopService, {
+        loopId: loop.id,
+        includeHistory: true,
+        historyLimit: 10,
+      });
+
+      expect(result.isError).toBe(false);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.iterations).toHaveLength(1);
+      expect(response.iterations[0].status).toBe('pass');
+      expect(response.iterations[0].score).toBe(42);
+    });
+
+    it('should propagate service errors', async () => {
+      mockLoopService.setGetLoopResult(
+        err(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Loop not found', {})),
+      );
+
+      const result = await simulateLoopStatus(mockLoopService, { loopId: 'non-existent' });
+
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('ListLoops', () => {
+    it('should return loop summaries', async () => {
+      const loops = [mockLoopService.makeLoop(), mockLoopService.makeLoop({ prompt: 'second loop' })];
+      mockLoopService.setListLoopsResult(ok(loops));
+
+      const result = await simulateListLoops(mockLoopService, {});
+
+      expect(result.isError).toBe(false);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.count).toBe(2);
+      expect(response.loops).toHaveLength(2);
+    });
+
+    it('should filter by status', async () => {
+      await simulateListLoops(mockLoopService, { status: LoopStatus.RUNNING });
+
+      expect(mockLoopService.listLoopsCalls).toHaveLength(1);
+      expect(mockLoopService.listLoopsCalls[0].status).toBe(LoopStatus.RUNNING);
+    });
+
+    it('should handle empty results', async () => {
+      mockLoopService.setListLoopsResult(ok([]));
+
+      const result = await simulateListLoops(mockLoopService, {});
+
+      expect(result.isError).toBe(false);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.count).toBe(0);
+      expect(response.loops).toHaveLength(0);
+    });
+  });
+
+  describe('CancelLoop', () => {
+    it('should cancel loop successfully', async () => {
+      const result = await simulateCancelLoop(mockLoopService, {
+        loopId: 'loop-123',
+        reason: 'No longer needed',
+      });
+
+      expect(result.isError).toBe(false);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.reason).toBe('No longer needed');
+      expect(mockLoopService.cancelLoopCalls).toHaveLength(1);
+      expect(mockLoopService.cancelLoopCalls[0].reason).toBe('No longer needed');
+    });
+
+    it('should pass cancelTasks flag', async () => {
+      await simulateCancelLoop(mockLoopService, {
+        loopId: 'loop-456',
+        cancelTasks: true,
+      });
+
+      expect(mockLoopService.cancelLoopCalls[0].cancelTasks).toBe(true);
+    });
+
+    it('should propagate service errors', async () => {
+      mockLoopService.setCancelLoopResult(
+        err(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Loop not found', {})),
+      );
+
+      const result = await simulateCancelLoop(mockLoopService, { loopId: 'non-existent' });
+
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(false);
+    });
+  });
+});
