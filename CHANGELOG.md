@@ -10,6 +10,75 @@ Nothing yet.
 
 ---
 
+## [0.7.0] - 2026-03-22
+
+### 🚀 Features
+- **Task Loops**: Iterative task execution with retry (run until exit code 0) and optimize (score-based, minimize/maximize) strategies
+- **Pipeline Loops**: Repeat a multi-step pipeline (2-20 steps) per iteration with linear dependencies and tail-task tracking
+- **Safety Controls**: Max iterations (default 10), max consecutive failures (default 3), configurable cooldown between iterations
+- **4 New MCP Tools**: `CreateLoop`, `LoopStatus`, `ListLoops`, `CancelLoop`
+- **CLI Commands**: `beat loop`, `beat loop list`, `beat loop get`, `beat loop cancel` with pipeline support (`--pipeline --step`)
+
+### 🧪 Test Coverage
+- 94 new loop tests (45 repository + 24 service + 20 handler + 5 integration)
+- 1,136 total tests passing
+
+### 🗄️ Database
+- **Migration 10**: `loops` table (definitions, strategy, exit condition, iteration state) and `loop_iterations` table (per-iteration records with scores and results)
+
+### 🔄 Events
+- 4 new events (29 total): `LoopCreated`, `LoopIterationCompleted`, `LoopCompleted`, `LoopCancelled`
+
+---
+
+## [0.6.0] - 2026-03-20
+
+### 🚀 Features
+- **Scheduled Pipelines**: `SchedulePipeline` MCP tool — cron/one-time multi-step pipelines with linear dependencies, per-step config, concurrency tracking, and `afterScheduleId` chaining
+- **CLI Pipeline Scheduling**: `beat schedule create --pipeline --step "..." --cron "..."`
+- **Cancel with In-Flight Tasks**: `CancelSchedule` supports `cancelTasks` flag to cancel all active execution tasks
+- **ListSchedules/GetSchedule Enhancements**: `isPipeline`, `stepCount`, and full `pipelineSteps` in responses
+
+### 🏗️ Architecture
+- **Event System Simplification**: 42 → 25 events; removed 18 overhead events and 3 services (QueryHandler, OutputHandler, AutoscalingManager); hybrid model (commands via events, queries via direct calls)
+- **SQLite Worker Coordination**: `workers` table with PID-based crash detection replaces in-memory tracking
+- **ReadOnlyContext**: Lightweight bootstrap for read-only CLI commands (~200-400ms faster startup)
+- **Atomic Transactions**: `runInTransaction` for multi-step DB operations with automatic rollback
+
+### ⚠️ Breaking Changes
+- **Dependency Failure Cascade**: Failed/cancelled upstream tasks now cascade cancellation to dependents (previously incorrectly unblocked them)
+- **Constructor Changes**: `WorkerRepository` and `OutputRepository` now required in constructors
+- **BootstrapMode Enum**: `mode: 'server'|'cli'|'run'` replaces boolean flags (`isCli`, `isRun`, `isReadOnly`)
+
+### 🐛 Bug Fixes
+- RecoveryManager validates dependency state before re-queuing tasks
+- `CancelSchedule` cancels tasks from ALL active executions, not just latest
+- Output `totalSize` recalculated after tail-slicing via shared `linesByteSize` utility
+- FAIL policy wrapped in transaction — atomic cancel+audit with event emission after commit
+- Queue handler race condition: fast-path `dependencyState` check prevents blocked tasks from being enqueued
+
+### 🗄️ Database
+- **Migration 8**: `pipeline_steps` column on `schedules`, `pipeline_task_ids` on `schedule_executions`
+- **Migration 9**: `workers` table for cross-process worker tracking
+
+---
+
+## [0.5.0] - 2026-03-10
+
+### 🚀 Features
+- **Multi-Agent Support**: Pluggable agent registry with adapters for Claude (`claude`), OpenAI Codex (`codex`), and Google Gemini (`gemini-cli`) — per-task agent selection across MCP and CLI
+- **`beat init`**: Interactive setup wizard for configuring default agent
+- **`beat agents list`**: Show registered agents with status and default marker
+
+### 🐛 Bug Fixes
+- **git-state dirty file parsing**: `.trim()` on full stdout was truncating first porcelain filename; fixed to trim per-line
+
+### 🧪 Test Coverage
+- 54 new tests (21 handler unit + 33 validation/output/process/git-state)
+- 900+ tests passing across all groups
+
+---
+
 ## [0.4.1] - 2026-03-04
 
 ### 🚀 Features
