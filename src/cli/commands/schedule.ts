@@ -28,8 +28,7 @@ interface ParsedScheduleCreateArgs {
 }
 
 /**
- * Parse and validate schedule create arguments
- * ARCHITECTURE: Pure function — no side effects, returns Result for testability
+ * Parse and validate schedule create arguments.
  */
 export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedScheduleCreateArgs, string> {
   const promptWords: string[] = [];
@@ -122,7 +121,12 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
   if (cronExpression && scheduledAt) {
     return err('Cannot specify both --cron and --at');
   }
-  const inferredType = cronExpression ? 'cron' : scheduledAt ? 'one_time' : undefined;
+  let inferredType: 'cron' | 'one_time' | undefined;
+  if (cronExpression) {
+    inferredType = 'cron';
+  } else if (scheduledAt) {
+    inferredType = 'one_time';
+  }
   if (scheduleType && inferredType && scheduleType !== inferredType) {
     return err(`--type ${scheduleType} conflicts with ${cronExpression ? '--cron' : '--at'}`);
   }
@@ -228,20 +232,24 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]):
     ui.info(`Ignoring positional prompt text in --pipeline mode: "${args.prompt}". Use --step flags only.`);
   }
 
+  const baseOptions = {
+    scheduleType: args.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
+    cronExpression: args.cronExpression,
+    scheduledAt: args.scheduledAt,
+    timezone: args.timezone,
+    missedRunPolicy: args.missedRunPolicy ? toMissedRunPolicy(args.missedRunPolicy) : undefined,
+    priority: args.priority ? Priority[args.priority] : undefined,
+    workingDirectory: args.workingDirectory,
+    maxRuns: args.maxRuns,
+    expiresAt: args.expiresAt,
+    afterScheduleId: args.afterScheduleId ? ScheduleId(args.afterScheduleId) : undefined,
+    agent: args.agent,
+  };
+
   if (args.isPipeline) {
     const result = await service.createScheduledPipeline({
+      ...baseOptions,
       steps: args.pipelineSteps!.map((prompt) => ({ prompt })),
-      scheduleType: args.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
-      cronExpression: args.cronExpression,
-      scheduledAt: args.scheduledAt,
-      timezone: args.timezone,
-      missedRunPolicy: args.missedRunPolicy ? toMissedRunPolicy(args.missedRunPolicy) : undefined,
-      priority: args.priority ? Priority[args.priority] : undefined,
-      workingDirectory: args.workingDirectory,
-      maxRuns: args.maxRuns,
-      expiresAt: args.expiresAt,
-      afterScheduleId: args.afterScheduleId ? ScheduleId(args.afterScheduleId) : undefined,
-      agent: args.agent,
     });
 
     const pipeline = exitOnError(result, undefined, 'Failed to create scheduled pipeline');
@@ -259,18 +267,8 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]):
   }
 
   const result = await service.createSchedule({
+    ...baseOptions,
     prompt: args.prompt!,
-    scheduleType: args.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
-    cronExpression: args.cronExpression,
-    scheduledAt: args.scheduledAt,
-    timezone: args.timezone,
-    missedRunPolicy: args.missedRunPolicy ? toMissedRunPolicy(args.missedRunPolicy) : undefined,
-    priority: args.priority ? Priority[args.priority] : undefined,
-    workingDirectory: args.workingDirectory,
-    maxRuns: args.maxRuns,
-    expiresAt: args.expiresAt,
-    afterScheduleId: args.afterScheduleId ? ScheduleId(args.afterScheduleId) : undefined,
-    agent: args.agent,
   });
 
   const created = exitOnError(result, undefined, 'Failed to create schedule');

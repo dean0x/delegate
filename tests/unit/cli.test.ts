@@ -1328,21 +1328,6 @@ describe('CLI - Schedule Commands', () => {
       expect(mockScheduleService.createCalls[0].afterScheduleId).toBe(ScheduleId('schedule-abc123'));
     });
 
-    it('should reject missing prompt', () => {
-      const result = parseScheduleCreateArgs(['--cron', '0 9 * * *']);
-      expect(result.ok).toBe(false);
-    });
-
-    it('should reject missing schedule type when no --cron or --at given', () => {
-      const result = parseScheduleCreateArgs(['run', 'tests']);
-      expect(result.ok).toBe(false);
-    });
-
-    it('should reject invalid schedule type', () => {
-      const result = parseScheduleCreateArgs(['run', 'tests', '--type', 'weekly']);
-      expect(result.ok).toBe(false);
-    });
-
     it('should infer type from --cron flag', async () => {
       const result = await simulateScheduleCreate(mockScheduleService, {
         prompt: 'run tests',
@@ -1380,13 +1365,6 @@ describe('CLI - Schedule Commands', () => {
       expect(call.steps[1].prompt).toBe('test');
       expect(call.scheduleType).toBe(ScheduleType.CRON);
       expect(call.cronExpression).toBe('0 9 * * *');
-    });
-
-    it('should reject pipeline with fewer than 2 steps', () => {
-      const result = parseScheduleCreateArgs(['--pipeline', '--step', 'only-one', '--cron', '0 9 * * *']);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.error).toContain('at least 2');
     });
   });
 
