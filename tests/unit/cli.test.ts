@@ -61,6 +61,7 @@ import type {
   TaskRepository,
 } from '../../src/core/interfaces';
 import { err, ok, type Result } from '../../src/core/result';
+import { toMissedRunPolicy } from '../../src/utils/format';
 import { TaskFactory } from '../fixtures/factories';
 
 // Test constants
@@ -1048,6 +1049,12 @@ describe('CLI - Command Parsing and Validation', () => {
 describe('CLI - Schedule Commands', () => {
   let mockScheduleService: MockScheduleService;
   let mockScheduleReadOnlyCtx: MockReadOnlyContext;
+  let parseScheduleCreateArgs: typeof import('../../src/cli/commands/schedule').parseScheduleCreateArgs;
+
+  beforeAll(async () => {
+    const mod = await import('../../src/cli/commands/schedule');
+    parseScheduleCreateArgs = mod.parseScheduleCreateArgs;
+  });
 
   beforeEach(() => {
     mockScheduleService = new MockScheduleService();
@@ -1057,6 +1064,209 @@ describe('CLI - Schedule Commands', () => {
   afterEach(() => {
     mockScheduleService.reset();
     mockScheduleReadOnlyCtx.reset();
+  });
+
+  describe('parseScheduleCreateArgs - pure function', () => {
+    it('should parse cron schedule', () => {
+      const result = parseScheduleCreateArgs(['run', 'tests', '--cron', '0 9 * * *']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.scheduleType).toBe('cron');
+      expect(result.value.cronExpression).toBe('0 9 * * *');
+      expect(result.value.prompt).toBe('run tests');
+    });
+
+    it('should parse one-time schedule with --at', () => {
+      const result = parseScheduleCreateArgs(['deploy', '--at', '2026-04-01T09:00:00Z']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.scheduleType).toBe('one_time');
+      expect(result.value.scheduledAt).toBe('2026-04-01T09:00:00Z');
+      expect(result.value.prompt).toBe('deploy');
+    });
+
+    it('should infer type from --cron without explicit --type', () => {
+      const result = parseScheduleCreateArgs(['task', '--cron', '*/5 * * * *']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.scheduleType).toBe('cron');
+    });
+
+    it('should infer type from --at without explicit --type', () => {
+      const result = parseScheduleCreateArgs(['task', '--at', '2026-04-01T09:00:00Z']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.scheduleType).toBe('one_time');
+    });
+
+    it('should parse all optional flags', () => {
+      const cwd = process.cwd();
+      const result = parseScheduleCreateArgs([
+        'run',
+        'tests',
+        '--cron',
+        '0 9 * * 1-5',
+        '--timezone',
+        'America/New_York',
+        '--missed-run-policy',
+        'catchup',
+        '--priority',
+        'P0',
+        '--working-directory',
+        cwd,
+        '--max-runs',
+        '10',
+        '--expires-at',
+        '2026-12-31T23:59:59Z',
+        '--after',
+        'sched-abc',
+        '--agent',
+        'claude',
+      ]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.timezone).toBe('America/New_York');
+      expect(result.value.missedRunPolicy).toBe('catchup');
+      expect(result.value.priority).toBe('P0');
+      expect(result.value.workingDirectory).toBe(cwd);
+      expect(result.value.maxRuns).toBe(10);
+      expect(result.value.expiresAt).toBe('2026-12-31T23:59:59Z');
+      expect(result.value.afterScheduleId).toBe('sched-abc');
+      expect(result.value.agent).toBe('claude');
+    });
+
+    it('should parse pipeline with --pipeline and --step flags', () => {
+      const result = parseScheduleCreateArgs(['--pipeline', '--step', 'lint', '--step', 'test', '--cron', '0 9 * * *']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.isPipeline).toBe(true);
+      expect(result.value.pipelineSteps).toEqual(['lint', 'test']);
+      expect(result.value.prompt).toBeUndefined();
+    });
+
+    it('should preserve prompt in pipeline mode for handler warning', () => {
+      const result = parseScheduleCreateArgs([
+        'extra',
+        'words',
+        '--pipeline',
+        '--step',
+        'lint',
+        '--step',
+        'test',
+        '--cron',
+        '0 9 * * *',
+      ]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.isPipeline).toBe(true);
+      expect(result.value.prompt).toBe('extra words');
+    });
+
+    it('should parse --priority with -p shorthand', () => {
+      const result = parseScheduleCreateArgs(['task', '--cron', '0 9 * * *', '-p', 'P1']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.priority).toBe('P1');
+    });
+
+    it('should parse --agent with -a shorthand', () => {
+      const result = parseScheduleCreateArgs(['task', '--cron', '0 9 * * *', '-a', 'claude']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.agent).toBe('claude');
+    });
+
+    // Error cases
+    it('should reject both --cron and --at', () => {
+      const result = parseScheduleCreateArgs(['task', '--cron', '0 9 * * *', '--at', '2026-04-01T09:00:00Z']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('Cannot specify both');
+    });
+
+    it('should reject --type conflict with --cron', () => {
+      const result = parseScheduleCreateArgs(['task', '--type', 'one_time', '--cron', '0 9 * * *']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('conflicts');
+    });
+
+    it('should reject missing schedule type', () => {
+      const result = parseScheduleCreateArgs(['task']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('--cron');
+    });
+
+    it('should reject invalid --type value', () => {
+      const result = parseScheduleCreateArgs(['task', '--type', 'weekly']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('--type');
+    });
+
+    it('should reject invalid --missed-run-policy', () => {
+      const result = parseScheduleCreateArgs(['task', '--cron', '0 9 * * *', '--missed-run-policy', 'ignore']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('--missed-run-policy');
+    });
+
+    it('should reject invalid priority', () => {
+      const result = parseScheduleCreateArgs(['task', '--cron', '0 9 * * *', '--priority', 'P9']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('Priority');
+    });
+
+    it('should reject pipeline with fewer than 2 steps', () => {
+      const result = parseScheduleCreateArgs(['--pipeline', '--step', 'only-one', '--cron', '0 9 * * *']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('at least 2');
+    });
+
+    it('should reject --step without --pipeline', () => {
+      const result = parseScheduleCreateArgs(['task', '--step', 'lint', '--step', 'test', '--cron', '0 9 * * *']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('--pipeline');
+    });
+
+    it('should reject unknown flag', () => {
+      const result = parseScheduleCreateArgs(['task', '--cron', '0 9 * * *', '--bogus']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('Unknown flag');
+    });
+
+    it('should reject missing prompt in non-pipeline mode', () => {
+      const result = parseScheduleCreateArgs(['--cron', '0 9 * * *']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('Usage');
+    });
+
+    it('should reject non-positive --max-runs', () => {
+      const result = parseScheduleCreateArgs(['task', '--cron', '0 9 * * *', '--max-runs', '0']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('--max-runs');
+    });
+
+    it('should reject unknown agent', () => {
+      const result = parseScheduleCreateArgs(['task', '--cron', '0 9 * * *', '--agent', 'skynet']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('Unknown agent');
+    });
+
+    it('should reject --agent without value', () => {
+      const result = parseScheduleCreateArgs(['task', '--cron', '0 9 * * *', '--agent', '--priority']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('--agent');
+    });
   });
 
   describe('schedule create', () => {
@@ -1095,7 +1305,7 @@ describe('CLI - Schedule Commands', () => {
         timezone: 'America/New_York',
         missedRunPolicy: 'catchup',
         priority: 'P0',
-        workingDirectory: '/workspace',
+        workingDirectory: process.cwd(),
         maxRuns: 10,
       });
 
@@ -1119,18 +1329,18 @@ describe('CLI - Schedule Commands', () => {
     });
 
     it('should reject missing prompt', () => {
-      const validation = validateScheduleCreateInput('', { type: 'cron', cron: '0 9 * * *' });
-      expect(validation.ok).toBe(false);
+      const result = parseScheduleCreateArgs(['--cron', '0 9 * * *']);
+      expect(result.ok).toBe(false);
     });
 
     it('should reject missing schedule type when no --cron or --at given', () => {
-      const validation = validateScheduleCreateInput('run tests', {});
-      expect(validation.ok).toBe(false);
+      const result = parseScheduleCreateArgs(['run', 'tests']);
+      expect(result.ok).toBe(false);
     });
 
     it('should reject invalid schedule type', () => {
-      const validation = validateScheduleCreateInput('run tests', { type: 'weekly' });
-      expect(validation.ok).toBe(false);
+      const result = parseScheduleCreateArgs(['run', 'tests', '--type', 'weekly']);
+      expect(result.ok).toBe(false);
     });
 
     it('should infer type from --cron flag', async () => {
@@ -1173,13 +1383,10 @@ describe('CLI - Schedule Commands', () => {
     });
 
     it('should reject pipeline with fewer than 2 steps', () => {
-      const validation = validatePipelineCreateInput(['only-one-step']);
-
-      expect(validation.ok).toBe(false);
-      if (!validation.ok) {
-        expect(validation.error.code).toBe(ErrorCode.INVALID_INPUT);
-        expect(validation.error.message).toContain('at least 2');
-      }
+      const result = parseScheduleCreateArgs(['--pipeline', '--step', 'only-one', '--cron', '0 9 * * *']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('at least 2');
     });
   });
 
@@ -2264,23 +2471,36 @@ async function simulateRetryCommand(taskManager: MockTaskManager, taskId: string
 // Schedule, Pipeline, Resume Helpers
 // ============================================================================
 
-function validateScheduleCreateInput(prompt: string, options: { type?: string }) {
-  if (!prompt || prompt.trim().length === 0) {
-    return err(
-      new BackbeatError(ErrorCode.INVALID_INPUT, 'Prompt is required for schedule creation', { field: 'prompt' }),
-    );
-  }
-
-  if (!options.type || !['cron', 'one_time'].includes(options.type)) {
-    return err(
-      new BackbeatError(ErrorCode.INVALID_INPUT, '--type must be "cron" or "one_time"', {
-        field: 'type',
-        value: options.type,
-      }),
-    );
-  }
-
-  return ok(undefined);
+/**
+ * Build CLI arg array from structured options for schedule create.
+ */
+function buildScheduleCreateArgs(options: {
+  prompt: string;
+  type: string;
+  cron?: string;
+  at?: string;
+  timezone?: string;
+  missedRunPolicy?: string;
+  priority?: string;
+  workingDirectory?: string;
+  maxRuns?: number;
+  expiresAt?: string;
+  afterScheduleId?: string;
+  agent?: string;
+}): string[] {
+  const args = options.prompt.split(' ');
+  if (options.cron) args.push('--cron', options.cron);
+  if (options.at) args.push('--at', options.at);
+  if (!options.cron && !options.at) args.push('--type', options.type);
+  if (options.timezone) args.push('--timezone', options.timezone);
+  if (options.missedRunPolicy) args.push('--missed-run-policy', options.missedRunPolicy);
+  if (options.priority) args.push('--priority', options.priority);
+  if (options.workingDirectory) args.push('--working-directory', options.workingDirectory);
+  if (options.maxRuns) args.push('--max-runs', String(options.maxRuns));
+  if (options.expiresAt) args.push('--expires-at', options.expiresAt);
+  if (options.afterScheduleId) args.push('--after', options.afterScheduleId);
+  if (options.agent) args.push('--agent', options.agent);
+  return args;
 }
 
 async function simulateScheduleCreate(
@@ -2299,28 +2519,23 @@ async function simulateScheduleCreate(
     afterScheduleId?: string;
   },
 ) {
-  const validation = validateScheduleCreateInput(options.prompt, options);
-  if (!validation.ok) return validation;
+  const { parseScheduleCreateArgs } = await import('../../src/cli/commands/schedule');
+  const parsed = parseScheduleCreateArgs(buildScheduleCreateArgs(options));
+  if (!parsed.ok) return err(new BackbeatError(ErrorCode.INVALID_INPUT, parsed.error));
+  const args = parsed.value;
 
   return service.createSchedule({
-    prompt: options.prompt,
-    scheduleType: options.type === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
-    cronExpression: options.cron,
-    scheduledAt: options.at,
-    timezone: options.timezone,
-    missedRunPolicy:
-      options.missedRunPolicy === 'catchup'
-        ? MissedRunPolicy.CATCHUP
-        : options.missedRunPolicy === 'fail'
-          ? MissedRunPolicy.FAIL
-          : options.missedRunPolicy
-            ? MissedRunPolicy.SKIP
-            : undefined,
-    priority: options.priority,
-    workingDirectory: options.workingDirectory,
-    maxRuns: options.maxRuns,
-    expiresAt: options.expiresAt,
-    afterScheduleId: options.afterScheduleId ? ScheduleId(options.afterScheduleId) : undefined,
+    prompt: args.prompt!,
+    scheduleType: args.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
+    cronExpression: args.cronExpression,
+    scheduledAt: args.scheduledAt,
+    timezone: args.timezone,
+    missedRunPolicy: args.missedRunPolicy ? toMissedRunPolicy(args.missedRunPolicy) : undefined,
+    priority: args.priority,
+    workingDirectory: args.workingDirectory,
+    maxRuns: args.maxRuns,
+    expiresAt: args.expiresAt,
+    afterScheduleId: args.afterScheduleId ? ScheduleId(args.afterScheduleId) : undefined,
   });
 }
 
@@ -2332,21 +2547,8 @@ function validatePipelineInput(steps: string[]) {
 }
 
 /**
- * Validates pipeline create input (--pipeline --step flags).
- * Mirrors the validation in scheduleCreate() when isPipeline is true.
- */
-function validatePipelineCreateInput(steps: string[]) {
-  if (steps.length < 2) {
-    return err(
-      new BackbeatError(ErrorCode.INVALID_INPUT, 'Pipeline requires at least 2 --step flags', { field: 'steps' }),
-    );
-  }
-  return ok(undefined);
-}
-
-/**
  * Simulates `beat schedule create --pipeline --step "..." --step "..." --cron "..."`
- * Mirrors the pipeline branch in scheduleCreate().
+ * Uses real parseScheduleCreateArgs for validation.
  */
 async function simulateScheduleCreatePipeline(
   service: MockScheduleService,
@@ -2364,30 +2566,39 @@ async function simulateScheduleCreatePipeline(
     agent?: string;
   },
 ) {
-  const validation = validatePipelineCreateInput(options.steps);
-  if (!validation.ok) return validation;
+  const { parseScheduleCreateArgs } = await import('../../src/cli/commands/schedule');
+  const args: string[] = ['--pipeline'];
+  for (const step of options.steps) {
+    args.push('--step', step);
+  }
+  if (options.cron) args.push('--cron', options.cron);
+  if (options.at) args.push('--at', options.at);
+  if (options.timezone) args.push('--timezone', options.timezone);
+  if (options.missedRunPolicy) args.push('--missed-run-policy', options.missedRunPolicy);
+  if (options.priority) args.push('--priority', options.priority);
+  if (options.workingDirectory) args.push('--working-directory', options.workingDirectory);
+  if (options.maxRuns) args.push('--max-runs', String(options.maxRuns));
+  if (options.expiresAt) args.push('--expires-at', options.expiresAt);
+  if (options.afterScheduleId) args.push('--after', options.afterScheduleId);
+  if (options.agent) args.push('--agent', options.agent);
 
-  const scheduleType = options.cron ? ScheduleType.CRON : ScheduleType.ONE_TIME;
+  const parsed = parseScheduleCreateArgs(args);
+  if (!parsed.ok) return err(new BackbeatError(ErrorCode.INVALID_INPUT, parsed.error));
+  const p = parsed.value;
 
   return service.createScheduledPipeline({
-    steps: options.steps.map((prompt) => ({ prompt })),
-    scheduleType,
-    cronExpression: options.cron,
-    scheduledAt: options.at,
-    timezone: options.timezone,
-    missedRunPolicy:
-      options.missedRunPolicy === 'catchup'
-        ? MissedRunPolicy.CATCHUP
-        : options.missedRunPolicy === 'fail'
-          ? MissedRunPolicy.FAIL
-          : options.missedRunPolicy
-            ? MissedRunPolicy.SKIP
-            : undefined,
-    priority: options.priority,
-    workingDirectory: options.workingDirectory,
-    maxRuns: options.maxRuns,
-    expiresAt: options.expiresAt,
-    afterScheduleId: options.afterScheduleId ? ScheduleId(options.afterScheduleId) : undefined,
+    steps: p.pipelineSteps!.map((prompt) => ({ prompt })),
+    scheduleType: p.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
+    cronExpression: p.cronExpression,
+    scheduledAt: p.scheduledAt,
+    timezone: p.timezone,
+    missedRunPolicy: p.missedRunPolicy ? toMissedRunPolicy(p.missedRunPolicy) : undefined,
+    priority: p.priority,
+    workingDirectory: p.workingDirectory,
+    maxRuns: p.maxRuns,
+    expiresAt: p.expiresAt,
+    afterScheduleId: p.afterScheduleId ? ScheduleId(p.afterScheduleId) : undefined,
+    agent: p.agent,
   });
 }
 

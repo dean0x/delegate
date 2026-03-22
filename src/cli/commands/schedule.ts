@@ -1,10 +1,168 @@
 import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
 import { Priority, ScheduleId, ScheduleStatus, ScheduleType } from '../../core/domain.js';
 import type { ScheduleExecution, ScheduleRepository, ScheduleService } from '../../core/interfaces.js';
+import { err, ok, type Result } from '../../core/result.js';
 import { toMissedRunPolicy, truncatePrompt } from '../../utils/format.js';
 import { validatePath } from '../../utils/validation.js';
 import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';
+
+/**
+ * Parsed arguments from CLI schedule create command
+ */
+interface ParsedScheduleCreateArgs {
+  readonly prompt?: string;
+  readonly scheduleType: 'cron' | 'one_time';
+  readonly cronExpression?: string;
+  readonly scheduledAt?: string;
+  readonly timezone?: string;
+  readonly missedRunPolicy?: 'skip' | 'catchup' | 'fail';
+  readonly priority?: 'P0' | 'P1' | 'P2';
+  readonly workingDirectory?: string;
+  readonly maxRuns?: number;
+  readonly expiresAt?: string;
+  readonly afterScheduleId?: string;
+  readonly agent?: AgentProvider;
+  readonly isPipeline: boolean;
+  readonly pipelineSteps?: readonly string[];
+}
+
+/**
+ * Parse and validate schedule create arguments
+ * ARCHITECTURE: Pure function — no side effects, returns Result for testability
+ */
+export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedScheduleCreateArgs, string> {
+  const promptWords: string[] = [];
+  let scheduleType: 'cron' | 'one_time' | undefined;
+  let cronExpression: string | undefined;
+  let scheduledAt: string | undefined;
+  let timezone: string | undefined;
+  let missedRunPolicy: 'skip' | 'catchup' | 'fail' | undefined;
+  let priority: 'P0' | 'P1' | 'P2' | undefined;
+  let workingDirectory: string | undefined;
+  let maxRuns: number | undefined;
+  let expiresAt: string | undefined;
+  let afterScheduleId: string | undefined;
+  let agent: AgentProvider | undefined;
+  let isPipeline = false;
+  const pipelineSteps: string[] = [];
+
+  for (let i = 0; i < scheduleArgs.length; i++) {
+    const arg = scheduleArgs[i];
+    const next = scheduleArgs[i + 1];
+
+    if (arg === '--type' && next) {
+      if (next !== 'cron' && next !== 'one_time') {
+        return err('--type must be "cron" or "one_time"');
+      }
+      scheduleType = next;
+      i++;
+    } else if (arg === '--cron' && next) {
+      cronExpression = next;
+      i++;
+    } else if (arg === '--at' && next) {
+      scheduledAt = next;
+      i++;
+    } else if (arg === '--timezone' && next) {
+      timezone = next;
+      i++;
+    } else if (arg === '--missed-run-policy' && next) {
+      if (!['skip', 'catchup', 'fail'].includes(next)) {
+        return err('--missed-run-policy must be "skip", "catchup", or "fail"');
+      }
+      missedRunPolicy = next as 'skip' | 'catchup' | 'fail';
+      i++;
+    } else if ((arg === '--priority' || arg === '-p') && next) {
+      if (!['P0', 'P1', 'P2'].includes(next)) {
+        return err('Priority must be P0, P1, or P2');
+      }
+      priority = next as 'P0' | 'P1' | 'P2';
+      i++;
+    } else if ((arg === '--working-directory' || arg === '-w') && next) {
+      const pathResult = validatePath(next);
+      if (!pathResult.ok) {
+        return err(`Invalid working directory: ${pathResult.error.message}`);
+      }
+      workingDirectory = pathResult.value;
+      i++;
+    } else if (arg === '--max-runs' && next) {
+      maxRuns = parseInt(next);
+      if (isNaN(maxRuns) || maxRuns < 1) {
+        return err('--max-runs must be a positive integer');
+      }
+      i++;
+    } else if (arg === '--expires-at' && next) {
+      expiresAt = next;
+      i++;
+    } else if (arg === '--after' && next) {
+      afterScheduleId = next;
+      i++;
+    } else if (arg === '--agent' || arg === '-a') {
+      if (!next || next.startsWith('-')) {
+        return err(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
+      }
+      if (!isAgentProvider(next)) {
+        return err(`Unknown agent: "${next}". Available agents: ${AGENT_PROVIDERS.join(', ')}`);
+      }
+      agent = next;
+      i++;
+    } else if (arg === '--pipeline') {
+      isPipeline = true;
+    } else if (arg === '--step' && next) {
+      pipelineSteps.push(next);
+      i++;
+    } else if (arg.startsWith('-')) {
+      return err(`Unknown flag: ${arg}`);
+    } else {
+      promptWords.push(arg);
+    }
+  }
+
+  // Infer type from --cron / --at flags
+  if (cronExpression && scheduledAt) {
+    return err('Cannot specify both --cron and --at');
+  }
+  const inferredType = cronExpression ? 'cron' : scheduledAt ? 'one_time' : undefined;
+  if (scheduleType && inferredType && scheduleType !== inferredType) {
+    return err(`--type ${scheduleType} conflicts with ${cronExpression ? '--cron' : '--at'}`);
+  }
+  scheduleType = scheduleType ?? inferredType;
+  if (!scheduleType) {
+    return err('Provide --cron, --at, or --type');
+  }
+
+  // Pipeline mode
+  if (isPipeline) {
+    if (pipelineSteps.length < 2) {
+      return err('Pipeline requires at least 2 --step flags');
+    }
+  } else if (pipelineSteps.length > 0) {
+    return err('--step requires --pipeline. Did you mean: beat schedule create --pipeline --step "..." --step "..."');
+  }
+
+  // Non-pipeline mode: prompt is required
+  const prompt = promptWords.join(' ');
+  if (!isPipeline && !prompt) {
+    return err('Usage: beat schedule create <prompt> --cron "..." | --at "..." [options]');
+  }
+
+  return ok({
+    prompt: prompt || undefined,
+    scheduleType,
+    cronExpression,
+    scheduledAt,
+    timezone,
+    missedRunPolicy,
+    priority,
+    workingDirectory,
+    maxRuns,
+    expiresAt,
+    afterScheduleId,
+    agent,
+    isPipeline,
+    pipelineSteps: isPipeline ? pipelineSteps : undefined,
+  });
+}
 
 export async function handleScheduleCommand(subCmd: string | undefined, scheduleArgs: string[]): Promise<void> {
   if (!subCmd) {
@@ -59,139 +217,31 @@ export async function handleScheduleCommand(subCmd: string | undefined, schedule
 }
 
 async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]): Promise<void> {
-  const promptWords: string[] = [];
-  let scheduleType: 'cron' | 'one_time' | undefined;
-  let cronExpression: string | undefined;
-  let scheduledAt: string | undefined;
-  let timezone: string | undefined;
-  let missedRunPolicy: 'skip' | 'catchup' | 'fail' | undefined;
-  let priority: 'P0' | 'P1' | 'P2' | undefined;
-  let workingDirectory: string | undefined;
-  let maxRuns: number | undefined;
-  let expiresAt: string | undefined;
-  let afterScheduleId: string | undefined;
-  let agent: AgentProvider | undefined;
-  let isPipeline = false;
-  const pipelineSteps: string[] = [];
-
-  for (let i = 0; i < scheduleArgs.length; i++) {
-    const arg = scheduleArgs[i];
-    const next = scheduleArgs[i + 1];
-
-    if (arg === '--type' && next) {
-      if (next !== 'cron' && next !== 'one_time') {
-        ui.error('--type must be "cron" or "one_time"');
-        process.exit(1);
-      }
-      scheduleType = next;
-      i++;
-    } else if (arg === '--cron' && next) {
-      cronExpression = next;
-      i++;
-    } else if (arg === '--at' && next) {
-      scheduledAt = next;
-      i++;
-    } else if (arg === '--timezone' && next) {
-      timezone = next;
-      i++;
-    } else if (arg === '--missed-run-policy' && next) {
-      if (!['skip', 'catchup', 'fail'].includes(next)) {
-        ui.error('--missed-run-policy must be "skip", "catchup", or "fail"');
-        process.exit(1);
-      }
-      missedRunPolicy = next as 'skip' | 'catchup' | 'fail';
-      i++;
-    } else if ((arg === '--priority' || arg === '-p') && next) {
-      if (!['P0', 'P1', 'P2'].includes(next)) {
-        ui.error('Priority must be P0, P1, or P2');
-        process.exit(1);
-      }
-      priority = next as 'P0' | 'P1' | 'P2';
-      i++;
-    } else if ((arg === '--working-directory' || arg === '-w') && next) {
-      const pathResult = validatePath(next);
-      if (!pathResult.ok) {
-        ui.error(`Invalid working directory: ${pathResult.error.message}`);
-        process.exit(1);
-      }
-      workingDirectory = pathResult.value;
-      i++;
-    } else if (arg === '--max-runs' && next) {
-      maxRuns = parseInt(next);
-      if (isNaN(maxRuns) || maxRuns < 1) {
-        ui.error('--max-runs must be a positive integer');
-        process.exit(1);
-      }
-      i++;
-    } else if (arg === '--expires-at' && next) {
-      expiresAt = next;
-      i++;
-    } else if (arg === '--after' && next) {
-      afterScheduleId = next;
-      i++;
-    } else if (arg === '--agent' || arg === '-a') {
-      if (!next || next.startsWith('-')) {
-        ui.error(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
-        process.exit(1);
-      }
-      if (!isAgentProvider(next)) {
-        ui.error(`Unknown agent: "${next}". Available agents: ${AGENT_PROVIDERS.join(', ')}`);
-        process.exit(1);
-      }
-      agent = next;
-      i++;
-    } else if (arg === '--pipeline') {
-      isPipeline = true;
-    } else if (arg === '--step' && next) {
-      pipelineSteps.push(next);
-      i++;
-    } else if (arg.startsWith('-')) {
-      ui.error(`Unknown flag: ${arg}`);
-      process.exit(1);
-    } else {
-      promptWords.push(arg);
-    }
-  }
-
-  // Infer type from --cron / --at flags
-  if (cronExpression && scheduledAt) {
-    ui.error('Cannot specify both --cron and --at');
+  const parsed = parseScheduleCreateArgs(scheduleArgs);
+  if (!parsed.ok) {
+    ui.error(parsed.error);
     process.exit(1);
   }
-  const inferredType = cronExpression ? 'cron' : scheduledAt ? 'one_time' : undefined;
-  if (scheduleType && inferredType && scheduleType !== inferredType) {
-    ui.error(`--type ${scheduleType} conflicts with ${cronExpression ? '--cron' : '--at'}`);
-    process.exit(1);
-  }
-  scheduleType = scheduleType ?? inferredType;
-  if (!scheduleType) {
-    ui.error('Provide --cron, --at, or --type');
-    process.exit(1);
+  const args = parsed.value;
+
+  if (args.isPipeline && args.prompt) {
+    ui.info(`Ignoring positional prompt text in --pipeline mode: "${args.prompt}". Use --step flags only.`);
   }
 
-  // Pipeline mode: --pipeline with --step flags
-  if (isPipeline) {
-    if (promptWords.length > 0) {
-      ui.info(`Ignoring positional prompt text in --pipeline mode: "${promptWords.join(' ')}". Use --step flags only.`);
-    }
-    if (pipelineSteps.length < 2) {
-      ui.error('Pipeline requires at least 2 --step flags');
-      process.exit(1);
-    }
-
+  if (args.isPipeline) {
     const result = await service.createScheduledPipeline({
-      steps: pipelineSteps.map((prompt) => ({ prompt })),
-      scheduleType: scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
-      cronExpression,
-      scheduledAt,
-      timezone,
-      missedRunPolicy: missedRunPolicy ? toMissedRunPolicy(missedRunPolicy) : undefined,
-      priority: priority ? Priority[priority] : undefined,
-      workingDirectory,
-      maxRuns,
-      expiresAt,
-      afterScheduleId: afterScheduleId ? ScheduleId(afterScheduleId) : undefined,
-      agent,
+      steps: args.pipelineSteps!.map((prompt) => ({ prompt })),
+      scheduleType: args.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
+      cronExpression: args.cronExpression,
+      scheduledAt: args.scheduledAt,
+      timezone: args.timezone,
+      missedRunPolicy: args.missedRunPolicy ? toMissedRunPolicy(args.missedRunPolicy) : undefined,
+      priority: args.priority ? Priority[args.priority] : undefined,
+      workingDirectory: args.workingDirectory,
+      maxRuns: args.maxRuns,
+      expiresAt: args.expiresAt,
+      afterScheduleId: args.afterScheduleId ? ScheduleId(args.afterScheduleId) : undefined,
+      agent: args.agent,
     });
 
     const pipeline = exitOnError(result, undefined, 'Failed to create scheduled pipeline');
@@ -203,38 +253,24 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]):
     ];
     if (pipeline.nextRunAt) details.push(`Next run: ${new Date(pipeline.nextRunAt).toISOString()}`);
     if (pipeline.cronExpression) details.push(`Cron: ${pipeline.cronExpression}`);
-    if (agent) details.push(`Agent: ${agent}`);
+    if (args.agent) details.push(`Agent: ${args.agent}`);
     ui.info(details.join(' | '));
-    process.exit(0);
-  }
-
-  // Guard: --step without --pipeline is a user error
-  if (pipelineSteps.length > 0) {
-    ui.error('--step requires --pipeline. Did you mean: beat schedule create --pipeline --step "..." --step "..."');
-    process.exit(1);
-  }
-
-  // Single-task mode
-  const prompt = promptWords.join(' ');
-  if (!prompt) {
-    ui.error('Usage: beat schedule create <prompt> --cron "..." | --at "..." [options]');
-    ui.info('  Pipeline: beat schedule create --pipeline --step "lint" --step "test" --cron "0 9 * * *"');
-    process.exit(1);
+    return;
   }
 
   const result = await service.createSchedule({
-    prompt,
-    scheduleType: scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
-    cronExpression,
-    scheduledAt,
-    timezone,
-    missedRunPolicy: missedRunPolicy ? toMissedRunPolicy(missedRunPolicy) : undefined,
-    priority: priority ? Priority[priority] : undefined,
-    workingDirectory,
-    maxRuns,
-    expiresAt,
-    afterScheduleId: afterScheduleId ? ScheduleId(afterScheduleId) : undefined,
-    agent,
+    prompt: args.prompt!,
+    scheduleType: args.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
+    cronExpression: args.cronExpression,
+    scheduledAt: args.scheduledAt,
+    timezone: args.timezone,
+    missedRunPolicy: args.missedRunPolicy ? toMissedRunPolicy(args.missedRunPolicy) : undefined,
+    priority: args.priority ? Priority[args.priority] : undefined,
+    workingDirectory: args.workingDirectory,
+    maxRuns: args.maxRuns,
+    expiresAt: args.expiresAt,
+    afterScheduleId: args.afterScheduleId ? ScheduleId(args.afterScheduleId) : undefined,
+    agent: args.agent,
   });
 
   const created = exitOnError(result, undefined, 'Failed to create schedule');
@@ -243,9 +279,8 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]):
   if (created.nextRunAt) details.push(`Next run: ${new Date(created.nextRunAt).toISOString()}`);
   if (created.cronExpression) details.push(`Cron: ${created.cronExpression}`);
   if (created.afterScheduleId) details.push(`After: ${created.afterScheduleId}`);
-  if (agent) details.push(`Agent: ${agent}`);
+  if (args.agent) details.push(`Agent: ${args.agent}`);
   ui.info(details.join(' | '));
-  process.exit(0);
 }
 
 async function scheduleList(repo: ScheduleRepository, scheduleArgs: string[]): Promise<void> {
