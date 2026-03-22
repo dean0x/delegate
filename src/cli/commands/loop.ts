@@ -7,10 +7,11 @@ import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../s
 import * as ui from '../ui.js';
 
 /**
- * Parsed arguments from CLI loop create command
+ * Parsed arguments from CLI loop create command.
+ * Discriminated union on `isPipeline`: pipeline variant has `pipelineSteps`,
+ * non-pipeline variant has `prompt`. Matches schedule parser pattern.
  */
-interface ParsedLoopArgs {
-  readonly prompt?: string;
+interface ParsedLoopBaseArgs {
   readonly strategy: LoopStrategy;
   readonly exitCondition: string;
   readonly evalDirection?: 'minimize' | 'maximize';
@@ -20,10 +21,13 @@ interface ParsedLoopArgs {
   readonly maxConsecutiveFailures?: number;
   readonly cooldownMs?: number;
   readonly freshContext: boolean;
-  readonly pipelineSteps?: readonly string[];
   readonly priority?: 'P0' | 'P1' | 'P2';
   readonly agent?: AgentProvider;
 }
+
+type ParsedLoopArgs =
+  | (ParsedLoopBaseArgs & { readonly isPipeline: true; readonly pipelineSteps: readonly string[] })
+  | (ParsedLoopBaseArgs & { readonly isPipeline: false; readonly prompt: string });
 
 /**
  * Parse and validate loop create arguments
@@ -62,25 +66,25 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
       direction = next;
       i++;
     } else if (arg === '--max-iterations' && next) {
-      maxIterations = parseInt(next);
+      maxIterations = parseInt(next, 10);
       if (isNaN(maxIterations) || maxIterations < 0) {
         return err('--max-iterations must be >= 0 (0 = unlimited)');
       }
       i++;
     } else if (arg === '--max-failures' && next) {
-      maxFailures = parseInt(next);
+      maxFailures = parseInt(next, 10);
       if (isNaN(maxFailures) || maxFailures < 0) {
         return err('--max-failures must be >= 0');
       }
       i++;
     } else if (arg === '--cooldown' && next) {
-      cooldown = parseInt(next);
+      cooldown = parseInt(next, 10);
       if (isNaN(cooldown) || cooldown < 0) {
         return err('--cooldown must be >= 0 (ms)');
       }
       i++;
     } else if (arg === '--eval-timeout' && next) {
-      evalTimeout = parseInt(next);
+      evalTimeout = parseInt(next, 10);
       if (isNaN(evalTimeout) || evalTimeout < 1000) {
         return err('--eval-timeout must be >= 1000 (ms)');
       }
@@ -105,8 +109,8 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
       }
       workingDirectory = pathResult.value;
       i++;
-    } else if ((arg === '--agent' || arg === '-a') && next) {
-      if (next.startsWith('-')) {
+    } else if (arg === '--agent' || arg === '-a') {
+      if (!next || next.startsWith('-')) {
         return err(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
       }
       if (!isAgentProvider(next)) {
@@ -159,8 +163,7 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
     return err('Usage: beat loop <prompt> --until <cmd> [options]');
   }
 
-  return ok({
-    prompt: isPipeline ? undefined : prompt,
+  const shared = {
     strategy: isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
     exitCondition,
     evalDirection: direction,
@@ -170,10 +173,14 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
     maxConsecutiveFailures: maxFailures,
     cooldownMs: cooldown,
     freshContext: !continueContext,
-    pipelineSteps: isPipeline ? pipelineSteps : undefined,
     priority,
     agent,
-  });
+  };
+
+  if (isPipeline) {
+    return ok({ ...shared, isPipeline: true as const, pipelineSteps });
+  }
+  return ok({ ...shared, isPipeline: false as const, prompt });
 }
 
 export async function handleLoopCommand(subCmd: string | undefined, loopArgs: string[]): Promise<void> {
@@ -216,7 +223,7 @@ async function handleLoopCreate(loopArgs: string[]): Promise<void> {
   const { loopService } = await withServices(s);
 
   const result = await loopService.createLoop({
-    prompt: args.prompt,
+    prompt: args.isPipeline ? undefined : args.prompt,
     strategy: args.strategy,
     exitCondition: args.exitCondition,
     evalDirection: toOptimizeDirection(args.evalDirection),
@@ -226,7 +233,7 @@ async function handleLoopCreate(loopArgs: string[]): Promise<void> {
     maxConsecutiveFailures: args.maxConsecutiveFailures,
     cooldownMs: args.cooldownMs,
     freshContext: args.freshContext,
-    pipelineSteps: args.pipelineSteps,
+    pipelineSteps: args.isPipeline ? args.pipelineSteps : undefined,
     priority: args.priority ? Priority[args.priority] : undefined,
     agent: args.agent,
   });
@@ -264,7 +271,7 @@ async function handleLoopList(loopArgs: string[]): Promise<void> {
       status = next;
       i++;
     } else if (arg === '--limit' && next) {
-      limit = parseInt(next);
+      limit = parseInt(next, 10);
       i++;
     }
   }
@@ -324,7 +331,7 @@ async function handleLoopGet(loopArgs: string[]): Promise<void> {
   let historyLimit: number | undefined;
   const hlIdx = loopArgs.indexOf('--history-limit');
   if (hlIdx !== -1 && loopArgs[hlIdx + 1]) {
-    historyLimit = parseInt(loopArgs[hlIdx + 1]);
+    historyLimit = parseInt(loopArgs[hlIdx + 1], 10);
   }
 
   const s = ui.createSpinner();

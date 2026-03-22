@@ -8,10 +8,11 @@ import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../s
 import * as ui from '../ui.js';
 
 /**
- * Parsed arguments from CLI schedule create command
+ * Parsed arguments from CLI schedule create command.
+ * Discriminated union on `isPipeline`: pipeline variant has `pipelineSteps`,
+ * non-pipeline variant has `prompt`. Eliminates non-null assertions in handlers.
  */
-interface ParsedScheduleCreateArgs {
-  readonly prompt?: string;
+interface ParsedScheduleBaseArgs {
   readonly scheduleType: 'cron' | 'one_time';
   readonly cronExpression?: string;
   readonly scheduledAt?: string;
@@ -23,9 +24,11 @@ interface ParsedScheduleCreateArgs {
   readonly expiresAt?: string;
   readonly afterScheduleId?: string;
   readonly agent?: AgentProvider;
-  readonly isPipeline: boolean;
-  readonly pipelineSteps?: readonly string[];
 }
+
+type ParsedScheduleCreateArgs =
+  | (ParsedScheduleBaseArgs & { readonly isPipeline: true; readonly pipelineSteps: readonly string[] })
+  | (ParsedScheduleBaseArgs & { readonly isPipeline: false; readonly prompt: string });
 
 /**
  * Parse and validate schedule create arguments.
@@ -141,7 +144,9 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
       return err('Pipeline requires at least 2 --step flags');
     }
   } else if (pipelineSteps.length > 0) {
-    return err('--step requires --pipeline. Did you mean: beat schedule create --pipeline --step "..." --step "..."');
+    return err(
+      '--step requires --pipeline. Did you mean: beat schedule create --pipeline --step "..." --step "..." --cron "..."',
+    );
   }
 
   // Non-pipeline mode: prompt is required
@@ -152,8 +157,7 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
     );
   }
 
-  return ok({
-    prompt: isPipeline ? undefined : prompt || undefined,
+  const shared = {
     scheduleType,
     cronExpression,
     scheduledAt,
@@ -165,9 +169,12 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
     expiresAt,
     afterScheduleId,
     agent,
-    isPipeline,
-    pipelineSteps: isPipeline ? pipelineSteps : undefined,
-  });
+  };
+
+  if (isPipeline) {
+    return ok({ ...shared, isPipeline: true as const, pipelineSteps });
+  }
+  return ok({ ...shared, isPipeline: false as const, prompt });
 }
 
 export async function handleScheduleCommand(subCmd: string | undefined, scheduleArgs: string[]): Promise<void> {
@@ -247,7 +254,7 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]):
   if (args.isPipeline) {
     const result = await service.createScheduledPipeline({
       ...baseOptions,
-      steps: args.pipelineSteps!.map((prompt) => ({ prompt })),
+      steps: args.pipelineSteps.map((prompt) => ({ prompt })),
     });
 
     const pipeline = exitOnError(result, undefined, 'Failed to create scheduled pipeline');
@@ -266,7 +273,7 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]):
 
   const result = await service.createSchedule({
     ...baseOptions,
-    prompt: args.prompt!,
+    prompt: args.prompt,
   });
 
   const created = exitOnError(result, undefined, 'Failed to create schedule');
@@ -291,7 +298,7 @@ async function scheduleList(repo: ScheduleRepository, scheduleArgs: string[]): P
       status = next;
       i++;
     } else if (arg === '--limit' && next) {
-      limit = parseInt(next);
+      limit = parseInt(next, 10);
       i++;
     }
   }
@@ -335,7 +342,7 @@ async function scheduleGet(repo: ScheduleRepository, scheduleArgs: string[]): Pr
   let historyLimit: number | undefined;
   const hlIdx = scheduleArgs.indexOf('--history-limit');
   if (hlIdx !== -1 && scheduleArgs[hlIdx + 1]) {
-    historyLimit = parseInt(scheduleArgs[hlIdx + 1]);
+    historyLimit = parseInt(scheduleArgs[hlIdx + 1], 10);
   }
 
   const scheduleResult = await repo.findById(ScheduleId(scheduleId));

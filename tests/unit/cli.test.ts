@@ -61,7 +61,7 @@ import type {
   TaskRepository,
 } from '../../src/core/interfaces';
 import { err, ok, type Result } from '../../src/core/result';
-import { toMissedRunPolicy } from '../../src/utils/format';
+import { toMissedRunPolicy, toOptimizeDirection } from '../../src/utils/format';
 import { TaskFactory } from '../fixtures/factories';
 
 // Test constants
@@ -1073,6 +1073,7 @@ describe('CLI - Schedule Commands', () => {
       if (!result.ok) return;
       expect(result.value.scheduleType).toBe('cron');
       expect(result.value.cronExpression).toBe('0 9 * * *');
+      if (result.value.isPipeline) return;
       expect(result.value.prompt).toBe('run tests');
     });
 
@@ -1082,6 +1083,7 @@ describe('CLI - Schedule Commands', () => {
       if (!result.ok) return;
       expect(result.value.scheduleType).toBe('one_time');
       expect(result.value.scheduledAt).toBe('2026-04-01T09:00:00Z');
+      if (result.value.isPipeline) return;
       expect(result.value.prompt).toBe('deploy');
     });
 
@@ -1140,8 +1142,8 @@ describe('CLI - Schedule Commands', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.isPipeline).toBe(true);
+      if (!result.value.isPipeline) return;
       expect(result.value.pipelineSteps).toEqual(['lint', 'test']);
-      expect(result.value.prompt).toBeUndefined();
     });
 
     it('should suppress prompt in pipeline mode (matches loop parser)', () => {
@@ -1159,7 +1161,6 @@ describe('CLI - Schedule Commands', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.isPipeline).toBe(true);
-      expect(result.value.prompt).toBeUndefined();
     });
 
     it('should parse --priority with -p shorthand', () => {
@@ -2501,9 +2502,10 @@ async function simulateScheduleCreate(
   const parsed = parseScheduleCreateArgs(buildScheduleCreateArgs(options));
   if (!parsed.ok) return err(new BackbeatError(ErrorCode.INVALID_INPUT, parsed.error));
   const args = parsed.value;
+  if (args.isPipeline) return err(new BackbeatError(ErrorCode.INVALID_INPUT, 'Expected non-pipeline'));
 
   return service.createSchedule({
-    prompt: args.prompt!,
+    prompt: args.prompt,
     scheduleType: args.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
     cronExpression: args.cronExpression,
     scheduledAt: args.scheduledAt,
@@ -2563,9 +2565,10 @@ async function simulateScheduleCreatePipeline(
   const parsed = parseScheduleCreateArgs(args);
   if (!parsed.ok) return err(new BackbeatError(ErrorCode.INVALID_INPUT, parsed.error));
   const p = parsed.value;
+  if (!p.isPipeline) return err(new BackbeatError(ErrorCode.INVALID_INPUT, 'Expected pipeline'));
 
   return service.createScheduledPipeline({
-    steps: p.pipelineSteps!.map((prompt) => ({ prompt })),
+    steps: p.pipelineSteps.map((prompt) => ({ prompt })),
     scheduleType: p.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
     cronExpression: p.cronExpression,
     scheduledAt: p.scheduledAt,
@@ -2635,22 +2638,17 @@ async function simulateLoopCreate(service: MockLoopService, args: string[]) {
   if (!parsed.ok) return err(new BackbeatError(ErrorCode.INVALID_INPUT, parsed.error));
   const p = parsed.value;
   return service.createLoop({
-    prompt: p.prompt,
+    prompt: p.isPipeline ? undefined : p.prompt,
     strategy: p.strategy,
     exitCondition: p.exitCondition,
-    evalDirection:
-      p.evalDirection === 'minimize'
-        ? OptimizeDirection.MINIMIZE
-        : p.evalDirection === 'maximize'
-          ? OptimizeDirection.MAXIMIZE
-          : undefined,
+    evalDirection: toOptimizeDirection(p.evalDirection),
     evalTimeout: p.evalTimeout,
     workingDirectory: p.workingDirectory,
     maxIterations: p.maxIterations,
     maxConsecutiveFailures: p.maxConsecutiveFailures,
     cooldownMs: p.cooldownMs,
     freshContext: p.freshContext,
-    pipelineSteps: p.pipelineSteps,
+    pipelineSteps: p.isPipeline ? p.pipelineSteps : undefined,
     priority: p.priority ? Priority[p.priority] : undefined,
     agent: p.agent,
   });
@@ -2761,6 +2759,7 @@ describe('CLI - Loop Commands', () => {
       if (!result.ok) return;
       expect(result.value.strategy).toBe(LoopStrategy.RETRY);
       expect(result.value.exitCondition).toBe('npm test');
+      if (result.value.isPipeline) return;
       expect(result.value.prompt).toBe('fix tests');
     });
 
@@ -2777,8 +2776,9 @@ describe('CLI - Loop Commands', () => {
       const result = parseLoopCreateArgs(['--pipeline', '--step', 'lint', '--step', 'test', '--until', 'true']);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
+      expect(result.value.isPipeline).toBe(true);
+      if (!result.value.isPipeline) return;
       expect(result.value.pipelineSteps).toEqual(['lint', 'test']);
-      expect(result.value.prompt).toBeUndefined();
     });
 
     it('should parse --max-iterations', () => {
