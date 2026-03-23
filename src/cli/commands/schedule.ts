@@ -76,6 +76,7 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
   let isLoop = false;
   let untilCmd: string | undefined;
   let evalCmd: string | undefined;
+  let explicitStrategy: LoopStrategy | undefined;
   let loopDirection: 'minimize' | 'maximize' | undefined;
   let loopMaxIterations: number | undefined;
   let loopMaxFailures: number | undefined;
@@ -157,10 +158,11 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
       evalCmd = next;
       i++;
     } else if (arg === '--strategy' && next) {
-      // Explicit strategy flag (alternative to --until/--eval inference)
+      // Explicit strategy override (alternative to --until/--eval inference)
       if (next !== 'retry' && next !== 'optimize') {
         return err('--strategy must be "retry" or "optimize"');
       }
+      explicitStrategy = next === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE;
       i++;
     } else if (arg === '--direction' && next) {
       if (next !== 'minimize' && next !== 'maximize') {
@@ -243,7 +245,7 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
     }
 
     const loopConfig: ParsedLoopConfig = {
-      strategy: isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
+      strategy: explicitStrategy ?? (isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY),
       exitCondition,
       evalDirection: loopDirection,
       evalTimeout: loopEvalTimeout,
