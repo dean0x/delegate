@@ -280,8 +280,6 @@ const ScheduleLoopSchema = z.object({
   missedRunPolicy: z.enum(['skip', 'catchup', 'fail']).optional().default('skip'),
   maxRuns: z.number().min(1).optional().describe('Maximum number of loop runs for cron schedules'),
   expiresAt: z.string().optional().describe('ISO 8601 datetime when schedule expires'),
-  name: z.string().optional().describe('Human-readable schedule name'),
-  description: z.string().optional().describe('Schedule description'),
 });
 
 const CancelLoopSchema = z.object({
@@ -2072,6 +2070,9 @@ export class MCPAdapter {
             freshContext: loop.freshContext,
             promptPreview: truncatePrompt(loop.taskTemplate.prompt, 50),
             workingDirectory: loop.workingDirectory,
+            gitBranch: loop.gitBranch ?? null,
+            gitBaseBranch: loop.gitBaseBranch ?? null,
+            scheduleId: loop.scheduleId ?? null,
             createdAt: new Date(loop.createdAt).toISOString(),
             updatedAt: new Date(loop.updatedAt).toISOString(),
             completedAt: loop.completedAt ? new Date(loop.completedAt).toISOString() : null,
@@ -2095,6 +2096,8 @@ export class MCPAdapter {
             score: iter.score ?? null,
             exitCode: iter.exitCode ?? null,
             errorMessage: iter.errorMessage ?? null,
+            gitBranch: iter.gitBranch ?? null,
+            gitDiffSummary: iter.gitDiffSummary ?? null,
             startedAt: new Date(iter.startedAt).toISOString(),
             completedAt: iter.completedAt ? new Date(iter.completedAt).toISOString() : null,
           }));

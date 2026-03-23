@@ -15,6 +15,7 @@ import {
   LoopIteration,
   LoopStatus,
   LoopStrategy,
+  updateLoop,
 } from '../core/domain.js';
 import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
@@ -220,7 +221,7 @@ export class LoopManagerService implements LoopService {
     // If gitBranch was provided, inject gitBaseBranch into the loop
     // ARCHITECTURE: createLoop sets gitBaseBranch to undefined; we override here
     // because captureGitState is async (not available in pure domain factory)
-    const loopWithGit = gitBaseBranch ? Object.freeze({ ...loop, gitBaseBranch }) : loop;
+    const loopWithGit = gitBaseBranch ? updateLoop(loop, { gitBaseBranch }) : loop;
 
     const promptSummary = request.prompt
       ? truncatePrompt(request.prompt, 50)

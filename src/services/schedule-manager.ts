@@ -21,6 +21,7 @@ import {
   ScheduleStatus,
   ScheduleType,
   TaskId,
+  updateSchedule,
 } from '../core/domain.js';
 import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
@@ -507,8 +508,8 @@ export class ScheduleManagerService implements ScheduleService {
       loopConfig: request.loopConfig,
     });
 
-    // Inject computed nextRunAt
-    const scheduleWithNext: Schedule = { ...schedule, nextRunAt };
+    // Inject computed nextRunAt via immutable update helper
+    const scheduleWithNext = updateSchedule(schedule, { nextRunAt });
 
     const promptSummary = request.loopConfig.prompt
       ? truncatePrompt(request.loopConfig.prompt, 50)

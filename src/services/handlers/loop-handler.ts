@@ -243,27 +243,16 @@ export class LoopHandler extends BaseEventHandler {
         if (!txResult.ok) {
           this.logger.error('Failed to persist task failure', txResult.error, { loopId });
           await this.completeLoop(loop, LoopStatus.FAILED, 'Failed to persist task failure');
-          return ok(undefined);
-        }
-
-        // Post-commit: check limits or schedule next
-        if (loop.maxConsecutiveFailures > 0 && newConsecutiveFailures >= loop.maxConsecutiveFailures) {
+        } else if (loop.maxConsecutiveFailures > 0 && newConsecutiveFailures >= loop.maxConsecutiveFailures) {
           await this.completeLoop(updatedLoop, LoopStatus.FAILED, 'Max consecutive failures reached');
         } else {
           await this.scheduleNextIteration(updatedLoop);
         }
-
-        // Clean up all pipeline task tracking for this iteration
-        this.cleanupPipelineTaskTracking(iteration);
-        this.taskToLoop.delete(taskId);
-        this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
-        return ok(undefined);
+      } else {
+        // Task COMPLETED — run exit condition evaluation
+        const evalResult = await this.exitConditionEvaluator.evaluate(loop, taskId);
+        await this.handleIterationResult(loop, iteration, evalResult);
       }
-
-      // Task COMPLETED — run exit condition evaluation
-      const evalResult = await this.exitConditionEvaluator.evaluate(loop, taskId);
-
-      await this.handleIterationResult(loop, iteration, evalResult);
 
       // Clean up all pipeline task tracking for this iteration
       this.cleanupPipelineTaskTracking(iteration);
@@ -480,15 +469,8 @@ export class LoopHandler extends BaseEventHandler {
       const updatedLoop = updateLoop(loop, { status: LoopStatus.RUNNING });
       await this.loopRepo.update(updatedLoop);
 
-      // Re-fetch the updated loop from DB for accurate state
-      const refreshedResult = await this.loopRepo.findById(loopId);
-      if (!refreshedResult.ok || !refreshedResult.value) {
-        this.logger.error('Failed to fetch loop after resume update', undefined, { loopId });
-        return ok(undefined);
-      }
-
       // Reuse recovery logic to derive the correct next action
-      await this.recoverSingleLoop(refreshedResult.value);
+      await this.recoverSingleLoop(updatedLoop);
 
       this.logger.info('Loop resumed', { loopId });
 
@@ -1233,7 +1215,7 @@ export class LoopHandler extends BaseEventHandler {
   private async cancelRemainingPipelineTasks(
     pipelineTaskIds: readonly TaskId[],
     failedTaskId: TaskId,
-    loopId: string,
+    loopId: LoopId,
   ): Promise<void> {
     for (const ptId of pipelineTaskIds) {
       if (ptId === failedTaskId) continue;
@@ -1273,7 +1255,7 @@ export class LoopHandler extends BaseEventHandler {
   /**
    * Clean up pipeline task entries for a completed iteration
    */
-  private cleanupPipelineTasks(loopId: string, iterationNumber: number): void {
+  private cleanupPipelineTasks(loopId: LoopId, iterationNumber: number): void {
     const key = `${loopId}:${iterationNumber}`;
     this.pipelineTasks.delete(key);
   }
