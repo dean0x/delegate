@@ -199,8 +199,9 @@ export class LoopHandler extends BaseEventHandler {
       }
 
       // Prevents action after cancel (R5 race condition)
-      if (loop.status !== LoopStatus.RUNNING) {
-        this.logger.debug('Loop not running, ignoring terminal event', {
+      // Allow PAUSED through so iteration results are recorded (graceful pause)
+      if (loop.status !== LoopStatus.RUNNING && loop.status !== LoopStatus.PAUSED) {
+        this.logger.debug('Loop not running or paused, ignoring terminal event', {
           loopId,
           status: loop.status,
           taskId,
@@ -377,6 +378,16 @@ export class LoopHandler extends BaseEventHandler {
       }
 
       const loop = loopResult.value;
+
+      // Defense-in-depth: only RUNNING loops can be paused
+      // LoopManagerService validates this, but handler is reachable via direct EventBus emission
+      if (loop.status !== LoopStatus.RUNNING) {
+        this.logger.warn('Cannot pause loop that is not running', {
+          loopId,
+          currentStatus: loop.status,
+        });
+        return ok(undefined);
+      }
 
       // Update loop status to PAUSED
       const updatedLoop = updateLoop(loop, { status: LoopStatus.PAUSED });
@@ -948,8 +959,18 @@ export class LoopHandler extends BaseEventHandler {
   /**
    * Schedule the next iteration, respecting cooldown (R14)
    * ARCHITECTURE: Uses setTimeout with .unref() to avoid blocking process exit
+   * Skips scheduling if loop is PAUSED — result was recorded, resume will re-derive action
    */
   private async scheduleNextIteration(loop: Loop): Promise<void> {
+    // If loop is paused, skip scheduling — iteration result is already recorded.
+    // Resume handler will re-derive the correct next action via recoverSingleLoop().
+    if (loop.status === LoopStatus.PAUSED) {
+      this.logger.debug('Loop is paused, skipping next iteration scheduling', {
+        loopId: loop.id,
+      });
+      return;
+    }
+
     if (loop.cooldownMs > 0) {
       this.logger.debug('Scheduling next iteration with cooldown', {
         loopId: loop.id,
