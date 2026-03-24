@@ -3403,6 +3403,15 @@ describe('CLI - Schedule --loop flag', () => {
     if (result.ok) return;
     expect(result.error).toContain('--minimize or --maximize');
   });
+
+  it('should reject --loop with both --minimize and --maximize', () => {
+    const result = parseScheduleCreateArgs([
+      '--loop', '--eval', 'echo 42', '--minimize', '--maximize', '--cron', '0 9 * * *',
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('Cannot specify both --minimize and --maximize');
+  });
 });
 
 /**
