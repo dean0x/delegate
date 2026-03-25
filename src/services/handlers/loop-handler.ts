@@ -248,6 +248,30 @@ export class LoopHandler extends BaseEventHandler {
         const failedEvent = event as TaskFailedEvent;
         const newConsecutiveFailures = loop.consecutiveFailures + 1;
 
+        // Git reset: revert working directory to pre-iteration state on failure (v0.8.1)
+        if (iteration.preIterationCommitSha) {
+          try {
+            const resetTarget = await this.getResetTargetSha(loop);
+            if (resetTarget) {
+              const resetResult = await resetToCommit(loop.workingDirectory, resetTarget);
+              if (!resetResult.ok) {
+                this.logger.warn('Failed to reset git state after task failure', {
+                  loopId,
+                  iterationNumber: iteration.iterationNumber,
+                  resetTarget,
+                  error: resetResult.error.message,
+                });
+              }
+            }
+          } catch (gitError) {
+            this.logger.warn('Git reset failed after task failure, continuing without git', {
+              loopId,
+              iterationNumber: iteration.iterationNumber,
+              error: gitError instanceof Error ? gitError.message : String(gitError),
+            });
+          }
+        }
+
         // Atomic: iteration fail + consecutiveFailures in single transaction
         const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
         const txResult = this.database.runInTransaction(() => {
@@ -1348,6 +1372,30 @@ export class LoopHandler extends BaseEventHandler {
     });
 
     await this.cancelRemainingPipelineTasks(iteration.pipelineTaskIds, taskId, loopId);
+
+    // Git reset: revert working directory to pre-iteration state on pipeline failure (v0.8.1)
+    if (iteration.preIterationCommitSha) {
+      try {
+        const resetTarget = await this.getResetTargetSha(loop);
+        if (resetTarget) {
+          const resetResult = await resetToCommit(loop.workingDirectory, resetTarget);
+          if (!resetResult.ok) {
+            this.logger.warn('Failed to reset git state after pipeline step failure', {
+              loopId,
+              iterationNumber: iteration.iterationNumber,
+              resetTarget,
+              error: resetResult.error.message,
+            });
+          }
+        }
+      } catch (gitError) {
+        this.logger.warn('Git reset failed after pipeline step failure, continuing without git', {
+          loopId,
+          iterationNumber: iteration.iterationNumber,
+          error: gitError instanceof Error ? gitError.message : String(gitError),
+        });
+      }
+    }
 
     // Atomic: iteration fail + consecutiveFailures in single transaction
     const newConsecutiveFailures = loop.consecutiveFailures + 1;
