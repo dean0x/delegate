@@ -227,8 +227,16 @@ export class LoopManagerService implements LoopService {
     // ========================================================================
 
     const gitContextResult = await captureLoopGitContext(validatedWorkingDirectory, request.gitBranch);
-    const gitBaseBranch = gitContextResult.ok ? gitContextResult.value.gitBaseBranch : undefined;
-    const gitStartCommitSha = gitContextResult.ok ? gitContextResult.value.gitStartCommitSha : undefined;
+    let gitBaseBranch: string | undefined;
+    let gitStartCommitSha: string | undefined;
+    if (gitContextResult.ok) {
+      gitBaseBranch = gitContextResult.value.gitBaseBranch;
+      gitStartCommitSha = gitContextResult.value.gitStartCommitSha;
+    } else {
+      this.logger.warn('Failed to capture git state for loop — proceeding without git context', {
+        error: gitContextResult.error.message,
+      });
+    }
 
     // ========================================================================
     // Create loop via domain factory

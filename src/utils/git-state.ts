@@ -116,7 +116,7 @@ export interface GitState {
  * @param workingDirectory - Absolute path to the working directory
  * @returns GitState if in a git repo, null if not, or error on unexpected failure
  */
-export async function captureGitState(workingDirectory: string): Promise<Result<GitState | null>> {
+export async function captureGitState(workingDirectory: string): Promise<Result<GitState | null, BackbeatError>> {
   try {
     const execOpts = { cwd: workingDirectory, timeout: GIT_TIMEOUT_MS };
 
@@ -301,7 +301,7 @@ export interface LoopGitContext {
 export async function captureLoopGitContext(
   workingDirectory: string,
   gitBranch?: string,
-): Promise<Result<LoopGitContext>> {
+): Promise<Result<LoopGitContext, BackbeatError>> {
   const gitStateResult = await captureGitState(workingDirectory);
   if (!gitStateResult.ok) {
     return gitStateResult;
