@@ -696,6 +696,21 @@ export class Database implements TransactionRunner {
           db.exec(`ALTER TABLE schedule_executions ADD COLUMN loop_id TEXT`);
         },
       },
+      {
+        version: 12,
+        description: 'Add commit-per-iteration git columns to loops and loop_iterations (v0.8.1)',
+        up: (db) => {
+          // New column on loops: captures HEAD SHA at loop creation
+          db.exec(`ALTER TABLE loops ADD COLUMN git_start_commit_sha TEXT`);
+
+          // New columns on loop_iterations: commit SHA after changes, pre-iteration snapshot
+          db.exec(`ALTER TABLE loop_iterations ADD COLUMN git_commit_sha TEXT`);
+          db.exec(`ALTER TABLE loop_iterations ADD COLUMN pre_iteration_commit_sha TEXT`);
+
+          // Old columns (git_base_branch on loops, git_branch on iterations) kept —
+          // SQLite cannot DROP COLUMN easily and dead columns are harmless
+        },
+      },
     ];
   }
 
