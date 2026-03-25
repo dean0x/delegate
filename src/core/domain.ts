@@ -542,7 +542,8 @@ export interface Loop {
   readonly consecutiveFailures: number;
   readonly status: LoopStatus;
   readonly gitBranch?: string; // Branch name for loop iteration work (v0.8.0)
-  readonly gitBaseBranch?: string; // Base branch to diff against (v0.8.0)
+  readonly gitBaseBranch?: string; // Base branch to diff against (v0.8.0, dead after v0.8.1)
+  readonly gitStartCommitSha?: string; // Commit SHA at loop creation for revert target (v0.8.1)
   readonly scheduleId?: ScheduleId; // Owning schedule if created via scheduled loop (v0.8.0)
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -563,7 +564,9 @@ export interface LoopIteration {
   readonly score?: number;
   readonly exitCode?: number;
   readonly errorMessage?: string;
-  readonly gitBranch?: string; // Branch used for this iteration (v0.8.0)
+  readonly gitBranch?: string; // Branch used for this iteration (v0.8.0, dead after v0.8.1)
+  readonly gitCommitSha?: string; // Commit SHA after iteration changes committed (v0.8.1)
+  readonly preIterationCommitSha?: string; // Commit SHA before iteration started (v0.8.1)
   readonly gitDiffSummary?: string; // Git diff --stat summary of iteration changes (v0.8.0)
   readonly startedAt: number;
   readonly completedAt?: number;
@@ -622,6 +625,7 @@ export const createLoop = (request: LoopCreateRequest, workingDirectory: string,
     status: LoopStatus.RUNNING,
     gitBranch: request.gitBranch,
     gitBaseBranch: undefined,
+    gitStartCommitSha: undefined,
     scheduleId,
     createdAt: now,
     updatedAt: now,
