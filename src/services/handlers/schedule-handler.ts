@@ -557,9 +557,10 @@ export class ScheduleHandler extends BaseEventHandler {
     // Create loop from loopConfig via domain factory
     const loop = createLoop(loopConfig, workingDirectory, scheduleId);
 
-    // Capture gitBaseBranch and gitStartCommitSha (v0.8.1)
+    // Capture gitStartCommitSha (v0.8.1)
     // ARCHITECTURE: createLoop() sets these to undefined; override here because
     // git operations are async (not available in pure domain factory)
+    // gitBaseBranch is a legacy field still populated for DB backward compatibility
     let loopWithGit = loop;
     const gitStateResult = await captureGitState(workingDirectory);
     if (gitStateResult.ok && gitStateResult.value) {

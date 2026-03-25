@@ -222,7 +222,8 @@ export class LoopManagerService implements LoopService {
     // ========================================================================
     // Git state capture (v0.8.1)
     // Always capture gitStartCommitSha when in a git repo (not just when --git-branch)
-    // Also capture gitBaseBranch for the branch creation target
+    // gitBaseBranch is a legacy field (dead after v0.8.1) but still populated
+    // for backward compatibility with existing DB rows
     // ========================================================================
 
     let gitBaseBranch: string | undefined;
@@ -250,8 +251,9 @@ export class LoopManagerService implements LoopService {
     );
 
     // Inject git state into the loop
-    // ARCHITECTURE: createLoop sets gitBaseBranch/gitStartCommitSha to undefined;
+    // ARCHITECTURE: createLoop sets gitStartCommitSha to undefined;
     // we override here because git operations are async (not available in pure domain factory)
+    // gitBaseBranch is a legacy field still populated for DB backward compatibility
     const loopWithGit =
       gitBaseBranch || gitStartCommitSha
         ? updateLoop(loop, {

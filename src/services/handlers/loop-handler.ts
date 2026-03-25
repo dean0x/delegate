@@ -771,35 +771,9 @@ export class LoopHandler extends BaseEventHandler {
       let gitDiffSummary: string | undefined;
       if (iteration.preIterationCommitSha) {
         try {
-          const commitResult = await commitAllChanges(
-            loop.workingDirectory,
-            `Loop ${loop.id} iteration ${iteration.iterationNumber} — pass`,
-          );
-          if (commitResult.ok && commitResult.value) {
-            gitCommitSha = commitResult.value;
-            const diffResult = await captureGitDiff(
-              loop.workingDirectory,
-              iteration.preIterationCommitSha,
-              gitCommitSha,
-            );
-            if (diffResult.ok && diffResult.value) {
-              gitDiffSummary = diffResult.value;
-            }
-          } else if (commitResult.ok) {
-            // null = nothing to commit (agent already committed)
-            const shaResult = await getCurrentCommitSha(loop.workingDirectory);
-            if (shaResult.ok) {
-              gitCommitSha = shaResult.value;
-              const diffResult = await captureGitDiff(
-                loop.workingDirectory,
-                iteration.preIterationCommitSha,
-                gitCommitSha,
-              );
-              if (diffResult.ok && diffResult.value) {
-                gitDiffSummary = diffResult.value;
-              }
-            }
-          }
+          const gitResult = await this.commitAndCaptureDiff(loop, iteration, 'pass');
+          gitCommitSha = gitResult.gitCommitSha;
+          gitDiffSummary = gitResult.gitDiffSummary;
         } catch (gitError) {
           this.logger.warn('Git commit failed on retry pass, continuing without git', {
             loopId: loop.id,
@@ -1118,41 +1092,12 @@ export class LoopHandler extends BaseEventHandler {
       try {
         const isCommitPath = iterationStatus === 'pass' || iterationStatus === 'keep';
         if (isCommitPath) {
-          // Commit changes and capture diff
-          const commitResult = await commitAllChanges(
-            loop.workingDirectory,
-            `Loop ${loop.id} iteration ${iteration.iterationNumber} — ${iterationStatus}`,
-          );
-          if (commitResult.ok && commitResult.value) {
-            gitCommitSha = commitResult.value;
-          } else if (commitResult.ok) {
-            // null = nothing to commit (agent already committed)
-            const shaResult = await getCurrentCommitSha(loop.workingDirectory);
-            if (shaResult.ok) {
-              gitCommitSha = shaResult.value;
-            }
-          } else {
-            this.logger.warn('Failed to commit iteration changes', {
-              loopId: loop.id,
-              iterationNumber: iteration.iterationNumber,
-              error: commitResult.error.message,
-            });
-          }
-
-          // Capture diff summary between pre-iteration and new commit
-          if (gitCommitSha) {
-            const diffResult = await captureGitDiff(
-              loop.workingDirectory,
-              iteration.preIterationCommitSha,
-              gitCommitSha,
-            );
-            if (diffResult.ok && diffResult.value) {
-              gitDiffSummary = diffResult.value;
-            }
-          }
+          const gitResult = await this.commitAndCaptureDiff(loop, iteration, iterationStatus);
+          gitCommitSha = gitResult.gitCommitSha;
+          gitDiffSummary = gitResult.gitDiffSummary;
         } else {
           // Discard path: reset to the appropriate target
-          const resetTarget = await this.getResetTargetSha(loop, iteration);
+          const resetTarget = await this.getResetTargetSha(loop);
           if (resetTarget) {
             const resetResult = await resetToCommit(loop.workingDirectory, resetTarget);
             if (!resetResult.ok) {
@@ -1228,13 +1173,57 @@ export class LoopHandler extends BaseEventHandler {
   }
 
   /**
+   * Commit all changes and capture diff summary for an iteration.
+   * Handles both explicit commits and agent-already-committed cases.
+   * @returns { gitCommitSha, gitDiffSummary } — either or both may be undefined on failure
+   */
+  private async commitAndCaptureDiff(
+    loop: Loop,
+    iteration: LoopIteration,
+    iterationStatus: string,
+  ): Promise<{ gitCommitSha?: string; gitDiffSummary?: string }> {
+    let gitCommitSha: string | undefined;
+    let gitDiffSummary: string | undefined;
+
+    const commitResult = await commitAllChanges(
+      loop.workingDirectory,
+      `Loop ${loop.id} iteration ${iteration.iterationNumber} — ${iterationStatus}`,
+    );
+    if (commitResult.ok && commitResult.value) {
+      gitCommitSha = commitResult.value;
+    } else if (commitResult.ok) {
+      // null = nothing to commit (agent already committed)
+      const shaResult = await getCurrentCommitSha(loop.workingDirectory);
+      if (shaResult.ok) {
+        gitCommitSha = shaResult.value;
+      }
+    } else {
+      this.logger.warn('Failed to commit iteration changes', {
+        loopId: loop.id,
+        iterationNumber: iteration.iterationNumber,
+        error: commitResult.error.message,
+      });
+    }
+
+    // Capture diff summary between pre-iteration and new commit
+    if (gitCommitSha && iteration.preIterationCommitSha) {
+      const diffResult = await captureGitDiff(loop.workingDirectory, iteration.preIterationCommitSha, gitCommitSha);
+      if (diffResult.ok && diffResult.value) {
+        gitDiffSummary = diffResult.value;
+      }
+    }
+
+    return { gitCommitSha, gitDiffSummary };
+  }
+
+  /**
    * Determine the commit SHA to reset to after a failed/discarded iteration.
    * - Retry fail: reset to loop.gitStartCommitSha (start fresh)
    * - Optimize discard/crash: reset to best iteration's gitCommitSha if available,
    *   fallback to loop.gitStartCommitSha
    * @returns SHA to reset to, or undefined if no git tracking
    */
-  private async getResetTargetSha(loop: Loop, currentIteration: LoopIteration): Promise<string | undefined> {
+  private async getResetTargetSha(loop: Loop): Promise<string | undefined> {
     // For optimize strategy: try to reset to the best iteration's commit
     if (loop.strategy === LoopStrategy.OPTIMIZE && loop.bestIterationId !== undefined) {
       const iterationsResult = await this.loopRepo.getIterations(loop.id, 100);
