@@ -52,9 +52,11 @@ export class LoopManagerService implements LoopService {
         );
       }
     }
-    if (request.prompt && request.prompt.length > 4000) {
+    // ARCHITECTURE: Internal service limit is 16000 to accommodate orchestrator prompts.
+    // MCP boundary schemas keep the user-facing limit at 4000 chars.
+    if (request.prompt && request.prompt.length > 16000) {
       return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, 'prompt must not exceed 4000 characters', {
+        new AutobeatError(ErrorCode.INVALID_INPUT, 'prompt must not exceed 16000 characters', {
           field: 'prompt',
           length: request.prompt.length,
         }),
