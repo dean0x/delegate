@@ -197,7 +197,7 @@ const SchedulePipelineSchema = z.object({
 });
 
 // Orchestrator-related Zod schemas (v0.9.0 Orchestrator Mode)
-const OrchestrateSchema = z.object({
+const CreateOrchestratorSchema = z.object({
   goal: z.string().min(1).max(8000).describe('High-level goal for the orchestrator to achieve'),
   workingDirectory: z.string().optional().describe('Working directory for workers (absolute path)'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('AI agent for the orchestrator loop'),
@@ -409,8 +409,8 @@ export class MCPAdapter {
         return await this.handleScheduleLoop(args);
       case 'ListAgents':
         return this.handleListAgents();
-      case 'Orchestrate':
-        return await this.handleOrchestrate(args);
+      case 'CreateOrchestrator':
+        return await this.handleCreateOrchestrator(args);
       case 'OrchestratorStatus':
         return await this.handleOrchestratorStatus(args);
       case 'ListOrchestrators':
@@ -1140,9 +1140,9 @@ export class MCPAdapter {
               },
             },
             {
-              name: 'Orchestrate',
+              name: 'CreateOrchestrator',
               description:
-                'Start an autonomous orchestration session. The orchestrator decomposes a high-level goal into subtasks, delegates to worker agents, monitors progress, and iterates until the goal is achieved.',
+                'Create and start an autonomous orchestration session. The orchestrator decomposes a high-level goal into subtasks, delegates to worker agents, monitors progress, and iterates until the goal is achieved.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -2554,7 +2554,7 @@ export class MCPAdapter {
   // Orchestrator tool handlers (v0.9.0)
   // ============================================================================
 
-  private async handleOrchestrate(args: unknown): Promise<MCPToolResponse> {
+  private async handleCreateOrchestrator(args: unknown): Promise<MCPToolResponse> {
     if (!this.orchestrationService) {
       return {
         content: [{ type: 'text', text: JSON.stringify({ error: 'Orchestration service not available' }, null, 2) }],
@@ -2562,7 +2562,7 @@ export class MCPAdapter {
       };
     }
 
-    const parseResult = OrchestrateSchema.safeParse(args);
+    const parseResult = CreateOrchestratorSchema.safeParse(args);
     if (!parseResult.success) {
       return {
         content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
