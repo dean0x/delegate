@@ -2634,9 +2634,7 @@ export class MCPAdapter {
       };
     }
 
-    const result = await this.orchestrationService.getOrchestration(
-      OrchestratorId(parseResult.data.orchestratorId),
-    );
+    const result = await this.orchestrationService.getOrchestration(OrchestratorId(parseResult.data.orchestratorId));
 
     return match(result, {
       ok: (orchestration) => ({
@@ -2659,9 +2657,7 @@ export class MCPAdapter {
                   maxIterations: orchestration.maxIterations,
                   createdAt: new Date(orchestration.createdAt).toISOString(),
                   updatedAt: new Date(orchestration.updatedAt).toISOString(),
-                  completedAt: orchestration.completedAt
-                    ? new Date(orchestration.completedAt).toISOString()
-                    : null,
+                  completedAt: orchestration.completedAt ? new Date(orchestration.completedAt).toISOString() : null,
                 },
               },
               null,
@@ -2744,10 +2740,7 @@ export class MCPAdapter {
     }
 
     const { orchestratorId, reason } = parseResult.data;
-    const result = await this.orchestrationService.cancelOrchestration(
-      OrchestratorId(orchestratorId),
-      reason,
-    );
+    const result = await this.orchestrationService.cancelOrchestration(OrchestratorId(orchestratorId), reason);
 
     return match(result, {
       ok: () => ({
