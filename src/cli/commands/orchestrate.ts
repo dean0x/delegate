@@ -18,6 +18,7 @@ import type { LoopCancelledEvent, LoopCompletedEvent } from '../../core/events/e
 import type { OrchestrationService } from '../../core/interfaces.js';
 import { readStateFile } from '../../core/orchestrator-state.js';
 import { err, ok, type Result } from '../../core/result.js';
+import { validatePath } from '../../utils/validation.js';
 import { errorMessage, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';
 
@@ -445,7 +446,13 @@ async function handleOrchestrateStatus(orchestratorId: string): Promise<void> {
   );
 
   // Try to read and display state file plan
-  const stateResult = readStateFile(o.stateFilePath);
+  // SECURITY: Validate state file path before reading (defense-in-depth — path comes from DB)
+  const statePathResult = validatePath(o.stateFilePath);
+  if (!statePathResult.ok) {
+    ctx.close();
+    return;
+  }
+  const stateResult = readStateFile(statePathResult.value);
   if (stateResult.ok) {
     const state = stateResult.value;
     ui.info(`\nState: ${state.status} (iteration ${state.iterationCount})`);
@@ -467,7 +474,18 @@ async function handleOrchestrateList(status?: string): Promise<void> {
   const ctx = withReadOnlyContext(s);
   s.stop('Ready');
 
-  const orchStatus = status ? (status as OrchestratorStatus) : undefined;
+  const validStatuses = Object.values(OrchestratorStatus);
+  let orchStatus: OrchestratorStatus | undefined;
+  if (status) {
+    const normalized = status.toLowerCase();
+    orchStatus = validStatuses.find((v) => v === normalized);
+    if (!orchStatus) {
+      ui.error(`Invalid status: "${status}". Valid values: ${validStatuses.join(', ')}`);
+      ctx.close();
+      process.exit(1);
+    }
+  }
+
   const result = orchStatus
     ? await ctx.orchestrationRepository.findByStatus(orchStatus)
     : await ctx.orchestrationRepository.findAll();

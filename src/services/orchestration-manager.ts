@@ -83,18 +83,30 @@ export class OrchestrationManagerService implements OrchestrationService {
     // State file setup
     // ========================================================================
 
-    const stateDir = getStateDir();
-    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    let stateFilePath: string;
+    let exitConditionScript: string;
+    try {
+      const stateDir = getStateDir();
+      mkdirSync(stateDir, { recursive: true, mode: 0o700 });
 
-    const stateFileName = `state-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.json`;
-    const stateFilePath = path.join(stateDir, stateFileName);
+      const stateFileName = `state-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.json`;
+      stateFilePath = path.join(stateDir, stateFileName);
 
-    // Write initial state
-    const initialState = createInitialState(request.goal);
-    writeStateFile(stateFilePath, initialState);
+      // Write initial state
+      const initialState = createInitialState(request.goal);
+      writeStateFile(stateFilePath, initialState);
 
-    // Write exit condition script
-    const exitConditionScript = writeExitConditionScript(stateDir, stateFilePath);
+      // Write exit condition script
+      exitConditionScript = writeExitConditionScript(stateDir, stateFilePath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error('Failed to set up orchestration state files', undefined, { error: message });
+      return err(
+        new AutobeatError(ErrorCode.SYSTEM_ERROR, `Failed to set up state files: ${message}`, {
+          error: message,
+        }),
+      );
+    }
 
     // ========================================================================
     // Create orchestration domain object
