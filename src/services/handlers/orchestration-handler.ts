@@ -9,7 +9,12 @@ import { LoopId, LoopStatus, OrchestratorStatus, updateOrchestration } from '../
 import type { EventBus } from '../../core/events/event-bus.js';
 import type { LoopCancelledEvent, LoopCompletedEvent } from '../../core/events/events.js';
 import { BaseEventHandler } from '../../core/events/handlers.js';
-import type { Logger, SyncLoopOperations, SyncOrchestrationOperations, TransactionRunner } from '../../core/interfaces.js';
+import type {
+  Logger,
+  SyncLoopOperations,
+  SyncOrchestrationOperations,
+  TransactionRunner,
+} from '../../core/interfaces.js';
 import { ok, type Result } from '../../core/result.js';
 
 export class OrchestrationHandler extends BaseEventHandler {
@@ -40,17 +45,15 @@ export class OrchestrationHandler extends BaseEventHandler {
     const handler = new OrchestrationHandler(orchestrationRepo, loopRepo, database, logger);
 
     // Subscribe to loop lifecycle events
-    const completedSub = eventBus.subscribe<LoopCompletedEvent>(
-      'LoopCompleted',
-      async (event) => handler.handleLoopCompleted(event),
+    const completedSub = eventBus.subscribe<LoopCompletedEvent>('LoopCompleted', async (event) =>
+      handler.handleLoopCompleted(event),
     );
     if (!completedSub.ok) {
       logger.error('Failed to subscribe to LoopCompleted', completedSub.error);
     }
 
-    const cancelledSub = eventBus.subscribe<LoopCancelledEvent>(
-      'LoopCancelled',
-      async (event) => handler.handleLoopCancelled(event),
+    const cancelledSub = eventBus.subscribe<LoopCancelledEvent>('LoopCancelled', async (event) =>
+      handler.handleLoopCancelled(event),
     );
     if (!cancelledSub.ok) {
       logger.error('Failed to subscribe to LoopCancelled', cancelledSub.error);

@@ -11,6 +11,7 @@ import { resolveDefaultAgent } from '../core/agents.js';
 import type { Configuration } from '../core/configuration.js';
 import {
   createOrchestration,
+  LoopStrategy,
   type Orchestration,
   type OrchestratorCreateRequest,
   OrchestratorId,
@@ -48,9 +49,7 @@ export class OrchestrationManagerService implements OrchestrationService {
 
     // Validate goal: 1-8000 chars
     if (!request.goal || request.goal.trim().length === 0) {
-      return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, 'goal is required', { field: 'goal' }),
-      );
+      return err(new AutobeatError(ErrorCode.INVALID_INPUT, 'goal is required', { field: 'goal' }));
     }
     if (request.goal.length > 8000) {
       return err(
@@ -101,11 +100,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     // Create orchestration domain object
     // ========================================================================
 
-    const orchestration = createOrchestration(
-      { ...request, agent },
-      stateFilePath,
-      validatedWorkingDirectory,
-    );
+    const orchestration = createOrchestration({ ...request, agent }, stateFilePath, validatedWorkingDirectory);
 
     // Persist orchestration
     const saveResult = this.orchestrationRepo.save(orchestration);
@@ -129,7 +124,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     });
 
     const loopResult = await this.loopService.createLoop({
-      strategy: 'retry' as const,
+      strategy: LoopStrategy.RETRY,
       prompt,
       exitCondition: `node ${exitConditionScript} ${stateFilePath}`,
       maxIterations: orchestration.maxIterations,
@@ -223,10 +218,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     if (!lookupResult.ok) return lookupResult;
 
     const orchestration = lookupResult.value;
-    if (
-      orchestration.status !== OrchestratorStatus.PLANNING &&
-      orchestration.status !== OrchestratorStatus.RUNNING
-    ) {
+    if (orchestration.status !== OrchestratorStatus.PLANNING && orchestration.status !== OrchestratorStatus.RUNNING) {
       return err(
         new AutobeatError(
           ErrorCode.INVALID_OPERATION,

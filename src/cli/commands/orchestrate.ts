@@ -12,15 +12,15 @@ import { bootstrap } from '../../bootstrap.js';
 import type { AgentProvider } from '../../core/agents.js';
 import { AGENT_PROVIDERS, isAgentProvider } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
-import type { EventBus } from '../../core/events/event-bus.js';
-import type { LoopCompletedEvent } from '../../core/events/events.js';
 import { OrchestratorId, OrchestratorStatus } from '../../core/domain.js';
+import type { EventBus } from '../../core/events/event-bus.js';
+import type { LoopCancelledEvent, LoopCompletedEvent } from '../../core/events/events.js';
 import type { OrchestrationService } from '../../core/interfaces.js';
 import { readStateFile } from '../../core/orchestrator-state.js';
 import { err, ok, type Result } from '../../core/result.js';
+import { createReadOnlyContext } from '../read-only-context.js';
 import { errorMessage, exitOnError, exitOnNull } from '../services.js';
 import * as ui from '../ui.js';
-import { createReadOnlyContext } from '../read-only-context.js';
 
 // ============================================================================
 // Arg parsing — pure function
@@ -181,7 +181,12 @@ function handleOrchestrateDetach(args: readonly string[]): void {
   }
 
   // Re-spawn with --foreground
-  const childArgs = [process.argv[1], 'orchestrate', '--foreground', ...args.filter((a) => a !== '--foreground' && a !== '-f')];
+  const childArgs = [
+    process.argv[1],
+    'orchestrate',
+    '--foreground',
+    ...args.filter((a) => a !== '--foreground' && a !== '-f'),
+  ];
   try {
     const child = spawn(process.argv[0], childArgs, {
       detached: true,
@@ -352,8 +357,8 @@ async function handleOrchestrateForeground(parsed: OrchestrateCreateParsed): Pro
       if (completedSub.ok) subscriptionIds.push(completedSub.value);
 
       // Watch for loop cancellation
-      const cancelledSub = eventBus.subscribe('LoopCancelled', async (event: Record<string, unknown>) => {
-        if ((event as { loopId?: string }).loopId !== orchestration.loopId) return;
+      const cancelledSub = eventBus.subscribe<LoopCancelledEvent>('LoopCancelled', async (event) => {
+        if (event.loopId !== orchestration.loopId) return;
         process.removeListener('SIGINT', sigintHandler);
         resolveOnce(1);
       });
@@ -385,7 +390,7 @@ async function handleOrchestrateStatus(orchestratorId: string): Promise<void> {
   const ctx = exitOnError(createReadOnlyContext());
   try {
     // Use raw DB query since ReadOnlyContext doesn't include orchestration repo yet
-    const db = (ctx as unknown as { close: () => void });
+    const db = ctx as unknown as { close: () => void };
     // Import orchestration repository for read-only query
     const { SQLiteOrchestrationRepository } = await import('../../implementations/orchestration-repository.js');
     const { Database } = await import('../../implementations/database.js');
@@ -410,21 +415,27 @@ async function handleOrchestrateStatus(orchestratorId: string): Promise<void> {
     }
 
     const o = result.value;
-    ui.stdout(JSON.stringify({
-      id: o.id,
-      goal: o.goal,
-      status: o.status,
-      loopId: o.loopId,
-      stateFilePath: o.stateFilePath,
-      workingDirectory: o.workingDirectory,
-      agent: o.agent,
-      maxDepth: o.maxDepth,
-      maxWorkers: o.maxWorkers,
-      maxIterations: o.maxIterations,
-      createdAt: new Date(o.createdAt).toISOString(),
-      updatedAt: new Date(o.updatedAt).toISOString(),
-      completedAt: o.completedAt ? new Date(o.completedAt).toISOString() : null,
-    }, null, 2));
+    ui.stdout(
+      JSON.stringify(
+        {
+          id: o.id,
+          goal: o.goal,
+          status: o.status,
+          loopId: o.loopId,
+          stateFilePath: o.stateFilePath,
+          workingDirectory: o.workingDirectory,
+          agent: o.agent,
+          maxDepth: o.maxDepth,
+          maxWorkers: o.maxWorkers,
+          maxIterations: o.maxIterations,
+          createdAt: new Date(o.createdAt).toISOString(),
+          updatedAt: new Date(o.updatedAt).toISOString(),
+          completedAt: o.completedAt ? new Date(o.completedAt).toISOString() : null,
+        },
+        null,
+        2,
+      ),
+    );
 
     // Try to read and display state file plan
     const stateResult = readStateFile(o.stateFilePath);
@@ -434,7 +445,14 @@ async function handleOrchestrateStatus(orchestratorId: string): Promise<void> {
       if (state.plan.length > 0) {
         ui.info('Plan:');
         for (const step of state.plan) {
-          const statusIcon = step.status === 'completed' ? 'done' : step.status === 'failed' ? 'FAIL' : step.status === 'in_progress' ? '...' : '   ';
+          const statusIcon =
+            step.status === 'completed'
+              ? 'done'
+              : step.status === 'failed'
+                ? 'FAIL'
+                : step.status === 'in_progress'
+                  ? '...'
+                  : '   ';
           ui.info(`  [${statusIcon}] ${step.id}: ${step.description}${step.taskId ? ` (${step.taskId})` : ''}`);
         }
       }
@@ -457,9 +475,7 @@ async function handleOrchestrateList(status?: string): Promise<void> {
   const repo = new SQLiteOrchestrationRepository(database);
 
   const orchStatus = status ? (status as OrchestratorStatus) : undefined;
-  const result = orchStatus
-    ? await repo.findByStatus(orchStatus)
-    : await repo.findAll();
+  const result = orchStatus ? await repo.findByStatus(orchStatus) : await repo.findAll();
 
   if (!result.ok) {
     ui.error(`Failed to list orchestrations: ${result.error.message}`);
@@ -526,7 +542,10 @@ async function handleOrchestrateCancel(orchestratorId: string, reason?: string):
 // Main command handler
 // ============================================================================
 
-export async function handleOrchestrateCommand(subCommand: string | undefined, subArgs: readonly string[]): Promise<void> {
+export async function handleOrchestrateCommand(
+  subCommand: string | undefined,
+  subArgs: readonly string[],
+): Promise<void> {
   const parsed = parseOrchestrateArgs(subCommand, subArgs);
 
   if (!parsed) {

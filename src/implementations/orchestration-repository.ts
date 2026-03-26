@@ -8,13 +8,10 @@
 import SQLite from 'better-sqlite3';
 import { unlinkSync } from 'fs';
 import { z } from 'zod';
-import { AGENT_PROVIDERS_TUPLE } from '../core/agents.js';
+import { AGENT_PROVIDERS_TUPLE, type AgentProvider } from '../core/agents.js';
 import { LoopId, Orchestration, OrchestratorId, OrchestratorStatus } from '../core/domain.js';
 import { operationErrorHandler } from '../core/errors.js';
-import {
-  OrchestrationRepository,
-  SyncOrchestrationOperations,
-} from '../core/interfaces.js';
+import { OrchestrationRepository, SyncOrchestrationOperations } from '../core/interfaces.js';
 import { Result, tryCatchAsync } from '../core/result.js';
 import { Database } from './database.js';
 
@@ -175,10 +172,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
     }, operationErrorHandler('find all orchestrations'));
   }
 
-  async findByStatus(
-    status: OrchestratorStatus,
-    limit?: number,
-  ): Promise<Result<readonly Orchestration[]>> {
+  async findByStatus(status: OrchestratorStatus, limit?: number): Promise<Result<readonly Orchestration[]>> {
     return tryCatchAsync(
       async () => {
         const effectiveLimit = limit ?? SQLiteOrchestrationRepository.DEFAULT_LIMIT;
@@ -317,8 +311,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
     }
   }
 
-  private toAgentProvider(value: string): string {
-    // Validate against known agents, but return as-is to avoid coupling to AgentProvider type
+  private toAgentProvider(value: string): AgentProvider {
     const schema = z.enum(AGENT_PROVIDERS_TUPLE);
     const result = schema.safeParse(value);
     if (!result.success) {
