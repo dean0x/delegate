@@ -1,6 +1,6 @@
 {
-  "name": "backbeat",
-  "version": "0.8.1",
+  "name": "autobeat",
+  "version": "0.8.2",
   "main": "dist/index.js",
   "bin": {
     "beat": "./dist/cli.js"
@@ -66,7 +66,7 @@
     "gemini",
     "automation",
     "task-delegation",
-    "backbeat"
+    "autobeat"
   ],
   "author": "dean0x",
   "license": "MIT",
@@ -76,12 +76,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/dean0x/backbeat.git"
+    "url": "https://github.com/dean0x/autobeat.git"
   },
   "bugs": {
-    "url": "https://github.com/dean0x/backbeat/issues"
+    "url": "https://github.com/dean0x/autobeat/issues"
   },
-  "homepage": "https://github.com/dean0x/backbeat#readme",
+  "homepage": "https://github.com/dean0x/autobeat#readme",
   "engines": {
     "node": ">=20.0.0"
   },

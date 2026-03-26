@@ -1,12 +1,33 @@
 # Changelog
 
-All notable changes to Backbeat will be documented in this file.
+All notable changes to Autobeat will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
 Nothing yet.
+
+---
+
+## [0.8.2] - 2026-03-26
+
+### 💥 Breaking Changes
+- **Package rename**: `backbeat` → `autobeat` (npm package, env vars, data dir, types, MCP server name)
+- **Environment variables**: `BACKBEAT_*` → `AUTOBEAT_*` (no backward compatibility fallback)
+- **Data directory**: `~/.backbeat/` → `~/.autobeat/`
+- **Database file**: `backbeat.db` → `autobeat.db`
+- **Error types**: `BackbeatError` → `AutobeatError`, `isBackbeatError` → `isAutobeatError`, `toBackbeatError` → `toAutobeatError`
+- **Event type**: `BackbeatEvent` → `AutobeatEvent`
+- **MCP server name**: `backbeat` → `autobeat`
+
+### 🚀 Features
+- **`beat migrate` command**: Automated migration from backbeat to autobeat — moves data directory, renames database file, updates MCP configs, scans shell profiles for env var references
+
+### Unchanged
+- CLI binary `beat` and all command names
+- All MCP tool names (`DelegateTask`, `TaskStatus`, etc.)
+- All functionality and APIs
 
 ---
 
@@ -165,7 +186,7 @@ Nothing yet.
 
 ## [0.4.0] - 2026-03-03
 
-First release as **backbeat** (renamed from `claudine`). 17 commits since v0.3.3, covering scheduling, resumption, architectural simplification, CLI overhaul, and two-phase rename.
+First release as **autobeat** (renamed from `claudine`). 17 commits since v0.3.3, covering scheduling, resumption, architectural simplification, CLI overhaul, and two-phase rename.
 
 ### 🚀 Major Features
 - **Task Scheduling**: Cron and one-time schedule support with 6 new MCP tools (`ScheduleTask`, `ListSchedules`, `ScheduleStatus`, `CancelSchedule`, `PauseSchedule`, `ResumeSchedule`) and 6 CLI commands. Full lifecycle management with pause/resume, missed run policies, timezone support, and execution history
@@ -176,7 +197,7 @@ First release as **backbeat** (renamed from `claudine`). 17 commits since v0.3.3
 - **Pipeline Command**: `beat pipeline` for sequential tasks with delays between steps
 
 ### 🏗️ Architecture
-- **Git/Worktree Removal**: Removed 9 git fields, 5 interfaces, 3 events, 10+ CLI flags, deleted `worktree-manager.ts`, `github-integration.ts`, `worktree-handler.ts`. Major architectural simplification — Backbeat focuses on orchestration, not source control
+- **Git/Worktree Removal**: Removed 9 git fields, 5 interfaces, 3 events, 10+ CLI flags, deleted `worktree-manager.ts`, `github-integration.ts`, `worktree-handler.ts`. Major architectural simplification — Autobeat focuses on orchestration, not source control
 - **Handler Setup Extraction**: Extracted handler registration from `bootstrap.ts` into dedicated `handler-setup.ts`
 - **Schedule Service Extraction**: ~375 lines of schedule logic extracted from MCP adapter into `ScheduleManagerService`. CLI reuses same service for full feature parity
 - **CLI Bootstrap Helper**: `withServices()` eliminates 15-line bootstrap boilerplate per command
@@ -201,10 +222,10 @@ First release as **backbeat** (renamed from `claudine`). 17 commits since v0.3.3
 - **Tech Debt Quick Wins**: Various cleanup from PR #41
 
 ### ⚠️ Breaking Changes
-- **Package Rename**: `claudine` → `backbeat` (npm package, CLI binary `beat`, MCP server name, config paths)
-- **Environment Variables**: `CLAUDINE_*` → `BACKBEAT_*`
-- **Data Paths**: `~/.claudine/` → `~/.backbeat/` (no migration — start fresh)
-- **Library API**: `ClaudineError` → `BackbeatError`, `isClaudineError()` → `isBackbeatError()`
+- **Package Rename**: `claudine` → `autobeat` (npm package, CLI binary `beat`, MCP server name, config paths)
+- **Environment Variables**: `CLAUDINE_*` → `AUTOBEAT_*`
+- **Data Paths**: `~/.claudine/` → `~/.autobeat/` (no migration — start fresh)
+- **Library API**: `ClaudineError` → `AutobeatError`, `isClaudineError()` → `isAutobeatError()`
 - **findAll() Pagination**: Returns max 100 results by default. Use `findAllUnbounded()` for all records
 - **Git/Worktree Fields Removed**: `useWorktree`, `branchName`, `mergeStrategy` and related CLI flags no longer accepted
 
@@ -326,7 +347,7 @@ First release as **backbeat** (renamed from `claudine`). 17 commits since v0.3.3
   - Atomic check-and-add operations using better-sqlite3
   - Verified protection with concurrent operation tests
 - **Error Handling Improvements**:
-  - Preserve semantic BackbeatError types in addDependency (TASK_NOT_FOUND, INVALID_OPERATION)
+  - Preserve semantic AutobeatError types in addDependency (TASK_NOT_FOUND, INVALID_OPERATION)
   - Fixed error masking that converted validation failures to SYSTEM_ERROR
   - Migration error handling only catches "no such table" errors
   - Re-throws permission, corruption, and connection errors
@@ -526,7 +547,7 @@ First release as **backbeat** (renamed from `claudine`). 17 commits since v0.3.3
 ### Upgrading to v0.2.0
 
 #### For New Users
-- Install via npm: `npm install -g backbeat`
+- Install via npm: `npm install -g autobeat`
 - Configure MCP: See [README.md](./README.md#configuration) for setup instructions
 - No migration needed for new installations
 
@@ -546,5 +567,5 @@ First release as **backbeat** (renamed from `claudine`). 17 commits since v0.3.3
 - **Documentation**: See [README.md](./README.md) for setup and usage
 - **Features**: See [FEATURES.md](./FEATURES.md) for complete feature list
 - **Roadmap**: See [ROADMAP.md](./ROADMAP.md) for future plans
-- **Issues**: Report bugs at [GitHub Issues](https://github.com/dean0x/backbeat/issues)
-- **Discussions**: Feature requests at [GitHub Discussions](https://github.com/dean0x/backbeat/discussions)
+- **Issues**: Report bugs at [GitHub Issues](https://github.com/dean0x/autobeat/issues)
+- **Discussions**: Feature requests at [GitHub Discussions](https://github.com/dean0x/autobeat/discussions)
