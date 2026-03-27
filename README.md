@@ -1,4 +1,4 @@
-# Autobeat: The Unopinionated Autonomous Coding Agent Orchestration Framework
+# Autobeat: Autonomous Coding Agent Orchestration Framework
 
 [![npm version](https://img.shields.io/npm/v/autobeat.svg)](https://www.npmjs.com/package/autobeat)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
