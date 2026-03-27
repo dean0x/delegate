@@ -1,63 +1,49 @@
-# Autobeat: AI Coding Agent Orchestration at Scale
+# Autobeat: The Unopinionated Autonomous Coding Agent Orchestration Framework
 
 [![npm version](https://img.shields.io/npm/v/autobeat.svg)](https://www.npmjs.com/package/autobeat)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
 [![CI](https://github.com/dean0x/autobeat/actions/workflows/ci.yml/badge.svg)](https://github.com/dean0x/autobeat/actions/workflows/ci.yml)
-[![MCP](https://img.shields.io/badge/MCP-Compatible-purple)](https://modelcontextprotocol.io/)
 
-## Why Autobeat
+One goal in. Finished work out. No human in the loop.
 
-Every AI coding agent is a single-threaded workhorse. One task, one agent, one repo at a time. That is a massive waste of computing power.
+```bash
+beat orchestrate "Build a complete auth system with JWT, OAuth2, and MFA"
+```
 
-Autobeat turns your machine into an AI development powerhouse. Run dozens of agents in parallel. Chain them into pipelines. Score their output and iterate until optimal. Three models, unlimited parallelism, one orchestrator.
+Autobeat gives you four composable primitives — delegation, eval loops, persistence, and resource management — and lets you wire them together however you want. Loops inside loops. Pipelines inside orchestrators. Agents spawning agents. The framework doesn't prescribe your workflow. It gives you the building blocks and gets out of the way.
 
-**Karpathy Optimization Loops.** The only production-grade framework that implements optimization loops with eval scoring for AI coding agents. Run a task, score the output with an eval script, iterate until optimal. Retry strategy (run until exit condition passes) or optimize strategy (minimize/maximize any metric). This is the Karpathy loop for coding agents, and nothing else out there does it.
+The orchestrator mode is where it all comes together: a meta-agent that uses Autobeat's own tools recursively to break down goals, spawn workers, handle failures, and iterate until everything passes. Fully autonomous. Nothing else works like this.
 
-**Multi-Agent Pipelines.** Chain sequential steps with dependencies. Schedule them on cron. Each step can use a different agent: Claude for architecture, Codex for implementation, Gemini for review.
+## How It Works
 
-**DAG Task Dependencies.** Full directed acyclic graph with cycle detection, failure cascading, and session continuation. Downstream tasks receive checkpoint context from completed dependencies.
+The orchestrator is a meta-agent — a coding agent whose tools are Autobeat's own primitives. Each iteration, it:
 
-**Autoscaling Workers.** Dynamic worker pool monitors CPU and memory in real-time. Spawns agents when resources are available. No artificial limits.
+1. Reads its persistent state file (plan, worker status, what passed, what failed)
+2. Breaks the goal into subtasks and delegates to worker agents
+3. Enforces execution ordering with task dependencies
+4. Creates eval loops for tasks that need verification
+5. Retries failed workers with enriched context from their logs
+6. Updates its state and continues until the goal is met or it determines it can't be
 
-**Crash-Proof Persistence.** SQLite with WAL mode. Automatic state recovery. Kill the process, reboot your machine, come back tomorrow. Everything is exactly where you left it.
+The orchestrator runs as a loop. Workers it spawns can themselves be loops. Loops all the way down.
 
-Three AI models. Unlimited parallelism. One orchestrator.
+## Why This Architecture
 
-## Features
+Every other orchestration framework builds infrastructure the agent could do itself — worktree management, CI parsing, PR automation, inter-agent messaging. Every line of that code becomes technical debt as models improve.
 
-- **Karpathy Optimization Loops** that run, score with eval scripts, and iterate until optimal. Retry strategy (exit code = done) or optimize strategy (minimize/maximize scoring). Pipeline loops repeat multi-step workflows.
-- **Multi-Agent Orchestration** to delegate to Claude, Codex, or Gemini with per-task agent selection
-- **DAG Task Dependencies** with cycle detection, failure cascading, and session continuation via checkpoint context injection
-- **Scheduled Pipelines** that chain sequential steps on cron or one-time schedules with per-step priority, working directory, and agent overrides
-- **Autoscaling Workers** with real-time CPU/memory monitoring and dynamic worker pool
-- **Crash Recovery** with SQLite WAL mode, automatic state recovery, and checkpoint-based task resumption
-- **Event-Driven Architecture** with specialized handlers that eliminate race conditions
+Autobeat provides four primitives that agents *can't* do for themselves:
 
-See **[FEATURES.md](./docs/FEATURES.md)** for the complete list.
+1. **Persistence** — crash-proof SQLite state that survives restarts
+2. **Delegation** — spawn background agents with dependency ordering
+3. **Eval loops** — run, score, iterate until optimal
+4. **Resource management** — autoscaling workers, CPU/memory monitoring
+
+Everything else — worktrees, CI, PRs, code review, testing, deployment — is the agent's job. As models get smarter, the framework automatically gets more powerful without changing a line of code.
 
 ## Quick Start
 
-### Prerequisites
-
-- Node.js 20.0.0+
-- npm 10.0.0+
-- An AI coding agent CLI installed (e.g., `claude`, `codex`, `gemini-cli`)
-
-### System Requirements
-
-**Minimum** (for development/testing):
-- 8+ CPU cores
-- 16GB RAM
-- 100GB SSD
-
-**Recommended** (for production):
-- 32+ CPU cores
-- 64GB+ RAM
-- 500GB+ NVMe SSD
-- Dedicated Linux server (Ubuntu 22.04+)
-
-### Installation
+### Install
 
 Add to your project's `.mcp.json`:
 
@@ -72,325 +58,253 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-Restart your MCP client to connect to Autobeat.
+Restart your MCP client to connect. Autobeat works with Claude Code, Codex, Gemini, and any MCP-compatible agent.
 
-## Usage
+### Prerequisites
 
-### MCP Tools
+- Node.js 20.0.0+
+- At least one coding agent CLI installed (`claude`, `codex`, or `gemini`)
 
-Once configured, use these MCP tools:
-
-| Tool | Description | Usage |
-|------|-------------|-------|
-| **DelegateTask** | Submit tasks to background instances | `DelegateTask({ prompt: "...", priority: "P1" })` |
-| **TaskStatus** | Get real-time task status | `TaskStatus({ taskId })` |
-| **TaskLogs** | Stream or retrieve execution logs | `TaskLogs({ taskId })` |
-| **CancelTask** | Cancel tasks with resource cleanup | `CancelTask({ taskId, reason })` |
-| **RetryTask** | Retry a failed or completed task | `RetryTask({ taskId })` |
-| **ScheduleTask** | Schedule recurring or one-time tasks | `ScheduleTask({ prompt: "...", scheduleType: "cron", cronExpression: "0 2 * * *" })` |
-| **ListSchedules** | List schedules with optional status filter | `ListSchedules({ status: "active" })` |
-| **ScheduleStatus** | Get schedule details and execution history | `ScheduleStatus({ scheduleId })` |
-| **CancelSchedule** | Cancel an active schedule (optionally cancel in-flight tasks) | `CancelSchedule({ scheduleId, reason, cancelTasks? })` |
-| **PauseSchedule** | Pause a schedule (resumable) | `PauseSchedule({ scheduleId })` |
-| **ResumeSchedule** | Resume a paused schedule | `ResumeSchedule({ scheduleId })` |
-| **ResumeTask** | Resume a failed/completed task with checkpoint context | `ResumeTask({ taskId, additionalContext? })` |
-| **CreatePipeline** | Create sequential task pipelines | `CreatePipeline({ steps: [...] })` |
-| **SchedulePipeline** | Create recurring/one-time scheduled pipelines | `SchedulePipeline({ steps: [...], cronExpression: "0 9 * * *" })` |
-| **CreateLoop** | Create iterative loops (retry or optimize strategy) | `CreateLoop({ prompt: "...", strategy: "retry", exitCondition: "npm test" })` |
-| **LoopStatus** | Get loop details and iteration history | `LoopStatus({ loopId })` |
-| **ListLoops** | List loops with optional status filter | `ListLoops({ status: "running" })` |
-| **CancelLoop** | Cancel an active loop (optionally cancel in-flight tasks) | `CancelLoop({ loopId, cancelTasks: true })` |
-| **PauseLoop** | Pause an active loop (graceful or force) | `PauseLoop({ loopId, force?: true })` |
-| **ResumeLoop** | Resume a paused loop | `ResumeLoop({ loopId })` |
-| **ScheduleLoop** | Schedule a recurring or one-time loop | `ScheduleLoop({ prompt: "...", strategy: "retry", exitCondition: "...", cronExpression: "0 * * * *" })` |
-
-### CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `beat mcp start` | Start the MCP server |
-| `beat run <task>` | Submit new task (fire-and-forget by default) |
-| `beat run <task> -f` | Submit task and stream output (foreground mode) |
-| `beat list` / `beat ls` | List all tasks |
-| `beat status [task-id]` | Check task status (all tasks if no ID) |
-| `beat logs <task-id>` | View task output |
-| `beat cancel <task-id>` | Cancel running task |
-| `beat retry <task-id>` | Retry a failed or completed task |
-| `beat resume <task-id>` | Resume a task from its checkpoint |
-| `beat schedule create <prompt>` | Create a cron or one-time schedule |
-| `beat schedule list` | List schedules with optional status filter |
-| `beat schedule status <id>` | Get schedule details and execution history |
-| `beat schedule pause <id>` | Pause an active schedule |
-| `beat schedule resume <id>` | Resume a paused schedule |
-| `beat schedule cancel <id>` | Cancel a schedule |
-| `beat pipeline <prompt> ...` | Create chained one-time schedules |
-| `beat loop <prompt> --until <cmd>` | Create a retry loop (run until condition passes) |
-| `beat loop <prompt> --eval <cmd>` | Create an optimize loop (score-based) |
-| `beat loop list` | List loops with optional status filter |
-| `beat loop status <loop-id>` | Get loop details and iteration history |
-| `beat loop cancel <loop-id>` | Cancel a loop |
-| `beat config show\|set\|reset\|path` | Manage configuration |
-| `beat help` | Show help |
-
-### Task Dependencies
-
-Create workflows where tasks wait for dependencies to complete:
+### First Run
 
 ```bash
-# Step 1: Create build task (fire-and-forget by default)
+# Initialize — detects installed agents, sets defaults
+beat init
+
+# Orchestrate — fire and forget
+beat orchestrate "Refactor the auth module to use JWT tokens"
+
+# Or run a single task in the foreground
+beat run "Fix the failing test in auth.test.ts" -f
+```
+
+## Orchestrate Mode
+
+The flagship. One command, autonomous execution.
+
+```bash
+# Detached (default) — runs in the background
+beat orchestrate "Build a REST API with user auth, CRUD endpoints, and tests"
+
+# Foreground — blocks and shows progress, Ctrl+C cancels
+beat orchestrate "Migrate the database schema" --foreground
+
+# With options
+beat orchestrate "Redesign the dashboard" \
+  --agent claude \
+  --max-workers 5 \
+  --max-iterations 50 \
+  --max-depth 3
+```
+
+### Monitor and Control
+
+```bash
+beat orchestrate status <id>     # Plan, steps, iteration count
+beat orchestrate list             # All orchestrations
+beat orchestrate cancel <id>     # Stop gracefully
+```
+
+## Eval Loops
+
+The Karpathy loop for coding agents. Run a task, evaluate the result, iterate until optimal.
+
+**Retry strategy** — run until a condition passes:
+
+```bash
+beat loop "Fix the failing tests" --until "npm test"
+```
+
+**Optimize strategy** — score output, seek the best:
+
+```bash
+beat loop "Optimize the bundle size" \
+  --eval "node measure-bundle.js" \
+  --direction minimize \
+  --max-iterations 10
+```
+
+**Pipeline loops** — repeat a multi-step workflow:
+
+```bash
+beat loop "Implement and verify the feature" \
+  --pipeline \
+  --step "Implement the changes" \
+  --step "Run the test suite" \
+  --step "Fix any failures" \
+  --until "npm test"
+```
+
+Each iteration starts with fresh context by default. The loop tracks the best result, reverts failures, and stops when the exit condition is met or safety limits are hit.
+
+## Task Delegation
+
+Spawn background coding agents with dependency ordering:
+
+```bash
+# Fire and forget
 beat run "npm run build" --priority P1
 # → task-abc123
 
-# Step 2: Create test task that waits for build
+# Chain with dependencies
 beat run "npm test" --deps task-abc123
-# Task waits for build to complete before running
-
-# Step 3: Create deploy task that waits for tests
 beat run "npm run deploy" --deps task-def456
-# Execution order: build → test → deploy
+# Execution: build → test → deploy
 ```
 
-**Multiple dependencies** (parallel execution):
+**Session continuation** passes output context through the chain:
 
 ```typescript
-// lint and format run in parallel
-const lint = await DelegateTask({ prompt: "npm run lint" });
-const format = await DelegateTask({ prompt: "npm run format" });
-
-// commit waits for both to complete
-const commit = await DelegateTask({
-  prompt: "git commit -m 'Formatted and linted'",
-  dependsOn: [lint.taskId, format.taskId]
-});
-```
-
-**Session continuation** (pass output context through dependency chains):
-
-```typescript
-// Build task runs first
 const build = await DelegateTask({ prompt: "npm run build" });
-
-// Test task receives build's output/git state in its prompt
 const test = await DelegateTask({
   prompt: "npm test",
   dependsOn: [build.taskId],
-  continueFrom: build.taskId
+  continueFrom: build.taskId  // receives build's checkpoint context
 });
 ```
 
-When `continueFrom` is set, the dependent task's prompt is automatically enriched with the dependency's checkpoint context (output summary, git state, errors) before execution.
+## Multi-Agent Pipelines
 
-See **[Task Dependencies Documentation](./docs/TASK-DEPENDENCIES.md)** for advanced patterns (diamond dependencies, error handling, failure propagation).
-
-### Task Scheduling
-
-Schedule tasks for future or recurring execution:
-
-```typescript
-// Recurring: daily backup at 2am EST
-await ScheduleTask({
-  prompt: "Backup database to S3",
-  scheduleType: "cron",
-  cronExpression: "0 2 * * *",
-  timezone: "America/New_York",
-  missedRunPolicy: "catchup"
-});
-
-// One-time: deploy tomorrow at 8am UTC
-await ScheduleTask({
-  prompt: "Deploy to production",
-  scheduleType: "one_time",
-  scheduledAt: "2026-02-19T08:00:00Z"
-});
-```
-
-**Schedule types**: `cron` (5-field expressions) and `one_time` (ISO 8601 datetime). **Missed run policies**: `skip`, `catchup`, `fail`. Supports IANA timezones and concurrent execution prevention.
-
-### Task Resumption
-
-Resume failed or completed tasks with enriched context from automatic checkpoints:
+Chain steps across different agents. Schedule them on cron.
 
 ```bash
-# Resume a failed task
-beat resume task-abc123
+# Sequential pipeline
+beat pipeline "Design the API schema" \
+  --step "Implement the endpoints" \
+  --step "Write integration tests" \
+  --step "Review for security issues"
 
-# Resume with additional instructions
-beat resume task-abc123 --context "Try a different approach this time"
+# Scheduled pipeline — runs every day at 2am
+beat schedule create "Run nightly checks" \
+  --cron "0 2 * * *" \
+  --pipeline \
+  --step "Run the full test suite" \
+  --step "Check for security vulnerabilities" \
+  --step "Generate coverage report"
 ```
 
-```typescript
-// Via MCP
-await ResumeTask({
-  taskId: "task-abc123",
-  additionalContext: "Focus on the database migration step"
-});
+Each step can use a different agent, working directory, and priority.
+
+## Scheduling
+
+```bash
+# Cron schedule
+beat schedule create "Backup the database" --cron "0 2 * * *" --timezone "America/New_York"
+
+# One-time schedule
+beat schedule create "Deploy to production" --at "2026-04-01T08:00:00Z"
+
+# Manage
+beat schedule list
+beat schedule pause <id>
+beat schedule resume <id>
+beat schedule cancel <id>
 ```
 
-Checkpoints are captured automatically on task completion/failure, preserving the last 50 lines of output. Resumed tasks receive the full checkpoint context in their prompt and track lineage via `parentTaskId` and `retryOf` fields.
+## All MCP Tools
 
-## Part of the AI Development Stack
+| Tool | What It Does |
+|------|-------------|
+| **Orchestrate** | Autonomous goal execution with worker management |
+| **OrchestrationStatus** | Orchestration plan, steps, and iteration state |
+| **ListOrchestrations** | List orchestrations with status filter |
+| **CancelOrchestration** | Cancel an orchestration and its workers |
+| **DelegateTask** | Spawn a background coding agent |
+| **TaskStatus** | Real-time task status |
+| **TaskLogs** | Execution logs |
+| **CancelTask** | Cancel with cleanup |
+| **RetryTask** | Retry a task |
+| **ResumeTask** | Resume from checkpoint |
+| **CreateLoop** | Iterative eval loop (retry or optimize) |
+| **LoopStatus** | Loop details and iteration history |
+| **ListLoops** | List loops with status filter |
+| **CancelLoop** | Cancel a loop |
+| **PauseLoop** / **ResumeLoop** | Pause and resume loops |
+| **ScheduleLoop** | Schedule a recurring loop |
+| **CreatePipeline** | Sequential multi-step pipeline |
+| **ScheduleTask** | Cron or one-time task schedule |
+| **SchedulePipeline** | Scheduled pipeline |
+| **ListSchedules** / **ScheduleStatus** | Schedule management |
+| **PauseSchedule** / **ResumeSchedule** | Schedule lifecycle |
+| **CancelSchedule** | Cancel schedule and optionally in-flight tasks |
 
-| Tool | Role | What It Does |
-|------|------|-------------|
-| **[Skim](https://github.com/dean0x/skim)** | Context Optimization | Code-aware AST parsing across 12 languages, command rewriting, test/build/git output compression |
-| **[DevFlow](https://github.com/dean0x/devflow)** | Quality Orchestration | 18 parallel reviewers, working memory, self-learning, composable plugin system |
-| **Autobeat** | Agent Orchestration | Orchestration at scale. Karpathy optimization loops, multi-agent pipelines, DAG dependencies, autoscaling |
+## All CLI Commands
 
-Autobeat scales execution. DevFlow enforces quality. Skim optimizes context. No other stack covers all three.
+```
+beat orchestrate <goal> [options]     Autonomous orchestration
+beat orchestrate status <id>          Orchestration details
+beat orchestrate list                 List orchestrations
+beat orchestrate cancel <id>          Cancel orchestration
 
-## Architecture
+beat run <prompt> [options]           Single task (detached or -f foreground)
+beat list                             List tasks
+beat status [id]                      Task status
+beat logs <id>                        Task logs
+beat cancel <id>                      Cancel task
+beat retry <id>                       Retry task
+beat resume <id>                      Resume from checkpoint
 
-**Event-driven system** with autoscaling workers and SQLite persistence. Components communicate through a central EventBus, eliminating race conditions and direct state management.
+beat loop <prompt> --until <cmd>      Retry loop
+beat loop <prompt> --eval <cmd>       Optimize loop
+beat loop list                        List loops
+beat loop status <id>                 Loop details
+beat loop cancel <id>                 Cancel loop
 
-**Task Lifecycle**: `Queued` → `Running` → `Completed` / `Failed` / `Cancelled`
+beat schedule create <prompt>         Create schedule
+beat schedule list                    List schedules
+beat schedule status <id>             Schedule details
+beat schedule pause/resume/cancel     Schedule lifecycle
 
-See **[Architecture Documentation](./docs/architecture/)** for implementation details.
+beat pipeline <prompt> --step ...     Create pipeline
+beat init                             Interactive setup
+beat config show|set|reset|path       Configuration
+beat help                             Help
+```
 
 ## Configuration
 
 Configuration priority: **environment variables > config file > defaults**.
 
-### Config File
-
-Persistent configuration stored at `~/.autobeat/config.json`:
-
 ```bash
-beat config show             # Show resolved configuration
-beat config set timeout 300000  # Set a value
-beat config reset timeout    # Revert to default
-beat config path             # Print config file location
+beat config show                    # Show resolved config
+beat config set timeout 300000      # Set a value
+beat config reset timeout           # Revert to default
 ```
 
-### Environment Variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TASK_TIMEOUT` | 1800000 (30min) | Task timeout in ms |
+| `MAX_OUTPUT_BUFFER` | 10485760 (10MB) | Output buffer size |
+| `CPU_CORES_RESERVED` | 2 | CPU cores reserved for system |
+| `MEMORY_RESERVE` | 2684354560 (2.5GB) | Memory reserve in bytes |
+| `LOG_LEVEL` | info | Logging verbosity |
 
-| Variable | Default | Range | Description |
-|----------|---------|-------|-------------|
-| `TASK_TIMEOUT` | 1800000 (30min) | 1000-3600000 | Task timeout in milliseconds |
-| `MAX_OUTPUT_BUFFER` | 10485760 (10MB) | 1024-1073741824 | Output buffer size in bytes |
-| `CPU_CORES_RESERVED` | 2 | 1-32 | CPU cores reserved for system |
-| `MEMORY_RESERVE` | 2684354560 (2.5GB) | 0-68719476736 | Memory reserve in bytes |
-| `LOG_LEVEL` | info | debug/info/warn/error | Logging verbosity |
+## Architecture
 
-### Per-Task Configuration
+Event-driven system with autoscaling workers and SQLite persistence. Components communicate through a central EventBus with specialized handlers.
 
-Override limits for individual tasks:
+**Task Lifecycle**: `Queued` → `Running` → `Completed` / `Failed` / `Cancelled`
 
-```typescript
-// Long-running task with larger buffer
-await DelegateTask({
-  prompt: "analyze large dataset",
-  timeout: 7200000,           // 2 hours
-  maxOutputBuffer: 104857600  // 100MB
-});
+Three agents supported: Claude, Codex, Gemini. Per-task agent selection. Crash recovery restores all in-flight work on restart.
 
-// Quick task with minimal resources
-await DelegateTask({
-  prompt: "run eslint",
-  timeout: 30000,             // 30 seconds
-  maxOutputBuffer: 1048576    // 1MB
-});
-```
+See **[Architecture Documentation](./docs/architecture/)** for details.
 
 ## Development
 
-### Available Scripts
-
 ```bash
-npm run dev        # Development mode with auto-reload
-npm run build      # Build TypeScript
-npm start          # Run built server
-npm run typecheck  # Type checking
-npm run clean      # Clean build artifacts
+npm run dev          # Development mode with auto-reload
+npm run build        # Build TypeScript
+npm run test:core    # Core tests (~3s)
+npm run test:all     # Full suite (1,500+ tests)
 ```
 
-### Testing
-
-Tests are grouped to prevent memory exhaustion. `npm test` is blocked as a safety measure.
-
-```bash
-# Grouped tests (fast, safe to run individually)
-npm run test:core           # Core domain logic (~3s)
-npm run test:handlers       # Service handlers (~3s)
-npm run test:repositories   # Data layer (~2s)
-npm run test:adapters       # MCP adapter (~2s)
-npm run test:implementations # Other implementations (~2s)
-npm run test:cli            # CLI tests (~2s)
-npm run test:integration    # Integration tests
-
-# Full suite (local terminal / CI only)
-npm run test:all            # All tests
-npm run test:coverage       # With coverage
-```
-
-### Project Structure
-
-```
-autobeat/
-├── src/
-│   ├── core/                # Core interfaces and types
-│   ├── implementations/     # Service implementations
-│   ├── services/            # Business logic & event handlers
-│   ├── adapters/            # MCP adapter
-│   ├── bootstrap.ts         # Dependency injection
-│   ├── cli.ts               # CLI interface
-│   └── index.ts             # Entry point
-├── dist/                    # Compiled JavaScript
-├── tests/
-│   ├── unit/                # Unit tests
-│   └── integration/         # Integration tests
-└── docs/                    # Documentation
-```
-
-## Roadmap
-
-- [x] v0.2.0 - Autoscaling and persistence
-- [x] v0.2.1 - Event-driven architecture and CLI
-- [x] v0.2.3 - Stability improvements
-- [x] v0.3.0 - Task dependency resolution
-- [x] v0.3.2 - Settling workers and spawn burst protection
-- [x] v0.3.3 - Test infrastructure and memory management
-- [x] v0.4.0 - Task scheduling and task resumption
-- [x] v0.5.0 - Multi-agent support (Claude, Codex, Gemini)
-- [x] v0.6.0 - Architectural simplification + scheduled pipelines
-- [x] v0.7.0 - Task/pipeline loops
-
-See **[ROADMAP.md](./docs/ROADMAP.md)** for detailed plans and timelines.
-
-## Troubleshooting
-
-### Agent CLI not found
-
-Ensure your agent CLI is in your PATH:
-```bash
-which claude    # or: which codex, which gemini
-```
-
-### Server won't start
-
-Check logs in stderr and verify Node.js version:
-```bash
-node --version  # Should be v20.0.0+
-```
-
-### Tasks fail immediately
-
-Run in development mode to see detailed logs:
-```bash
-npm run dev
-```
-
-## Contributing
-
-Contributions are welcome! Please read our contributing guidelines before submitting PRs.
+See **[FEATURES.md](./docs/FEATURES.md)** for the complete feature list and **[ROADMAP.md](./docs/ROADMAP.md)** for what's next.
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT
 
 ## Support
 
-- Report issues: [GitHub Issues](https://github.com/dean0x/autobeat/issues)
-
-## Acknowledgments
-
-Built with the [Model Context Protocol SDK](https://modelcontextprotocol.io)
+- Issues: [GitHub Issues](https://github.com/dean0x/autobeat/issues)
+- Built with the [Model Context Protocol SDK](https://modelcontextprotocol.io)
