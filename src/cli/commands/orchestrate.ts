@@ -37,8 +37,15 @@ function stepStatusIcon(status: string): string {
 }
 
 // ============================================================================
-// Arg parsing — pure function
+// Arg parsing — pure functions
 // ============================================================================
+
+/** Parse and validate an integer flag value within [min, max]. */
+function parseIntFlag(name: string, value: string, min: number, max: number): Result<number, string> {
+  const val = parseInt(value, 10);
+  if (isNaN(val) || val < min || val > max) return err(`${name} must be ${min}-${max}`);
+  return ok(val);
+}
 
 interface OrchestrateCreateParsed {
   readonly kind: 'create';
@@ -99,22 +106,19 @@ export function parseOrchestrateCreateArgs(args: readonly string[]): Result<Orch
       agent = next;
       i++;
     } else if (arg === '--max-depth') {
-      const next = args[i + 1];
-      const val = parseInt(next, 10);
-      if (isNaN(val) || val < 1 || val > 10) return err('--max-depth must be 1-10');
-      maxDepth = val;
+      const parsed = parseIntFlag('--max-depth', args[i + 1], 1, 10);
+      if (!parsed.ok) return parsed;
+      maxDepth = parsed.value;
       i++;
     } else if (arg === '--max-workers') {
-      const next = args[i + 1];
-      const val = parseInt(next, 10);
-      if (isNaN(val) || val < 1 || val > 20) return err('--max-workers must be 1-20');
-      maxWorkers = val;
+      const parsed = parseIntFlag('--max-workers', args[i + 1], 1, 20);
+      if (!parsed.ok) return parsed;
+      maxWorkers = parsed.value;
       i++;
     } else if (arg === '--max-iterations') {
-      const next = args[i + 1];
-      const val = parseInt(next, 10);
-      if (isNaN(val) || val < 1 || val > 200) return err('--max-iterations must be 1-200');
-      maxIterations = val;
+      const parsed = parseIntFlag('--max-iterations', args[i + 1], 1, 200);
+      if (!parsed.ok) return parsed;
+      maxIterations = parsed.value;
       i++;
     } else if (arg.startsWith('-')) {
       return err(`Unknown flag: ${arg}`);

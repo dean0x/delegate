@@ -211,7 +211,7 @@ const OrchestratorStatusSchema = z.object({
 });
 
 const ListOrchestratorsSchema = z.object({
-  status: z.enum(['planning', 'running', 'completed', 'failed', 'cancelled']).optional(),
+  status: z.nativeEnum(OrchestratorStatus).optional(),
   limit: z.number().min(1).max(100).optional().default(50),
   offset: z.number().min(0).optional().default(0),
 });
@@ -2698,7 +2698,7 @@ export class MCPAdapter {
 
     const { status, limit, offset } = parseResult.data;
     const result = await this.orchestrationService.listOrchestrations(
-      status as OrchestratorStatus | undefined,
+      status,
       limit,
       offset,
     );

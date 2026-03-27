@@ -17,6 +17,8 @@ import type {
   Loop,
   LoopCreateRequest,
   LoopIteration,
+  Orchestration,
+  OrchestratorCreateRequest,
   PipelineCreateRequest,
   PipelineResult,
   PipelineStepRequest,
@@ -27,17 +29,20 @@ import type {
 } from '../../../src/core/domain';
 import {
   createLoop,
+  createOrchestration,
   LoopId,
   LoopStatus,
   LoopStrategy,
   MissedRunPolicy,
+  OrchestratorId,
+  OrchestratorStatus,
   Priority,
   ScheduleId,
   ScheduleStatus,
   ScheduleType,
 } from '../../../src/core/domain';
 import { AutobeatError, ErrorCode, taskNotFound } from '../../../src/core/errors';
-import type { Logger, LoopService, ScheduleService, TaskManager } from '../../../src/core/interfaces';
+import type { Logger, LoopService, OrchestrationService, ScheduleService, TaskManager } from '../../../src/core/interfaces';
 import type { Result } from '../../../src/core/result';
 import { err, ok } from '../../../src/core/result';
 import { createTestConfiguration, TaskFactory } from '../../fixtures/factories';
@@ -308,6 +313,74 @@ class MockLoopService implements LoopService {
 
 // Default stub for tests that don't exercise loop features
 const stubLoopService = new MockLoopService();
+
+/**
+ * Mock OrchestrationService for MCP adapter testing
+ */
+class MockOrchestrationService implements OrchestrationService {
+  createCalls: OrchestratorCreateRequest[] = [];
+  getCalls: OrchestratorId[] = [];
+  listCalls: Array<{ status?: OrchestratorStatus; limit?: number; offset?: number }> = [];
+  cancelCalls: Array<{ id: OrchestratorId; reason?: string }> = [];
+
+  private createResult: Result<Orchestration> = ok(this.makeOrchestration());
+  private getResult: Result<Orchestration> = ok(this.makeOrchestration());
+  private listResult: Result<readonly Orchestration[]> = ok([]);
+  private cancelResult: Result<void> = ok(undefined);
+
+  makeOrchestration(overrides?: Partial<Orchestration>): Orchestration {
+    const base = createOrchestration({ goal: 'test goal' }, '/tmp/state.json', '/tmp');
+    return overrides ? { ...base, ...overrides } : base;
+  }
+
+  setCreateResult(result: Result<Orchestration>) {
+    this.createResult = result;
+  }
+  setGetResult(result: Result<Orchestration>) {
+    this.getResult = result;
+  }
+  setListResult(result: Result<readonly Orchestration[]>) {
+    this.listResult = result;
+  }
+  setCancelResult(result: Result<void>) {
+    this.cancelResult = result;
+  }
+
+  async createOrchestration(request: OrchestratorCreateRequest): Promise<Result<Orchestration>> {
+    this.createCalls.push(request);
+    return this.createResult;
+  }
+
+  async getOrchestration(id: OrchestratorId): Promise<Result<Orchestration>> {
+    this.getCalls.push(id);
+    return this.getResult;
+  }
+
+  async listOrchestrations(
+    status?: OrchestratorStatus,
+    limit?: number,
+    offset?: number,
+  ): Promise<Result<readonly Orchestration[]>> {
+    this.listCalls.push({ status, limit, offset });
+    return this.listResult;
+  }
+
+  async cancelOrchestration(id: OrchestratorId, reason?: string): Promise<Result<void>> {
+    this.cancelCalls.push({ id, reason });
+    return this.cancelResult;
+  }
+
+  reset() {
+    this.createCalls = [];
+    this.getCalls = [];
+    this.listCalls = [];
+    this.cancelCalls = [];
+    this.createResult = ok(this.makeOrchestration());
+    this.getResult = ok(this.makeOrchestration());
+    this.listResult = ok([]);
+    this.cancelResult = ok(undefined);
+  }
+}
 
 describe('MCPAdapter - Protocol Compliance', () => {
   let adapter: MCPAdapter;
@@ -2330,6 +2403,289 @@ describe('MCPAdapter - Loop Tools', () => {
 
       expect(mockLoopService.createLoopCalls).toHaveLength(1);
       // The simulate helper doesn't pass gitBranch, but we verify the service accepts it
+    });
+  });
+});
+
+// ============================================================================
+// Orchestration Tool Tests via callTool() — full Zod + dispatch pipeline
+// ============================================================================
+
+describe('Orchestration tools via callTool()', () => {
+  let mockOrchService: MockOrchestrationService;
+
+  beforeEach(() => {
+    mockOrchService = new MockOrchestrationService();
+  });
+
+  function makeAdapter(orchService?: OrchestrationService) {
+    return new MCPAdapter({
+      taskManager: new MockTaskManager(),
+      logger: new MockLogger(),
+      scheduleService: stubScheduleService,
+      loopService: stubLoopService,
+      agentRegistry: undefined,
+      config: testConfig,
+      orchestrationService: orchService,
+    });
+  }
+
+  describe('CreateOrchestrator via callTool()', () => {
+    it('should create an orchestration with required fields', async () => {
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('CreateOrchestrator', {
+        goal: 'Build the auth system',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.orchestratorId).toBeDefined();
+      expect(response.status).toBe('planning');
+      expect(response.message).toContain('Orchestration started');
+      expect(mockOrchService.createCalls).toHaveLength(1);
+      expect(mockOrchService.createCalls[0].goal).toBe('Build the auth system');
+    });
+
+    it('should pass all optional parameters to the service', async () => {
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('CreateOrchestrator', {
+        goal: 'Deploy microservices',
+        workingDirectory: process.cwd(),
+        agent: 'claude',
+        maxDepth: 5,
+        maxWorkers: 10,
+        maxIterations: 100,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(mockOrchService.createCalls).toHaveLength(1);
+      const call = mockOrchService.createCalls[0];
+      expect(call.goal).toBe('Deploy microservices');
+      expect(call.maxDepth).toBe(5);
+      expect(call.maxWorkers).toBe(10);
+      expect(call.maxIterations).toBe(100);
+    });
+
+    it('should reject missing required goal field via Zod', async () => {
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('CreateOrchestrator', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+      expect(mockOrchService.createCalls).toHaveLength(0);
+    });
+
+    it('should propagate service errors', async () => {
+      mockOrchService.setCreateResult(
+        err(new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Failed to create orchestration', {})),
+      );
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('CreateOrchestrator', {
+        goal: 'A failing goal',
+      });
+
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Failed to create orchestration');
+    });
+
+    it('should return service unavailable when orchestrationService is undefined', async () => {
+      const adapter = makeAdapter(undefined);
+
+      const result = await adapter.callTool('CreateOrchestrator', {
+        goal: 'No service available',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('not available');
+    });
+  });
+
+  describe('OrchestratorStatus via callTool()', () => {
+    it('should get orchestration status', async () => {
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('OrchestratorStatus', {
+        orchestratorId: 'orchestrator-abc123',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.orchestration).toBeDefined();
+      expect(response.orchestration.goal).toBe('test goal');
+      expect(mockOrchService.getCalls).toHaveLength(1);
+    });
+
+    it('should reject missing orchestratorId via Zod', async () => {
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('OrchestratorStatus', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+      expect(mockOrchService.getCalls).toHaveLength(0);
+    });
+
+    it('should propagate service errors', async () => {
+      mockOrchService.setGetResult(
+        err(new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Orchestration not found', {})),
+      );
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('OrchestratorStatus', {
+        orchestratorId: 'orchestrator-missing',
+      });
+
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(false);
+    });
+
+    it('should return service unavailable when orchestrationService is undefined', async () => {
+      const adapter = makeAdapter(undefined);
+
+      const result = await adapter.callTool('OrchestratorStatus', {
+        orchestratorId: 'orchestrator-noop',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('not available');
+    });
+  });
+
+  describe('ListOrchestrators via callTool()', () => {
+    it('should list orchestrations with default parameters', async () => {
+      const orch = mockOrchService.makeOrchestration();
+      mockOrchService.setListResult(ok([orch]));
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('ListOrchestrators', {});
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.count).toBe(1);
+      expect(response.orchestrations).toHaveLength(1);
+      expect(mockOrchService.listCalls).toHaveLength(1);
+    });
+
+    it('should filter by status using z.nativeEnum(OrchestratorStatus)', async () => {
+      const adapter = makeAdapter(mockOrchService);
+
+      await adapter.callTool('ListOrchestrators', {
+        status: 'running',
+      });
+
+      expect(mockOrchService.listCalls).toHaveLength(1);
+      expect(mockOrchService.listCalls[0].status).toBe(OrchestratorStatus.RUNNING);
+    });
+
+    it('should reject invalid status value via Zod', async () => {
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('ListOrchestrators', {
+        status: 'invalid_status',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+      expect(mockOrchService.listCalls).toHaveLength(0);
+    });
+
+    it('should propagate service errors', async () => {
+      mockOrchService.setListResult(
+        err(new AutobeatError(ErrorCode.SYSTEM_ERROR, 'DB failure', {})),
+      );
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('ListOrchestrators', {});
+
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(false);
+    });
+
+    it('should return service unavailable when orchestrationService is undefined', async () => {
+      const adapter = makeAdapter(undefined);
+
+      const result = await adapter.callTool('ListOrchestrators', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('not available');
+    });
+  });
+
+  describe('CancelOrchestrator via callTool()', () => {
+    it('should cancel an orchestration', async () => {
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('CancelOrchestrator', {
+        orchestratorId: 'orchestrator-cancel-1',
+        reason: 'No longer needed',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.message).toContain('cancelled');
+      expect(mockOrchService.cancelCalls).toHaveLength(1);
+      expect(mockOrchService.cancelCalls[0].reason).toBe('No longer needed');
+    });
+
+    it('should cancel without reason', async () => {
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('CancelOrchestrator', {
+        orchestratorId: 'orchestrator-cancel-2',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(mockOrchService.cancelCalls).toHaveLength(1);
+      expect(mockOrchService.cancelCalls[0].reason).toBeUndefined();
+    });
+
+    it('should reject missing orchestratorId via Zod', async () => {
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('CancelOrchestrator', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+      expect(mockOrchService.cancelCalls).toHaveLength(0);
+    });
+
+    it('should propagate service errors', async () => {
+      mockOrchService.setCancelResult(
+        err(new AutobeatError(ErrorCode.INVALID_OPERATION, 'Already cancelled', {})),
+      );
+      const adapter = makeAdapter(mockOrchService);
+
+      const result = await adapter.callTool('CancelOrchestrator', {
+        orchestratorId: 'orchestrator-already-done',
+      });
+
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Already cancelled');
+    });
+
+    it('should return service unavailable when orchestrationService is undefined', async () => {
+      const adapter = makeAdapter(undefined);
+
+      const result = await adapter.callTool('CancelOrchestrator', {
+        orchestratorId: 'orchestrator-noop',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('not available');
     });
   });
 });
