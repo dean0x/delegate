@@ -5,6 +5,8 @@
  * Rationale: Efficient orchestration persistence for orchestrator mode (v0.9.0)
  */
 
+import os from 'os';
+import path from 'path';
 import SQLite from 'better-sqlite3';
 import { unlink } from 'fs/promises';
 import { z } from 'zod';
@@ -214,13 +216,10 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       if (rows.length === 0) return 0;
 
       // DB is source of truth — delete rows first (crash-safe: orphan files are harmless)
-      // Batch deletes in groups of 500 to avoid SQLite parameter limits
-      const BATCH_SIZE = 500;
+      // Uses pre-prepared deleteStmt in a transaction — avoids dynamic db.prepare() inside loop
       const deleteInTransaction = this.db.transaction((ids: readonly string[]) => {
-        for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-          const batch = ids.slice(i, i + BATCH_SIZE);
-          const placeholders = batch.map(() => '?').join(',');
-          this.db.prepare(`DELETE FROM orchestrations WHERE id IN (${placeholders})`).run(...batch);
+        for (const id of ids) {
+          this.deleteStmt.run(id);
         }
       });
 
@@ -228,9 +227,21 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       deleteInTransaction(ids);
 
       // Best-effort async file cleanup — orphan files are harmless
-      // Only delete per-orchestration state files (not shared files like check-complete.js)
-      const filePaths = rows.map((r) => r.state_file_path);
-      await Promise.allSettled(filePaths.map((filePath) => unlink(filePath)));
+      // Validate paths are within expected state directory before unlinking (defense against DB corruption)
+      const expectedDir = path.resolve(path.join(os.homedir(), '.autobeat', 'orchestrator-state'));
+      const isWithinStateDir = (filePath: string): boolean => {
+        const resolved = path.resolve(filePath);
+        return resolved.startsWith(expectedDir + path.sep);
+      };
+
+      // Delete per-orchestration state files and their corresponding exit condition scripts
+      const filePaths = rows.map((r) => r.state_file_path).filter(isWithinStateDir);
+      const scriptPaths = filePaths.map((fp) => {
+        const dir = path.dirname(fp);
+        const baseName = path.basename(fp, '.json');
+        return path.join(dir, `check-complete-${baseName}.js`);
+      });
+      await Promise.allSettled([...filePaths, ...scriptPaths].map((p) => unlink(p)));
 
       return rows.length;
     }, operationErrorHandler('cleanup old orchestrations'));

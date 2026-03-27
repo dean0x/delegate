@@ -122,12 +122,17 @@ export function readStateFile(filePath: string): Result<OrchestratorStateFile> {
 /**
  * Write the exit condition checker script for the orchestrator loop
  * Returns the absolute path to the script
+ * ARCHITECTURE: Each orchestration gets a unique script derived from its state file name
+ * to prevent race conditions when multiple orchestrations run concurrently.
+ * The state file path is hardcoded into the script (no process.argv override).
  */
 export function writeExitConditionScript(dir: string, stateFilePath: string): string {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const scriptPath = path.join(dir, 'check-complete.js');
+  // Derive unique script name from state file name (already unique per orchestration)
+  const stateBaseName = path.basename(stateFilePath, '.json');
+  const scriptPath = path.join(dir, `check-complete-${stateBaseName}.js`);
   const script = `try {
-  const s = JSON.parse(require('fs').readFileSync(process.argv[2] || ${JSON.stringify(stateFilePath)}, 'utf8'));
+  const s = JSON.parse(require('fs').readFileSync(${JSON.stringify(stateFilePath)}, 'utf8'));
   process.exit(s.status === 'complete' ? 0 : 1);
 } catch { process.exit(1); }
 `;

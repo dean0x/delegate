@@ -151,7 +151,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     const loopResult = await this.loopService.createLoop({
       strategy: LoopStrategy.RETRY,
       prompt,
-      exitCondition: `node ${JSON.stringify(exitConditionScript)} ${JSON.stringify(stateFilePath)}`,
+      exitCondition: `node ${JSON.stringify(exitConditionScript)}`,
       maxIterations: orchestration.maxIterations,
       maxConsecutiveFailures: 5,
       freshContext: true,

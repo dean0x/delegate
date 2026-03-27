@@ -144,7 +144,7 @@ describe('Orchestrator State File - Unit Tests', () => {
 
       expect(path.isAbsolute(scriptPath)).toBe(true);
       expect(existsSync(scriptPath)).toBe(true);
-      expect(scriptPath).toContain('check-complete.js');
+      expect(scriptPath).toContain('check-complete-state.js');
     });
 
     it('should write executable script with correct logic', () => {
@@ -154,6 +154,27 @@ describe('Orchestrator State File - Unit Tests', () => {
       const content = readFileSync(scriptPath, 'utf-8');
       expect(content).toContain('process.exit');
       expect(content).toContain("s.status === 'complete'");
+    });
+
+    it('should hardcode state file path without process.argv override', () => {
+      const stateFilePath = path.join(tmpDir, 'state.json');
+      const scriptPath = writeExitConditionScript(tmpDir, stateFilePath);
+
+      const content = readFileSync(scriptPath, 'utf-8');
+      expect(content).toContain(stateFilePath);
+      expect(content).not.toContain('process.argv');
+    });
+
+    it('should generate unique script names for different state files', () => {
+      const stateFile1 = path.join(tmpDir, 'state-abc.json');
+      const stateFile2 = path.join(tmpDir, 'state-def.json');
+
+      const script1 = writeExitConditionScript(tmpDir, stateFile1);
+      const script2 = writeExitConditionScript(tmpDir, stateFile2);
+
+      expect(script1).not.toBe(script2);
+      expect(existsSync(script1)).toBe(true);
+      expect(existsSync(script2)).toBe(true);
     });
   });
 });
