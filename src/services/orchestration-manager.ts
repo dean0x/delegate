@@ -31,14 +31,27 @@ import { err, ok, type Result } from '../core/result.js';
 import { validatePath } from '../utils/validation.js';
 import { buildOrchestratorPrompt } from './orchestrator-prompt.js';
 
+export interface OrchestrationManagerServiceDeps {
+  readonly eventBus: EventBus;
+  readonly logger: Logger;
+  readonly orchestrationRepo: OrchestrationRepository;
+  readonly loopService: LoopService;
+  readonly config: Configuration;
+}
+
 export class OrchestrationManagerService implements OrchestrationService {
-  constructor(
-    private readonly eventBus: EventBus,
-    private readonly logger: Logger,
-    private readonly orchestrationRepo: OrchestrationRepository,
-    private readonly loopService: LoopService,
-    private readonly config: Configuration,
-  ) {
+  private readonly eventBus: EventBus;
+  private readonly logger: Logger;
+  private readonly orchestrationRepo: OrchestrationRepository;
+  private readonly loopService: LoopService;
+  private readonly config: Configuration;
+
+  constructor(deps: OrchestrationManagerServiceDeps) {
+    this.eventBus = deps.eventBus;
+    this.logger = deps.logger;
+    this.orchestrationRepo = deps.orchestrationRepo;
+    this.loopService = deps.loopService;
+    this.config = deps.config;
     this.logger.debug('OrchestrationManagerService initialized');
   }
 

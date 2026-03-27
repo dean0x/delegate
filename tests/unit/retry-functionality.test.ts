@@ -51,14 +51,14 @@ describe('Retry Functionality', () => {
     const outputCapture = new BufferedOutputCapture(BUFFER_SIZES.MEDIUM, eventBus);
 
     // Initialize task manager with hybrid architecture: direct repository + event bus
-    taskManager = new TaskManagerService(
+    taskManager = new TaskManagerService({
       eventBus,
       logger,
       config,
-      repository,
+      taskRepo: repository,
       outputCapture,
-      createMockOutputRepository(),
-    );
+      outputRepository: createMockOutputRepository(),
+    });
 
     // Set up persistence handler for task save on TaskDelegated
     const dependencyRepo = new SQLiteDependencyRepository(database);

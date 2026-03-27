@@ -44,20 +44,27 @@ describe('Integration: Event-driven task delegation flow', () => {
 
     const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
     const mockWorkerRepo = createMockWorkerRepository();
-    const workerPool = new EventDrivenWorkerPool(
-      agentRegistry, // agentRegistry
-      resourceMonitor, // monitor
-      logger, // logger
-      eventBus, // eventBus
-      outputCapture, // outputCapture
-      mockWorkerRepo, // workerRepository
-      createMockOutputRepository(), // outputRepository
-    );
+    const workerPool = new EventDrivenWorkerPool({
+      agentRegistry,
+      monitor: resourceMonitor,
+      logger,
+      eventBus,
+      outputCapture,
+      workerRepository: mockWorkerRepo,
+      outputRepository: createMockOutputRepository(),
+    });
 
-    // Initialize task manager with hybrid architecture: (eventBus, logger, config, taskRepo, outputCapture, outputRepository)
+    // Initialize task manager with hybrid architecture
     const config = createTestConfiguration();
     const mockOutputRepo = createMockOutputRepository();
-    const taskManager = new TaskManagerService(eventBus, logger, config, repository, outputCapture, mockOutputRepo);
+    const taskManager = new TaskManagerService({
+      eventBus,
+      logger,
+      config,
+      taskRepo: repository,
+      outputCapture,
+      outputRepository: mockOutputRepo,
+    });
 
     // Track events
     const events: string[] = [];

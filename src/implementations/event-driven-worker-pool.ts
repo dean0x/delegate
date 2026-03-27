@@ -29,22 +29,40 @@ interface WorkerState extends Worker {
   timeoutTimer?: NodeJS.Timeout;
 }
 
+export interface EventDrivenWorkerPoolDeps {
+  readonly agentRegistry: AgentRegistry;
+  readonly monitor: ResourceMonitor;
+  readonly logger: Logger;
+  readonly eventBus: EventBus;
+  readonly outputCapture: OutputCapture;
+  readonly workerRepository: WorkerRepository;
+  readonly outputRepository: OutputRepository;
+  readonly outputFlushIntervalMs?: number;
+}
+
 export class EventDrivenWorkerPool implements WorkerPool {
   private readonly workers = new Map<WorkerId, WorkerState>();
   private readonly taskToWorker = new Map<TaskId, WorkerId>();
   private readonly processConnector: ProcessConnector;
 
-  constructor(
-    private readonly agentRegistry: AgentRegistry,
-    private readonly monitor: ResourceMonitor,
-    private readonly logger: Logger,
-    private readonly eventBus: EventBus,
-    outputCapture: OutputCapture,
-    private readonly workerRepository: WorkerRepository,
-    outputRepository: OutputRepository,
-    outputFlushIntervalMs?: number,
-  ) {
-    this.processConnector = new ProcessConnector(outputCapture, logger, outputRepository, outputFlushIntervalMs);
+  private readonly agentRegistry: AgentRegistry;
+  private readonly monitor: ResourceMonitor;
+  private readonly logger: Logger;
+  private readonly eventBus: EventBus;
+  private readonly workerRepository: WorkerRepository;
+
+  constructor(deps: EventDrivenWorkerPoolDeps) {
+    this.agentRegistry = deps.agentRegistry;
+    this.monitor = deps.monitor;
+    this.logger = deps.logger;
+    this.eventBus = deps.eventBus;
+    this.workerRepository = deps.workerRepository;
+    this.processConnector = new ProcessConnector(
+      deps.outputCapture,
+      deps.logger,
+      deps.outputRepository,
+      deps.outputFlushIntervalMs,
+    );
   }
 
   async spawn(task: Task): Promise<Result<Worker>> {

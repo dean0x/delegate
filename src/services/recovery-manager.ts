@@ -17,17 +17,37 @@ import {
 } from '../core/interfaces.js';
 import { ok, Result } from '../core/result.js';
 
+export interface RecoveryManagerDeps {
+  readonly repository: TaskRepository;
+  readonly queue: TaskQueue;
+  readonly eventBus: EventBus;
+  readonly logger: Logger;
+  readonly workerRepository: WorkerRepository;
+  readonly dependencyRepo: DependencyRepository;
+  readonly loopRepository?: LoopRepository;
+  readonly orchestrationRepository?: OrchestrationRepository;
+}
+
 export class RecoveryManager {
-  constructor(
-    private readonly repository: TaskRepository,
-    private readonly queue: TaskQueue,
-    private readonly eventBus: EventBus,
-    private readonly logger: Logger,
-    private readonly workerRepository: WorkerRepository,
-    private readonly dependencyRepo: DependencyRepository,
-    private readonly loopRepository?: LoopRepository,
-    private readonly orchestrationRepository?: OrchestrationRepository,
-  ) {}
+  private readonly repository: TaskRepository;
+  private readonly queue: TaskQueue;
+  private readonly eventBus: EventBus;
+  private readonly logger: Logger;
+  private readonly workerRepository: WorkerRepository;
+  private readonly dependencyRepo: DependencyRepository;
+  private readonly loopRepository?: LoopRepository;
+  private readonly orchestrationRepository?: OrchestrationRepository;
+
+  constructor(deps: RecoveryManagerDeps) {
+    this.repository = deps.repository;
+    this.queue = deps.queue;
+    this.eventBus = deps.eventBus;
+    this.logger = deps.logger;
+    this.workerRepository = deps.workerRepository;
+    this.dependencyRepo = deps.dependencyRepo;
+    this.loopRepository = deps.loopRepository;
+    this.orchestrationRepository = deps.orchestrationRepository;
+  }
 
   /**
    * Check if a process is alive using signal 0 (existence check).

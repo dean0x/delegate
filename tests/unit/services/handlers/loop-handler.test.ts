@@ -82,15 +82,15 @@ describe('LoopHandler - Behavioral Tests', () => {
     mockCheckpointRepo = createMockCheckpointRepo();
     mockEvaluator = { evaluate: vi.fn().mockResolvedValue({ passed: true, exitCode: 0 }) };
 
-    const handlerResult = await LoopHandler.create(
+    const handlerResult = await LoopHandler.create({
       loopRepo,
       taskRepo,
-      mockCheckpointRepo,
+      checkpointRepo: mockCheckpointRepo,
       eventBus,
       database,
-      mockEvaluator,
+      exitConditionEvaluator: mockEvaluator,
       logger,
-    );
+    });
     if (!handlerResult.ok) {
       throw new Error(`Failed to create LoopHandler: ${handlerResult.error.message}`);
     }
@@ -152,15 +152,15 @@ describe('LoopHandler - Behavioral Tests', () => {
       const freshTaskRepo = new SQLiteTaskRepository(freshDb);
       const freshLogger = new TestLogger();
 
-      const result = await LoopHandler.create(
-        freshLoopRepo,
-        freshTaskRepo,
-        createMockCheckpointRepo(),
-        freshEventBus,
-        freshDb,
-        { evaluate: vi.fn().mockResolvedValue({ passed: true, exitCode: 0 }) },
-        freshLogger,
-      );
+      const result = await LoopHandler.create({
+        loopRepo: freshLoopRepo,
+        taskRepo: freshTaskRepo,
+        checkpointRepo: createMockCheckpointRepo(),
+        eventBus: freshEventBus,
+        database: freshDb,
+        exitConditionEvaluator: { evaluate: vi.fn().mockResolvedValue({ passed: true, exitCode: 0 }) },
+        logger: freshLogger,
+      });
 
       expect(result.ok).toBe(true);
       expect(freshLogger.hasLogContaining('LoopHandler initialized')).toBe(true);
@@ -665,15 +665,15 @@ describe('LoopHandler - Behavioral Tests', () => {
 
       // Create a NEW handler instance - recovery should rebuild maps
       const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
-      const newHandlerResult = await LoopHandler.create(
+      const newHandlerResult = await LoopHandler.create({
         loopRepo,
         taskRepo,
-        createMockCheckpointRepo(),
-        freshEventBus,
+        checkpointRepo: createMockCheckpointRepo(),
+        eventBus: freshEventBus,
         database,
-        { evaluate: vi.fn().mockResolvedValue({ passed: true, exitCode: 0 }) },
-        new TestLogger(),
-      );
+        exitConditionEvaluator: { evaluate: vi.fn().mockResolvedValue({ passed: true, exitCode: 0 }) },
+        logger: new TestLogger(),
+      });
 
       expect(newHandlerResult.ok).toBe(true);
       // The handler's logger should mention rebuilt maps
@@ -883,15 +883,15 @@ describe('LoopHandler - Behavioral Tests', () => {
 
       // Create fresh handler — triggers recovery
       const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
-      await LoopHandler.create(
+      await LoopHandler.create({
         loopRepo,
         taskRepo,
-        createMockCheckpointRepo(),
-        freshEventBus,
+        checkpointRepo: createMockCheckpointRepo(),
+        eventBus: freshEventBus,
         database,
-        mockEvaluator,
-        new TestLogger(),
-      );
+        exitConditionEvaluator: mockEvaluator,
+        logger: new TestLogger(),
+      });
 
       const recoveredLoop = await getLoop(loop.id);
       expect(recoveredLoop!.status).toBe(LoopStatus.COMPLETED);
@@ -906,15 +906,15 @@ describe('LoopHandler - Behavioral Tests', () => {
       });
 
       const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
-      await LoopHandler.create(
+      await LoopHandler.create({
         loopRepo,
         taskRepo,
-        createMockCheckpointRepo(),
-        freshEventBus,
+        checkpointRepo: createMockCheckpointRepo(),
+        eventBus: freshEventBus,
         database,
-        mockEvaluator,
-        new TestLogger(),
-      );
+        exitConditionEvaluator: mockEvaluator,
+        logger: new TestLogger(),
+      });
 
       const recoveredLoop = await getLoop(loop.id);
       expect(recoveredLoop!.status).toBe(LoopStatus.RUNNING);
@@ -930,15 +930,15 @@ describe('LoopHandler - Behavioral Tests', () => {
       });
 
       const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
-      await LoopHandler.create(
+      await LoopHandler.create({
         loopRepo,
         taskRepo,
-        createMockCheckpointRepo(),
-        freshEventBus,
+        checkpointRepo: createMockCheckpointRepo(),
+        eventBus: freshEventBus,
         database,
-        mockEvaluator,
-        new TestLogger(),
-      );
+        exitConditionEvaluator: mockEvaluator,
+        logger: new TestLogger(),
+      });
 
       const recoveredLoop = await getLoop(loop.id);
       expect(recoveredLoop!.status).toBe(LoopStatus.FAILED);
@@ -956,15 +956,15 @@ describe('LoopHandler - Behavioral Tests', () => {
       });
 
       const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
-      await LoopHandler.create(
+      await LoopHandler.create({
         loopRepo,
         taskRepo,
-        createMockCheckpointRepo(),
-        freshEventBus,
+        checkpointRepo: createMockCheckpointRepo(),
+        eventBus: freshEventBus,
         database,
-        mockEvaluator,
-        new TestLogger(),
-      );
+        exitConditionEvaluator: mockEvaluator,
+        logger: new TestLogger(),
+      });
 
       const recoveredLoop = await getLoop(loop.id);
       expect(recoveredLoop!.status).toBe(LoopStatus.RUNNING);
@@ -1033,15 +1033,15 @@ describe('LoopHandler - Behavioral Tests', () => {
 
       // Create fresh handler — triggers recovery
       const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
-      await LoopHandler.create(
+      await LoopHandler.create({
         loopRepo,
         taskRepo,
-        createMockCheckpointRepo(),
-        freshEventBus,
+        checkpointRepo: createMockCheckpointRepo(),
+        eventBus: freshEventBus,
         database,
-        mockEvaluator,
-        new TestLogger(),
-      );
+        exitConditionEvaluator: mockEvaluator,
+        logger: new TestLogger(),
+      });
 
       // Iteration should be marked cancelled
       const allIters = await loopRepo.getIterations(loop.id, 10);
@@ -1225,15 +1225,15 @@ describe('LoopHandler - Behavioral Tests', () => {
 
       // Create a fresh handler — triggers recovery
       const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
-      await LoopHandler.create(
+      await LoopHandler.create({
         loopRepo,
         taskRepo,
-        createMockCheckpointRepo(),
-        freshEventBus,
+        checkpointRepo: createMockCheckpointRepo(),
+        eventBus: freshEventBus,
         database,
-        mockEvaluator,
-        new TestLogger(),
-      );
+        exitConditionEvaluator: mockEvaluator,
+        logger: new TestLogger(),
+      });
 
       // Loop should still be PAUSED (not recovered to RUNNING)
       const afterRecovery = await getLoop(loop.id);

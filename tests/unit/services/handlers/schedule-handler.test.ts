@@ -63,16 +63,15 @@ describe('ScheduleHandler - Behavioral Tests', () => {
     loopRepo = new SQLiteLoopRepository(database);
     loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
 
-    const handlerResult = await ScheduleHandler.create(
+    const handlerResult = await ScheduleHandler.create({
       scheduleRepo,
       taskRepo,
       eventBus,
       database,
       loopRepo,
-      logger,
-      undefined,
       loopService,
-    );
+      logger,
+    });
     if (!handlerResult.ok) {
       throw new Error(`Failed to create ScheduleHandler: ${handlerResult.error.message}`);
     }
@@ -115,16 +114,15 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       const freshTaskRepo = new SQLiteTaskRepository(freshDb);
       const freshLoopRepo = new SQLiteLoopRepository(freshDb);
       const freshLoopService = new LoopManagerService(freshEventBus, freshLogger, freshLoopRepo, freshConfig);
-      const result = await ScheduleHandler.create(
-        freshScheduleRepo,
-        freshTaskRepo,
-        freshEventBus,
-        freshDb,
-        freshLoopRepo,
-        freshLogger,
-        undefined,
-        freshLoopService,
-      );
+      const result = await ScheduleHandler.create({
+        scheduleRepo: freshScheduleRepo,
+        taskRepo: freshTaskRepo,
+        eventBus: freshEventBus,
+        database: freshDb,
+        loopRepo: freshLoopRepo,
+        loopService: freshLoopService,
+        logger: freshLogger,
+      });
 
       expect(result.ok).toBe(true);
       expect(freshLogger.hasLogContaining('ScheduleHandler initialized')).toBe(true);

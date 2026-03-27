@@ -49,30 +49,37 @@ type DependencyValidationFailure =
   | { depId: TaskId; error: Error; type: 'system' };
 type DependencyValidationResult = DependencyValidationOk | DependencyValidationFailure;
 
+export interface DependencyHandlerDeps {
+  readonly dependencyRepo: DependencyRepository;
+  readonly taskRepo: TaskRepository;
+  readonly logger: Logger;
+  readonly eventBus: EventBus;
+  readonly graph: DependencyGraph;
+  readonly maxChainDepth: number;
+  readonly checkpointLookup?: CheckpointLookup;
+}
+
 export class DependencyHandler extends BaseEventHandler {
   private eventBus: EventBus;
   private graph: DependencyGraph;
   private readonly maxChainDepth: number;
   private readonly checkpointLookup?: CheckpointLookup;
 
+  private readonly dependencyRepo: DependencyRepository;
+  private readonly taskRepo: TaskRepository;
+
   /**
    * Private constructor - use DependencyHandler.create() instead
    * ARCHITECTURE: Factory pattern ensures handler is fully initialized before use
    */
-  private constructor(
-    private readonly dependencyRepo: DependencyRepository,
-    private readonly taskRepo: TaskRepository,
-    logger: Logger,
-    eventBus: EventBus,
-    graph: DependencyGraph,
-    maxChainDepth: number,
-    checkpointLookup?: CheckpointLookup,
-  ) {
-    super(logger, 'DependencyHandler');
-    this.eventBus = eventBus;
-    this.graph = graph;
-    this.maxChainDepth = maxChainDepth;
-    this.checkpointLookup = checkpointLookup;
+  private constructor(deps: DependencyHandlerDeps) {
+    super(deps.logger, 'DependencyHandler');
+    this.dependencyRepo = deps.dependencyRepo;
+    this.taskRepo = deps.taskRepo;
+    this.eventBus = deps.eventBus;
+    this.graph = deps.graph;
+    this.maxChainDepth = deps.maxChainDepth;
+    this.checkpointLookup = deps.checkpointLookup;
   }
 
   /**
@@ -80,23 +87,17 @@ export class DependencyHandler extends BaseEventHandler {
    * ARCHITECTURE: Guarantees handler is ready to use - no uninitialized state possible
    * PERFORMANCE: Graph initialized once from database (O(N) one-time cost)
    *
-   * @param dependencyRepo - Repository for dependency persistence
-   * @param taskRepo - Repository for task lookups (needed for TaskUnblocked events)
-   * @param logger - Logger instance
-   * @param eventBus - Event bus for subscriptions
+   * @param deps - Dependencies for handler creation
    * @param options - Optional configuration. Defaults: maxChainDepth=100
    * @returns Result containing initialized handler or error
    */
   static async create(
-    dependencyRepo: DependencyRepository,
-    taskRepo: TaskRepository,
-    logger: Logger,
-    eventBus: EventBus,
+    deps: Omit<DependencyHandlerDeps, 'graph' | 'maxChainDepth' | 'checkpointLookup'>,
     options?: DependencyHandlerOptions,
   ): Promise<Result<DependencyHandler>> {
     const maxChainDepth = options?.maxChainDepth ?? DEFAULT_MAX_DEPENDENCY_CHAIN_DEPTH;
     const checkpointLookup = options?.checkpointLookup;
-    const handlerLogger = logger.child ? logger.child({ module: 'DependencyHandler' }) : logger;
+    const handlerLogger = deps.logger.child ? deps.logger.child({ module: 'DependencyHandler' }) : deps.logger;
 
     // PERFORMANCE: Initialize graph eagerly (one-time O(N) cost)
     // Subsequent operations use incremental O(1) updates instead of rebuilding
@@ -106,7 +107,7 @@ export class DependencyHandler extends BaseEventHandler {
     // 2. Graph must be complete for cycle detection to work correctly
     // 3. Typical dependency count is <1000, scan takes <10ms
     handlerLogger.debug('Initializing dependency graph from database');
-    const allDepsResult = await dependencyRepo.findAllUnbounded();
+    const allDepsResult = await deps.dependencyRepo.findAllUnbounded();
     if (!allDepsResult.ok) {
       handlerLogger.error('Failed to initialize dependency graph', allDepsResult.error);
       return err(allDepsResult.error);
@@ -119,15 +120,15 @@ export class DependencyHandler extends BaseEventHandler {
     });
 
     // Create handler with initialized graph
-    const handler = new DependencyHandler(
-      dependencyRepo,
-      taskRepo,
-      handlerLogger,
-      eventBus,
+    const handler = new DependencyHandler({
+      dependencyRepo: deps.dependencyRepo,
+      taskRepo: deps.taskRepo,
+      logger: handlerLogger,
+      eventBus: deps.eventBus,
       graph,
       maxChainDepth,
       checkpointLookup,
-    );
+    });
 
     // Subscribe to events
     const subscribeResult = handler.subscribeToEvents();

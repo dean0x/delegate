@@ -73,7 +73,7 @@ describe('CheckpointHandler - Behavioral Tests', () => {
     );
 
     // Create handler using factory pattern
-    const handlerResult = await CheckpointHandler.create(checkpointRepo, outputCapture, taskRepo, eventBus, logger);
+    const handlerResult = await CheckpointHandler.create({ checkpointRepo, outputCapture, taskRepo, eventBus, logger });
 
     if (!handlerResult.ok) {
       throw new Error(`Failed to create CheckpointHandler: ${handlerResult.error.message}`);
@@ -99,13 +99,13 @@ describe('CheckpointHandler - Behavioral Tests', () => {
       const freshEventBus = new InMemoryEventBus(freshConfig, freshLogger);
 
       // Act
-      const result = await CheckpointHandler.create(
+      const result = await CheckpointHandler.create({
         checkpointRepo,
         outputCapture,
         taskRepo,
-        freshEventBus,
-        freshLogger,
-      );
+        eventBus: freshEventBus,
+        logger: freshLogger,
+      });
 
       // Assert
       expect(result.ok).toBe(true);

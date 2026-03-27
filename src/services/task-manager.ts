@@ -36,16 +36,33 @@ import {
 import { err, ok, Result } from '../core/result.js';
 import { linesByteSize } from '../utils/output.js';
 
+export interface TaskManagerServiceDeps {
+  readonly eventBus: EventBus;
+  readonly logger: Logger;
+  readonly config: Configuration;
+  readonly taskRepo: TaskRepository;
+  readonly outputCapture: OutputCapture;
+  readonly outputRepository: OutputRepository;
+  readonly checkpointRepo?: CheckpointRepository;
+}
+
 export class TaskManagerService implements TaskManager {
-  constructor(
-    private readonly eventBus: EventBus,
-    private readonly logger: Logger,
-    private readonly config: Configuration,
-    private readonly taskRepo: TaskRepository,
-    private readonly outputCapture: OutputCapture,
-    private readonly outputRepository: OutputRepository,
-    private readonly checkpointRepo?: CheckpointRepository,
-  ) {
+  private readonly eventBus: EventBus;
+  private readonly logger: Logger;
+  private readonly config: Configuration;
+  private readonly taskRepo: TaskRepository;
+  private readonly outputCapture: OutputCapture;
+  private readonly outputRepository: OutputRepository;
+  private readonly checkpointRepo?: CheckpointRepository;
+
+  constructor(deps: TaskManagerServiceDeps) {
+    this.eventBus = deps.eventBus;
+    this.logger = deps.logger;
+    this.config = deps.config;
+    this.taskRepo = deps.taskRepo;
+    this.outputCapture = deps.outputCapture;
+    this.outputRepository = deps.outputRepository;
+    this.checkpointRepo = deps.checkpointRepo;
     this.logger.debug('TaskManager initialized with hybrid architecture (commands via events, queries direct)');
   }
 

@@ -72,15 +72,15 @@ describe('handler-setup', () => {
 
     // Worker pool with test spawner wrapped in AgentRegistry
     const agentRegistry = new InMemoryAgentRegistry([new ProcessSpawnerAdapter(new TestProcessSpawner())]);
-    const workerPool = new EventDrivenWorkerPool(
+    const workerPool = new EventDrivenWorkerPool({
       agentRegistry,
-      resourceMonitor,
-      logger.child({ module: 'WorkerPool' }),
+      monitor: resourceMonitor,
+      logger: logger.child({ module: 'WorkerPool' }),
       eventBus,
-      new BufferedOutputCapture(config.maxOutputBuffer, eventBus),
-      mockWorkerRepo,
-      createMockOutputRepository(),
-    );
+      outputCapture: new BufferedOutputCapture(config.maxOutputBuffer, eventBus),
+      workerRepository: mockWorkerRepo,
+      outputRepository: createMockOutputRepository(),
+    });
     container.registerValue('workerPool', workerPool);
 
     // Repositories added in v0.4.0+ (scheduleRepository, checkpointRepository, loopRepository, database)

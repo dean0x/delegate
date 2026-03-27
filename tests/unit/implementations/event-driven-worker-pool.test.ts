@@ -112,7 +112,7 @@ describe('EventDrivenWorkerPool', () => {
     // Wrap ProcessSpawner in AgentRegistry for backward compatibility
     agentRegistry = new InMemoryAgentRegistry([new ProcessSpawnerAdapter(spawner)]);
 
-    pool = new EventDrivenWorkerPool(
+    pool = new EventDrivenWorkerPool({
       agentRegistry,
       monitor,
       logger,
@@ -120,7 +120,7 @@ describe('EventDrivenWorkerPool', () => {
       outputCapture,
       workerRepository,
       outputRepository,
-    );
+    });
   });
 
   afterEach(() => {
@@ -192,15 +192,15 @@ describe('EventDrivenWorkerPool', () => {
         list: vi.fn().mockReturnValue([]),
         dispose: vi.fn(),
       } as unknown as AgentRegistry;
-      const failPool = new EventDrivenWorkerPool(
-        failRegistry,
+      const failPool = new EventDrivenWorkerPool({
+        agentRegistry: failRegistry,
         monitor,
         logger,
         eventBus,
         outputCapture,
         workerRepository,
         outputRepository,
-      );
+      });
       const task = buildTask();
 
       const result = await failPool.spawn(task);
@@ -223,15 +223,15 @@ describe('EventDrivenWorkerPool', () => {
         dispose: vi.fn(),
       };
       const failRegistry = new InMemoryAgentRegistry([failAdapter]);
-      const failPool = new EventDrivenWorkerPool(
-        failRegistry,
+      const failPool = new EventDrivenWorkerPool({
+        agentRegistry: failRegistry,
         monitor,
         logger,
         eventBus,
         outputCapture,
         workerRepository,
         outputRepository,
-      );
+      });
       const task = buildTask();
 
       const result = await failPool.spawn(task);

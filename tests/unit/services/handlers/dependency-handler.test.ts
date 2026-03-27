@@ -35,7 +35,7 @@ describe('DependencyHandler - Behavioral Tests', () => {
     taskRepo = new SQLiteTaskRepository(database);
 
     // Create handler using factory pattern
-    const handlerResult = await DependencyHandler.create(dependencyRepo, taskRepo, logger, eventBus);
+    const handlerResult = await DependencyHandler.create({ dependencyRepo, taskRepo, logger, eventBus });
     if (!handlerResult.ok) {
       throw new Error(`Failed to create DependencyHandler: ${handlerResult.error.message}`);
     }
@@ -55,7 +55,7 @@ describe('DependencyHandler - Behavioral Tests', () => {
       const freshLogger = new TestLogger();
 
       // Act - Create handler using factory pattern
-      const result = await DependencyHandler.create(dependencyRepo, taskRepo, freshLogger, freshEventBus);
+      const result = await DependencyHandler.create({ dependencyRepo, taskRepo, logger: freshLogger, eventBus: freshEventBus });
 
       // Assert
       expect(result.ok).toBe(true);
@@ -975,10 +975,7 @@ describe('DependencyHandler - Behavioral Tests', () => {
       checkpointRepo = new SQLiteCheckpointRepository(enrichmentDb);
 
       const handlerResult = await DependencyHandler.create(
-        enrichDepRepo,
-        enrichTaskRepo,
-        enrichmentLogger,
-        enrichmentEventBus,
+        { dependencyRepo: enrichDepRepo, taskRepo: enrichTaskRepo, logger: enrichmentLogger, eventBus: enrichmentEventBus },
         { checkpointLookup: checkpointRepo },
       );
       if (!handlerResult.ok) {

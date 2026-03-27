@@ -308,13 +308,13 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   // Register OrchestrationService for orchestrator mode (v0.9.0)
   container.registerSingleton('orchestrationService', () => {
-    return new OrchestrationManagerService(
-      getFromContainer<EventBus>(container, 'eventBus'),
-      getFromContainer<Logger>(container, 'logger').child({ module: 'OrchestrationManager' }),
-      getFromContainer<OrchestrationRepository>(container, 'orchestrationRepository'),
-      getFromContainer<LoopService>(container, 'loopService'),
+    return new OrchestrationManagerService({
+      eventBus: getFromContainer<EventBus>(container, 'eventBus'),
+      logger: getFromContainer<Logger>(container, 'logger').child({ module: 'OrchestrationManager' }),
+      orchestrationRepo: getFromContainer<OrchestrationRepository>(container, 'orchestrationRepository'),
+      loopService: getFromContainer<LoopService>(container, 'loopService'),
       config,
-    );
+    });
   });
 
   // Register core services
@@ -387,30 +387,30 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   // Register worker pool (v0.5.0: uses AgentRegistry instead of ProcessSpawner)
   container.registerSingleton('workerPool', () => {
-    return new EventDrivenWorkerPool(
-      getFromContainer<AgentRegistry>(container, 'agentRegistry'),
-      getFromContainer<ResourceMonitor>(container, 'resourceMonitor'),
-      getFromContainer<Logger>(container, 'logger').child({ module: 'WorkerPool' }),
-      getFromContainer<EventBus>(container, 'eventBus'),
-      getFromContainer<OutputCapture>(container, 'outputCapture'),
-      getFromContainer<WorkerRepository>(container, 'workerRepository'),
-      getFromContainer<OutputRepository>(container, 'outputRepository'),
-      config.outputFlushIntervalMs,
-    );
+    return new EventDrivenWorkerPool({
+      agentRegistry: getFromContainer<AgentRegistry>(container, 'agentRegistry'),
+      monitor: getFromContainer<ResourceMonitor>(container, 'resourceMonitor'),
+      logger: getFromContainer<Logger>(container, 'logger').child({ module: 'WorkerPool' }),
+      eventBus: getFromContainer<EventBus>(container, 'eventBus'),
+      outputCapture: getFromContainer<OutputCapture>(container, 'outputCapture'),
+      workerRepository: getFromContainer<WorkerRepository>(container, 'workerRepository'),
+      outputRepository: getFromContainer<OutputRepository>(container, 'outputRepository'),
+      outputFlushIntervalMs: config.outputFlushIntervalMs,
+    });
   });
 
   // Register task manager
   container.registerSingleton('taskManager', async () => {
     // ARCHITECTURE: Hybrid TaskManager - commands via events, queries via direct repo
-    const taskManager = new TaskManagerService(
-      getFromContainer<EventBus>(container, 'eventBus'),
-      getFromContainer<Logger>(container, 'logger').child({ module: 'TaskManager' }),
+    const taskManager = new TaskManagerService({
+      eventBus: getFromContainer<EventBus>(container, 'eventBus'),
+      logger: getFromContainer<Logger>(container, 'logger').child({ module: 'TaskManager' }),
       config, // Pass complete config - no partial objects needed
-      getFromContainer<TaskRepository>(container, 'taskRepository'),
-      getFromContainer<OutputCapture>(container, 'outputCapture'),
-      getFromContainer<OutputRepository>(container, 'outputRepository'),
-      getFromContainer<CheckpointRepository>(container, 'checkpointRepository'),
-    );
+      taskRepo: getFromContainer<TaskRepository>(container, 'taskRepository'),
+      outputCapture: getFromContainer<OutputCapture>(container, 'outputCapture'),
+      outputRepository: getFromContainer<OutputRepository>(container, 'outputRepository'),
+      checkpointRepo: getFromContainer<CheckpointRepository>(container, 'checkpointRepository'),
+    });
 
     // Wire up event handlers using centralized handler setup
     // ARCHITECTURE: Handler creation extracted to handler-setup.ts for maintainability
@@ -438,15 +438,15 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       throw new Error(`Failed to resolve taskManager for MCPAdapter: ${taskManagerResult.error.message}`);
     }
 
-    return new MCPAdapter(
-      taskManagerResult.value,
-      getFromContainer<Logger>(container, 'logger').child({ module: 'MCP' }),
-      getFromContainer<ScheduleService>(container, 'scheduleService'),
-      getFromContainer<LoopService>(container, 'loopService'),
-      getFromContainer<AgentRegistry>(container, 'agentRegistry'),
+    return new MCPAdapter({
+      taskManager: taskManagerResult.value,
+      logger: getFromContainer<Logger>(container, 'logger').child({ module: 'MCP' }),
+      scheduleService: getFromContainer<ScheduleService>(container, 'scheduleService'),
+      loopService: getFromContainer<LoopService>(container, 'loopService'),
+      agentRegistry: getFromContainer<AgentRegistry>(container, 'agentRegistry'),
       config,
-      getFromContainer<OrchestrationService>(container, 'orchestrationService'),
-    );
+      orchestrationService: getFromContainer<OrchestrationService>(container, 'orchestrationService'),
+    });
   });
 
   // Register recovery manager
@@ -457,16 +457,16 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       throw new Error('TaskRepository required for RecoveryManager');
     }
 
-    return new RecoveryManager(
-      repositoryResult.value as TaskRepository,
-      getFromContainer<TaskQueue>(container, 'taskQueue'),
-      getFromContainer<EventBus>(container, 'eventBus'),
-      getFromContainer<Logger>(container, 'logger').child({ module: 'Recovery' }),
-      getFromContainer<WorkerRepository>(container, 'workerRepository'),
-      getFromContainer<DependencyRepository>(container, 'dependencyRepository'),
-      getFromContainer<LoopRepository>(container, 'loopRepository'),
-      getFromContainer<OrchestrationRepository>(container, 'orchestrationRepository'),
-    );
+    return new RecoveryManager({
+      repository: repositoryResult.value as TaskRepository,
+      queue: getFromContainer<TaskQueue>(container, 'taskQueue'),
+      eventBus: getFromContainer<EventBus>(container, 'eventBus'),
+      logger: getFromContainer<Logger>(container, 'logger').child({ module: 'Recovery' }),
+      workerRepository: getFromContainer<WorkerRepository>(container, 'workerRepository'),
+      dependencyRepo: getFromContainer<DependencyRepository>(container, 'dependencyRepository'),
+      loopRepository: getFromContainer<LoopRepository>(container, 'loopRepository'),
+      orchestrationRepository: getFromContainer<OrchestrationRepository>(container, 'orchestrationRepository'),
+    });
   });
 
   // Run recovery on startup (skip for short-lived CLI commands)

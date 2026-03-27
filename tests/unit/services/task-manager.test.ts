@@ -141,14 +141,14 @@ describe('TaskManagerService', () => {
     taskRepo = createMockTaskRepo();
     outputCapture = createMockOutputCapture();
     outputRepository = createMockOutputRepository();
-    service = new TaskManagerService(
-      eventBus as unknown as EventBus,
+    service = new TaskManagerService({
+      eventBus: eventBus as unknown as EventBus,
       logger,
       config,
-      taskRepo as unknown as TaskRepository,
-      outputCapture as unknown as OutputCapture,
-      outputRepository as unknown as OutputRepository,
-    );
+      taskRepo: taskRepo as unknown as TaskRepository,
+      outputCapture: outputCapture as unknown as OutputCapture,
+      outputRepository: outputRepository as unknown as OutputRepository,
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -217,14 +217,14 @@ describe('TaskManagerService', () => {
     describe('agent resolution', () => {
       it('should fail delegation when no agent specified and no default configured', async () => {
         const noDefaultConfig = new ConfigFactory().withDefaultAgent(undefined).build();
-        const svc = new TaskManagerService(
-          eventBus as unknown as EventBus,
+        const svc = new TaskManagerService({
+          eventBus: eventBus as unknown as EventBus,
           logger,
-          noDefaultConfig,
-          taskRepo as unknown as TaskRepository,
-          outputCapture as unknown as OutputCapture,
-          outputRepository as unknown as OutputRepository,
-        );
+          config: noDefaultConfig,
+          taskRepo: taskRepo as unknown as TaskRepository,
+          outputCapture: outputCapture as unknown as OutputCapture,
+          outputRepository: outputRepository as unknown as OutputRepository,
+        });
 
         const result = await svc.delegate({ prompt: 'test' });
 
@@ -237,14 +237,14 @@ describe('TaskManagerService', () => {
 
       it('should use config defaultAgent when task does not specify one', async () => {
         const geminiConfig = new ConfigFactory().withDefaultAgent('gemini').build();
-        const svc = new TaskManagerService(
-          eventBus as unknown as EventBus,
+        const svc = new TaskManagerService({
+          eventBus: eventBus as unknown as EventBus,
           logger,
-          geminiConfig,
-          taskRepo as unknown as TaskRepository,
-          outputCapture as unknown as OutputCapture,
-          outputRepository as unknown as OutputRepository,
-        );
+          config: geminiConfig,
+          taskRepo: taskRepo as unknown as TaskRepository,
+          outputCapture: outputCapture as unknown as OutputCapture,
+          outputRepository: outputRepository as unknown as OutputRepository,
+        });
 
         const result = await svc.delegate({ prompt: 'test' });
 
@@ -255,14 +255,14 @@ describe('TaskManagerService', () => {
 
       it('should prefer explicit task agent over config default', async () => {
         const claudeConfig = new ConfigFactory().withDefaultAgent('claude').build();
-        const svc = new TaskManagerService(
-          eventBus as unknown as EventBus,
+        const svc = new TaskManagerService({
+          eventBus: eventBus as unknown as EventBus,
           logger,
-          claudeConfig,
-          taskRepo as unknown as TaskRepository,
-          outputCapture as unknown as OutputCapture,
-          outputRepository as unknown as OutputRepository,
-        );
+          config: claudeConfig,
+          taskRepo: taskRepo as unknown as TaskRepository,
+          outputCapture: outputCapture as unknown as OutputCapture,
+          outputRepository: outputRepository as unknown as OutputRepository,
+        });
 
         const result = await svc.delegate({ prompt: 'test', agent: 'codex' });
 
@@ -859,15 +859,15 @@ describe('TaskManagerService', () => {
 
     beforeEach(() => {
       checkpointRepo = createMockCheckpointRepo();
-      svcWithCheckpoint = new TaskManagerService(
-        eventBus as unknown as EventBus,
+      svcWithCheckpoint = new TaskManagerService({
+        eventBus: eventBus as unknown as EventBus,
         logger,
         config,
-        taskRepo as unknown as TaskRepository,
-        outputCapture as unknown as OutputCapture,
-        outputRepository as unknown as OutputRepository,
+        taskRepo: taskRepo as unknown as TaskRepository,
+        outputCapture: outputCapture as unknown as OutputCapture,
+        outputRepository: outputRepository as unknown as OutputRepository,
         checkpointRepo,
-      );
+      });
     });
 
     it('should return error when task not found', async () => {

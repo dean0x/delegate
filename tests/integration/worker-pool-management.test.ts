@@ -29,15 +29,15 @@ describe('Integration: Worker pool management', () => {
     const outputRepository = createMockOutputRepository();
 
     const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const workerPool = new EventDrivenWorkerPool(
-      agentRegistry, // agentRegistry
-      resourceMonitor, // monitor
-      logger, // logger
-      eventBus, // eventBus
-      outputCapture, // outputCapture
-      workerRepository, // workerRepository
-      outputRepository, // outputRepository
-    );
+    const workerPool = new EventDrivenWorkerPool({
+      agentRegistry,
+      monitor: resourceMonitor,
+      logger,
+      eventBus,
+      outputCapture,
+      workerRepository,
+      outputRepository,
+    });
 
     try {
       // Track worker events
@@ -120,15 +120,15 @@ describe('Integration: Worker pool management', () => {
     const outputRepository = createMockOutputRepository();
 
     const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const workerPool = new EventDrivenWorkerPool(
-      agentRegistry, // agentRegistry
-      resourceMonitor, // monitor
-      logger, // logger
-      eventBus, // eventBus
-      outputCapture, // outputCapture
-      workerRepository, // workerRepository
-      outputRepository, // outputRepository
-    );
+    const workerPool = new EventDrivenWorkerPool({
+      agentRegistry,
+      monitor: resourceMonitor,
+      logger,
+      eventBus,
+      outputCapture,
+      workerRepository,
+      outputRepository,
+    });
 
     try {
       const tasks = Array.from({ length: 5 }, (_, i) => createTask({ prompt: `Resource task ${i}` }));
@@ -271,15 +271,15 @@ describe('Integration: Worker pool management', () => {
     const outputRepository = createMockOutputRepository();
 
     const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const workerPool = new EventDrivenWorkerPool(
+    const workerPool = new EventDrivenWorkerPool({
       agentRegistry,
-      resourceMonitor,
+      monitor: resourceMonitor,
       logger,
       eventBus,
       outputCapture,
       workerRepository,
       outputRepository,
-    );
+    });
 
     try {
       const task = createTask({ prompt: 'register test' });
@@ -331,15 +331,15 @@ describe('Integration: Worker pool management', () => {
     (workerRepository.getGlobalCount as ReturnType<typeof vi.fn>).mockImplementation(() => ok(registeredCount));
 
     const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const workerPool = new EventDrivenWorkerPool(
+    const workerPool = new EventDrivenWorkerPool({
       agentRegistry,
-      resourceMonitor,
+      monitor: resourceMonitor,
       logger,
       eventBus,
       outputCapture,
       workerRepository,
       outputRepository,
-    );
+    });
 
     try {
       const tasks = Array.from({ length: 3 }, (_, i) => createTask({ prompt: `count task ${i}` }));
@@ -387,15 +387,15 @@ describe('Integration: Worker pool management', () => {
     const outputRepository = createMockOutputRepository();
 
     const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const workerPool = new EventDrivenWorkerPool(
+    const workerPool = new EventDrivenWorkerPool({
       agentRegistry,
-      resourceMonitor,
+      monitor: resourceMonitor,
       logger,
       eventBus,
       outputCapture,
       workerRepository,
       outputRepository,
-    );
+    });
 
     try {
       const task = createTask({ prompt: 'output persist test' });

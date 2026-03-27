@@ -63,15 +63,15 @@ describe('Integration: Task Loops - End-to-End Flow', () => {
     taskRepo = new SQLiteTaskRepository(database);
 
     // Create handler (subscribes to events)
-    const handlerResult = await LoopHandler.create(
+    const handlerResult = await LoopHandler.create({
       loopRepo,
       taskRepo,
-      createMockCheckpointRepo(),
+      checkpointRepo: createMockCheckpointRepo(),
       eventBus,
       database,
-      new ShellExitConditionEvaluator(),
+      exitConditionEvaluator: new ShellExitConditionEvaluator(),
       logger,
-    );
+    });
     if (!handlerResult.ok) {
       throw new Error(`Failed to create LoopHandler: ${handlerResult.error.message}`);
     }

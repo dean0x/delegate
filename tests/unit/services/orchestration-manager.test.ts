@@ -40,7 +40,7 @@ describe('OrchestrationManagerService - Unit Tests', () => {
     eventBus = new TestEventBus();
     logger = new TestLogger();
     loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
-    service = new OrchestrationManagerService(eventBus, logger, orchestrationRepo, loopService, config);
+    service = new OrchestrationManagerService({ eventBus, logger, orchestrationRepo, loopService, config });
 
     // Simulate LoopHandler: persist loop on LoopCreated event
     // ARCHITECTURE: In production, LoopHandler saves the loop to DB on LoopCreated.

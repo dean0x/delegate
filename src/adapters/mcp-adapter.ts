@@ -322,18 +322,35 @@ interface MCPToolResponse {
   isError?: boolean;
 }
 
+export interface MCPAdapterDeps {
+  readonly taskManager: TaskManager;
+  readonly logger: Logger;
+  readonly scheduleService: ScheduleService;
+  readonly loopService: LoopService;
+  readonly agentRegistry: AgentRegistry | undefined;
+  readonly config: Configuration;
+  readonly orchestrationService?: OrchestrationService;
+}
+
 export class MCPAdapter {
   private server: Server;
 
-  constructor(
-    private readonly taskManager: TaskManager,
-    private readonly logger: Logger,
-    private readonly scheduleService: ScheduleService,
-    private readonly loopService: LoopService,
-    private readonly agentRegistry: AgentRegistry | undefined,
-    private readonly config: Configuration,
-    private readonly orchestrationService?: OrchestrationService,
-  ) {
+  private readonly taskManager: TaskManager;
+  private readonly logger: Logger;
+  private readonly scheduleService: ScheduleService;
+  private readonly loopService: LoopService;
+  private readonly agentRegistry: AgentRegistry | undefined;
+  private readonly config: Configuration;
+  private readonly orchestrationService?: OrchestrationService;
+
+  constructor(deps: MCPAdapterDeps) {
+    this.taskManager = deps.taskManager;
+    this.logger = deps.logger;
+    this.scheduleService = deps.scheduleService;
+    this.loopService = deps.loopService;
+    this.agentRegistry = deps.agentRegistry;
+    this.config = deps.config;
+    this.orchestrationService = deps.orchestrationService;
     this.server = new Server(
       {
         name: 'autobeat',

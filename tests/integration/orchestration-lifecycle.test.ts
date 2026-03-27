@@ -42,7 +42,7 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
     eventBus = new TestEventBus();
     logger = new TestLogger();
     loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
-    orchService = new OrchestrationManagerService(eventBus, logger, orchRepo, loopService, config);
+    orchService = new OrchestrationManagerService({ eventBus, logger, orchestrationRepo: orchRepo, loopService, config });
 
     // Simulate LoopHandler: persist loop on LoopCreated event
     eventBus.subscribe('LoopCreated', async (event: Record<string, unknown>) => {

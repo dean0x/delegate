@@ -12,6 +12,16 @@ import { BaseEventHandler } from '../../core/events/handlers.js';
 import { Logger, ResourceMonitor, TaskQueue, TaskRepository, WorkerPool } from '../../core/interfaces.js';
 import { err, ok, Result } from '../../core/result.js';
 
+export interface WorkerHandlerDeps {
+  readonly config: Configuration;
+  readonly workerPool: WorkerPool;
+  readonly resourceMonitor: ResourceMonitor;
+  readonly eventBus: EventBus;
+  readonly taskQueue: TaskQueue;
+  readonly taskRepo: TaskRepository;
+  readonly logger: Logger;
+}
+
 export class WorkerHandler extends BaseEventHandler {
   /**
    * CRITICAL: Spawn burst protection via SERIALIZATION
@@ -53,18 +63,21 @@ export class WorkerHandler extends BaseEventHandler {
    */
   private spawnLock: Promise<void> = Promise.resolve();
 
-  constructor(
-    config: Configuration,
-    private readonly workerPool: WorkerPool,
-    private readonly resourceMonitor: ResourceMonitor,
-    private readonly eventBus: EventBus,
-    private readonly taskQueue: TaskQueue,
-    private readonly taskRepo: TaskRepository,
-    logger: Logger,
-  ) {
-    super(logger, 'WorkerHandler');
+  private readonly workerPool: WorkerPool;
+  private readonly resourceMonitor: ResourceMonitor;
+  private readonly eventBus: EventBus;
+  private readonly taskQueue: TaskQueue;
+  private readonly taskRepo: TaskRepository;
+
+  constructor(deps: WorkerHandlerDeps) {
+    super(deps.logger, 'WorkerHandler');
+    this.workerPool = deps.workerPool;
+    this.resourceMonitor = deps.resourceMonitor;
+    this.eventBus = deps.eventBus;
+    this.taskQueue = deps.taskQueue;
+    this.taskRepo = deps.taskRepo;
     // Config schema guarantees minSpawnDelayMs has a value (default: 10s)
-    this.minSpawnDelayMs = config.minSpawnDelayMs;
+    this.minSpawnDelayMs = deps.config.minSpawnDelayMs;
   }
 
   /**

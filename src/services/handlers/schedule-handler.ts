@@ -51,54 +51,51 @@ export interface ScheduleHandlerOptions {
   readonly defaultTimezone?: string;
 }
 
+export interface ScheduleHandlerDeps {
+  readonly scheduleRepo: ScheduleRepository & SyncScheduleOperations;
+  readonly taskRepo: TaskRepository & SyncTaskOperations;
+  readonly eventBus: EventBus;
+  readonly database: TransactionRunner;
+  readonly loopRepo: LoopRepository;
+  readonly loopService: LoopService | undefined;
+  readonly logger: Logger;
+  readonly options?: ScheduleHandlerOptions;
+}
+
 export class ScheduleHandler extends BaseEventHandler {
   private readonly defaultTimezone: string;
+
+  private readonly scheduleRepo: ScheduleRepository & SyncScheduleOperations;
+  private readonly taskRepo: TaskRepository & SyncTaskOperations;
+  private readonly eventBus: EventBus;
+  private readonly database: TransactionRunner;
+  private readonly loopRepo: LoopRepository;
+  private readonly loopService: LoopService | undefined;
 
   /**
    * Private constructor - use ScheduleHandler.create() instead
    * ARCHITECTURE: Factory pattern ensures handler is fully initialized before use
    */
-  private constructor(
-    private readonly scheduleRepo: ScheduleRepository & SyncScheduleOperations,
-    private readonly taskRepo: TaskRepository & SyncTaskOperations,
-    private readonly eventBus: EventBus,
-    private readonly database: TransactionRunner,
-    private readonly loopRepo: LoopRepository,
-    private readonly loopService: LoopService | undefined,
-    logger: Logger,
-    options?: ScheduleHandlerOptions,
-  ) {
-    super(logger, 'ScheduleHandler');
-    this.defaultTimezone = options?.defaultTimezone ?? 'UTC';
+  private constructor(deps: ScheduleHandlerDeps) {
+    super(deps.logger, 'ScheduleHandler');
+    this.scheduleRepo = deps.scheduleRepo;
+    this.taskRepo = deps.taskRepo;
+    this.eventBus = deps.eventBus;
+    this.database = deps.database;
+    this.loopRepo = deps.loopRepo;
+    this.loopService = deps.loopService;
+    this.defaultTimezone = deps.options?.defaultTimezone ?? 'UTC';
   }
 
   /**
    * Factory method to create a fully initialized ScheduleHandler
    * ARCHITECTURE: Guarantees handler is ready to use - no uninitialized state possible
    */
-  static async create(
-    scheduleRepo: ScheduleRepository & SyncScheduleOperations,
-    taskRepo: TaskRepository & SyncTaskOperations,
-    eventBus: EventBus,
-    database: TransactionRunner,
-    loopRepo: LoopRepository,
-    logger: Logger,
-    options?: ScheduleHandlerOptions,
-    loopService?: LoopService,
-  ): Promise<Result<ScheduleHandler, AutobeatError>> {
-    const handlerLogger = logger.child ? logger.child({ module: 'ScheduleHandler' }) : logger;
+  static async create(deps: ScheduleHandlerDeps): Promise<Result<ScheduleHandler, AutobeatError>> {
+    const handlerLogger = deps.logger.child ? deps.logger.child({ module: 'ScheduleHandler' }) : deps.logger;
 
     // Create handler
-    const handler = new ScheduleHandler(
-      scheduleRepo,
-      taskRepo,
-      eventBus,
-      database,
-      loopRepo,
-      loopService,
-      handlerLogger,
-      options,
-    );
+    const handler = new ScheduleHandler({ ...deps, logger: handlerLogger });
 
     // Subscribe to events
     const subscribeResult = handler.subscribeToEvents();

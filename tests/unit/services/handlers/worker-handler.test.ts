@@ -232,7 +232,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       killGracePeriodMs: 5000,
     } as Configuration;
 
-    workerHandler = new WorkerHandler(config, workerPool, resourceMonitor, eventBus, taskQueue, taskRepo, logger);
+    workerHandler = new WorkerHandler({ config, workerPool, resourceMonitor, eventBus, taskQueue, taskRepo, logger });
 
     await workerHandler.setup(eventBus);
   });
@@ -246,15 +246,15 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
   describe('Setup and Teardown', () => {
     it('should subscribe to TaskQueued events during setup', async () => {
       const newEventBus = new TestEventBus();
-      const newHandler = new WorkerHandler(
+      const newHandler = new WorkerHandler({
         config,
         workerPool,
         resourceMonitor,
-        newEventBus,
+        eventBus: newEventBus,
         taskQueue,
         taskRepo,
         logger,
-      );
+      });
 
       const result = await newHandler.setup(newEventBus);
 
@@ -264,15 +264,15 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
     it('should subscribe to TaskCancellationRequested events during setup', async () => {
       const newEventBus = new TestEventBus();
-      const newHandler = new WorkerHandler(
+      const newHandler = new WorkerHandler({
         config,
         workerPool,
         resourceMonitor,
-        newEventBus,
+        eventBus: newEventBus,
         taskQueue,
         taskRepo,
         logger,
-      );
+      });
 
       const result = await newHandler.setup(newEventBus);
 
@@ -288,15 +288,15 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
     it('should return success result after setup', async () => {
       const newEventBus = new TestEventBus();
-      const newHandler = new WorkerHandler(
+      const newHandler = new WorkerHandler({
         config,
         workerPool,
         resourceMonitor,
-        newEventBus,
+        eventBus: newEventBus,
         taskQueue,
         taskRepo,
         logger,
-      );
+      });
 
       const result = await newHandler.setup(newEventBus);
 

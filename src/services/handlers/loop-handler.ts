@@ -50,26 +50,41 @@ import {
   resetToCommit,
 } from '../../utils/git-state.js';
 
+export interface LoopHandlerDeps {
+  readonly loopRepo: LoopRepository & SyncLoopOperations;
+  readonly taskRepo: TaskRepository & SyncTaskOperations;
+  readonly checkpointRepo: CheckpointRepository;
+  readonly eventBus: EventBus;
+  readonly database: TransactionRunner;
+  readonly exitConditionEvaluator: ExitConditionEvaluator;
+  readonly logger: Logger;
+}
+
 export class LoopHandler extends BaseEventHandler {
   // In-memory state (rebuilt from DB on restart)
   private taskToLoop: Map<TaskId, LoopId> = new Map(); // taskId → loopId
   private pipelineTasks: Map<string, Set<TaskId>> = new Map(); // "loopId:iteration" → set of taskIds
   private cooldownTimers: Map<LoopId, NodeJS.Timeout> = new Map(); // loopId → timer
 
+  private readonly loopRepo: LoopRepository & SyncLoopOperations;
+  private readonly taskRepo: TaskRepository & SyncTaskOperations;
+  private readonly checkpointRepo: CheckpointRepository;
+  private readonly eventBus: EventBus;
+  private readonly database: TransactionRunner;
+  private readonly exitConditionEvaluator: ExitConditionEvaluator;
+
   /**
    * Private constructor - use LoopHandler.create() instead
    * ARCHITECTURE: Factory pattern ensures handler is fully initialized before use
    */
-  private constructor(
-    private readonly loopRepo: LoopRepository & SyncLoopOperations,
-    private readonly taskRepo: TaskRepository & SyncTaskOperations,
-    private readonly checkpointRepo: CheckpointRepository,
-    private readonly eventBus: EventBus,
-    private readonly database: TransactionRunner,
-    private readonly exitConditionEvaluator: ExitConditionEvaluator,
-    logger: Logger,
-  ) {
-    super(logger, 'LoopHandler');
+  private constructor(deps: LoopHandlerDeps) {
+    super(deps.logger, 'LoopHandler');
+    this.loopRepo = deps.loopRepo;
+    this.taskRepo = deps.taskRepo;
+    this.checkpointRepo = deps.checkpointRepo;
+    this.eventBus = deps.eventBus;
+    this.database = deps.database;
+    this.exitConditionEvaluator = deps.exitConditionEvaluator;
   }
 
   /**
@@ -77,26 +92,10 @@ export class LoopHandler extends BaseEventHandler {
    * ARCHITECTURE: Guarantees handler is ready to use — no uninitialized state possible
    * Runs recovery on startup (R3) — self-healing regardless of RecoveryManager timing
    */
-  static async create(
-    loopRepo: LoopRepository & SyncLoopOperations,
-    taskRepo: TaskRepository & SyncTaskOperations,
-    checkpointRepo: CheckpointRepository,
-    eventBus: EventBus,
-    database: TransactionRunner,
-    exitConditionEvaluator: ExitConditionEvaluator,
-    logger: Logger,
-  ): Promise<Result<LoopHandler, AutobeatError>> {
-    const handlerLogger = logger.child ? logger.child({ module: 'LoopHandler' }) : logger;
+  static async create(deps: LoopHandlerDeps): Promise<Result<LoopHandler, AutobeatError>> {
+    const handlerLogger = deps.logger.child ? deps.logger.child({ module: 'LoopHandler' }) : deps.logger;
 
-    const handler = new LoopHandler(
-      loopRepo,
-      taskRepo,
-      checkpointRepo,
-      eventBus,
-      database,
-      exitConditionEvaluator,
-      handlerLogger,
-    );
+    const handler = new LoopHandler({ ...deps, logger: handlerLogger });
 
     // Subscribe to events
     const subscribeResult = handler.subscribeToEvents();

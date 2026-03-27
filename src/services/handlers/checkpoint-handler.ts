@@ -20,35 +20,40 @@ const MAX_SUMMARY_LENGTH = 2000;
 /** Number of output lines to capture for checkpoint summaries */
 const OUTPUT_TAIL_LINES = 50;
 
+export interface CheckpointHandlerDeps {
+  readonly checkpointRepo: CheckpointRepository;
+  readonly outputCapture: OutputCapture;
+  readonly taskRepo: TaskRepository;
+  readonly eventBus: EventBus;
+  readonly logger: Logger;
+}
+
 export class CheckpointHandler extends BaseEventHandler {
+  private readonly checkpointRepo: CheckpointRepository;
+  private readonly outputCapture: OutputCapture;
+  private readonly taskRepo: TaskRepository;
+  private readonly eventBus: EventBus;
+
   /**
    * Private constructor - use CheckpointHandler.create() instead
    * ARCHITECTURE: Factory pattern ensures handler is fully initialized before use
    */
-  private constructor(
-    private readonly checkpointRepo: CheckpointRepository,
-    private readonly outputCapture: OutputCapture,
-    private readonly taskRepo: TaskRepository,
-    private readonly eventBus: EventBus,
-    logger: Logger,
-  ) {
-    super(logger, 'CheckpointHandler');
+  private constructor(deps: CheckpointHandlerDeps) {
+    super(deps.logger, 'CheckpointHandler');
+    this.checkpointRepo = deps.checkpointRepo;
+    this.outputCapture = deps.outputCapture;
+    this.taskRepo = deps.taskRepo;
+    this.eventBus = deps.eventBus;
   }
 
   /**
    * Factory method to create a fully initialized CheckpointHandler
    * ARCHITECTURE: Guarantees handler is ready to use - no uninitialized state possible
    */
-  static async create(
-    checkpointRepo: CheckpointRepository,
-    outputCapture: OutputCapture,
-    taskRepo: TaskRepository,
-    eventBus: EventBus,
-    logger: Logger,
-  ): Promise<Result<CheckpointHandler, AutobeatError>> {
-    const handlerLogger = logger.child ? logger.child({ module: 'CheckpointHandler' }) : logger;
+  static async create(deps: CheckpointHandlerDeps): Promise<Result<CheckpointHandler, AutobeatError>> {
+    const handlerLogger = deps.logger.child ? deps.logger.child({ module: 'CheckpointHandler' }) : deps.logger;
 
-    const handler = new CheckpointHandler(checkpointRepo, outputCapture, taskRepo, eventBus, handlerLogger);
+    const handler = new CheckpointHandler({ ...deps, logger: handlerLogger });
 
     const subscribeResult = handler.subscribeToEvents();
     if (!subscribeResult.ok) {

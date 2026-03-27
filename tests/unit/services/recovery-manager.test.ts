@@ -110,14 +110,14 @@ describe('RecoveryManager', () => {
     workerRepo = createMockWorkerRepository();
     dependencyRepo = createMockDependencyRepo();
 
-    manager = new RecoveryManager(
-      repo as unknown as TaskRepository,
-      queue as unknown as TaskQueue,
-      eventBus as unknown as EventBus,
-      logger as unknown as Logger,
-      workerRepo as unknown as WorkerRepository,
-      dependencyRepo as unknown as DependencyRepository,
-    );
+    manager = new RecoveryManager({
+      repository: repo as unknown as TaskRepository,
+      queue: queue as unknown as TaskQueue,
+      eventBus: eventBus as unknown as EventBus,
+      logger: logger as unknown as Logger,
+      workerRepository: workerRepo as unknown as WorkerRepository,
+      dependencyRepo: dependencyRepo as unknown as DependencyRepository,
+    });
   });
 
   // --- Helpers ---
@@ -871,15 +871,15 @@ describe('RecoveryManager', () => {
       const mockLoopRepo = createMockLoopRepository();
       mockLoopRepo.cleanupOldLoops.mockResolvedValue(ok(3));
 
-      const managerWithLoops = new RecoveryManager(
-        repo as unknown as TaskRepository,
-        queue as unknown as TaskQueue,
-        eventBus as unknown as EventBus,
-        logger as unknown as Logger,
-        workerRepo as unknown as WorkerRepository,
-        dependencyRepo as unknown as DependencyRepository,
-        mockLoopRepo as unknown as LoopRepository,
-      );
+      const managerWithLoops = new RecoveryManager({
+        repository: repo as unknown as TaskRepository,
+        queue: queue as unknown as TaskQueue,
+        eventBus: eventBus as unknown as EventBus,
+        logger: logger as unknown as Logger,
+        workerRepository: workerRepo as unknown as WorkerRepository,
+        dependencyRepo: dependencyRepo as unknown as DependencyRepository,
+        loopRepository: mockLoopRepo as unknown as LoopRepository,
+      });
 
       setupFindByStatus([], []);
 
@@ -892,15 +892,15 @@ describe('RecoveryManager', () => {
       const mockLoopRepo = createMockLoopRepository();
       mockLoopRepo.cleanupOldLoops.mockResolvedValue(ok(5));
 
-      const managerWithLoops = new RecoveryManager(
-        repo as unknown as TaskRepository,
-        queue as unknown as TaskQueue,
-        eventBus as unknown as EventBus,
-        logger as unknown as Logger,
-        workerRepo as unknown as WorkerRepository,
-        dependencyRepo as unknown as DependencyRepository,
-        mockLoopRepo as unknown as LoopRepository,
-      );
+      const managerWithLoops = new RecoveryManager({
+        repository: repo as unknown as TaskRepository,
+        queue: queue as unknown as TaskQueue,
+        eventBus: eventBus as unknown as EventBus,
+        logger: logger as unknown as Logger,
+        workerRepository: workerRepo as unknown as WorkerRepository,
+        dependencyRepo: dependencyRepo as unknown as DependencyRepository,
+        loopRepository: mockLoopRepo as unknown as LoopRepository,
+      });
 
       setupFindByStatus([], []);
 

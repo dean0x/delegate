@@ -317,7 +317,7 @@ describe('MCPAdapter - Protocol Compliance', () => {
   beforeEach(() => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
-    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, stubLoopService, undefined, testConfig);
+    adapter = new MCPAdapter({ taskManager: mockTaskManager, logger: mockLogger, scheduleService: stubScheduleService, loopService: stubLoopService, agentRegistry: undefined, config: testConfig });
   });
 
   afterEach(() => {
@@ -766,14 +766,14 @@ describe('MCPAdapter - CreatePipeline Tool', () => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
     mockScheduleService = new MockScheduleService();
-    adapter = new MCPAdapter(
-      mockTaskManager,
-      mockLogger,
-      mockScheduleService as unknown as ScheduleService,
-      stubLoopService,
-      undefined,
-      testConfig,
-    );
+    adapter = new MCPAdapter({
+      taskManager: mockTaskManager,
+      logger: mockLogger,
+      scheduleService: mockScheduleService as unknown as ScheduleService,
+      loopService: stubLoopService,
+      agentRegistry: undefined,
+      config: testConfig,
+    });
   });
 
   afterEach(() => {
@@ -851,7 +851,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
   beforeEach(() => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
-    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, stubLoopService, undefined, testConfig);
+    adapter = new MCPAdapter({ taskManager: mockTaskManager, logger: mockLogger, scheduleService: stubScheduleService, loopService: stubLoopService, agentRegistry: undefined, config: testConfig });
   });
 
   afterEach(() => {
@@ -900,14 +900,14 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
   describe('ListAgents tool', () => {
     it('should return agent list without registry', () => {
       // Adapter created without agentRegistry
-      const adapterNoRegistry = new MCPAdapter(
-        mockTaskManager,
-        mockLogger,
-        stubScheduleService,
-        stubLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapterNoRegistry = new MCPAdapter({
+        taskManager: mockTaskManager,
+        logger: mockLogger,
+        scheduleService: stubScheduleService,
+        loopService: stubLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
       // The handleListAgents is private, so we verify via schema/tool listing
       // This is a structural test — actual handler is tested via integration
       expect(adapterNoRegistry).toBeTruthy();
@@ -922,14 +922,14 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
         dispose: vi.fn(),
       };
 
-      const adapterWithRegistry = new MCPAdapter(
-        mockTaskManager,
-        mockLogger,
-        stubScheduleService,
-        stubLoopService,
-        mockRegistry,
-        testConfig,
-      );
+      const adapterWithRegistry = new MCPAdapter({
+        taskManager: mockTaskManager,
+        logger: mockLogger,
+        scheduleService: stubScheduleService,
+        loopService: stubLoopService,
+        agentRegistry: mockRegistry,
+        config: testConfig,
+      });
 
       expect(adapterWithRegistry).toBeTruthy();
       expect(adapterWithRegistry.getServer()).toBeTruthy();
@@ -940,14 +940,14 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
     it('should exist as a constructable adapter method', () => {
       // ConfigureAgent is exposed via MCP tool registration
       // Structural test — actual handler is private
-      const adapterInstance = new MCPAdapter(
-        mockTaskManager,
-        mockLogger,
-        stubScheduleService,
-        stubLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapterInstance = new MCPAdapter({
+        taskManager: mockTaskManager,
+        logger: mockLogger,
+        scheduleService: stubScheduleService,
+        loopService: stubLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
       expect(adapterInstance).toBeTruthy();
       expect(adapterInstance.getServer()).toBeTruthy();
     });
@@ -960,14 +960,14 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
         dispose: vi.fn(),
       };
 
-      const adapterWithRegistry = new MCPAdapter(
-        mockTaskManager,
-        mockLogger,
-        stubScheduleService,
-        stubLoopService,
-        mockRegistry,
-        testConfig,
-      );
+      const adapterWithRegistry = new MCPAdapter({
+        taskManager: mockTaskManager,
+        logger: mockLogger,
+        scheduleService: stubScheduleService,
+        loopService: stubLoopService,
+        agentRegistry: mockRegistry,
+        config: testConfig,
+      });
       expect(adapterWithRegistry).toBeTruthy();
     });
   });
@@ -983,14 +983,14 @@ describe('MCPAdapter - SchedulePipeline & Enhanced Schedule Tools', () => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
     mockScheduleService = new MockScheduleService();
-    adapter = new MCPAdapter(
-      mockTaskManager,
-      mockLogger,
-      mockScheduleService as unknown as ScheduleService,
-      stubLoopService,
-      undefined,
-      testConfig,
-    );
+    adapter = new MCPAdapter({
+      taskManager: mockTaskManager,
+      logger: mockLogger,
+      scheduleService: mockScheduleService as unknown as ScheduleService,
+      loopService: stubLoopService,
+      agentRegistry: undefined,
+      config: testConfig,
+    });
   });
 
   afterEach(() => {
@@ -2118,14 +2118,14 @@ describe('MCPAdapter - Loop Tools', () => {
 
   describe('PauseLoop via callTool()', () => {
     it('should pause a loop with graceful mode through full dispatch pipeline', async () => {
-      const adapter = new MCPAdapter(
-        new MockTaskManager(),
-        new MockLogger(),
-        stubScheduleService,
-        mockLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
 
       const result = await adapter.callTool('PauseLoop', {
         loopId: 'loop-pause-1',
@@ -2141,14 +2141,14 @@ describe('MCPAdapter - Loop Tools', () => {
     });
 
     it('should pause a loop with force mode through full dispatch pipeline', async () => {
-      const adapter = new MCPAdapter(
-        new MockTaskManager(),
-        new MockLogger(),
-        stubScheduleService,
-        mockLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
 
       const result = await adapter.callTool('PauseLoop', {
         loopId: 'loop-pause-2',
@@ -2164,14 +2164,14 @@ describe('MCPAdapter - Loop Tools', () => {
     it('should propagate service errors through callTool()', async () => {
       mockLoopService.setPauseLoopResult(err(new AutobeatError(ErrorCode.INVALID_OPERATION, 'Loop not running', {})));
 
-      const adapter = new MCPAdapter(
-        new MockTaskManager(),
-        new MockLogger(),
-        stubScheduleService,
-        mockLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
 
       const result = await adapter.callTool('PauseLoop', { loopId: 'loop-not-running' });
 
@@ -2182,14 +2182,14 @@ describe('MCPAdapter - Loop Tools', () => {
     });
 
     it('should reject invalid input via Zod validation', async () => {
-      const adapter = new MCPAdapter(
-        new MockTaskManager(),
-        new MockLogger(),
-        stubScheduleService,
-        mockLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
 
       const result = await adapter.callTool('PauseLoop', { loopId: '' });
 
@@ -2201,14 +2201,14 @@ describe('MCPAdapter - Loop Tools', () => {
 
   describe('ResumeLoop via callTool()', () => {
     it('should resume a paused loop through full dispatch pipeline', async () => {
-      const adapter = new MCPAdapter(
-        new MockTaskManager(),
-        new MockLogger(),
-        stubScheduleService,
-        mockLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
 
       const result = await adapter.callTool('ResumeLoop', {
         loopId: 'loop-resume-1',
@@ -2224,14 +2224,14 @@ describe('MCPAdapter - Loop Tools', () => {
     it('should propagate service errors through callTool()', async () => {
       mockLoopService.setResumeLoopResult(err(new AutobeatError(ErrorCode.INVALID_OPERATION, 'Loop not paused', {})));
 
-      const adapter = new MCPAdapter(
-        new MockTaskManager(),
-        new MockLogger(),
-        stubScheduleService,
-        mockLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
 
       const result = await adapter.callTool('ResumeLoop', { loopId: 'loop-not-paused' });
 
@@ -2242,14 +2242,14 @@ describe('MCPAdapter - Loop Tools', () => {
     });
 
     it('should reject invalid input via Zod validation', async () => {
-      const adapter = new MCPAdapter(
-        new MockTaskManager(),
-        new MockLogger(),
-        stubScheduleService,
-        mockLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
 
       const result = await adapter.callTool('ResumeLoop', { loopId: '' });
 
@@ -2262,14 +2262,14 @@ describe('MCPAdapter - Loop Tools', () => {
   describe('ScheduleLoop via callTool()', () => {
     it('should create a scheduled loop through full dispatch pipeline', async () => {
       const mockScheduleService = new MockScheduleService();
-      const adapter = new MCPAdapter(
-        new MockTaskManager(),
-        new MockLogger(),
-        mockScheduleService,
-        mockLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: mockScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
 
       const result = await adapter.callTool('ScheduleLoop', {
         strategy: 'retry',
@@ -2287,14 +2287,14 @@ describe('MCPAdapter - Loop Tools', () => {
     });
 
     it('should reject invalid input via Zod validation', async () => {
-      const adapter = new MCPAdapter(
-        new MockTaskManager(),
-        new MockLogger(),
-        stubScheduleService,
-        mockLoopService,
-        undefined,
-        testConfig,
-      );
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
 
       // Missing required fields: strategy, exitCondition, scheduleType
       const result = await adapter.callTool('ScheduleLoop', { prompt: 'test' });
