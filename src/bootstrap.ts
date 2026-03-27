@@ -168,9 +168,8 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   container.registerSingleton('logger', () => {
     if (process.env.NODE_ENV === 'production') {
       return new StructuredLogger({}, logLevel);
-    } else {
-      return new ConsoleLogger('[Autobeat]', true, logLevel);
     }
+    return new ConsoleLogger('[Autobeat]', true, logLevel);
   });
 
   // Validate configuration against system (component-level validation)

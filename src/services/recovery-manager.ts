@@ -193,8 +193,7 @@ export class RecoveryManager {
   private async cleanupOldLoops(): Promise<void> {
     if (!this.loopRepository) return;
 
-    const sevenDaysMs = CLEANUP_RETENTION_MS;
-    const cleanupResult = await this.loopRepository.cleanupOldLoops(sevenDaysMs);
+    const cleanupResult = await this.loopRepository.cleanupOldLoops(CLEANUP_RETENTION_MS);
 
     if (cleanupResult.ok && cleanupResult.value > 0) {
       this.logger.info('Cleaned up old completed loops', { count: cleanupResult.value });
@@ -204,8 +203,7 @@ export class RecoveryManager {
   private async cleanupOldOrchestrations(): Promise<void> {
     if (!this.orchestrationRepository) return;
 
-    const sevenDaysMs = CLEANUP_RETENTION_MS;
-    const cleanupResult = await this.orchestrationRepository.cleanupOldOrchestrations(sevenDaysMs);
+    const cleanupResult = await this.orchestrationRepository.cleanupOldOrchestrations(CLEANUP_RETENTION_MS);
 
     if (cleanupResult.ok && cleanupResult.value > 0) {
       this.logger.info('Cleaned up old completed orchestrations', { count: cleanupResult.value });

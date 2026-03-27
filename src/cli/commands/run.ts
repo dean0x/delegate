@@ -134,7 +134,7 @@ export async function runTask(
     maxOutputBuffer?: number;
     agent?: string;
   },
-) {
+): Promise<void> {
   let container: Container | undefined;
   const s = ui.createSpinner();
   try {
