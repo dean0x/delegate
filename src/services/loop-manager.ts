@@ -56,6 +56,14 @@ export class LoopManagerService implements LoopService {
 
     // Validate evalMode + exitCondition
     const evalMode = request.evalMode ?? EvalMode.SHELL;
+    if (evalMode !== EvalMode.SHELL && evalMode !== EvalMode.AGENT) {
+      return err(
+        new AutobeatError(ErrorCode.INVALID_INPUT, `evalMode must be "${EvalMode.SHELL}" or "${EvalMode.AGENT}", got "${evalMode}"`, {
+          field: 'evalMode',
+          value: evalMode,
+        }),
+      );
+    }
     if (evalMode === EvalMode.SHELL) {
       // Shell mode: exitCondition required, evalPrompt forbidden
       if (!request.exitCondition || request.exitCondition.trim().length === 0) {
