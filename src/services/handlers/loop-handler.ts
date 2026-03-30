@@ -276,54 +276,53 @@ export class LoopHandler extends BaseEventHandler {
         // Note: agent eval mode can take a long time; re-fetch state afterwards to guard stale data
         const evalResult = await this.exitConditionEvaluator.evaluate(loop, taskId);
 
-        // Stale state guard: re-fetch loop and iteration after potentially slow eval (Step 8b)
+        // Stale state guard: re-fetch loop and iteration after potentially slow agent eval (Step 8b)
+        // Shell eval completes in milliseconds so re-fetching is unnecessary; guard only applies to agent mode
         // If loop was cancelled while eval ran, skip result processing
         // Allow PAUSED through — consistent with the early guard at line 208 (graceful pause records results)
-        const freshLoopResult = await this.loopRepo.findById(loopId);
-        if (
-          !freshLoopResult.ok ||
-          !freshLoopResult.value ||
-          (freshLoopResult.value.status !== LoopStatus.RUNNING && freshLoopResult.value.status !== LoopStatus.PAUSED)
-        ) {
-          const staleStatus = freshLoopResult.ok ? (freshLoopResult.value?.status ?? 'null') : 'error';
-          this.logger.info('Loop no longer running after eval, skipping result processing', {
-            loopId,
-            status: staleStatus,
-          });
-          // Clean up tracking before returning
-          this.cleanupPipelineTaskTracking(iteration);
-          this.taskToLoop.delete(taskId);
-          this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
-          return ok(undefined);
-        }
-        const freshLoop = freshLoopResult.value;
+        if (loop.evalMode === 'agent') {
+          const freshLoopResult = await this.loopRepo.findById(loopId);
+          if (
+            !freshLoopResult.ok ||
+            !freshLoopResult.value ||
+            (freshLoopResult.value.status !== LoopStatus.RUNNING && freshLoopResult.value.status !== LoopStatus.PAUSED)
+          ) {
+            const staleStatus = freshLoopResult.ok ? (freshLoopResult.value?.status ?? 'null') : 'error';
+            this.logger.info('Loop no longer running after eval, skipping result processing', {
+              loopId,
+              status: staleStatus,
+            });
+            this.cleanupIterationTracking(taskId, loopId, iteration);
+            return ok(undefined);
+          }
+          const freshLoop = freshLoopResult.value;
 
-        const freshIterationResult = await this.loopRepo.findIterationByTaskId(taskId);
-        if (
-          !freshIterationResult.ok ||
-          !freshIterationResult.value ||
-          freshIterationResult.value.status !== 'running'
-        ) {
-          const staleIterStatus = freshIterationResult.ok ? (freshIterationResult.value?.status ?? 'null') : 'error';
-          this.logger.info('Iteration no longer running after eval, skipping result processing', {
-            loopId,
-            iterationStatus: staleIterStatus,
-          });
-          // Clean up tracking before returning
-          this.cleanupPipelineTaskTracking(iteration);
-          this.taskToLoop.delete(taskId);
-          this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
-          return ok(undefined);
-        }
-        const freshIteration = freshIterationResult.value;
+          const freshIterationResult = await this.loopRepo.findIterationByTaskId(taskId);
+          if (
+            !freshIterationResult.ok ||
+            !freshIterationResult.value ||
+            freshIterationResult.value.status !== 'running'
+          ) {
+            const staleIterStatus = freshIterationResult.ok
+              ? (freshIterationResult.value?.status ?? 'null')
+              : 'error';
+            this.logger.info('Iteration no longer running after eval, skipping result processing', {
+              loopId,
+              iterationStatus: staleIterStatus,
+            });
+            this.cleanupIterationTracking(taskId, loopId, iteration);
+            return ok(undefined);
+          }
+          const freshIteration = freshIterationResult.value;
 
-        await this.handleIterationResult(freshLoop, freshIteration, evalResult);
+          await this.handleIterationResult(freshLoop, freshIteration, evalResult);
+        } else {
+          await this.handleIterationResult(loop, iteration, evalResult);
+        }
       }
 
       // Clean up all pipeline task tracking for this iteration
-      this.cleanupPipelineTaskTracking(iteration);
-      this.taskToLoop.delete(taskId);
-      this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
+      this.cleanupIterationTracking(taskId, loopId, iteration);
 
       return ok(undefined);
     });
@@ -1486,6 +1485,16 @@ export class LoopHandler extends BaseEventHandler {
 
       this.taskToLoop.delete(ptId);
     }
+  }
+
+  /**
+   * Clean up all in-memory iteration tracking for a terminal task.
+   * Combines taskToLoop removal, pipeline task entry tracking, and pipeline task map cleanup.
+   */
+  private cleanupIterationTracking(taskId: TaskId, loopId: LoopId, iteration: LoopIteration): void {
+    this.cleanupPipelineTaskTracking(iteration);
+    this.taskToLoop.delete(taskId);
+    this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
   }
 
   /**

@@ -792,7 +792,7 @@ describe('LoopHandler - Behavioral Tests', () => {
         return { passed: true, exitCode: 0 };
       });
 
-      const loop = await createAndEmitLoop({ maxIterations: 5 });
+      const loop = await createAndEmitLoop({ maxIterations: 5, evalMode: 'agent' });
       const taskId = await getLatestTaskId(loop.id);
       expect(taskId).toBeDefined();
 
