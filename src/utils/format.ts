@@ -3,7 +3,7 @@
  * ARCHITECTURE: Centralized string formatting and enum mapping to eliminate inline duplication
  */
 
-import { EvalMode, MissedRunPolicy, OptimizeDirection } from '../core/domain.js';
+import { MissedRunPolicy, OptimizeDirection } from '../core/domain.js';
 
 /**
  * Truncate a string to maxLen characters, appending '...' if truncated
@@ -26,21 +26,6 @@ export function toOptimizeDirection(value: string | undefined): OptimizeDirectio
       return OptimizeDirection.MINIMIZE;
     case 'maximize':
       return OptimizeDirection.MAXIMIZE;
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Map evalMode string to EvalMode enum
- * Returns undefined for unrecognized values
- */
-export function toEvalMode(value: string | undefined): EvalMode | undefined {
-  switch (value) {
-    case 'shell':
-      return EvalMode.SHELL;
-    case 'agent':
-      return EvalMode.AGENT;
     default:
       return undefined;
   }

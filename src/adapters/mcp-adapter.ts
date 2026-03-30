@@ -39,7 +39,7 @@ import {
 } from '../core/domain.js';
 import { Logger, LoopService, OrchestrationService, ScheduleService, TaskManager } from '../core/interfaces.js';
 import { match } from '../core/result.js';
-import { toEvalMode, toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
+import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
 import { validatePath } from '../utils/validation.js';
 
 // Zod schemas for MCP protocol validation
@@ -244,7 +244,6 @@ const CreateLoopSchema = z.object({
   evalMode: z
     .nativeEnum(EvalMode)
     .optional()
-    .default(EvalMode.SHELL)
     .describe('Evaluation mode: shell command or agent review'),
   evalPrompt: z
     .string()
@@ -319,7 +318,6 @@ const ScheduleLoopSchema = z.object({
   evalMode: z
     .nativeEnum(EvalMode)
     .optional()
-    .default(EvalMode.SHELL)
     .describe('Evaluation mode: shell command or agent review'),
   evalPrompt: z
     .string()
@@ -2205,7 +2203,7 @@ export class MCPAdapter {
       prompt: data.prompt,
       strategy: data.strategy === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE,
       exitCondition: data.exitCondition,
-      evalMode: data.evalMode as EvalMode | undefined,
+      evalMode: data.evalMode,
       evalPrompt: data.evalPrompt,
       evalDirection: toOptimizeDirection(data.evalDirection),
       evalTimeout: data.evalTimeout,
@@ -2536,7 +2534,7 @@ export class MCPAdapter {
       prompt: data.prompt,
       strategy: data.strategy === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE,
       exitCondition: data.exitCondition,
-      evalMode: data.evalMode as EvalMode | undefined,
+      evalMode: data.evalMode,
       evalPrompt: data.evalPrompt,
       evalDirection: toOptimizeDirection(data.evalDirection),
       evalTimeout: data.evalTimeout,
