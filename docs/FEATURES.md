@@ -338,6 +338,7 @@ Last Updated: March 2026 (v1.0.0)
 ### Loop Strategies
 - **Retry**: Run a task until an exit condition passes — shell command returning exit code 0 ends the loop
 - **Optimize**: Run a task, score output with eval script, keep improvements — seek the best score across iterations (minimize or maximize direction)
+- **Agent Eval Mode**: Either strategy can delegate exit condition evaluation to an AI agent instead of a shell command. Pass `evalMode: 'agent'` (MCP) or `--eval-mode agent` (CLI). The agent reads iteration output and returns pass/fail (retry) or a numeric score (optimize). Use `evalPrompt` / `--eval-prompt` to customize the evaluation prompt.
 
 ### Single Task Loops
 - **Task Prompt**: Each iteration runs the same prompt (or enriched with checkpoint context if `freshContext` is false)
@@ -354,10 +355,14 @@ Last Updated: March 2026 (v1.0.0)
 - **Cooldown**: Delay between iterations in milliseconds (default: 0)
 - **Eval Timeout**: Timeout for exit condition evaluation (default: 60s, minimum: 1s)
 - **Fresh Context**: Each iteration gets a fresh agent context (default: true) or continues from previous checkpoint
+- **Eval Mode** (`evalMode`): `'shell'` (default) evaluates iteration results via a shell command exit code; `'agent'` delegates evaluation to an AI agent
+- **Eval Prompt** (`evalPrompt`): Optional custom instructions for the agent evaluator (agent mode only). When omitted, the agent uses a default review prompt.
 
 ### CLI Commands (v0.7.0+)
 - `beat loop <prompt> --until <cmd>`: Create a retry loop (run until shell command exits 0)
 - `beat loop <prompt> --eval <cmd> --minimize|--maximize`: Create an optimize loop (score-based)
+- `beat loop <prompt> --eval-mode agent --strategy retry`: Create a retry loop using agent evaluation
+- `beat loop <prompt> --eval-mode agent --strategy optimize --maximize [--eval-prompt "..."]`: Create an optimize loop with agent scoring
 - `beat loop --pipeline --step "..." --step "..." --until <cmd>`: Create a pipeline loop
 - `beat loop list [--status <status>]`: List loops with optional status filter
 - `beat loop status <loop-id> [--history]`: Get loop details and iteration history
@@ -373,6 +378,7 @@ Last Updated: March 2026 (v1.0.0)
 
 ### Database Schema
 - **Migration 10**: `loops` table for loop definitions and state, `loop_iterations` table for per-iteration execution records
+- **Migration 15**: `eval_mode` and `eval_prompt` columns on `loops` table, `eval_feedback` column on `loop_iterations` table
 
 ## ❌ NOT Implemented
 - **Distributed Processing**: Single-server only

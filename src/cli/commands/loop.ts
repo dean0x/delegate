@@ -1,5 +1,5 @@
 import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
-import { LoopId, LoopStatus, LoopStrategy, Priority } from '../../core/domain.js';
+import { EvalMode, LoopId, LoopStatus, LoopStrategy, Priority } from '../../core/domain.js';
 import type { LoopService } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
 import { toOptimizeDirection, truncatePrompt } from '../../utils/format.js';
@@ -15,7 +15,7 @@ import * as ui from '../ui.js';
 interface ParsedLoopBaseArgs {
   readonly strategy: LoopStrategy;
   readonly exitCondition: string;
-  readonly evalMode: 'shell' | 'agent';
+  readonly evalMode: EvalMode;
   readonly evalPrompt?: string;
   readonly evalDirection?: 'minimize' | 'maximize';
   readonly evalTimeout?: number;
@@ -34,14 +34,170 @@ type ParsedLoopArgs =
   | (ParsedLoopBaseArgs & { readonly isPipeline: false; readonly prompt: string });
 
 /**
+ * Raw flags parsed from the CLI token stream before mode-specific validation.
+ * Passed to parseAgentModeArgs() or parseShellModeArgs() for final assembly.
+ */
+interface RawLoopFlags {
+  readonly promptWords: readonly string[];
+  readonly untilCmd: string | undefined;
+  readonly evalCmd: string | undefined;
+  readonly evalMode: EvalMode | undefined;
+  readonly evalPrompt: string | undefined;
+  readonly strategyFlag: string | undefined;
+  readonly minimizeFlag: boolean;
+  readonly maximizeFlag: boolean;
+  readonly maxIterations: number | undefined;
+  readonly maxFailures: number | undefined;
+  readonly cooldown: number | undefined;
+  readonly evalTimeout: number | undefined;
+  readonly continueContext: boolean;
+  readonly isPipeline: boolean;
+  readonly pipelineSteps: readonly string[];
+  readonly priority: 'P0' | 'P1' | 'P2' | undefined;
+  readonly workingDirectory: string | undefined;
+  readonly agent: AgentProvider | undefined;
+  readonly gitBranch: string | undefined;
+}
+
+/**
+ * Validate and assemble ParsedLoopArgs for agent eval mode.
+ * Called when --eval-mode agent is provided (or inferred).
+ */
+function parseAgentModeArgs(flags: RawLoopFlags): Result<ParsedLoopArgs, string> {
+  if (flags.untilCmd || flags.evalCmd) {
+    return err('--until and --eval are not valid with --eval-mode agent. Use --strategy retry|optimize instead.');
+  }
+  if (!flags.strategyFlag) {
+    return err('--strategy retry|optimize is required with --eval-mode agent');
+  }
+  if (flags.minimizeFlag || flags.maximizeFlag) {
+    return err('--minimize/--maximize are not valid with --eval-mode agent');
+  }
+
+  // Pipeline mode validation
+  if (flags.isPipeline) {
+    if (flags.pipelineSteps.length < 2) {
+      return err('Pipeline requires at least 2 --step flags');
+    }
+  } else if (flags.pipelineSteps.length > 0) {
+    return err(
+      '--step requires --pipeline. Did you mean: beat loop --pipeline --step "..." --step "..." --eval-mode agent --strategy retry',
+    );
+  }
+
+  // Non-pipeline mode: prompt is required
+  const prompt = flags.promptWords.join(' ');
+  if (!flags.isPipeline && !prompt) {
+    return err('Usage: beat loop <prompt> --eval-mode agent --strategy retry|optimize [options]');
+  }
+
+  const shared = {
+    strategy: flags.strategyFlag === 'optimize' ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
+    exitCondition: '',
+    evalMode: EvalMode.AGENT,
+    evalPrompt: flags.evalPrompt,
+    evalTimeout: flags.evalTimeout,
+    workingDirectory: flags.workingDirectory,
+    maxIterations: flags.maxIterations,
+    maxConsecutiveFailures: flags.maxFailures,
+    cooldownMs: flags.cooldown,
+    freshContext: !flags.continueContext,
+    priority: flags.priority,
+    agent: flags.agent,
+    gitBranch: flags.gitBranch,
+  };
+  if (flags.isPipeline) {
+    return ok({ ...shared, isPipeline: true as const, pipelineSteps: flags.pipelineSteps as string[] });
+  }
+  return ok({ ...shared, isPipeline: false as const, prompt });
+}
+
+/**
+ * Validate and assemble ParsedLoopArgs for shell eval mode (default).
+ * Called when --eval-mode shell is provided or no --eval-mode flag is given.
+ */
+function parseShellModeArgs(flags: RawLoopFlags): Result<ParsedLoopArgs, string> {
+  if (flags.strategyFlag) {
+    return err('--strategy is only valid with --eval-mode agent');
+  }
+
+  if (flags.untilCmd && flags.evalCmd) {
+    return err('Cannot specify both --until and --eval. Use --until for retry strategy, --eval for optimize strategy.');
+  }
+  if (!flags.untilCmd && !flags.evalCmd) {
+    return err(
+      'Provide --until <cmd> for retry strategy, --eval <cmd> --minimize|--maximize for optimize strategy, or --eval-mode agent --strategy retry|optimize for agent evaluation.',
+    );
+  }
+
+  const isOptimize = !!flags.evalCmd;
+  const exitCondition = isOptimize ? flags.evalCmd! : flags.untilCmd!;
+
+  // Validate direction flags for optimize
+  if (flags.minimizeFlag && flags.maximizeFlag) {
+    return err('Cannot specify both --minimize and --maximize');
+  }
+  const direction: 'minimize' | 'maximize' | undefined = flags.minimizeFlag
+    ? 'minimize'
+    : flags.maximizeFlag
+      ? 'maximize'
+      : undefined;
+  if (isOptimize && !direction) {
+    return err('--minimize or --maximize is required with --eval (optimize strategy)');
+  }
+  if (!isOptimize && direction) {
+    return err('--minimize/--maximize is only valid with --eval (optimize strategy)');
+  }
+
+  // Pipeline mode
+  if (flags.isPipeline) {
+    if (flags.pipelineSteps.length < 2) {
+      return err('Pipeline requires at least 2 --step flags');
+    }
+  } else if (flags.pipelineSteps.length > 0) {
+    return err(
+      '--step requires --pipeline. Did you mean: beat loop --pipeline --step "..." --step "..." --until "..."',
+    );
+  }
+
+  // Non-pipeline mode: prompt is required
+  const prompt = flags.promptWords.join(' ');
+  if (!flags.isPipeline && !prompt) {
+    return err('Usage: beat loop <prompt> --until <cmd> [options]');
+  }
+
+  const shared = {
+    strategy: isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
+    exitCondition,
+    evalMode: EvalMode.SHELL,
+    evalDirection: direction,
+    evalTimeout: flags.evalTimeout,
+    workingDirectory: flags.workingDirectory,
+    maxIterations: flags.maxIterations,
+    maxConsecutiveFailures: flags.maxFailures,
+    cooldownMs: flags.cooldown,
+    freshContext: !flags.continueContext,
+    priority: flags.priority,
+    agent: flags.agent,
+    gitBranch: flags.gitBranch,
+  };
+
+  if (flags.isPipeline) {
+    return ok({ ...shared, isPipeline: true as const, pipelineSteps: flags.pipelineSteps as string[] });
+  }
+  return ok({ ...shared, isPipeline: false as const, prompt });
+}
+
+/**
  * Parse and validate loop create arguments
  * ARCHITECTURE: Pure function — no side effects, returns Result for testability
+ * Delegates mode-specific validation to parseAgentModeArgs() / parseShellModeArgs().
  */
 export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, string> {
   const promptWords: string[] = [];
   let untilCmd: string | undefined;
   let evalCmd: string | undefined;
-  let evalMode: 'shell' | 'agent' | undefined;
+  let evalMode: EvalMode | undefined;
   let evalPrompt: string | undefined;
   let strategyFlag: string | undefined;
   let minimizeFlag = false;
@@ -69,10 +225,10 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
       evalCmd = next;
       i++;
     } else if (arg === '--eval-mode' && next) {
-      if (next !== 'shell' && next !== 'agent') {
+      if (next !== EvalMode.SHELL && next !== EvalMode.AGENT) {
         return err('--eval-mode must be "shell" or "agent"');
       }
-      evalMode = next;
+      evalMode = next as EvalMode;
       i++;
     } else if (arg === '--eval-prompt' && next) {
       evalPrompt = next;
@@ -151,130 +307,36 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
   }
 
   // Validate --eval-prompt requires --eval-mode agent
-  if (evalPrompt && evalMode !== 'agent') {
+  if (evalPrompt && evalMode !== EvalMode.AGENT) {
     return err('--eval-prompt requires --eval-mode agent');
   }
 
-  // Agent eval mode: --strategy is required; --until/--eval are forbidden
-  if (evalMode === 'agent') {
-    if (untilCmd || evalCmd) {
-      return err('--until and --eval are not valid with --eval-mode agent. Use --strategy retry|optimize instead.');
-    }
-    if (!strategyFlag) {
-      return err('--strategy retry|optimize is required with --eval-mode agent');
-    }
-    if (minimizeFlag || maximizeFlag) {
-      return err('--minimize/--maximize are not valid with --eval-mode agent');
-    }
-
-    // Pipeline mode validation
-    if (isPipeline) {
-      if (pipelineSteps.length < 2) {
-        return err('Pipeline requires at least 2 --step flags');
-      }
-    } else if (pipelineSteps.length > 0) {
-      return err(
-        '--step requires --pipeline. Did you mean: beat loop --pipeline --step "..." --step "..." --eval-mode agent --strategy retry',
-      );
-    }
-
-    // Non-pipeline mode: prompt is required
-    const prompt = promptWords.join(' ');
-    if (!isPipeline && !prompt) {
-      return err('Usage: beat loop <prompt> --eval-mode agent --strategy retry|optimize [options]');
-    }
-
-    const shared = {
-      strategy: strategyFlag === 'optimize' ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
-      exitCondition: '',
-      evalMode: 'agent' as const,
-      evalPrompt,
-      evalTimeout,
-      workingDirectory,
-      maxIterations,
-      maxConsecutiveFailures: maxFailures,
-      cooldownMs: cooldown,
-      freshContext: !continueContext,
-      priority,
-      agent,
-      gitBranch,
-    };
-    if (isPipeline) {
-      return ok({ ...shared, isPipeline: true as const, pipelineSteps });
-    }
-    return ok({ ...shared, isPipeline: false as const, prompt });
-  }
-
-  // Shell eval mode (default): strategy inferred from --until / --eval flags
-  if (strategyFlag) {
-    return err('--strategy is only valid with --eval-mode agent');
-  }
-
-  if (untilCmd && evalCmd) {
-    return err('Cannot specify both --until and --eval. Use --until for retry strategy, --eval for optimize strategy.');
-  }
-  if (!untilCmd && !evalCmd) {
-    return err(
-      'Provide --until <cmd> for retry strategy, --eval <cmd> --minimize|--maximize for optimize strategy, or --eval-mode agent --strategy retry|optimize for agent evaluation.',
-    );
-  }
-
-  const isOptimize = !!evalCmd;
-  const exitCondition = isOptimize ? evalCmd! : untilCmd!;
-
-  // Validate direction flags for optimize
-  if (minimizeFlag && maximizeFlag) {
-    return err('Cannot specify both --minimize and --maximize');
-  }
-  const direction: 'minimize' | 'maximize' | undefined = minimizeFlag
-    ? 'minimize'
-    : maximizeFlag
-      ? 'maximize'
-      : undefined;
-  if (isOptimize && !direction) {
-    return err('--minimize or --maximize is required with --eval (optimize strategy)');
-  }
-  if (!isOptimize && direction) {
-    return err('--minimize/--maximize is only valid with --eval (optimize strategy)');
-  }
-
-  // Pipeline mode
-  if (isPipeline) {
-    if (pipelineSteps.length < 2) {
-      return err('Pipeline requires at least 2 --step flags');
-    }
-  } else if (pipelineSteps.length > 0) {
-    return err(
-      '--step requires --pipeline. Did you mean: beat loop --pipeline --step "..." --step "..." --until "..."',
-    );
-  }
-
-  // Non-pipeline mode: prompt is required
-  const prompt = promptWords.join(' ');
-  if (!isPipeline && !prompt) {
-    return err('Usage: beat loop <prompt> --until <cmd> [options]');
-  }
-
-  const shared = {
-    strategy: isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
-    exitCondition,
-    evalMode: 'shell' as const,
-    evalDirection: direction,
-    evalTimeout,
-    workingDirectory,
+  const flags: RawLoopFlags = {
+    promptWords,
+    untilCmd,
+    evalCmd,
+    evalMode,
+    evalPrompt,
+    strategyFlag,
+    minimizeFlag,
+    maximizeFlag,
     maxIterations,
-    maxConsecutiveFailures: maxFailures,
-    cooldownMs: cooldown,
-    freshContext: !continueContext,
+    maxFailures,
+    cooldown,
+    evalTimeout,
+    continueContext,
+    isPipeline,
+    pipelineSteps,
     priority,
+    workingDirectory,
     agent,
     gitBranch,
   };
 
-  if (isPipeline) {
-    return ok({ ...shared, isPipeline: true as const, pipelineSteps });
+  if (evalMode === EvalMode.AGENT) {
+    return parseAgentModeArgs(flags);
   }
-  return ok({ ...shared, isPipeline: false as const, prompt });
+  return parseShellModeArgs(flags);
 }
 
 export async function handleLoopCommand(subCmd: string | undefined, loopArgs: string[]): Promise<void> {
@@ -465,7 +527,7 @@ async function handleLoopStatus(loopArgs: string[]): Promise<void> {
     if (loop.bestScore !== undefined) lines.push(`Best Score:    ${loop.bestScore}`);
     if (loop.evalDirection) lines.push(`Direction:     ${loop.evalDirection}`);
     lines.push(`Eval Mode:     ${loop.evalMode}`);
-    if (loop.evalMode === 'shell') {
+    if (loop.evalMode === EvalMode.SHELL) {
       lines.push(`Exit Cond:     ${loop.exitCondition}`);
     } else if (loop.evalPrompt) {
       lines.push(`Eval Prompt:   ${truncatePrompt(loop.evalPrompt, 80)}`);

@@ -9,6 +9,7 @@ import SQLite from 'better-sqlite3';
 import { z } from 'zod';
 import { AGENT_PROVIDERS_TUPLE } from '../core/agents.js';
 import {
+  EvalMode,
   type LoopCreateRequest,
   LoopId,
   LoopStrategy,
@@ -120,7 +121,7 @@ const LoopConfigSchema = z.object({
   exitCondition: z.string().min(1).optional(),
   evalDirection: z.nativeEnum(OptimizeDirection).optional(),
   evalTimeout: z.number().optional(),
-  evalMode: z.enum(['shell', 'agent']).optional(),
+  evalMode: z.nativeEnum(EvalMode).optional(),
   evalPrompt: z.string().optional(),
   workingDirectory: z.string().optional(),
   maxIterations: z.number().optional(),

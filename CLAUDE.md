@@ -164,6 +164,8 @@ Quick reference for common operations:
 | Loop repository | `src/implementations/loop-repository.ts` |
 | Loop handler | `src/services/handlers/loop-handler.ts` |
 | Loop manager | `src/services/loop-manager.ts` |
+| Agent exit condition evaluator | `src/services/agent-exit-condition-evaluator.ts` |
+| Composite exit condition evaluator | `src/services/composite-exit-condition-evaluator.ts` |
 | Migrate command | `src/cli/commands/migrate.ts` |
 
 ## Documentation Structure

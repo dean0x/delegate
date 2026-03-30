@@ -42,7 +42,7 @@ All commands share the same database. Workers persist across iterations.
 
 LOOP MANAGEMENT (iterative refinement via beat CLI):
   Shell eval loop:
-    beat loop "<prompt>" --until "npm test" --strategy retry
+    beat loop "<prompt>" --until "npm test"
     beat loop "<prompt>" --eval "npm run score" --maximize
   Agent eval loop (recommended for code quality goals):
     beat loop "<prompt>" --eval-mode agent --strategy retry

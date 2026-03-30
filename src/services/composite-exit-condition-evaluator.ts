@@ -4,6 +4,7 @@
  * Pattern: Composite pattern — transparent to callers, implements ExitConditionEvaluator
  */
 
+import { EvalMode } from '../core/domain.js';
 import type { Loop, TaskId } from '../core/domain.js';
 import type { EvalResult, ExitConditionEvaluator } from '../core/interfaces.js';
 
@@ -14,9 +15,15 @@ export class CompositeExitConditionEvaluator implements ExitConditionEvaluator {
   ) {}
 
   async evaluate(loop: Loop, taskId: TaskId): Promise<EvalResult> {
-    if (loop.evalMode === 'agent') {
-      return this.agentEvaluator.evaluate(loop, taskId);
+    switch (loop.evalMode) {
+      case EvalMode.AGENT:
+        return this.agentEvaluator.evaluate(loop, taskId);
+      case EvalMode.SHELL:
+        return this.shellEvaluator.evaluate(loop, taskId);
+      default: {
+        const _exhaustive: never = loop.evalMode;
+        throw new Error(`Unhandled evalMode: ${_exhaustive}`);
+      }
     }
-    return this.shellEvaluator.evaluate(loop, taskId);
   }
 }

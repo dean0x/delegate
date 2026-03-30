@@ -9,6 +9,7 @@ import SQLite from 'better-sqlite3';
 import { z } from 'zod';
 import { AGENT_PROVIDERS_TUPLE } from '../core/agents.js';
 import {
+  EvalMode,
   Loop,
   LoopId,
   LoopIteration,
@@ -38,7 +39,7 @@ const LoopRowSchema = z.object({
   exit_condition: z.string(),
   eval_direction: z.string().nullable(),
   eval_timeout: z.number(),
-  eval_mode: z.string().default('shell'),
+  eval_mode: z.nativeEnum(EvalMode).default(EvalMode.SHELL),
   eval_prompt: z.string().nullable(),
   working_directory: z.string(),
   max_iterations: z.number(),
@@ -606,7 +607,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       exitCondition: data.exit_condition,
       evalDirection: data.eval_direction ? this.toOptimizeDirection(data.eval_direction) : undefined,
       evalTimeout: data.eval_timeout,
-      evalMode: data.eval_mode as 'shell' | 'agent',
+      evalMode: data.eval_mode as EvalMode,
       evalPrompt: data.eval_prompt ?? undefined,
       workingDirectory: data.working_directory,
       maxIterations: data.max_iterations,

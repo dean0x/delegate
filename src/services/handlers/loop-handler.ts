@@ -9,6 +9,7 @@
 import type { Loop, LoopIteration, Task } from '../../core/domain.js';
 import {
   createTask,
+  EvalMode,
   isTerminalState,
   LoopId,
   LoopStatus,
@@ -280,7 +281,7 @@ export class LoopHandler extends BaseEventHandler {
         // Shell eval completes in milliseconds so re-fetching is unnecessary; guard only applies to agent mode
         // If loop was cancelled while eval ran, skip result processing
         // Allow PAUSED through — consistent with the early guard at line 208 (graceful pause records results)
-        if (loop.evalMode === 'agent') {
+        if (loop.evalMode === EvalMode.AGENT) {
           const freshLoopResult = await this.loopRepo.findById(loopId);
           if (
             !freshLoopResult.ok ||

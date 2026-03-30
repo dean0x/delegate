@@ -521,6 +521,15 @@ export enum OptimizeDirection {
 }
 
 /**
+ * Evaluation mode discriminator for loop exit condition evaluation
+ * ARCHITECTURE: Determines whether a shell command or agent review evaluates each iteration
+ */
+export enum EvalMode {
+  SHELL = 'shell',
+  AGENT = 'agent',
+}
+
+/**
  * Loop interface - defines iterative task/pipeline execution
  * ARCHITECTURE: All fields readonly for immutability
  * Pattern: Factory function createLoop() for construction
@@ -533,7 +542,7 @@ export interface Loop {
   readonly exitCondition: string; // Shell command to evaluate iteration result (empty string for agent mode)
   readonly evalDirection?: OptimizeDirection; // Optimize strategy only
   readonly evalTimeout: number; // Milliseconds for exit condition evaluation
-  readonly evalMode: 'shell' | 'agent'; // Evaluation mode: shell command or agent review
+  readonly evalMode: EvalMode; // Evaluation mode: shell command or agent review
   readonly evalPrompt?: string; // Custom prompt for agent evaluator (agent mode only)
   readonly workingDirectory: string;
   readonly maxIterations: number; // 0 = unlimited
@@ -585,10 +594,10 @@ export interface LoopIteration {
 export interface LoopCreateRequest {
   readonly prompt?: string; // Optional if pipeline mode (pipelineSteps provided)
   readonly strategy: LoopStrategy;
-  readonly exitCondition?: string; // Required for shell mode, optional for agent mode
+  readonly exitCondition?: string; // Required for shell mode, empty string for agent mode (kept non-optional for backward compat)
   readonly evalDirection?: OptimizeDirection;
   readonly evalTimeout?: number; // Default: 60000ms
-  readonly evalMode?: 'shell' | 'agent'; // Default: 'shell'
+  readonly evalMode?: EvalMode; // Default: EvalMode.SHELL
   readonly evalPrompt?: string; // Custom prompt for agent evaluator (agent mode only)
   readonly workingDirectory?: string;
   readonly maxIterations?: number; // Default: 10
@@ -621,7 +630,7 @@ export const createLoop = (request: LoopCreateRequest, workingDirectory: string,
     exitCondition: request.exitCondition ?? '',
     evalDirection: request.evalDirection,
     evalTimeout: request.evalTimeout ?? 60000,
-    evalMode: request.evalMode ?? 'shell',
+    evalMode: request.evalMode ?? EvalMode.SHELL,
     evalPrompt: request.evalPrompt,
     workingDirectory,
     maxIterations: request.maxIterations ?? 10,
