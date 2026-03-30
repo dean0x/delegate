@@ -234,11 +234,30 @@ const ConfigureAgentSchema = z.object({
 const CreateLoopSchema = z.object({
   prompt: z.string().min(1).max(4000).optional().describe('Task prompt for each iteration'),
   strategy: z.enum(['retry', 'optimize']).describe('Loop strategy'),
-  exitCondition: z.string().min(1).max(4000).optional().describe('Shell command to evaluate after each iteration (required for shell eval mode)'),
-  evalMode: z.enum(['shell', 'agent']).optional().default('shell').describe('Evaluation mode: shell command or agent review'),
-  evalPrompt: z.string().min(1).max(8000).optional().describe('Custom prompt for agent evaluator (agent eval mode only)'),
+  exitCondition: z
+    .string()
+    .min(1)
+    .max(4000)
+    .optional()
+    .describe('Shell command to evaluate after each iteration (required for shell eval mode)'),
+  evalMode: z
+    .enum(['shell', 'agent'])
+    .optional()
+    .default('shell')
+    .describe('Evaluation mode: shell command or agent review'),
+  evalPrompt: z
+    .string()
+    .min(1)
+    .max(8000)
+    .optional()
+    .describe('Custom prompt for agent evaluator (agent eval mode only)'),
   evalDirection: z.enum(['minimize', 'maximize']).optional().describe('Score direction for optimize strategy'),
-  evalTimeout: z.number().min(1000).optional().default(60000).describe('Eval timeout in ms (max: shell=300s, agent=600s)'),
+  evalTimeout: z
+    .number()
+    .min(1000)
+    .optional()
+    .default(60000)
+    .describe('Eval timeout in ms (max: shell=300s, agent=600s)'),
   workingDirectory: z.string().optional().describe('Working directory for task and eval'),
   maxIterations: z.number().min(0).optional().default(10).describe('Max iterations (0 = unlimited)'),
   maxConsecutiveFailures: z.number().min(0).optional().default(3).describe('Max consecutive failures before stopping'),
@@ -289,9 +308,19 @@ const ScheduleLoopSchema = z.object({
   // Loop config fields
   prompt: z.string().min(1).max(4000).optional().describe('Task prompt for each iteration'),
   strategy: z.enum(['retry', 'optimize']).describe('Loop strategy'),
-  exitCondition: z.string().min(1).max(4000).optional().describe('Shell command to evaluate after each iteration (required for shell eval mode)'),
+  exitCondition: z
+    .string()
+    .min(1)
+    .max(4000)
+    .optional()
+    .describe('Shell command to evaluate after each iteration (required for shell eval mode)'),
   evalMode: z.enum(['shell', 'agent']).optional().describe('Evaluation mode: shell command or agent review'),
-  evalPrompt: z.string().min(1).max(8000).optional().describe('Custom prompt for agent evaluator (agent eval mode only)'),
+  evalPrompt: z
+    .string()
+    .min(1)
+    .max(8000)
+    .optional()
+    .describe('Custom prompt for agent evaluator (agent eval mode only)'),
   evalDirection: z.enum(['minimize', 'maximize']).optional().describe('Score direction for optimize strategy'),
   evalTimeout: z.number().min(1000).optional().describe('Eval timeout in ms (max: shell=300s, agent=600s)'),
   workingDirectory: z.string().optional().describe('Working directory for task and eval'),

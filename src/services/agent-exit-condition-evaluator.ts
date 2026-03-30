@@ -5,12 +5,22 @@
  * Rationale: Enables code-comprehension-based evaluation that shell commands cannot perform
  */
 
-import { createTask } from '../core/domain.js';
 import type { Loop, TaskId } from '../core/domain.js';
-import { LoopStrategy } from '../core/domain.js';
+import { createTask, LoopStrategy } from '../core/domain.js';
 import { EventBus } from '../core/events/event-bus.js';
-import type { TaskCancelledEvent, TaskCompletedEvent, TaskFailedEvent, TaskTimeoutEvent } from '../core/events/events.js';
-import type { EvalResult, ExitConditionEvaluator, Logger, LoopRepository, OutputRepository } from '../core/interfaces.js';
+import type {
+  TaskCancelledEvent,
+  TaskCompletedEvent,
+  TaskFailedEvent,
+  TaskTimeoutEvent,
+} from '../core/events/events.js';
+import type {
+  EvalResult,
+  ExitConditionEvaluator,
+  Logger,
+  LoopRepository,
+  OutputRepository,
+} from '../core/interfaces.js';
 
 export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
   constructor(
@@ -64,7 +74,11 @@ export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
     // Wait for eval task completion
     const completionStatus = await completionPromise;
 
-    if (completionStatus.type === 'failed' || completionStatus.type === 'timeout' || completionStatus.type === 'cancelled') {
+    if (
+      completionStatus.type === 'failed' ||
+      completionStatus.type === 'timeout' ||
+      completionStatus.type === 'cancelled'
+    ) {
       const errorMsg =
         completionStatus.type === 'timeout'
           ? `Eval agent timed out after ${loop.evalTimeout}ms`
@@ -115,7 +129,8 @@ export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
       : 'Use `git diff HEAD~1..HEAD` to see what changed in this iteration.';
 
     if (loop.strategy === LoopStrategy.RETRY) {
-      const userPrompt = loop.evalPrompt ??
+      const userPrompt =
+        loop.evalPrompt ??
         `Review the code changes. ${gitDiffInstruction} Use \`beat logs ${taskId}\` to read the worker's output. Output PASS if the changes are acceptable, FAIL if not. The LAST LINE of your response must be exactly PASS or FAIL.`;
 
       return `You are evaluating the result of an automated code improvement iteration.
@@ -127,7 +142,8 @@ Task ID: ${taskId}
 ${userPrompt}`;
     } else {
       // OPTIMIZE strategy
-      const userPrompt = loop.evalPrompt ??
+      const userPrompt =
+        loop.evalPrompt ??
         `Score the code change quality 0-100. ${gitDiffInstruction} Use \`beat logs ${taskId}\` to read the worker's output. Provide your analysis, then on the LAST LINE output a single numeric score between 0 and 100.`;
 
       return `You are evaluating and scoring the result of an automated code improvement iteration.

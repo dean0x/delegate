@@ -290,7 +290,11 @@ export class LoopHandler extends BaseEventHandler {
         const freshLoop = freshLoopResult.value;
 
         const freshIterationResult = await this.loopRepo.findIterationByTaskId(taskId);
-        if (!freshIterationResult.ok || !freshIterationResult.value || freshIterationResult.value.status !== 'running') {
+        if (
+          !freshIterationResult.ok ||
+          !freshIterationResult.value ||
+          freshIterationResult.value.status !== 'running'
+        ) {
           const staleIterStatus = freshIterationResult.ok ? (freshIterationResult.value?.status ?? 'null') : 'error';
           this.logger.info('Iteration no longer running after eval, skipping result processing', {
             loopId,

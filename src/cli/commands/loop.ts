@@ -214,7 +214,9 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
     return err('Cannot specify both --until and --eval. Use --until for retry strategy, --eval for optimize strategy.');
   }
   if (!untilCmd && !evalCmd) {
-    return err('Provide --until <cmd> for retry strategy, --eval <cmd> --minimize|--maximize for optimize strategy, or --eval-mode agent --strategy retry|optimize for agent evaluation.');
+    return err(
+      'Provide --until <cmd> for retry strategy, --eval <cmd> --minimize|--maximize for optimize strategy, or --eval-mode agent --strategy retry|optimize for agent evaluation.',
+    );
   }
 
   const isOptimize = !!evalCmd;
