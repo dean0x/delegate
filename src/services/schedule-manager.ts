@@ -9,6 +9,7 @@ import { resolveDefaultAgent } from '../core/agents.js';
 import { Configuration } from '../core/configuration.js';
 import {
   createSchedule,
+  EvalMode,
   PipelineCreateRequest,
   PipelineResult,
   PipelineStep,
@@ -21,7 +22,6 @@ import {
   ScheduleStatus,
   ScheduleType,
   TaskId,
-  updateSchedule,
 } from '../core/domain.js';
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
@@ -482,9 +482,14 @@ export class ScheduleManagerService implements ScheduleService {
     const { scheduledAtMs, expiresAtMs, nextRunAt, timezone } = timingResult.value;
 
     // Validate loopConfig basics
-    if (!request.loopConfig.exitCondition || request.loopConfig.exitCondition.trim().length === 0) {
+    // exitCondition is only required for shell eval mode; agent mode evaluates via LLM review
+    const evalMode = request.loopConfig.evalMode ?? EvalMode.SHELL;
+    if (
+      evalMode === EvalMode.SHELL &&
+      (!request.loopConfig.exitCondition || request.loopConfig.exitCondition.trim().length === 0)
+    ) {
       return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, 'loopConfig.exitCondition is required', {
+        new AutobeatError(ErrorCode.INVALID_INPUT, 'loopConfig.exitCondition is required for shell eval mode', {
           field: 'loopConfig.exitCondition',
         }),
       );
@@ -508,28 +513,27 @@ export class ScheduleManagerService implements ScheduleService {
       loopConfig: request.loopConfig,
     });
 
-    // Inject computed nextRunAt via immutable update helper
-    const scheduleWithNext = updateSchedule(schedule, { nextRunAt });
-
     const promptSummary = request.loopConfig.prompt
       ? truncatePrompt(request.loopConfig.prompt, 50)
       : `Loop (${request.loopConfig.strategy})`;
 
     this.logger.info('Creating scheduled loop', {
-      scheduleId: scheduleWithNext.id,
-      scheduleType: scheduleWithNext.scheduleType,
+      scheduleId: schedule.id,
+      scheduleType: schedule.scheduleType,
+      nextRunAt: new Date(nextRunAt).toISOString(),
       prompt: promptSummary,
     });
 
-    const emitResult = await this.eventBus.emit('ScheduleCreated', { schedule: scheduleWithNext });
+    // Emit event — ScheduleHandler persists with calculated nextRunAt
+    const emitResult = await this.eventBus.emit('ScheduleCreated', { schedule });
     if (!emitResult.ok) {
       this.logger.error('Failed to emit ScheduleCreated event', emitResult.error, {
-        scheduleId: scheduleWithNext.id,
+        scheduleId: schedule.id,
       });
       return err(emitResult.error);
     }
 
-    return ok(scheduleWithNext);
+    return ok(schedule);
   }
 
   /**

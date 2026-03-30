@@ -17,6 +17,7 @@ import {
 } from '../core/agents.js';
 import { type Configuration, loadAgentConfig, resetAgentConfig, saveAgentConfig } from '../core/configuration.js';
 import {
+  EvalMode,
   LoopCreateRequest,
   LoopId,
   LoopStatus,
@@ -234,9 +235,31 @@ const ConfigureAgentSchema = z.object({
 const CreateLoopSchema = z.object({
   prompt: z.string().min(1).max(4000).optional().describe('Task prompt for each iteration'),
   strategy: z.enum(['retry', 'optimize']).describe('Loop strategy'),
-  exitCondition: z.string().min(1).max(4000).describe('Shell command to evaluate after each iteration'),
+  exitCondition: z
+    .string()
+    .min(1)
+    .max(4000)
+    .optional()
+    .describe('Shell command to evaluate after each iteration (required for shell eval mode)'),
+  evalMode: z
+    .nativeEnum(EvalMode)
+    .optional()
+    .default(EvalMode.SHELL)
+    .describe('Evaluation mode: shell command or agent review'),
+  evalPrompt: z
+    .string()
+    .min(1)
+    .max(8000)
+    .optional()
+    .describe('Custom prompt for agent evaluator (agent eval mode only)'),
   evalDirection: z.enum(['minimize', 'maximize']).optional().describe('Score direction for optimize strategy'),
-  evalTimeout: z.number().min(1000).optional().default(60000).describe('Eval script timeout in ms'),
+  evalTimeout: z
+    .number()
+    .min(1000)
+    .max(600000)
+    .optional()
+    .default(60000)
+    .describe('Eval timeout in ms (max: shell=300s, agent=600s)'),
   workingDirectory: z.string().optional().describe('Working directory for task and eval'),
   maxIterations: z.number().min(0).optional().default(10).describe('Max iterations (0 = unlimited)'),
   maxConsecutiveFailures: z.number().min(0).optional().default(3).describe('Max consecutive failures before stopping'),
@@ -287,9 +310,25 @@ const ScheduleLoopSchema = z.object({
   // Loop config fields
   prompt: z.string().min(1).max(4000).optional().describe('Task prompt for each iteration'),
   strategy: z.enum(['retry', 'optimize']).describe('Loop strategy'),
-  exitCondition: z.string().min(1).max(4000).describe('Shell command to evaluate after each iteration'),
+  exitCondition: z
+    .string()
+    .min(1)
+    .max(4000)
+    .optional()
+    .describe('Shell command to evaluate after each iteration (required for shell eval mode)'),
+  evalMode: z
+    .nativeEnum(EvalMode)
+    .optional()
+    .default(EvalMode.SHELL)
+    .describe('Evaluation mode: shell command or agent review'),
+  evalPrompt: z
+    .string()
+    .min(1)
+    .max(8000)
+    .optional()
+    .describe('Custom prompt for agent evaluator (agent eval mode only)'),
   evalDirection: z.enum(['minimize', 'maximize']).optional().describe('Score direction for optimize strategy'),
-  evalTimeout: z.number().min(1000).optional().describe('Eval script timeout in ms'),
+  evalTimeout: z.number().min(1000).max(600000).optional().describe('Eval timeout in ms (max: shell=300s, agent=600s)'),
   workingDirectory: z.string().optional().describe('Working directory for task and eval'),
   maxIterations: z.number().min(0).optional().describe('Max iterations (0 = unlimited)'),
   maxConsecutiveFailures: z.number().min(0).optional().describe('Max consecutive failures'),
@@ -952,6 +991,17 @@ export class MCPAdapter {
                     description:
                       'Shell command to evaluate after each iteration (exit code 0 = pass for retry, stdout = score for optimize)',
                   },
+                  evalMode: {
+                    type: 'string',
+                    enum: ['shell', 'agent'],
+                    description: 'Evaluation mode: shell command or agent review (default: shell)',
+                  },
+                  evalPrompt: {
+                    type: 'string',
+                    description: 'Custom prompt for agent evaluator (agent eval mode only)',
+                    minLength: 1,
+                    maxLength: 8000,
+                  },
                   evalDirection: {
                     type: 'string',
                     enum: ['minimize', 'maximize'],
@@ -959,8 +1009,9 @@ export class MCPAdapter {
                   },
                   evalTimeout: {
                     type: 'number',
-                    description: 'Eval script timeout in ms (default: 60000)',
+                    description: 'Eval script timeout in ms (default: 60000, max: 600000)',
                     minimum: 1000,
+                    maximum: 600000,
                   },
                   workingDirectory: {
                     type: 'string',
@@ -1007,7 +1058,7 @@ export class MCPAdapter {
                     description: 'Git branch name for loop iteration work (v0.8.0)',
                   },
                 },
-                required: ['strategy', 'exitCondition'],
+                required: ['strategy'],
               },
             },
             {
@@ -1120,8 +1171,22 @@ export class MCPAdapter {
                   prompt: { type: 'string', description: 'Task prompt for each iteration' },
                   strategy: { type: 'string', enum: ['retry', 'optimize'], description: 'Loop strategy' },
                   exitCondition: { type: 'string', description: 'Shell command to evaluate after each iteration' },
+                  evalMode: {
+                    type: 'string',
+                    enum: ['shell', 'agent'],
+                    description: 'Evaluation mode: shell command or agent review (default: shell)',
+                  },
+                  evalPrompt: {
+                    type: 'string',
+                    description: 'Custom prompt for agent evaluator (agent eval mode only)',
+                  },
                   evalDirection: { type: 'string', enum: ['minimize', 'maximize'] },
-                  evalTimeout: { type: 'number', description: 'Eval script timeout in ms', minimum: 1000 },
+                  evalTimeout: {
+                    type: 'number',
+                    description: 'Eval script timeout in ms',
+                    minimum: 1000,
+                    maximum: 600000,
+                  },
                   workingDirectory: { type: 'string' },
                   maxIterations: { type: 'number', description: 'Max iterations (0 = unlimited)', minimum: 0 },
                   maxConsecutiveFailures: { type: 'number', minimum: 0 },
@@ -1144,7 +1209,7 @@ export class MCPAdapter {
                   maxRuns: { type: 'number', description: 'Maximum number of loop runs for cron schedules' },
                   expiresAt: { type: 'string', description: 'ISO 8601 expiration datetime' },
                 },
-                required: ['strategy', 'exitCondition', 'scheduleType'],
+                required: ['strategy', 'scheduleType'],
               },
             },
             // Agent tools (v0.5.0 Multi-Agent Support)
@@ -2145,6 +2210,8 @@ export class MCPAdapter {
       prompt: data.prompt,
       strategy: data.strategy === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE,
       exitCondition: data.exitCondition,
+      evalMode: data.evalMode,
+      evalPrompt: data.evalPrompt,
       evalDirection: toOptimizeDirection(data.evalDirection),
       evalTimeout: data.evalTimeout,
       workingDirectory: data.workingDirectory,
@@ -2226,6 +2293,8 @@ export class MCPAdapter {
             gitBranch: loop.gitBranch ?? null,
             gitBaseBranch: loop.gitBaseBranch ?? null,
             gitStartCommitSha: loop.gitStartCommitSha ?? null,
+            evalMode: loop.evalMode,
+            evalPrompt: loop.evalPrompt ?? null,
             scheduleId: loop.scheduleId ?? null,
             createdAt: new Date(loop.createdAt).toISOString(),
             updatedAt: new Date(loop.updatedAt).toISOString(),
@@ -2250,6 +2319,7 @@ export class MCPAdapter {
             score: iter.score ?? null,
             exitCode: iter.exitCode ?? null,
             errorMessage: iter.errorMessage ?? null,
+            evalFeedback: iter.evalFeedback ?? null,
             gitBranch: iter.gitBranch ?? null,
             gitCommitSha: iter.gitCommitSha ?? null,
             preIterationCommitSha: iter.preIterationCommitSha ?? null,
@@ -2471,6 +2541,8 @@ export class MCPAdapter {
       prompt: data.prompt,
       strategy: data.strategy === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE,
       exitCondition: data.exitCondition,
+      evalMode: data.evalMode,
+      evalPrompt: data.evalPrompt,
       evalDirection: toOptimizeDirection(data.evalDirection),
       evalTimeout: data.evalTimeout,
       workingDirectory: data.workingDirectory,

@@ -744,6 +744,15 @@ export class Database implements TransactionRunner {
           db.exec(`CREATE INDEX IF NOT EXISTS idx_orchestrations_loop_id ON orchestrations(loop_id)`);
         },
       },
+      {
+        version: 15,
+        description: 'Add agent eval mode to loops and eval feedback to loop iterations',
+        up: (db) => {
+          db.exec("ALTER TABLE loops ADD COLUMN eval_mode TEXT NOT NULL DEFAULT 'shell'");
+          db.exec('ALTER TABLE loops ADD COLUMN eval_prompt TEXT');
+          db.exec('ALTER TABLE loop_iterations ADD COLUMN eval_feedback TEXT');
+        },
+      },
     ];
   }
 

@@ -6,7 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- **Agent Eval Mode**: Loops can now use an AI agent to evaluate iteration results instead of a shell command. Pass `--eval-mode agent` (CLI) or `evalMode: 'agent'` (MCP) to have the agent review output and decide pass/fail or score. Use `--eval-prompt` / `evalPrompt` to supply a custom evaluation prompt.
 
 ---
 

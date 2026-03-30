@@ -674,6 +674,7 @@ export interface EvalResult {
   readonly score?: number;
   readonly exitCode?: number;
   readonly error?: string;
+  readonly feedback?: string; // Narrative feedback from agent evaluator (agent mode only)
 }
 
 /**
@@ -682,6 +683,11 @@ export interface EvalResult {
  * Pattern: Strategy pattern — implementations can use shell exec, HTTP, etc.
  */
 export interface ExitConditionEvaluator {
+  /**
+   * Evaluate the exit condition for a loop iteration.
+   * ARCHITECTURE: Strategy semantics (RETRY pass/fail vs OPTIMIZE score) are
+   * handled by each implementation — see ShellExitConditionEvaluator.
+   */
   evaluate(loop: Loop, taskId: TaskId): Promise<EvalResult>;
 }
 

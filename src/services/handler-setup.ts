@@ -16,6 +16,7 @@ import {
   LoopRepository,
   LoopService,
   OutputCapture,
+  OutputRepository,
   ResourceMonitor,
   ScheduleRepository,
   SyncLoopOperations,
@@ -28,6 +29,8 @@ import {
   WorkerPool,
 } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
+import { AgentExitConditionEvaluator } from './agent-exit-condition-evaluator.js';
+import { CompositeExitConditionEvaluator } from './composite-exit-condition-evaluator.js';
 import { ShellExitConditionEvaluator } from './exit-condition-evaluator.js';
 import { CheckpointHandler } from './handlers/checkpoint-handler.js';
 import { DependencyHandler } from './handlers/dependency-handler.js';
@@ -49,6 +52,7 @@ export interface HandlerDependencies {
   readonly database: TransactionRunner;
   readonly taskRepository: TaskRepository & SyncTaskOperations;
   readonly outputCapture: OutputCapture;
+  readonly outputRepository: OutputRepository;
   readonly taskQueue: TaskQueue;
   readonly dependencyRepository: DependencyRepository;
   readonly workerPool: WorkerPool;
@@ -114,7 +118,7 @@ function getDependency<T>(container: Container, key: string): Result<T> {
  * ```
  */
 export function extractHandlerDependencies(container: Container): Result<HandlerDependencies> {
-  // Extract all 13 dependencies - fail fast on any missing
+  // Extract all dependencies - fail fast on any missing
   const configResult = getDependency<Configuration>(container, 'config');
   if (!configResult.ok) return configResult;
 
@@ -132,6 +136,9 @@ export function extractHandlerDependencies(container: Container): Result<Handler
 
   const outputCaptureResult = getDependency<OutputCapture>(container, 'outputCapture');
   if (!outputCaptureResult.ok) return outputCaptureResult;
+
+  const outputRepositoryResult = getDependency<OutputRepository>(container, 'outputRepository');
+  if (!outputRepositoryResult.ok) return outputRepositoryResult;
 
   const taskQueueResult = getDependency<TaskQueue>(container, 'taskQueue');
   if (!taskQueueResult.ok) return taskQueueResult;
@@ -172,6 +179,7 @@ export function extractHandlerDependencies(container: Container): Result<Handler
     database: databaseResult.value,
     taskRepository: taskRepositoryResult.value,
     outputCapture: outputCaptureResult.value,
+    outputRepository: outputRepositoryResult.value,
     taskQueue: taskQueueResult.value,
     dependencyRepository: dependencyRepositoryResult.value,
     workerPool: workerPoolResult.value,
@@ -334,13 +342,22 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
   // 7. Loop Handler - iterative task/pipeline execution engine (v0.7.0)
   // ARCHITECTURE: Factory pattern ensures handler is fully initialized before use
   // Created AFTER CheckpointHandler because it needs checkpointRepository for context enrichment
+  const shellEvaluator = new ShellExitConditionEvaluator();
+  const agentEvaluator = new AgentExitConditionEvaluator(
+    eventBus,
+    deps.outputRepository,
+    deps.loopRepository,
+    childLogger('AgentEval'),
+  );
+  const exitConditionEvaluator = new CompositeExitConditionEvaluator(shellEvaluator, agentEvaluator);
+
   const loopHandlerResult = await LoopHandler.create({
     loopRepo: deps.loopRepository,
     taskRepo: deps.taskRepository,
     checkpointRepo: deps.checkpointRepository,
     eventBus,
     database: deps.database,
-    exitConditionEvaluator: new ShellExitConditionEvaluator(),
+    exitConditionEvaluator,
     logger: childLogger('LoopHandler'),
   });
   if (!loopHandlerResult.ok) {

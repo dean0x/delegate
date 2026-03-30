@@ -9,6 +9,7 @@ import SQLite from 'better-sqlite3';
 import { z } from 'zod';
 import { AGENT_PROVIDERS_TUPLE } from '../core/agents.js';
 import {
+  EvalMode,
   Loop,
   LoopId,
   LoopIteration,
@@ -35,9 +36,11 @@ const LoopRowSchema = z.object({
   strategy: z.enum(['retry', 'optimize']),
   task_template: z.string(), // JSON serialized TaskRequest
   pipeline_steps: z.string().nullable(),
-  exit_condition: z.string().min(1),
+  exit_condition: z.string(),
   eval_direction: z.string().nullable(),
   eval_timeout: z.number(),
+  eval_mode: z.nativeEnum(EvalMode).default(EvalMode.SHELL),
+  eval_prompt: z.string().nullable(),
   working_directory: z.string(),
   max_iterations: z.number(),
   max_consecutive_failures: z.number(),
@@ -68,6 +71,7 @@ const LoopIterationRowSchema = z.object({
   score: z.number().nullable(),
   exit_code: z.number().nullable(),
   error_message: z.string().nullable(),
+  eval_feedback: z.string().nullable(),
   started_at: z.number(),
   completed_at: z.number().nullable(),
   git_branch: z.string().nullable(),
@@ -117,6 +121,8 @@ interface LoopRow {
   readonly exit_condition: string;
   readonly eval_direction: string | null;
   readonly eval_timeout: number;
+  readonly eval_mode: string;
+  readonly eval_prompt: string | null;
   readonly working_directory: string;
   readonly max_iterations: number;
   readonly max_consecutive_failures: number;
@@ -147,6 +153,7 @@ interface LoopIterationRow {
   readonly score: number | null;
   readonly exit_code: number | null;
   readonly error_message: string | null;
+  readonly eval_feedback: string | null;
   readonly started_at: number;
   readonly completed_at: number | null;
   readonly git_branch: string | null;
@@ -181,14 +188,14 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
     this.saveStmt = this.db.prepare(`
       INSERT INTO loops (
         id, strategy, task_template, pipeline_steps, exit_condition,
-        eval_direction, eval_timeout, working_directory, max_iterations,
+        eval_direction, eval_timeout, eval_mode, eval_prompt, working_directory, max_iterations,
         max_consecutive_failures, cooldown_ms, fresh_context, status,
         current_iteration, best_score, best_iteration_id, best_iteration_commit_sha,
         consecutive_failures, created_at, updated_at, completed_at,
         git_branch, git_base_branch, git_start_commit_sha, schedule_id
       ) VALUES (
         @id, @strategy, @taskTemplate, @pipelineSteps, @exitCondition,
-        @evalDirection, @evalTimeout, @workingDirectory, @maxIterations,
+        @evalDirection, @evalTimeout, @evalMode, @evalPrompt, @workingDirectory, @maxIterations,
         @maxConsecutiveFailures, @cooldownMs, @freshContext, @status,
         @currentIteration, @bestScore, @bestIterationId, @bestIterationCommitSha,
         @consecutiveFailures, @createdAt, @updatedAt, @completedAt,
@@ -204,6 +211,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         exit_condition = @exitCondition,
         eval_direction = @evalDirection,
         eval_timeout = @evalTimeout,
+        eval_mode = @evalMode,
+        eval_prompt = @evalPrompt,
         working_directory = @workingDirectory,
         max_iterations = @maxIterations,
         max_consecutive_failures = @maxConsecutiveFailures,
@@ -247,9 +256,9 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
     this.recordIterationStmt = this.db.prepare(`
       INSERT INTO loop_iterations (
         loop_id, iteration_number, task_id, pipeline_task_ids,
-        status, score, exit_code, error_message, started_at, completed_at,
+        status, score, exit_code, error_message, eval_feedback, started_at, completed_at,
         git_branch, git_commit_sha, pre_iteration_commit_sha, git_diff_summary
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.updateIterationStmt = this.db.prepare(`
@@ -258,6 +267,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         score = @score,
         exit_code = @exitCode,
         error_message = @errorMessage,
+        eval_feedback = @evalFeedback,
         completed_at = @completedAt,
         git_branch = @gitBranch,
         git_commit_sha = @gitCommitSha,
@@ -399,6 +409,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
           iteration.score ?? null,
           iteration.exitCode ?? null,
           iteration.errorMessage ?? null,
+          iteration.evalFeedback ?? null,
           iteration.startedAt,
           iteration.completedAt ?? null,
           iteration.gitBranch ?? null, // Legacy (v0.8.0), always null for v0.8.1+
@@ -453,6 +464,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
           score: iteration.score ?? null,
           exitCode: iteration.exitCode ?? null,
           errorMessage: iteration.errorMessage ?? null,
+          evalFeedback: iteration.evalFeedback ?? null,
           completedAt: iteration.completedAt ?? null,
           gitBranch: iteration.gitBranch ?? null, // Legacy (v0.8.0), always null for v0.8.1+
           gitCommitSha: iteration.gitCommitSha ?? null,
@@ -486,6 +498,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       iteration.score ?? null,
       iteration.exitCode ?? null,
       iteration.errorMessage ?? null,
+      iteration.evalFeedback ?? null,
       iteration.startedAt,
       iteration.completedAt ?? null,
       iteration.gitBranch ?? null, // Legacy (v0.8.0), always null for v0.8.1+
@@ -508,6 +521,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       score: iteration.score ?? null,
       exitCode: iteration.exitCode ?? null,
       errorMessage: iteration.errorMessage ?? null,
+      evalFeedback: iteration.evalFeedback ?? null,
       completedAt: iteration.completedAt ?? null,
       gitBranch: iteration.gitBranch ?? null, // Legacy (v0.8.0), always null for v0.8.1+
       gitCommitSha: iteration.gitCommitSha ?? null,
@@ -534,6 +548,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       exitCondition: loop.exitCondition,
       evalDirection: loop.evalDirection ?? null,
       evalTimeout: loop.evalTimeout,
+      evalMode: loop.evalMode,
+      evalPrompt: loop.evalPrompt ?? null,
       workingDirectory: loop.workingDirectory,
       maxIterations: loop.maxIterations,
       maxConsecutiveFailures: loop.maxConsecutiveFailures,
@@ -591,6 +607,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       exitCondition: data.exit_condition,
       evalDirection: data.eval_direction ? this.toOptimizeDirection(data.eval_direction) : undefined,
       evalTimeout: data.eval_timeout,
+      evalMode: data.eval_mode as EvalMode,
+      evalPrompt: data.eval_prompt ?? undefined,
       workingDirectory: data.working_directory,
       maxIterations: data.max_iterations,
       maxConsecutiveFailures: data.max_consecutive_failures,
@@ -642,6 +660,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       score: data.score ?? undefined,
       exitCode: data.exit_code ?? undefined,
       errorMessage: data.error_message ?? undefined,
+      evalFeedback: data.eval_feedback ?? undefined,
       gitBranch: data.git_branch ?? undefined,
       gitCommitSha: data.git_commit_sha ?? undefined,
       preIterationCommitSha: data.pre_iteration_commit_sha ?? undefined,

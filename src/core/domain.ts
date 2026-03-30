@@ -521,6 +521,15 @@ export enum OptimizeDirection {
 }
 
 /**
+ * Evaluation mode discriminator for loop exit condition evaluation
+ * ARCHITECTURE: Determines whether a shell command or agent review evaluates each iteration
+ */
+export enum EvalMode {
+  SHELL = 'shell',
+  AGENT = 'agent',
+}
+
+/**
  * Loop interface - defines iterative task/pipeline execution
  * ARCHITECTURE: All fields readonly for immutability
  * Pattern: Factory function createLoop() for construction
@@ -530,9 +539,11 @@ export interface Loop {
   readonly strategy: LoopStrategy;
   readonly taskTemplate: TaskRequest;
   readonly pipelineSteps?: readonly string[];
-  readonly exitCondition: string; // Shell command to evaluate iteration result
+  readonly exitCondition: string; // Shell command to evaluate iteration result (empty string for agent mode)
   readonly evalDirection?: OptimizeDirection; // Optimize strategy only
   readonly evalTimeout: number; // Milliseconds for exit condition evaluation
+  readonly evalMode: EvalMode; // Evaluation mode: shell command or agent review
+  readonly evalPrompt?: string; // Custom prompt for agent evaluator (agent mode only)
   readonly workingDirectory: string;
   readonly maxIterations: number; // 0 = unlimited
   readonly maxConsecutiveFailures: number;
@@ -567,6 +578,7 @@ export interface LoopIteration {
   readonly score?: number;
   readonly exitCode?: number;
   readonly errorMessage?: string;
+  readonly evalFeedback?: string; // Feedback from agent evaluator (agent mode only)
   readonly gitBranch?: string; // Branch used for this iteration (v0.8.0, dead after v0.8.1)
   readonly gitCommitSha?: string; // Commit SHA after iteration changes committed (v0.8.1)
   readonly preIterationCommitSha?: string; // Commit SHA before iteration started (v0.8.1)
@@ -582,9 +594,11 @@ export interface LoopIteration {
 export interface LoopCreateRequest {
   readonly prompt?: string; // Optional if pipeline mode (pipelineSteps provided)
   readonly strategy: LoopStrategy;
-  readonly exitCondition: string;
+  readonly exitCondition?: string; // Required for shell mode, empty string for agent mode (kept non-optional for backward compat)
   readonly evalDirection?: OptimizeDirection;
   readonly evalTimeout?: number; // Default: 60000ms
+  readonly evalMode?: EvalMode; // Default: EvalMode.SHELL
+  readonly evalPrompt?: string; // Custom prompt for agent evaluator (agent mode only)
   readonly workingDirectory?: string;
   readonly maxIterations?: number; // Default: 10
   readonly maxConsecutiveFailures?: number; // Default: 3
@@ -613,9 +627,11 @@ export const createLoop = (request: LoopCreateRequest, workingDirectory: string,
       agent: request.agent,
     },
     pipelineSteps: request.pipelineSteps,
-    exitCondition: request.exitCondition,
+    exitCondition: request.exitCondition ?? '',
     evalDirection: request.evalDirection,
     evalTimeout: request.evalTimeout ?? 60000,
+    evalMode: request.evalMode ?? EvalMode.SHELL,
+    evalPrompt: request.evalPrompt,
     workingDirectory,
     maxIterations: request.maxIterations ?? 10,
     maxConsecutiveFailures: request.maxConsecutiveFailures ?? 3,

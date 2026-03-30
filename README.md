@@ -121,6 +121,14 @@ beat loop "Optimize the bundle size" \
   --max-iterations 10
 ```
 
+**Agent eval** -let an AI judge the result instead of a shell command:
+
+```bash
+beat loop "Fix the failing tests" --eval-mode agent --strategy retry
+beat loop "Optimize the algorithm" --eval-mode agent --strategy optimize --maximize \
+  --eval-prompt "Score the solution on correctness and efficiency (0-100)"
+```
+
 **Pipeline loops** -repeat a multi-step workflow:
 
 ```bash

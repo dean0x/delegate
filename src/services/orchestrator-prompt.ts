@@ -40,6 +40,26 @@ WORKER MANAGEMENT (via beat CLI):
 
 All commands share the same database. Workers persist across iterations.
 
+LOOP MANAGEMENT (iterative refinement via beat CLI):
+  Shell eval loop:
+    beat loop "<prompt>" --until "npm test"
+    beat loop "<prompt>" --eval "npm run score" --maximize
+  Agent eval loop (recommended for code quality goals):
+    beat loop "<prompt>" --eval-mode agent --strategy retry
+    beat loop "<prompt>" --eval-mode agent --strategy optimize
+    beat loop "<prompt>" --eval-mode agent --strategy retry \
+      --eval-prompt "Review the changes and output PASS if all tests pass and code quality is high, otherwise FAIL with an explanation."
+  Loop status:         beat loop status <loop-id> [--history]
+  Cancel loop:         beat loop cancel <loop-id>
+
+AGENT EVAL MODE:
+  Use --eval-mode agent when the exit condition requires judgment that cannot
+  be expressed as a shell exit code (e.g., code quality, design correctness,
+  test coverage adequacy). The evaluator agent reads the task output and git
+  diff, then returns PASS/FAIL (retry) or a numeric score (optimize).
+  For --strategy retry: evaluator last line must be "PASS" or "FAIL"
+  For --strategy optimize: evaluator last line must be a numeric score
+
 CONSTRAINTS:
 - Max concurrent workers: ${maxWorkers}
 - Max delegation depth: ${maxDepth}

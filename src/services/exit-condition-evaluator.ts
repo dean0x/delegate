@@ -20,6 +20,10 @@ export class ShellExitConditionEvaluator implements ExitConditionEvaluator {
    * - Optimize strategy: parse last non-empty line of stdout as score
    */
   async evaluate(loop: Loop, taskId: TaskId): Promise<EvalResult> {
+    if (!loop.exitCondition?.trim()) {
+      return { passed: false, error: 'exitCondition cannot be empty in shell eval mode' };
+    }
+
     const env = {
       ...process.env,
       AUTOBEAT_LOOP_ID: loop.id,

@@ -222,6 +222,104 @@ describe('LoopManagerService - Unit Tests', () => {
     });
   });
 
+  describe('createLoop() - agent eval mode', () => {
+    it('should create a retry loop with agent eval mode (no exitCondition required)', async () => {
+      const result = await service.createLoop({
+        prompt: 'Improve the code',
+        strategy: LoopStrategy.RETRY,
+        evalMode: 'agent',
+        maxIterations: 5,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.evalMode).toBe('agent');
+      expect(result.value.strategy).toBe(LoopStrategy.RETRY);
+    });
+
+    it('should create an optimize loop with agent eval mode', async () => {
+      const result = await service.createLoop({
+        prompt: 'Improve code quality score',
+        strategy: LoopStrategy.OPTIMIZE,
+        evalMode: 'agent',
+        evalDirection: OptimizeDirection.MAXIMIZE,
+        maxIterations: 5,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.evalMode).toBe('agent');
+      expect(result.value.strategy).toBe(LoopStrategy.OPTIMIZE);
+    });
+
+    it('should store evalPrompt when provided with agent eval mode', async () => {
+      const customPrompt = 'Check test coverage is above 80%.';
+      const result = await service.createLoop({
+        prompt: 'Write more tests',
+        strategy: LoopStrategy.RETRY,
+        evalMode: 'agent',
+        evalPrompt: customPrompt,
+        maxIterations: 3,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.evalPrompt).toBe(customPrompt);
+    });
+
+    it('should return error when evalPrompt provided with shell eval mode', async () => {
+      const result = await service.createLoop(
+        retryRequest({ evalPrompt: 'Some agent prompt' }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('evalPrompt');
+    });
+
+    it('should return error when shell mode has empty exitCondition', async () => {
+      const result = await service.createLoop(retryRequest({ exitCondition: '' }));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('exitCondition is required');
+    });
+
+    it('should allow agent mode with larger evalTimeout (up to 600s)', async () => {
+      const result = await service.createLoop({
+        prompt: 'Complex code review',
+        strategy: LoopStrategy.RETRY,
+        evalMode: 'agent',
+        evalTimeout: 600000,
+        maxIterations: 3,
+      });
+
+      expect(result.ok).toBe(true);
+    });
+
+    it('should reject evalTimeout over 600s for agent mode', async () => {
+      const result = await service.createLoop({
+        prompt: 'Complex code review',
+        strategy: LoopStrategy.RETRY,
+        evalMode: 'agent',
+        evalTimeout: 600001,
+        maxIterations: 3,
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('evalTimeout');
+    });
+
+    it('should reject evalTimeout over 300s for shell mode', async () => {
+      const result = await service.createLoop(retryRequest({ evalTimeout: 300001 }));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('evalTimeout');
+    });
+  });
+
   // Helper: save a loop directly in the repository (bypasses event handler)
   async function saveLoopInRepo(overrides: Partial<Parameters<typeof createLoop>[0]> = {}): Promise<Loop> {
     const loop = createLoop(

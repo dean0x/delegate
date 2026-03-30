@@ -137,6 +137,26 @@ describe('ShellExitConditionEvaluator', () => {
     });
   });
 
+  describe('Empty exitCondition guard', () => {
+    it('should return error when exitCondition is empty', async () => {
+      const loop = createTestLoop({ exitCondition: '' });
+      const result = await evaluator.evaluate(loop, taskId);
+
+      expect(result.passed).toBe(false);
+      expect(result.error).toContain('exitCondition cannot be empty');
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it('should return error when exitCondition is whitespace-only', async () => {
+      const loop = createTestLoop({ exitCondition: '   \n\t  ' });
+      const result = await evaluator.evaluate(loop, taskId);
+
+      expect(result.passed).toBe(false);
+      expect(result.error).toContain('exitCondition cannot be empty');
+      expect(exec).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Environment variable injection (R11)', () => {
     it('should inject AUTOBEAT_LOOP_ID, AUTOBEAT_ITERATION, AUTOBEAT_TASK_ID', async () => {
       mockExecSuccess('ok\n');

@@ -88,6 +88,7 @@ describe('handler-setup', () => {
     container.registerValue('scheduleRepository', new SQLiteScheduleRepository(database));
     container.registerValue('checkpointRepository', new SQLiteCheckpointRepository(database));
     container.registerValue('loopRepository', new SQLiteLoopRepository(database));
+    container.registerValue('outputRepository', createMockOutputRepository());
   });
 
   afterEach(async () => {

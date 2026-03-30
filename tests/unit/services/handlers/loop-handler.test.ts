@@ -703,6 +703,142 @@ describe('LoopHandler - Behavioral Tests', () => {
     });
   });
 
+  describe('EvalFeedback propagation', () => {
+    it('should store evalFeedback in iteration when retry eval returns feedback on PASS', async () => {
+      const feedbackText = 'Imports look clean. Logic is correct.';
+      mockEvaluator.evaluate.mockResolvedValue({ passed: true, feedback: feedbackText });
+
+      const loop = await createAndEmitLoop();
+      const taskId = await getLatestTaskId(loop.id);
+      expect(taskId).toBeDefined();
+
+      await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const allIters = await loopRepo.getIterations(loop.id, 10);
+      expect(allIters.ok).toBe(true);
+      const iter1 = allIters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1).toBeDefined();
+      expect(iter1!.evalFeedback).toBe(feedbackText);
+    });
+
+    it('should store evalFeedback in iteration when retry eval returns feedback on FAIL', async () => {
+      const feedbackText = 'Tests are still failing in module X.';
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, feedback: feedbackText });
+
+      const loop = await createAndEmitLoop({ maxConsecutiveFailures: 5, maxIterations: 5 });
+      const taskId = await getLatestTaskId(loop.id);
+      expect(taskId).toBeDefined();
+
+      await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const allIters = await loopRepo.getIterations(loop.id, 10);
+      expect(allIters.ok).toBe(true);
+      const iter1 = allIters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1).toBeDefined();
+      expect(iter1!.evalFeedback).toBe(feedbackText);
+    });
+
+    it('should store evalFeedback in iteration when optimize eval returns feedback', async () => {
+      const feedbackText = 'Score is lower because the algorithm is O(n^2).';
+      mockEvaluator.evaluate.mockResolvedValue({ passed: true, score: 40, feedback: feedbackText });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.OPTIMIZE,
+        evalDirection: OptimizeDirection.MAXIMIZE,
+        maxIterations: 3,
+      });
+      const taskId = await getLatestTaskId(loop.id);
+      expect(taskId).toBeDefined();
+
+      await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const allIters = await loopRepo.getIterations(loop.id, 10);
+      expect(allIters.ok).toBe(true);
+      const iter1 = allIters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1).toBeDefined();
+      expect(iter1!.evalFeedback).toBe(feedbackText);
+    });
+
+    it('should leave evalFeedback undefined when evaluator returns no feedback', async () => {
+      mockEvaluator.evaluate.mockResolvedValue({ passed: true, exitCode: 0 });
+
+      const loop = await createAndEmitLoop();
+      const taskId = await getLatestTaskId(loop.id);
+      expect(taskId).toBeDefined();
+
+      await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const allIters = await loopRepo.getIterations(loop.id, 10);
+      expect(allIters.ok).toBe(true);
+      const iter1 = allIters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1).toBeDefined();
+      expect(iter1!.evalFeedback).toBeUndefined();
+    });
+  });
+
+  describe('Stale state guard after agent eval', () => {
+    it('should skip result processing when loop is no longer running after eval', async () => {
+      // Create loop first so loop.id is in scope before configuring the mock
+      const loop = await createAndEmitLoop({ maxIterations: 5, evalMode: 'agent' });
+      const taskId = await getLatestTaskId(loop.id);
+      expect(taskId).toBeDefined();
+
+      // Evaluator takes long — in the meantime, loop is cancelled
+      mockEvaluator.evaluate.mockImplementation(async () => {
+        // Simulate loop being cancelled while eval runs
+        const loopResult = await loopRepo.findById(loop.id);
+        if (loopResult.ok && loopResult.value) {
+          await loopRepo.update({ ...loopResult.value, status: LoopStatus.CANCELLED, updatedAt: Date.now() });
+        }
+        return { passed: true, exitCode: 0 };
+      });
+
+      // Complete the task — evaluator will cancel the loop, then stale guard skips processing
+      await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Loop should be CANCELLED (not COMPLETED — because stale guard prevented completion)
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.CANCELLED);
+    });
+
+    it('should skip result processing when iteration is no longer running after eval', async () => {
+      // Create loop first so loop.id is in scope before configuring the mock
+      const loop = await createAndEmitLoop({ maxIterations: 5, evalMode: 'agent' });
+      const taskId = await getLatestTaskId(loop.id);
+      expect(taskId).toBeDefined();
+
+      // Evaluator takes long — in the meantime, the iteration is force-cancelled (e.g. stale recovery)
+      mockEvaluator.evaluate.mockImplementation(async () => {
+        // Simulate iteration being cancelled while eval runs (loop stays running)
+        const iterResult = await loopRepo.findIterationByTaskId(taskId!);
+        if (iterResult.ok && iterResult.value) {
+          await loopRepo.updateIteration({ ...iterResult.value, status: 'cancelled', completedAt: Date.now() });
+        }
+        return { passed: true, exitCode: 0 };
+      });
+
+      // Complete the task — evaluator will cancel the iteration, then stale guard skips processing
+      await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Loop should still be RUNNING (stale guard skipped the completion logic)
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+
+      // Iteration should be CANCELLED (not 'pass' — processing was skipped)
+      const allIters = await loopRepo.getIterations(loop.id, 10);
+      expect(allIters.ok).toBe(true);
+      const iter1 = allIters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1).toBeDefined();
+      expect(iter1!.status).toBe('cancelled');
+    });
+  });
+
   describe('Context enrichment (R2)', () => {
     it('should enrich prompt with checkpoint when freshContext=false', async () => {
       // Mock: exit condition fails first time, succeeds second

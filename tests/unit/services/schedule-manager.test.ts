@@ -972,6 +972,24 @@ describe('ScheduleManagerService - Unit Tests', () => {
       expect(result.error.message).toContain('exitCondition is required');
     });
 
+    it('should allow empty exitCondition for agent eval mode', async () => {
+      const request = scheduledLoopRequest({
+        loopConfig: {
+          prompt: 'Review code quality',
+          strategy: LoopStrategy.RETRY,
+          exitCondition: '',
+          evalMode: 'agent',
+          evalPrompt: 'Did the agent fix all issues?',
+        },
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.loopConfig!.evalMode).toBe('agent');
+    });
+
     it('should emit ScheduleCreated event with loopConfig', async () => {
       const request = scheduledLoopRequest();
 

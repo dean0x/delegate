@@ -2397,6 +2397,71 @@ describe('MCPAdapter - Loop Tools', () => {
     });
   });
 
+  describe('CreateLoop with evalMode via callTool()', () => {
+    it('should accept evalMode agent with strategy and no exitCondition', async () => {
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
+
+      const result = await adapter.callTool('CreateLoop', {
+        prompt: 'Fix the code',
+        strategy: 'retry',
+        evalMode: 'agent',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(mockLoopService.createLoopCalls).toHaveLength(1);
+      expect(mockLoopService.createLoopCalls[0].evalMode).toBe('agent');
+    });
+
+    it('should accept evalPrompt with evalMode agent', async () => {
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
+
+      const result = await adapter.callTool('CreateLoop', {
+        prompt: 'Fix the code',
+        strategy: 'retry',
+        evalMode: 'agent',
+        evalPrompt: 'Check for security issues',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(mockLoopService.createLoopCalls[0].evalPrompt).toBe('Check for security issues');
+    });
+
+    it('should default evalMode to shell', async () => {
+      const adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService: stubScheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
+
+      await adapter.callTool('CreateLoop', {
+        prompt: 'Fix the code',
+        strategy: 'retry',
+        exitCondition: 'npm test',
+      });
+
+      expect(mockLoopService.createLoopCalls[0].evalMode).toBe('shell');
+    });
+  });
+
   describe('CreateLoop with gitBranch', () => {
     it('should pass gitBranch field to service', async () => {
       const loop = mockLoopService.makeLoop({ prompt: 'Loop with git' });
