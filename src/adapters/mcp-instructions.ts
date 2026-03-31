@@ -60,7 +60,7 @@ The orchestrator manages its own task graph — you just provide the goal and gu
 - TaskStatus with taskId → check a specific task
 - TaskLogs with taskId → read stdout/stderr from a task
 - LoopStatus with loopId, includeHistory: true → see iteration progress and scores
-- OrchestratorStatus with orchestrationId → see plan steps and progress
+- OrchestratorStatus with orchestratorId → see plan steps and progress
 
 ### React to results
 - TaskLogs to read output, then decide next steps
