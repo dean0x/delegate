@@ -80,6 +80,7 @@ export class ScheduleManagerService implements ScheduleService {
       maxRuns: request.maxRuns,
       expiresAt: expiresAtMs,
       afterScheduleId: request.afterScheduleId,
+      nextRunAt,
     });
 
     this.logger.info('Creating schedule', {
@@ -88,7 +89,7 @@ export class ScheduleManagerService implements ScheduleService {
       nextRunAt: new Date(nextRunAt).toISOString(),
     });
 
-    // Emit event - ScheduleHandler persists with calculated nextRunAt
+    // Emit event - ScheduleHandler persists
     const emitResult = await this.eventBus.emit('ScheduleCreated', { schedule });
     if (!emitResult.ok) {
       this.logger.error('Failed to emit ScheduleCreated event', emitResult.error, {
@@ -307,6 +308,7 @@ export class ScheduleManagerService implements ScheduleService {
       maxRuns: request.maxRuns,
       expiresAt: expiresAtMs,
       afterScheduleId: request.afterScheduleId,
+      nextRunAt,
     });
 
     this.logger.info('Creating scheduled pipeline', {
@@ -316,7 +318,7 @@ export class ScheduleManagerService implements ScheduleService {
       nextRunAt: new Date(nextRunAt).toISOString(),
     });
 
-    // Emit event — ScheduleHandler persists with calculated nextRunAt
+    // Emit event — ScheduleHandler persists
     const emitResult = await this.eventBus.emit('ScheduleCreated', { schedule });
     if (!emitResult.ok) {
       this.logger.error('Failed to emit ScheduleCreated event', emitResult.error, {
@@ -511,6 +513,7 @@ export class ScheduleManagerService implements ScheduleService {
       maxRuns: request.maxRuns,
       expiresAt: expiresAtMs,
       loopConfig: request.loopConfig,
+      nextRunAt,
     });
 
     const promptSummary = request.loopConfig.prompt
@@ -524,7 +527,7 @@ export class ScheduleManagerService implements ScheduleService {
       prompt: promptSummary,
     });
 
-    // Emit event — ScheduleHandler persists with calculated nextRunAt
+    // Emit event — ScheduleHandler persists
     const emitResult = await this.eventBus.emit('ScheduleCreated', { schedule });
     if (!emitResult.ok) {
       this.logger.error('Failed to emit ScheduleCreated event', emitResult.error, {

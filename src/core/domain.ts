@@ -302,6 +302,7 @@ export interface ScheduleRequest {
   readonly afterScheduleId?: ScheduleId; // Chain: block until after-schedule's latest task completes
   readonly pipelineSteps?: readonly PipelineStepRequest[]; // Pipeline: ordered steps for scheduled pipeline
   readonly loopConfig?: LoopCreateRequest; // Loop config for scheduled loop creation (v0.8.0)
+  readonly nextRunAt?: number; // Pre-computed next run time (from validateScheduleTiming)
 }
 
 /**
@@ -341,7 +342,7 @@ export const createSchedule = (request: ScheduleRequest): Schedule => {
     maxRuns: request.maxRuns,
     runCount: 0,
     lastRunAt: undefined,
-    nextRunAt: request.scheduleType === ScheduleType.ONE_TIME ? request.scheduledAt : undefined,
+    nextRunAt: request.nextRunAt ?? (request.scheduleType === ScheduleType.ONE_TIME ? request.scheduledAt : undefined),
     expiresAt: request.expiresAt,
     afterScheduleId: request.afterScheduleId,
     pipelineSteps: request.pipelineSteps,
