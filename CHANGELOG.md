@@ -6,8 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+---
+
+## [1.1.0] - 2026-04-01
+
 ### Added
-- **Agent Eval Mode**: Loops can now use an AI agent to evaluate iteration results instead of a shell command. Pass `--eval-mode agent` (CLI) or `evalMode: 'agent'` (MCP) to have the agent review output and decide pass/fail or score. Use `--eval-prompt` / `evalPrompt` to supply a custom evaluation prompt.
+- **Agent Eval Mode**: Loops can use an AI agent to evaluate iteration results instead of shell commands. `evalMode: 'agent'` (MCP) / `--eval-mode agent` (CLI). Custom evaluation prompts via `evalPrompt` / `--eval-prompt`.
+- **Agent Orchestration Skill**: Structured skill files in `skills/autobeat/` with capability hierarchy, tool reference, composition patterns, and monitoring guides.
+- **Skill Installer**: `beat init --install-skills [--skills-agents claude,codex]` copies skill files to agent-specific directories (`.claude/`, `.agents/`, `.gemini/`).
+- **MCP Instructions**: Server-side instructions injected into MCP protocol for structured agent context.
+- **ListAgents MCP Tool**: List available agents with registration and auth status.
+- **ConfigureAgent MCP Tool**: Check auth status, store API key, or reset stored key for an agent.
+
+### Fixed
+- **CRON schedule nextRunAt**: `createSchedule()` factory now populates `nextRunAt` for CRON schedules immediately. Previously returned `undefined` until the handler persisted it.
 
 ---
 

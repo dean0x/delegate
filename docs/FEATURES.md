@@ -2,7 +2,34 @@
 
 This document lists all features that are **currently implemented and working** in Autobeat.
 
-Last Updated: March 2026
+Last Updated: April 2026
+
+## ✅ Agent Eval Mode & Skill System (v1.1.0)
+
+### Agent Eval Mode
+- Loops can use an AI agent to evaluate iteration results instead of a shell command
+- `evalMode: 'agent'` (MCP) / `--eval-mode agent` (CLI)
+- Custom evaluation prompts via `evalPrompt` / `--eval-prompt`
+- Agent judges pass/fail (retry strategy) or scores 0-100 (optimize strategy)
+- `AgentExitConditionEvaluator` and `CompositeExitConditionEvaluator` handle evaluation dispatch
+
+### Agent Orchestration Skill
+- Skill files in `skills/autobeat/` provide structured context for AI agents
+- Capability hierarchy decision tree (Task < Pipeline < Loop < Orchestrator)
+- Complete MCP tool and CLI command reference
+- Composition patterns and anti-patterns
+- Reference guides: orchestration, loops, dependencies, monitoring, capability matrix
+
+### Skill Installer
+- `beat init --install-skills`: install skill files to agent-specific directories
+- `--skills-agents claude,codex,gemini`: target specific agents
+- Detects existing skills and prompts for update
+- Agent-specific paths: `.claude/skills/autobeat`, `.agents/skills/autobeat`, `.gemini/skills/autobeat`
+
+### MCP Enhancements
+- **MCP Instructions**: server-side instructions injected into MCP Server for structured agent context
+- **ListAgents**: list available agents with registration and auth status (no parameters)
+- **ConfigureAgent**: check auth status (`check`), store API key (`set`), or reset stored key (`reset`)
 
 ## ✅ Autonomous Orchestration (v1.0.0)
 

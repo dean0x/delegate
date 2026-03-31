@@ -1,8 +1,8 @@
 # Autobeat Development Roadmap
 
-## Current Status: v1.0.0 RELEASED (2026-03-28)
+## Current Status: v1.1.0 RELEASED (2026-04-01)
 
-Orchestrator Mode -- the autonomous meta-agent that uses Autobeat's own MCP tools to break down goals, spawn workers, monitor progress, and iterate until done.
+Agent eval mode, skill system, and skill installer. Built on top of v1.0.0's autonomous orchestration.
 
 ---
 
@@ -49,6 +49,11 @@ DAG-based dependencies, cycle detection, TOCTOU protection, failure cascading, p
 Autoscaling workers, event-driven architecture, SQLite persistence.
 
 ---
+
+### v1.1.0 - Agent Eval Mode & Skill System ✅
+**Status**: **RELEASED** (2026-04-01)
+
+Agent eval mode for loop exit conditions (AI judges pass/fail instead of shell commands). Agent orchestration skill with structured reference files. Skill installer via `beat init --install-skills`. MCP instructions and ConfigureAgent/ListAgents tools.
 
 ## v1.0.0 - Autonomous Orchestration
 
@@ -138,6 +143,7 @@ Multi-server support, shared state (Redis backend), fault tolerance, task affini
 | v0.7.0 | ✅ Released | Task/Pipeline Loops |
 | v0.8.0–v0.8.2 | ✅ Released | Loop Enhancements, Git Integration, Rename |
 | **v1.0.0** | ✅ Released | **Autonomous Orchestration** |
+| **v1.1.0** | ✅ Released | **Agent Eval Mode & Skill System** |
 
 ---
 
