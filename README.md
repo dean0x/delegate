@@ -65,7 +65,7 @@ Restart your MCP client to connect. Autobeat works with Claude Code, Codex, Gemi
 ### First Run
 
 ```bash
-# Initialize -detects installed agents, sets defaults
+# Initialize — detects installed agents, sets defaults, installs agent skills
 beat init
 
 # Orchestrate -fire and forget

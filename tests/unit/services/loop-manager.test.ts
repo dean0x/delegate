@@ -268,9 +268,7 @@ describe('LoopManagerService - Unit Tests', () => {
     });
 
     it('should return error when evalPrompt provided with shell eval mode', async () => {
-      const result = await service.createLoop(
-        retryRequest({ evalPrompt: 'Some agent prompt' }),
-      );
+      const result = await service.createLoop(retryRequest({ evalPrompt: 'Some agent prompt' }));
 
       expect(result.ok).toBe(false);
       if (result.ok) return;

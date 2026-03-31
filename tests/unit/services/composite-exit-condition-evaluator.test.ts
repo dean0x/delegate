@@ -6,10 +6,9 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { Loop } from '../../../src/core/domain.js';
-import { createLoop, LoopStrategy } from '../../../src/core/domain.js';
+import { createLoop, LoopStrategy, TaskId } from '../../../src/core/domain.js';
 import type { EvalResult, ExitConditionEvaluator } from '../../../src/core/interfaces.js';
 import { CompositeExitConditionEvaluator } from '../../../src/services/composite-exit-condition-evaluator.js';
-import { TaskId } from '../../../src/core/domain.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

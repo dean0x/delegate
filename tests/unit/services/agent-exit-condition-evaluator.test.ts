@@ -9,10 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Loop } from '../../../src/core/domain.js';
 import { createLoop, LoopId, LoopStrategy, OptimizeDirection, TaskId } from '../../../src/core/domain.js';
 import type { EvalResult, LoopRepository, OutputRepository } from '../../../src/core/interfaces.js';
-import { ok, err } from '../../../src/core/result.js';
+import { err, ok } from '../../../src/core/result.js';
 import { AgentExitConditionEvaluator } from '../../../src/services/agent-exit-condition-evaluator.js';
-import { TestEventBus } from '../../fixtures/test-doubles.js';
-import { TestLogger } from '../../fixtures/test-doubles.js';
+import { TestEventBus, TestLogger } from '../../fixtures/test-doubles.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -57,13 +56,11 @@ function createOutputRepo(lines: string[]): OutputRepository {
  */
 function createLoopRepo(preIterationCommitSha?: string): LoopRepository {
   return {
-    findIterationByTaskId: vi.fn().mockResolvedValue(
-      ok(
-        preIterationCommitSha
-          ? { iterationNumber: 1, preIterationCommitSha, status: 'running' }
-          : null,
+    findIterationByTaskId: vi
+      .fn()
+      .mockResolvedValue(
+        ok(preIterationCommitSha ? { iterationNumber: 1, preIterationCommitSha, status: 'running' } : null),
       ),
-    ),
     findById: vi.fn().mockResolvedValue(ok(null)),
     findAll: vi.fn().mockResolvedValue(ok([])),
     findByStatus: vi.fn().mockResolvedValue(ok([])),
@@ -85,7 +82,10 @@ function createLoopRepo(preIterationCommitSha?: string): LoopRepository {
  * to simulate agent completion.
  */
 async function simulateEvalTaskComplete(eventBus: TestEventBus, evalTaskId: string): Promise<void> {
-  await eventBus.emit('TaskCompleted', { taskId: evalTaskId as ReturnType<typeof TaskId>, workerId: 'w1' as unknown as never });
+  await eventBus.emit('TaskCompleted', {
+    taskId: evalTaskId as ReturnType<typeof TaskId>,
+    workerId: 'w1' as unknown as never,
+  });
 }
 
 async function simulateEvalTaskFailed(eventBus: TestEventBus, evalTaskId: string, errorMsg: string): Promise<void> {

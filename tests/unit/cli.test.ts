@@ -3076,14 +3076,7 @@ describe('CLI - Loop Commands', () => {
     });
 
     it('should allow --maximize with --eval-mode agent and --strategy optimize', () => {
-      const result = parseLoopCreateArgs([
-        'fix',
-        '--eval-mode',
-        'agent',
-        '--strategy',
-        'optimize',
-        '--maximize',
-      ]);
+      const result = parseLoopCreateArgs(['fix', '--eval-mode', 'agent', '--strategy', 'optimize', '--maximize']);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.evalDirection).toBe('maximize');
@@ -3092,28 +3085,14 @@ describe('CLI - Loop Commands', () => {
     });
 
     it('should allow --minimize with --eval-mode agent and --strategy optimize', () => {
-      const result = parseLoopCreateArgs([
-        'fix',
-        '--eval-mode',
-        'agent',
-        '--strategy',
-        'optimize',
-        '--minimize',
-      ]);
+      const result = parseLoopCreateArgs(['fix', '--eval-mode', 'agent', '--strategy', 'optimize', '--minimize']);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.evalDirection).toBe('minimize');
     });
 
     it('should reject --minimize/--maximize with --eval-mode agent and --strategy retry', () => {
-      const result = parseLoopCreateArgs([
-        'fix',
-        '--eval-mode',
-        'agent',
-        '--strategy',
-        'retry',
-        '--maximize',
-      ]);
+      const result = parseLoopCreateArgs(['fix', '--eval-mode', 'agent', '--strategy', 'retry', '--maximize']);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error).toContain('--minimize/--maximize');

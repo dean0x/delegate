@@ -431,6 +431,13 @@ describe('MCPAdapter - Protocol Compliance', () => {
       expect(typeof adapter.getServer).toBe('function');
       expect(adapter.getServer()).toBeTruthy();
     });
+
+    it('should include MCP instructions in server configuration', () => {
+      const server = adapter.getServer();
+      const instructions = (server as unknown as Record<string, unknown>)._instructions;
+      expect(instructions).toBeDefined();
+      expect(instructions).toContain('Autobeat');
+    });
   });
 
   describe('DelegateTask Tool - Input Validation', () => {

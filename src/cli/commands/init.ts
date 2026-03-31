@@ -7,9 +7,13 @@
  */
 
 import * as p from '@clack/prompts';
+import { cpSync, existsSync, rmSync } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import type { AgentAuthStatus, AgentProvider } from '../../core/agents.js';
 import { AGENT_DESCRIPTIONS, AGENT_PROVIDERS, checkAgentAuth, isAgentProvider } from '../../core/agents.js';
 import { CONFIG_FILE_PATH, loadAgentConfig, loadConfigFile, saveConfigValue } from '../../core/configuration.js';
+import { err, ok, type Result } from '../../core/result.js';
 import * as ui from '../ui.js';
 
 // ============================================================================
@@ -17,13 +21,20 @@ import * as ui from '../ui.js';
 // ============================================================================
 
 export type InitResult =
-  | { readonly code: 0; readonly agent: AgentProvider; readonly status: AgentAuthStatus }
+  | {
+      readonly code: 0;
+      readonly agent: AgentProvider;
+      readonly status: AgentAuthStatus;
+      readonly skillPaths?: readonly string[];
+    }
   | { readonly code: 0; readonly reason: string }
   | { readonly code: 1; readonly reason: string };
 
 export interface InitOptions {
   readonly agent?: string;
   readonly yes?: boolean;
+  readonly installSkills?: boolean;
+  readonly skillsAgents?: string;
 }
 
 export interface InitDeps {
@@ -33,14 +44,30 @@ export interface InitDeps {
   readonly selectAgent: (statuses: readonly AgentAuthStatus[]) => Promise<AgentProvider | 'cancelled'>;
   readonly confirmReconfigure: (existingAgent: AgentProvider) => Promise<boolean | 'cancelled'>;
   readonly isTTY: boolean;
+  readonly confirmSkillInstall?: () => Promise<boolean | 'cancelled'>;
+  readonly selectSkillAgents?: (defaultAgent: AgentProvider) => Promise<readonly AgentProvider[] | 'cancelled'>;
+  readonly copySkills?: (agents: readonly AgentProvider[], projectRoot: string) => Result<readonly string[], string>;
+  readonly skillsExist?: (agents: readonly AgentProvider[], projectRoot: string) => boolean;
+  readonly confirmSkillUpdate?: () => Promise<boolean | 'cancelled'>;
+  readonly getProjectRoot?: () => string;
 }
+
+/**
+ * Agent-specific skill install directories.
+ * Gemini installs to both its own dir and the shared .agents dir.
+ */
+export const AGENT_SKILL_DIRS: Readonly<Record<AgentProvider, readonly string[]>> = Object.freeze({
+  claude: ['.claude/skills/autobeat'],
+  codex: ['.agents/skills/autobeat'],
+  gemini: ['.gemini/skills/autobeat', '.agents/skills/autobeat'],
+});
 
 // ============================================================================
 // Arg Parsing
 // ============================================================================
 
 export function parseInitArgs(args: readonly string[]): InitOptions {
-  const options: { agent?: string; yes?: boolean } = {};
+  const options: { agent?: string; yes?: boolean; installSkills?: boolean; skillsAgents?: string } = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -54,10 +81,110 @@ export function parseInitArgs(args: readonly string[]): InitOptions {
       }
     } else if (arg === '--yes' || arg === '-y') {
       options.yes = true;
+    } else if (arg === '--install-skills') {
+      options.installSkills = true;
+    } else if (arg.startsWith('--skills-agents=')) {
+      options.skillsAgents = arg.slice('--skills-agents='.length) || undefined;
+    } else if (arg === '--skills-agents') {
+      const next = args[i + 1];
+      if (next && !next.startsWith('-')) {
+        options.skillsAgents = next;
+        i++;
+      }
     }
   }
 
   return options;
+}
+
+// ============================================================================
+// Skill Install Logic
+// ============================================================================
+
+/**
+ * Resolve the skill source directory from the installed package.
+ * Works from both dist/ (compiled) and src/ (tsx) contexts.
+ */
+export function resolveSkillSource(): string {
+  const thisFile = fileURLToPath(import.meta.url);
+  // From dist/cli/commands/init.js or src/cli/commands/init.ts → package root
+  return path.resolve(path.dirname(thisFile), '..', '..', '..', 'skills', 'autobeat');
+}
+
+/**
+ * Get all target directories for the given agents in the project root.
+ * Deduplicates paths (e.g., codex and gemini both write to .agents/).
+ */
+export function getSkillTargetDirs(agents: readonly AgentProvider[], projectRoot: string): readonly string[] {
+  const seen = new Set<string>();
+  const dirs: string[] = [];
+
+  for (const agent of agents) {
+    for (const relative of AGENT_SKILL_DIRS[agent]) {
+      const abs = path.resolve(projectRoot, relative);
+      if (!seen.has(abs)) {
+        seen.add(abs);
+        dirs.push(abs);
+      }
+    }
+  }
+
+  return dirs;
+}
+
+/**
+ * Check if any skill directories already exist for the given agents.
+ */
+export function defaultSkillsExist(agents: readonly AgentProvider[], projectRoot: string): boolean {
+  const dirs = getSkillTargetDirs(agents, projectRoot);
+  return dirs.some((dir) => existsSync(dir));
+}
+
+/**
+ * Copy skills from the package source to agent-specific directories.
+ * Returns all installed paths on success.
+ */
+export function defaultCopySkills(
+  agents: readonly AgentProvider[],
+  projectRoot: string,
+): Result<readonly string[], string> {
+  const source = resolveSkillSource();
+  if (!existsSync(source)) {
+    return err(`Skill source not found: ${source}`);
+  }
+
+  const dirs = getSkillTargetDirs(agents, projectRoot);
+  const installed: string[] = [];
+
+  for (const dir of dirs) {
+    try {
+      if (existsSync(dir)) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+      cpSync(source, dir, { recursive: true });
+      installed.push(dir);
+    } catch (e) {
+      return err(`Failed to copy skills to ${dir}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  return ok(installed);
+}
+
+/**
+ * Parse --skills-agents flag value into validated agent providers.
+ */
+export function parseSkillsAgents(value: string): Result<readonly AgentProvider[], string> {
+  const parts = value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const part of parts) {
+    if (!isAgentProvider(part)) {
+      return err(`Unknown agent in --skills-agents: "${part}". Available: ${AGENT_PROVIDERS.join(', ')}`);
+    }
+  }
+  return ok(parts as AgentProvider[]);
 }
 
 // ============================================================================
@@ -81,6 +208,16 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<Ini
     }
 
     const status = deps.checkAuth(options.agent);
+
+    // Non-interactive skill install: --install-skills
+    if (options.installSkills && deps.copySkills) {
+      const skillResult = await runSkillInstall(options.agent, options, deps);
+      if (skillResult.code === 1) return skillResult;
+      if ('skillPaths' in skillResult) {
+        return { code: 0, agent: options.agent, status, skillPaths: skillResult.skillPaths };
+      }
+    }
+
     return { code: 0, agent: options.agent, status };
   }
 
@@ -117,7 +254,89 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<Ini
   if (!status) {
     return { code: 1, reason: `Internal error: no auth status for '${selected}'` };
   }
+
+  // Interactive skill install (only if deps are available)
+  if (deps.confirmSkillInstall) {
+    const skillResult = await runSkillInstall(selected, options, deps);
+    if (skillResult.code === 1) return skillResult;
+    if ('skillPaths' in skillResult) {
+      return { code: 0, agent: selected, status, skillPaths: skillResult.skillPaths };
+    }
+  }
+
   return { code: 0, agent: selected, status };
+}
+
+/**
+ * Skill install sub-flow — shared between interactive and non-interactive paths.
+ * Returns an InitResult fragment: either skillPaths on success, a reason on skip, or error.
+ */
+async function runSkillInstall(
+  defaultAgent: AgentProvider,
+  options: InitOptions,
+  deps: InitDeps,
+): Promise<{ code: 0; skillPaths: readonly string[] } | { code: 0; reason: string } | { code: 1; reason: string }> {
+  const projectRoot = deps.getProjectRoot?.() ?? process.cwd();
+
+  // Determine target agents
+  let agents: readonly AgentProvider[];
+
+  if (options.skillsAgents) {
+    // Non-interactive: explicit --skills-agents
+    const parsed = parseSkillsAgents(options.skillsAgents);
+    if (!parsed.ok) {
+      return { code: 1, reason: parsed.error };
+    }
+    agents = parsed.value;
+  } else if (options.installSkills && !deps.isTTY) {
+    // Non-interactive without --skills-agents: install for default agent only
+    agents = [defaultAgent];
+  } else if (deps.selectSkillAgents) {
+    // Interactive: ask which agents
+    const confirmResult = await deps.confirmSkillInstall?.();
+    if (confirmResult === 'cancelled') {
+      return { code: 0, reason: 'Skills install cancelled.' };
+    }
+    if (!confirmResult) {
+      return { code: 0, reason: 'Skills install skipped.' };
+    }
+
+    const selectedAgents = await deps.selectSkillAgents(defaultAgent);
+    if (selectedAgents === 'cancelled') {
+      return { code: 0, reason: 'Skills install cancelled.' };
+    }
+    agents = selectedAgents;
+  } else {
+    // No skill deps available — skip silently
+    return { code: 0, reason: 'Skills install skipped.' };
+  }
+
+  if (agents.length === 0) {
+    return { code: 0, reason: 'No agents selected for skills.' };
+  }
+
+  // Check for existing skills
+  if (deps.skillsExist?.(agents, projectRoot) && !options.yes && deps.confirmSkillUpdate) {
+    const updateResult = await deps.confirmSkillUpdate();
+    if (updateResult === 'cancelled') {
+      return { code: 0, reason: 'Skills update cancelled.' };
+    }
+    if (!updateResult) {
+      return { code: 0, reason: 'Skills unchanged.' };
+    }
+  }
+
+  // Copy skills
+  if (!deps.copySkills) {
+    return { code: 0, reason: 'Skills install skipped.' };
+  }
+
+  const copyResult = deps.copySkills(agents, projectRoot);
+  if (!copyResult.ok) {
+    return { code: 1, reason: copyResult.error };
+  }
+
+  return { code: 0, skillPaths: copyResult.value };
 }
 
 // ============================================================================
@@ -184,6 +403,48 @@ export function createDefaultDeps(): InitDeps {
     },
 
     isTTY: process.stderr.isTTY === true,
+
+    async confirmSkillInstall(): Promise<boolean | 'cancelled'> {
+      const result = await p.confirm({
+        message: 'Install agent skills for autobeat orchestration?',
+        initialValue: true,
+        output: process.stderr,
+      });
+
+      if (p.isCancel(result)) return 'cancelled';
+      return result;
+    },
+
+    async selectSkillAgents(defaultAgent: AgentProvider): Promise<readonly AgentProvider[] | 'cancelled'> {
+      const result = await p.multiselect({
+        message: 'Which agents will use autobeat in this project?',
+        options: AGENT_PROVIDERS.map((provider) => ({
+          value: provider,
+          label: `${provider} — ${AGENT_DESCRIPTIONS[provider]}`,
+        })),
+        initialValues: [defaultAgent],
+        required: true,
+        output: process.stderr,
+      });
+
+      if (p.isCancel(result)) return 'cancelled';
+      return result;
+    },
+
+    copySkills: defaultCopySkills,
+    skillsExist: defaultSkillsExist,
+    getProjectRoot: () => process.cwd(),
+
+    async confirmSkillUpdate(): Promise<boolean | 'cancelled'> {
+      const result = await p.confirm({
+        message: 'Skills already installed. Update to latest version?',
+        initialValue: true,
+        output: process.stderr,
+      });
+
+      if (p.isCancel(result)) return 'cancelled';
+      return result;
+    },
   };
 }
 
@@ -208,15 +469,18 @@ export async function initCommand(args: readonly string[]): Promise<void> {
   }
 
   if ('agent' in result) {
-    if (isInteractive) {
-      if (result.status.hint) {
-        ui.info(result.status.hint);
+    if (result.status.hint) {
+      ui.info(result.status.hint);
+    }
+    if (result.skillPaths && result.skillPaths.length > 0) {
+      ui.success('Agent skills installed:');
+      for (const skillPath of result.skillPaths) {
+        ui.step(`  ${skillPath}`);
       }
+    }
+    if (isInteractive) {
       ui.outro(`Default agent set to '${result.agent}'. Config: ${CONFIG_FILE_PATH}`);
     } else {
-      if (result.status.hint) {
-        ui.info(result.status.hint);
-      }
       ui.success(`Default agent set to '${result.agent}'`);
     }
   } else if (result.reason === 'Setup cancelled.') {

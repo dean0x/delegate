@@ -154,6 +154,7 @@ Quick reference for common operations:
 | Event handlers | `src/services/handlers/` |
 | Handler setup | `src/services/handler-setup.ts` |
 | MCP adapter | `src/adapters/mcp-adapter.ts` |
+| MCP instructions | `src/adapters/mcp-instructions.ts` |
 | CLI | `src/cli.ts` |
 | Worker repository | `src/implementations/worker-repository.ts` |
 | Schedule repository | `src/implementations/schedule-repository.ts` |
@@ -167,6 +168,7 @@ Quick reference for common operations:
 | Agent exit condition evaluator | `src/services/agent-exit-condition-evaluator.ts` |
 | Composite exit condition evaluator | `src/services/composite-exit-condition-evaluator.ts` |
 | Migrate command | `src/cli/commands/migrate.ts` |
+| Agent skill content | `skills/autobeat/` |
 
 ## Documentation Structure
 

@@ -41,6 +41,7 @@ import { Logger, LoopService, OrchestrationService, ScheduleService, TaskManager
 import { match } from '../core/result.js';
 import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
 import { validatePath } from '../utils/validation.js';
+import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 
 // Zod schemas for MCP protocol validation
 const DelegateTaskSchema = z.object({
@@ -399,6 +400,7 @@ export class MCPAdapter {
         capabilities: {
           tools: {},
         },
+        instructions: MCP_INSTRUCTIONS,
       },
     );
 
