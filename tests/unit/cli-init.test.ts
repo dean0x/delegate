@@ -41,7 +41,7 @@ function makeSkillDeps(overrides: Partial<InitDeps> = {}): InitDeps {
   return makeDeps({
     confirmSkillInstall: async () => true,
     selectSkillAgents: async () => ['claude'],
-    copySkills: () => ({ ok: true, paths: ['/project/.claude/skills/autobeat'] }),
+    copySkills: () => ({ ok: true, value: ['/project/.claude/skills/autobeat'] }),
     skillsExist: () => false,
     confirmSkillUpdate: async () => true,
     ...overrides,
@@ -116,25 +116,29 @@ describe('parseInitArgs', () => {
 
 describe('parseSkillsAgents', () => {
   it('should parse valid single agent', () => {
-    expect(parseSkillsAgents('claude')).toEqual(['claude']);
+    const result = parseSkillsAgents('claude');
+    expect(result).toEqual({ ok: true, value: ['claude'] });
   });
 
   it('should parse valid comma-separated agents', () => {
-    expect(parseSkillsAgents('claude,codex,gemini')).toEqual(['claude', 'codex', 'gemini']);
+    const result = parseSkillsAgents('claude,codex,gemini');
+    expect(result).toEqual({ ok: true, value: ['claude', 'codex', 'gemini'] });
   });
 
   it('should trim whitespace', () => {
-    expect(parseSkillsAgents('claude , codex')).toEqual(['claude', 'codex']);
+    const result = parseSkillsAgents('claude , codex');
+    expect(result).toEqual({ ok: true, value: ['claude', 'codex'] });
   });
 
   it('should reject unknown agent', () => {
     const result = parseSkillsAgents('claude,gpt4');
-    expect(typeof result).toBe('string');
-    expect(result).toContain('gpt4');
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain('gpt4');
   });
 
   it('should filter empty strings', () => {
-    expect(parseSkillsAgents('claude,,codex')).toEqual(['claude', 'codex']);
+    const result = parseSkillsAgents('claude,,codex');
+    expect(result).toEqual({ ok: true, value: ['claude', 'codex'] });
   });
 });
 
@@ -345,7 +349,7 @@ describe('runInit — skill install (interactive)', () => {
       copySkills(agents, projectRoot) {
         copiedAgents = agents;
         copiedRoot = projectRoot;
-        return { ok: true, paths: ['/project/.claude/skills/autobeat'] };
+        return { ok: true, value: ['/project/.claude/skills/autobeat'] };
       },
     });
 
@@ -380,7 +384,7 @@ describe('runInit — skill install (interactive)', () => {
       confirmSkillInstall: async () => false,
       copySkills() {
         copyCalled = true;
-        return { ok: true, paths: [] };
+        return { ok: true, value: [] };
       },
     });
 
@@ -439,7 +443,7 @@ describe('runInit — skill install (interactive)', () => {
       confirmSkillUpdate: async () => false,
       copySkills() {
         copyCalled = true;
-        return { ok: true, paths: [] };
+        return { ok: true, value: [] };
       },
     });
 
@@ -458,7 +462,7 @@ describe('runInit — skill install (interactive)', () => {
         copiedAgents = agents;
         return {
           ok: true,
-          paths: [
+          value: [
             '/project/.claude/skills/autobeat',
             '/project/.agents/skills/autobeat',
             '/project/.gemini/skills/autobeat',
@@ -496,7 +500,7 @@ describe('runInit — skill install (non-interactive)', () => {
       isTTY: false,
       copySkills(agents) {
         copiedAgents = agents;
-        return { ok: true, paths: ['/project/.claude/skills/autobeat'] };
+        return { ok: true, value: ['/project/.claude/skills/autobeat'] };
       },
     });
 
@@ -513,7 +517,7 @@ describe('runInit — skill install (non-interactive)', () => {
       isTTY: false,
       copySkills(agents) {
         copiedAgents = agents;
-        return { ok: true, paths: ['/project/.claude/skills/autobeat', '/project/.agents/skills/autobeat'] };
+        return { ok: true, value: ['/project/.claude/skills/autobeat', '/project/.agents/skills/autobeat'] };
       },
     });
 
@@ -539,7 +543,7 @@ describe('runInit — skill install (non-interactive)', () => {
       isTTY: false,
       copySkills() {
         copyCalled = true;
-        return { ok: true, paths: [] };
+        return { ok: true, value: [] };
       },
     });
 
@@ -563,7 +567,7 @@ describe('runInit — skill install (non-interactive)', () => {
       },
       copySkills() {
         copyCalled = true;
-        return { ok: true, paths: ['/project/.claude/skills/autobeat'] };
+        return { ok: true, value: ['/project/.claude/skills/autobeat'] };
       },
     });
 

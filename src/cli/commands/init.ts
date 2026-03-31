@@ -7,12 +7,13 @@
  */
 
 import * as p from '@clack/prompts';
-import { cpSync, existsSync } from 'fs';
+import { cpSync, existsSync, rmSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { AgentAuthStatus, AgentProvider } from '../../core/agents.js';
 import { AGENT_DESCRIPTIONS, AGENT_PROVIDERS, checkAgentAuth, isAgentProvider } from '../../core/agents.js';
 import { CONFIG_FILE_PATH, loadAgentConfig, loadConfigFile, saveConfigValue } from '../../core/configuration.js';
+import { err, ok, type Result } from '../../core/result.js';
 import * as ui from '../ui.js';
 
 // ============================================================================
@@ -45,12 +46,10 @@ export interface InitDeps {
   readonly isTTY: boolean;
   readonly confirmSkillInstall?: () => Promise<boolean | 'cancelled'>;
   readonly selectSkillAgents?: (defaultAgent: AgentProvider) => Promise<readonly AgentProvider[] | 'cancelled'>;
-  readonly copySkills?: (
-    agents: readonly AgentProvider[],
-    projectRoot: string,
-  ) => { ok: true; paths: readonly string[] } | { ok: false; error: string };
+  readonly copySkills?: (agents: readonly AgentProvider[], projectRoot: string) => Result<readonly string[], string>;
   readonly skillsExist?: (agents: readonly AgentProvider[], projectRoot: string) => boolean;
   readonly confirmSkillUpdate?: () => Promise<boolean | 'cancelled'>;
+  readonly getProjectRoot?: () => string;
 }
 
 /**
@@ -148,10 +147,10 @@ export function defaultSkillsExist(agents: readonly AgentProvider[], projectRoot
 export function defaultCopySkills(
   agents: readonly AgentProvider[],
   projectRoot: string,
-): { ok: true; paths: readonly string[] } | { ok: false; error: string } {
+): Result<readonly string[], string> {
   const source = resolveSkillSource();
   if (!existsSync(source)) {
-    return { ok: false, error: `Skill source not found: ${source}` };
+    return err(`Skill source not found: ${source}`);
   }
 
   const dirs = getSkillTargetDirs(agents, projectRoot);
@@ -159,30 +158,33 @@ export function defaultCopySkills(
 
   for (const dir of dirs) {
     try {
+      if (existsSync(dir)) {
+        rmSync(dir, { recursive: true, force: true });
+      }
       cpSync(source, dir, { recursive: true });
       installed.push(dir);
     } catch (e) {
-      return { ok: false, error: `Failed to copy skills to ${dir}: ${e instanceof Error ? e.message : String(e)}` };
+      return err(`Failed to copy skills to ${dir}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
-  return { ok: true, paths: installed };
+  return ok(installed);
 }
 
 /**
  * Parse --skills-agents flag value into validated agent providers.
  */
-export function parseSkillsAgents(value: string): readonly AgentProvider[] | string {
+export function parseSkillsAgents(value: string): Result<readonly AgentProvider[], string> {
   const parts = value
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
   for (const part of parts) {
     if (!isAgentProvider(part)) {
-      return `Unknown agent in --skills-agents: "${part}". Available: ${AGENT_PROVIDERS.join(', ')}`;
+      return err(`Unknown agent in --skills-agents: "${part}". Available: ${AGENT_PROVIDERS.join(', ')}`);
     }
   }
-  return parts as AgentProvider[];
+  return ok(parts as AgentProvider[]);
 }
 
 // ============================================================================
@@ -274,7 +276,7 @@ async function runSkillInstall(
   options: InitOptions,
   deps: InitDeps,
 ): Promise<{ code: 0; skillPaths: readonly string[] } | { code: 0; reason: string } | { code: 1; reason: string }> {
-  const projectRoot = process.cwd();
+  const projectRoot = deps.getProjectRoot?.() ?? process.cwd();
 
   // Determine target agents
   let agents: readonly AgentProvider[];
@@ -282,10 +284,10 @@ async function runSkillInstall(
   if (options.skillsAgents) {
     // Non-interactive: explicit --skills-agents
     const parsed = parseSkillsAgents(options.skillsAgents);
-    if (typeof parsed === 'string') {
-      return { code: 1, reason: parsed };
+    if (!parsed.ok) {
+      return { code: 1, reason: parsed.error };
     }
-    agents = parsed;
+    agents = parsed.value;
   } else if (options.installSkills && !deps.isTTY) {
     // Non-interactive without --skills-agents: install for default agent only
     agents = [defaultAgent];
@@ -338,7 +340,7 @@ async function runSkillInstall(
     return { code: 1, reason: copyResult.error };
   }
 
-  return { code: 0, skillPaths: copyResult.paths };
+  return { code: 0, skillPaths: copyResult.value };
 }
 
 // ============================================================================
@@ -435,6 +437,7 @@ export function createDefaultDeps(): InitDeps {
 
     copySkills: defaultCopySkills,
     skillsExist: defaultSkillsExist,
+    getProjectRoot: () => process.cwd(),
 
     async confirmSkillUpdate(): Promise<boolean | 'cancelled'> {
       const result = await p.confirm({
@@ -470,27 +473,18 @@ export async function initCommand(args: readonly string[]): Promise<void> {
   }
 
   if ('agent' in result) {
+    if (result.status.hint) {
+      ui.info(result.status.hint);
+    }
+    if (result.skillPaths && result.skillPaths.length > 0) {
+      ui.success('Agent skills installed:');
+      for (const skillPath of result.skillPaths) {
+        ui.step(`  ${skillPath}`);
+      }
+    }
     if (isInteractive) {
-      if (result.status.hint) {
-        ui.info(result.status.hint);
-      }
-      if (result.skillPaths && result.skillPaths.length > 0) {
-        ui.success('Agent skills installed:');
-        for (const p of result.skillPaths) {
-          ui.step(`  ${p}`);
-        }
-      }
       ui.outro(`Default agent set to '${result.agent}'. Config: ${CONFIG_FILE_PATH}`);
     } else {
-      if (result.status.hint) {
-        ui.info(result.status.hint);
-      }
-      if (result.skillPaths && result.skillPaths.length > 0) {
-        ui.success('Agent skills installed:');
-        for (const p of result.skillPaths) {
-          ui.step(`  ${p}`);
-        }
-      }
       ui.success(`Default agent set to '${result.agent}'`);
     }
   } else if (result.reason === 'Setup cancelled.') {
