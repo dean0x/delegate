@@ -21,7 +21,8 @@ export class ClaudeProcessSpawner implements ProcessSpawner {
     this.baseArgs = Object.freeze(['--print', '--dangerously-skip-permissions', '--output-format', 'json']);
   }
 
-  spawn(prompt: string, workingDirectory: string, taskId?: string): Result<{ process: ChildProcess; pid: number }> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  spawn(prompt: string, workingDirectory: string, taskId?: string, _model?: string): Result<{ process: ChildProcess; pid: number }> {
     try {
       // Make prompt more explicit if it looks like a simple command
       let finalPrompt = prompt;

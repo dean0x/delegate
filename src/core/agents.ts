@@ -77,6 +77,17 @@ export const AGENT_DESCRIPTIONS: Readonly<Record<AgentProvider, string>> = Objec
 });
 
 /**
+ * Base URL environment variable names per agent provider
+ * Used by BaseAgentAdapter.resolveBaseUrl() to check user env before config
+ * Single source of truth — infrastructure-level override
+ */
+export const AGENT_BASE_URL_ENV: Readonly<Record<AgentProvider, string>> = Object.freeze({
+  claude: 'ANTHROPIC_BASE_URL',
+  codex: 'OPENAI_BASE_URL',
+  gemini: 'GEMINI_BASE_URL',
+});
+
+/**
  * Auth requirements per agent provider — single source of truth
  *
  * ARCHITECTURE: Used by checkAgentAuth(), resolveAuth(), CLI `agents check`,
@@ -224,9 +235,15 @@ export interface AgentAdapter {
    * @param prompt - The task prompt to execute
    * @param workingDirectory - Directory to run in
    * @param taskId - Optional task ID for identification
+   * @param model - Optional model override (per-task model overrides agent config model)
    * @returns Process handle with PID, or error
    */
-  spawn(prompt: string, workingDirectory: string, taskId?: string): Result<{ process: ChildProcess; pid: number }>;
+  spawn(
+    prompt: string,
+    workingDirectory: string,
+    taskId?: string,
+    model?: string,
+  ): Result<{ process: ChildProcess; pid: number }>;
 
   /**
    * Kill an agent process by PID

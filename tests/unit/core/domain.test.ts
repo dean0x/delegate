@@ -507,5 +507,23 @@ describe('Domain Models - REAL Behavior Tests', () => {
       expect(Object.isFrozen(task)).toBe(true);
       expect(task.agent).toBe('gemini');
     });
+
+    it('should propagate model field from request to task', () => {
+      const task = createTask({
+        prompt: 'use specific model',
+        agent: 'claude',
+        model: 'claude-opus-4-5',
+      });
+
+      expect(task.model).toBe('claude-opus-4-5');
+    });
+
+    it('should leave model undefined when not provided', () => {
+      const task = createTask({
+        prompt: 'default model task',
+      });
+
+      expect(task.model).toBeUndefined();
+    });
   });
 });

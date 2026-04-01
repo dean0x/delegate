@@ -753,6 +753,13 @@ export class Database implements TransactionRunner {
           db.exec('ALTER TABLE loop_iterations ADD COLUMN eval_feedback TEXT');
         },
       },
+      {
+        version: 16,
+        description: 'Add model column to tasks for per-task model override',
+        up: (db) => {
+          db.exec('ALTER TABLE tasks ADD COLUMN model TEXT');
+        },
+      },
     ];
   }
 

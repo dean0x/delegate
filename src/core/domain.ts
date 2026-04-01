@@ -104,6 +104,10 @@ export interface Task {
   // Resolved by TaskManager: explicit task agent > config defaultAgent > error
   readonly agent?: AgentProvider;
 
+  // Model override (per-task): overrides agent-config default model and CLI default
+  // Resolution order: per-task > agent-config > CLI default
+  readonly model?: string;
+
   // Timestamps and results
   readonly createdAt: number;
   readonly updatedAt?: number;
@@ -180,6 +184,9 @@ export interface TaskRequest {
   // Multi-agent support (v0.5.0): Which agent provider to use
   // Resolved by TaskManager: explicit task agent > config defaultAgent > error
   readonly agent?: AgentProvider;
+
+  // Model override (per-task): overrides agent-config default model and CLI default
+  readonly model?: string;
 }
 
 export interface TaskUpdate {
@@ -232,6 +239,9 @@ export const createTask = (request: TaskRequest): Task => {
 
     // Multi-agent support (v0.5.0)
     agent: request.agent,
+
+    // Per-task model override
+    model: request.model,
 
     createdAt: now,
     updatedAt: now,
@@ -389,6 +399,7 @@ export interface ScheduleCreateRequest {
   readonly expiresAt?: string; // ISO 8601 string (parsed by service)
   readonly afterScheduleId?: ScheduleId; // Chain: block until after-schedule's latest task completes
   readonly agent?: AgentProvider; // Multi-agent support (v0.5.0)
+  readonly model?: string; // Per-schedule model override
 }
 
 /**
@@ -400,6 +411,7 @@ export interface PipelineStepRequest {
   readonly priority?: Priority;
   readonly workingDirectory?: string;
   readonly agent?: AgentProvider; // Multi-agent support (v0.5.0)
+  readonly model?: string; // Per-step model override
 }
 
 export interface PipelineCreateRequest {
@@ -407,6 +419,7 @@ export interface PipelineCreateRequest {
   readonly priority?: Priority; // shared default for all steps
   readonly workingDirectory?: string; // shared default for all steps
   readonly agent?: AgentProvider; // shared default for all steps
+  readonly model?: string; // shared default model for all steps
 }
 
 /**
@@ -427,6 +440,7 @@ export interface ScheduledPipelineCreateRequest {
   readonly expiresAt?: string; // ISO 8601 string (parsed by service)
   readonly afterScheduleId?: ScheduleId;
   readonly agent?: AgentProvider; // shared default for all steps
+  readonly model?: string; // shared default model for all steps
 }
 
 /**
@@ -608,6 +622,7 @@ export interface LoopCreateRequest {
   readonly pipelineSteps?: readonly string[];
   readonly priority?: Priority;
   readonly agent?: AgentProvider;
+  readonly model?: string; // Per-loop model override (applied to taskTemplate)
   readonly gitBranch?: string; // Branch name for loop iteration work (v0.8.0)
 }
 
@@ -626,6 +641,7 @@ export const createLoop = (request: LoopCreateRequest, workingDirectory: string,
       priority: request.priority,
       workingDirectory,
       agent: request.agent,
+      model: request.model,
     },
     pipelineSteps: request.pipelineSteps,
     exitCondition: request.exitCondition ?? '',
@@ -697,6 +713,7 @@ export interface Orchestration {
   readonly stateFilePath: string;
   readonly workingDirectory: string;
   readonly agent?: AgentProvider;
+  readonly model?: string;
   readonly maxDepth: number;
   readonly maxWorkers: number;
   readonly maxIterations: number;
@@ -714,6 +731,7 @@ export interface OrchestratorCreateRequest {
   readonly goal: string;
   readonly workingDirectory?: string;
   readonly agent?: AgentProvider;
+  readonly model?: string;
   readonly maxDepth?: number;
   readonly maxWorkers?: number;
   readonly maxIterations?: number;
@@ -737,6 +755,7 @@ export const createOrchestration = (
     stateFilePath,
     workingDirectory,
     agent: request.agent,
+    model: request.model,
     maxDepth: request.maxDepth ?? 3,
     maxWorkers: request.maxWorkers ?? 5,
     maxIterations: request.maxIterations ?? 50,

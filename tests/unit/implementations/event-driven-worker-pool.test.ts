@@ -247,7 +247,7 @@ describe('EventDrivenWorkerPool', () => {
 
       await pool.spawn(task);
 
-      expect(spawner.spawn as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.prompt, '/my/project', task.id);
+      expect(spawner.spawn as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.prompt, '/my/project', task.id, task.model);
     });
 
     it('should fall back to process.cwd() when no workingDirectory provided', async () => {
@@ -255,7 +255,7 @@ describe('EventDrivenWorkerPool', () => {
 
       await pool.spawn(task);
 
-      expect(spawner.spawn as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.prompt, process.cwd(), task.id);
+      expect(spawner.spawn as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.prompt, process.cwd(), task.id, task.model);
     });
 
     it('should increase worker count after successful spawn', async () => {

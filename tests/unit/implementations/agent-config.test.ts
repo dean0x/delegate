@@ -139,4 +139,79 @@ describe('Agent Config Storage', () => {
       expect(raw.agents).toBeUndefined();
     });
   });
+
+  describe('baseUrl support', () => {
+    it('should save and load baseUrl for a provider', () => {
+      const result = saveAgentConfig('claude', 'baseUrl', 'https://proxy.example.com/v1');
+      expect(result.ok).toBe(true);
+
+      const config = loadAgentConfig('claude');
+      expect(config.baseUrl).toBe('https://proxy.example.com/v1');
+    });
+
+    it('should strip trailing slash from baseUrl on save', () => {
+      saveAgentConfig('claude', 'baseUrl', 'https://proxy.example.com/v1/');
+      const config = loadAgentConfig('claude');
+      expect(config.baseUrl).toBe('https://proxy.example.com/v1');
+    });
+
+    it('should delete baseUrl when empty string is saved', () => {
+      saveAgentConfig('claude', 'baseUrl', 'https://proxy.example.com');
+      saveAgentConfig('claude', 'baseUrl', '');
+      const config = loadAgentConfig('claude');
+      expect(config.baseUrl).toBeUndefined();
+    });
+
+    it('should preserve apiKey when saving baseUrl', () => {
+      saveAgentConfig('claude', 'apiKey', 'sk-test');
+      saveAgentConfig('claude', 'baseUrl', 'https://proxy.example.com');
+
+      const config = loadAgentConfig('claude');
+      expect(config.apiKey).toBe('sk-test');
+      expect(config.baseUrl).toBe('https://proxy.example.com');
+    });
+
+    it('should preserve baseUrl when saving apiKey', () => {
+      saveAgentConfig('claude', 'baseUrl', 'https://proxy.example.com');
+      saveAgentConfig('claude', 'apiKey', 'sk-test');
+
+      const config = loadAgentConfig('claude');
+      expect(config.baseUrl).toBe('https://proxy.example.com');
+      expect(config.apiKey).toBe('sk-test');
+    });
+  });
+
+  describe('model support', () => {
+    it('should save and load model for a provider', () => {
+      const result = saveAgentConfig('claude', 'model', 'claude-opus-4-5');
+      expect(result.ok).toBe(true);
+
+      const config = loadAgentConfig('claude');
+      expect(config.model).toBe('claude-opus-4-5');
+    });
+
+    it('should delete model when empty string is saved', () => {
+      saveAgentConfig('claude', 'model', 'claude-opus-4-5');
+      saveAgentConfig('claude', 'model', '');
+      const config = loadAgentConfig('claude');
+      expect(config.model).toBeUndefined();
+    });
+
+    it('should preserve apiKey when saving model', () => {
+      saveAgentConfig('codex', 'apiKey', 'sk-openai');
+      saveAgentConfig('codex', 'model', 'gpt-4o');
+
+      const config = loadAgentConfig('codex');
+      expect(config.apiKey).toBe('sk-openai');
+      expect(config.model).toBe('gpt-4o');
+    });
+
+    it('should not clobber fields across different providers', () => {
+      saveAgentConfig('claude', 'model', 'claude-opus-4-5');
+      saveAgentConfig('codex', 'model', 'gpt-4o');
+
+      expect(loadAgentConfig('claude').model).toBe('claude-opus-4-5');
+      expect(loadAgentConfig('codex').model).toBe('gpt-4o');
+    });
+  });
 });

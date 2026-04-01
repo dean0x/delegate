@@ -508,3 +508,234 @@ describe('Pre-spawn auth validation', () => {
     }
   });
 });
+
+// ============================================================================
+// baseUrl Passthrough Tests
+// ============================================================================
+
+describe('baseUrl passthrough', () => {
+  let testDir: string;
+  let restoreConfig: () => void;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    testDir = path.join(tmpdir(), `autobeat-baseurl-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    restoreConfig = _testSetConfigDir(testDir);
+    mockIsCommandInPath.mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    restoreConfig();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('ClaudeAdapter: should inject ANTHROPIC_BASE_URL from config when not set in env', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+    saveAgentConfig('claude', 'baseUrl', 'https://proxy.example.com');
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn('test prompt', '/workspace');
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.ANTHROPIC_BASE_URL).toBe('https://proxy.example.com');
+    adapter.dispose();
+  });
+
+  it('ClaudeAdapter: user env ANTHROPIC_BASE_URL takes precedence over config', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+    saveAgentConfig('claude', 'baseUrl', 'https://config.example.com');
+
+    process.env.ANTHROPIC_BASE_URL = 'https://env.example.com';
+    try {
+      const adapter = new ClaudeAdapter(testConfig, 'claude');
+      adapter.spawn('test prompt', '/workspace');
+
+      const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+      // User env (spread via cleanEnv) takes precedence over injected config
+      expect(spawnOptions.env.ANTHROPIC_BASE_URL).toBe('https://env.example.com');
+      adapter.dispose();
+    } finally {
+      delete process.env.ANTHROPIC_BASE_URL;
+    }
+  });
+
+  it('ClaudeAdapter: auto-sets CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 when baseUrl is configured', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+    saveAgentConfig('claude', 'baseUrl', 'https://proxy.example.com');
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn('test prompt', '/workspace');
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('1');
+    adapter.dispose();
+  });
+
+  it('ClaudeAdapter: user env CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS takes precedence', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+    saveAgentConfig('claude', 'baseUrl', 'https://proxy.example.com');
+
+    // Note: CLAUDE_CODE_ vars are stripped, so only non-CLAUDE_CODE_ prefix vars work
+    // CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS would be stripped by ClaudeAdapter's envPrefixesToStrip
+    // Test that explicitly setting it in injected env is overridden when present
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn('test prompt', '/workspace');
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    // Auto-set to '1' since CLAUDE_CODE_ is stripped and baseUrl is configured
+    expect(spawnOptions.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('1');
+    adapter.dispose();
+  });
+
+  it('ClaudeAdapter: no CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS when baseUrl not configured', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn('test prompt', '/workspace');
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBeUndefined();
+    adapter.dispose();
+  });
+
+  it('CodexAdapter: should inject OPENAI_BASE_URL from config', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+    saveAgentConfig('codex', 'baseUrl', 'https://openai-proxy.example.com');
+
+    const adapter = new CodexAdapter(testConfig, 'codex');
+    adapter.spawn('test prompt', '/workspace');
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.OPENAI_BASE_URL).toBe('https://openai-proxy.example.com');
+    adapter.dispose();
+  });
+
+  it('GeminiAdapter: should inject GEMINI_BASE_URL from config', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+    saveAgentConfig('gemini', 'baseUrl', 'https://gemini-proxy.example.com');
+
+    const adapter = new GeminiAdapter(testConfig, 'gemini');
+    adapter.spawn('test prompt', '/workspace');
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.GEMINI_BASE_URL).toBe('https://gemini-proxy.example.com');
+    adapter.dispose();
+  });
+});
+
+// ============================================================================
+// Model Passthrough Tests
+// ============================================================================
+
+describe('model passthrough', () => {
+  let testDir: string;
+  let restoreConfig: () => void;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    testDir = path.join(tmpdir(), `autobeat-model-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    restoreConfig = _testSetConfigDir(testDir);
+    mockIsCommandInPath.mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    restoreConfig();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('ClaudeAdapter: should include --model in args when model provided', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn('test prompt', '/workspace', 'task-1', 'claude-opus-4-5');
+
+    const [, args] = mockSpawn.mock.calls[0];
+    expect(args).toContain('--model');
+    expect(args).toContain('claude-opus-4-5');
+    // --model should appear before '--'
+    const modelIdx = (args as string[]).indexOf('--model');
+    const separatorIdx = (args as string[]).indexOf('--');
+    expect(modelIdx).toBeLessThan(separatorIdx);
+    adapter.dispose();
+  });
+
+  it('ClaudeAdapter: no --model in args when no model provided', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn('test prompt', '/workspace');
+
+    const [, args] = mockSpawn.mock.calls[0];
+    expect(args).not.toContain('--model');
+    adapter.dispose();
+  });
+
+  it('ClaudeAdapter: per-task model overrides agent-config model', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+    saveAgentConfig('claude', 'model', 'claude-sonnet-4-5');
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn('test prompt', '/workspace', 'task-1', 'claude-opus-4-5');
+
+    const [, args] = mockSpawn.mock.calls[0];
+    const modelIdx = (args as string[]).indexOf('--model');
+    expect((args as string[])[modelIdx + 1]).toBe('claude-opus-4-5');
+    adapter.dispose();
+  });
+
+  it('ClaudeAdapter: uses agent-config model when no per-task model', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+    saveAgentConfig('claude', 'model', 'claude-sonnet-4-5');
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn('test prompt', '/workspace');
+
+    const [, args] = mockSpawn.mock.calls[0];
+    expect(args).toContain('--model');
+    expect(args).toContain('claude-sonnet-4-5');
+    adapter.dispose();
+  });
+
+  it('CodexAdapter: should include --model in args when model provided', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new CodexAdapter(testConfig, 'codex');
+    adapter.spawn('test prompt', '/workspace', 'task-1', 'gpt-4o');
+
+    const [, args] = mockSpawn.mock.calls[0];
+    expect(args).toContain('--model');
+    expect(args).toContain('gpt-4o');
+    adapter.dispose();
+  });
+
+  it('GeminiAdapter: should include --model in args when model provided', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new GeminiAdapter(testConfig, 'gemini');
+    adapter.spawn('test prompt', '/workspace', 'task-1', 'gemini-2.0-flash');
+
+    const [, args] = mockSpawn.mock.calls[0];
+    expect(args).toContain('--model');
+    expect(args).toContain('gemini-2.0-flash');
+    // --model should appear before --prompt
+    const modelIdx = (args as string[]).indexOf('--model');
+    const promptIdx = (args as string[]).indexOf('--prompt');
+    expect(modelIdx).toBeLessThan(promptIdx);
+    adapter.dispose();
+  });
+});

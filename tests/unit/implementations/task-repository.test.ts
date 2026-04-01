@@ -301,4 +301,72 @@ describe('SQLiteTaskRepository', () => {
       expect(found).toBeNull();
     });
   });
+
+  describe('model field persistence', () => {
+    it('should save and retrieve task with model', async () => {
+      const task = createTestTask({
+        id: 'task-with-model',
+        model: 'claude-opus-4-5',
+      });
+      await repo.save(task);
+
+      const result = await repo.findById(TaskId('task-with-model'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).not.toBeNull();
+      expect(result.value!.model).toBe('claude-opus-4-5');
+    });
+
+    it('should save and retrieve task without model as undefined', async () => {
+      const task = createTestTask({
+        id: 'task-no-model',
+      });
+      await repo.save(task);
+
+      const result = await repo.findById(TaskId('task-no-model'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).not.toBeNull();
+      expect(result.value!.model).toBeUndefined();
+    });
+
+    it('should update model via update()', async () => {
+      const task = createTestTask({ id: 'task-update-model' });
+      await repo.save(task);
+
+      const updateResult = await repo.update(TaskId('task-update-model'), {
+        model: 'gpt-4o',
+      });
+      expect(updateResult.ok).toBe(true);
+
+      const result = await repo.findById(TaskId('task-update-model'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value!.model).toBe('gpt-4o');
+    });
+
+    it('should return model in findAll results', async () => {
+      const task = createTestTask({ id: 'findall-model-task', model: 'gemini-2.0-flash' });
+      await repo.save(task);
+
+      const result = await repo.findAll();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const found = result.value.find((t) => t.id === 'findall-model-task');
+      expect(found).toBeDefined();
+      expect(found!.model).toBe('gemini-2.0-flash');
+    });
+
+    it('should preserve model on tasks without model (backward compat)', async () => {
+      // Tasks created before migration v16 would have model=NULL
+      // Test that they deserialize to undefined (not null)
+      const task = createTestTask({ id: 'legacy-task' });
+      await repo.save(task);
+
+      const result = await repo.findById(TaskId('legacy-task'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value!.model).toBeUndefined();
+    });
+  });
 });

@@ -23,8 +23,13 @@ export class ProcessSpawnerAdapter implements AgentAdapter {
     this.provider = provider;
   }
 
-  spawn(prompt: string, workingDirectory: string, taskId?: string): Result<{ process: ChildProcess; pid: number }> {
-    return this.spawner.spawn(prompt, workingDirectory, taskId);
+  spawn(
+    prompt: string,
+    workingDirectory: string,
+    taskId?: string,
+    model?: string,
+  ): Result<{ process: ChildProcess; pid: number }> {
+    return this.spawner.spawn(prompt, workingDirectory, taskId, model);
   }
 
   kill(pid: number): Result<void> {

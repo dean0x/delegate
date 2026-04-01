@@ -13,7 +13,7 @@
  */
 
 import { ChildProcess, spawn } from 'child_process';
-import { AGENT_AUTH, AgentAdapter, AgentAuthConfig, AgentProvider, isCommandInPath } from '../core/agents.js';
+import { AGENT_AUTH, AGENT_BASE_URL_ENV, AgentAdapter, AgentAuthConfig, AgentProvider, isCommandInPath } from '../core/agents.js';
 import { Configuration, loadAgentConfig } from '../core/configuration.js';
 import { AutobeatError, agentMisconfigured, ErrorCode, processSpawnFailed } from '../core/errors.js';
 import { err, ok, Result, tryCatch } from '../core/result.js';
@@ -28,8 +28,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     protected readonly command: string,
   ) {}
 
-  /** Build CLI args for the given prompt */
-  protected abstract buildArgs(prompt: string): readonly string[];
+  /** Build CLI args for the given prompt and optional model override */
+  protected abstract buildArgs(prompt: string, model?: string): readonly string[];
 
   /** Env var prefixes to strip before spawning (prevents nesting issues) */
   protected abstract get envPrefixesToStrip(): readonly string[];
@@ -88,7 +88,41 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     return {};
   }
 
-  spawn(prompt: string, workingDirectory: string, taskId?: string): Result<{ process: ChildProcess; pid: number }> {
+  /**
+   * Resolve base URL env var to inject into spawn env.
+   * Resolution order: user env (already in cleanEnv, takes precedence) → config file.
+   * Returns env var name → value to inject. Empty object means nothing to inject.
+   */
+  protected resolveBaseUrl(): Record<string, string> {
+    const baseUrlEnvVar = AGENT_BASE_URL_ENV[this.provider];
+    // If user already has it set in their env, don't inject (cleanEnv will carry it through)
+    if (process.env[baseUrlEnvVar]) {
+      return {};
+    }
+    // Check config file
+    const agentConfig = loadAgentConfig(this.provider);
+    if (agentConfig.baseUrl) {
+      return { [baseUrlEnvVar]: agentConfig.baseUrl };
+    }
+    return {};
+  }
+
+  /**
+   * Resolve the model to use for this spawn.
+   * Resolution order: per-task model → agent-config model → undefined (use CLI default).
+   */
+  protected resolveModel(taskModel?: string): string | undefined {
+    if (taskModel) return taskModel;
+    const agentConfig = loadAgentConfig(this.provider);
+    return agentConfig.model;
+  }
+
+  spawn(
+    prompt: string,
+    workingDirectory: string,
+    taskId?: string,
+    model?: string,
+  ): Result<{ process: ChildProcess; pid: number }> {
     try {
       // Pre-spawn: verify CLI binary exists before anything else
       if (!isCommandInPath(this.command)) {
@@ -104,8 +138,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const authResult = this.resolveAuth();
       if (!authResult.ok) return authResult;
 
+      const resolvedModel = this.resolveModel(model);
       const finalPrompt = this.transformPrompt(prompt);
-      const args = this.buildArgs(finalPrompt);
+      const args = this.buildArgs(finalPrompt, resolvedModel);
 
       const exactMatches = this.envExactMatchesToStrip;
       const cleanEnv = Object.fromEntries(
@@ -113,10 +148,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           ([key]) => !this.envPrefixesToStrip.some((prefix) => key.startsWith(prefix)) && !exactMatches.includes(key),
         ),
       );
+      const baseUrlEnv = this.resolveBaseUrl();
       const env = {
         ...this.additionalEnv,
         ...cleanEnv,
         ...authResult.value.injectedEnv,
+        ...baseUrlEnv,
         AUTOBEAT_WORKER: 'true',
         ...(taskId && { AUTOBEAT_TASK_ID: taskId }),
       };

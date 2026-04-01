@@ -94,7 +94,7 @@ export async function agentsConfigSet(
   value: string | undefined,
 ): Promise<void> {
   if (!agent || !key || !value) {
-    ui.error('Usage: beat agents config set <agent> apiKey <value>');
+    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model> <value>');
     process.exit(1);
   }
 
@@ -103,15 +103,18 @@ export async function agentsConfigSet(
     process.exit(1);
   }
 
-  if (key !== 'apiKey') {
-    ui.error(`Unknown config key: "${key}". Valid keys: apiKey`);
+  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model') {
+    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model`);
     process.exit(1);
   }
 
-  ui.note(
-    'API keys passed as CLI arguments may be stored in shell history. Consider using an environment variable instead.',
-    'Warning',
-  );
+  // Shell history warning only for apiKey (not baseUrl/model which are not secrets)
+  if (key === 'apiKey') {
+    ui.note(
+      'API keys passed as CLI arguments may be stored in shell history. Consider using an environment variable instead.',
+      'Warning',
+    );
+  }
 
   const result = saveAgentConfig(agent, key, value);
   if (!result.ok) {
@@ -119,7 +122,11 @@ export async function agentsConfigSet(
     process.exit(1);
   }
 
-  ui.success(`${agent}.${key} saved (${maskApiKey(value)})`);
+  if (key === 'apiKey') {
+    ui.success(`${agent}.${key} saved (${maskApiKey(value)})`);
+  } else {
+    ui.success(`${agent}.${key} saved: ${value}`);
+  }
   process.exit(0);
 }
 
@@ -139,10 +146,21 @@ export async function agentsConfigShow(agent?: string): Promise<void> {
     const config = loadAgentConfig(p);
     const auth = AGENT_AUTH[p];
 
+    const parts: string[] = [];
     if (config.apiKey) {
-      lines.push(`${p.padEnd(10)} apiKey: ${maskApiKey(config.apiKey)} (env var: ${auth.envVars[0]})`);
+      parts.push(`apiKey: ${maskApiKey(config.apiKey)} (env var: ${auth.envVars[0]})`);
+    }
+    if (config.baseUrl) {
+      parts.push(`baseUrl: ${config.baseUrl}`);
+    }
+    if (config.model) {
+      parts.push(`model: ${config.model}`);
+    }
+
+    if (parts.length > 0) {
+      lines.push(`${p.padEnd(10)} ${parts.join(' | ')}`);
     } else {
-      lines.push(`${p.padEnd(10)} ${ui.dim('(no stored key)')}`);
+      lines.push(`${p.padEnd(10)} ${ui.dim('(no stored config)')}`);
     }
   }
 

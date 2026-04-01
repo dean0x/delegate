@@ -283,6 +283,7 @@ export class TaskManagerService implements TaskManager {
       retryCount,
       retryOf: taskId,
       agent: originalTask.agent,
+      model: originalTask.model,
     };
 
     // Create the new retry task
@@ -388,6 +389,7 @@ export class TaskManagerService implements TaskManager {
       retryCount,
       retryOf: taskId,
       agent: originalTask.agent,
+      model: originalTask.model,
     };
 
     const newTask = createTask(resumeRequest);

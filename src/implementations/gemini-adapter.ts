@@ -16,8 +16,9 @@ export class GeminiAdapter extends BaseAgentAdapter {
     super(config, geminiCommand);
   }
 
-  protected buildArgs(prompt: string): readonly string[] {
-    return ['--yolo', '--prompt', prompt];
+  protected buildArgs(prompt: string, model?: string): readonly string[] {
+    const modelArgs: string[] = model ? ['--model', model] : [];
+    return ['--yolo', ...modelArgs, '--prompt', prompt];
   }
 
   protected get additionalEnv(): Record<string, string> {

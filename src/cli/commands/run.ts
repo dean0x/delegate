@@ -133,6 +133,7 @@ export async function runTask(
     timeout?: number;
     maxOutputBuffer?: number;
     agent?: string;
+    model?: string;
   },
 ): Promise<void> {
   let container: Container | undefined;
@@ -167,6 +168,7 @@ export async function runTask(
       if (options.priority) params.push(`Priority: ${options.priority}`);
       if (options.workingDirectory) params.push(`Dir: ${options.workingDirectory}`);
       if (options.agent) params.push(`Agent: ${options.agent}`);
+      if (options.model) params.push(`Model: ${options.model}`);
       if (options.dependsOn && options.dependsOn.length > 0) params.push(`Deps: ${options.dependsOn.join(', ')}`);
       if (options.continueFrom) params.push(`Continue from: ${options.continueFrom}`);
       if (options.timeout) params.push(`Timeout: ${ui.formatMs(options.timeout)}`);
@@ -181,6 +183,7 @@ export async function runTask(
       dependsOn: options?.dependsOn?.map((id: string) => TaskId(id)),
       continueFrom: options?.continueFrom ? TaskId(options.continueFrom) : undefined,
       agent: options?.agent as AgentProvider | undefined,
+      model: options?.model,
     };
 
     const result = await taskManager.delegate(request);

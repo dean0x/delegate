@@ -12,6 +12,7 @@ export const createTestTask = (overrides?: Partial<Task>): Task => ({
   timeout: 300000,
   maxOutputBuffer: 10485760,
   agent: 'claude',
+  model: undefined,
   ...overrides,
 });
 

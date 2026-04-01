@@ -35,6 +35,7 @@ const TaskRowSchema = z.object({
   dependencies: z.string().nullable(),
   continue_from: z.string().nullable(),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).nullable(),
+  model: z.string().nullable(),
 });
 
 /**
@@ -60,6 +61,7 @@ interface TaskRow {
   readonly dependencies: string | null;
   readonly continue_from: string | null;
   readonly agent: string | null;
+  readonly model: string | null;
 }
 
 export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations {
@@ -86,12 +88,12 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
         id, prompt, status, priority, working_directory,
         timeout, max_output_buffer,
         created_at, started_at, completed_at, worker_id, exit_code, dependencies,
-        parent_task_id, retry_count, retry_of, continue_from, agent
+        parent_task_id, retry_count, retry_of, continue_from, agent, model
       ) VALUES (
         @id, @prompt, @status, @priority, @workingDirectory,
         @timeout, @maxOutputBuffer,
         @createdAt, @startedAt, @completedAt, @workerId, @exitCode, @dependencies,
-        @parentTaskId, @retryCount, @retryOf, @continueFrom, @agent
+        @parentTaskId, @retryCount, @retryOf, @continueFrom, @agent, @model
       )
     `);
 
@@ -114,7 +116,8 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
         retry_count = @retryCount,
         retry_of = @retryOf,
         continue_from = @continueFrom,
-        agent = @agent
+        agent = @agent,
+        model = @model
       WHERE id = @id
     `);
 
@@ -122,7 +125,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent
+             dependencies, continue_from, agent, model
       FROM tasks WHERE id = ?
     `);
 
@@ -130,7 +133,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent
+             dependencies, continue_from, agent, model
       FROM tasks ORDER BY created_at DESC
     `);
 
@@ -138,7 +141,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent
+             dependencies, continue_from, agent, model
       FROM tasks WHERE status = ? ORDER BY created_at DESC
     `);
 
@@ -150,7 +153,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent
+             dependencies, continue_from, agent, model
       FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?
     `);
 
@@ -190,6 +193,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       retryOf: task.retryOf || null,
       continueFrom: task.continueFrom || null,
       agent: task.agent || null,
+      model: task.model || null,
     };
   }
 
@@ -334,6 +338,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       retryOf: data.retry_of ? (data.retry_of as TaskId) : undefined,
       continueFrom: data.continue_from ? (data.continue_from as TaskId) : undefined,
       agent: data.agent ?? undefined,
+      model: data.model ?? undefined,
       createdAt: data.created_at,
       startedAt: data.started_at || undefined,
       completedAt: data.completed_at || undefined,

@@ -257,6 +257,8 @@ export function resetConfigValue(key: string): ConfigWriteResult {
 
 export interface AgentConfig {
   readonly apiKey?: string;
+  readonly baseUrl?: string;
+  readonly model?: string;
 }
 
 /**
@@ -271,13 +273,23 @@ export function loadAgentConfig(provider: AgentProvider): AgentConfig {
   const record = section as Record<string, unknown>;
   return {
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : undefined,
+    baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : undefined,
+    model: typeof record.model === 'string' ? record.model : undefined,
   };
 }
 
 /**
  * Save a key-value pair under the `agents.<provider>` section of config.json
+ *
+ * Edge cases:
+ * - Empty string: deletes the key instead of saving it
+ * - baseUrl: strips trailing slash before saving
  */
-export function saveAgentConfig(provider: AgentProvider, key: 'apiKey', value: string): ConfigWriteResult {
+export function saveAgentConfig(
+  provider: AgentProvider,
+  key: 'apiKey' | 'baseUrl' | 'model',
+  value: string,
+): ConfigWriteResult {
   const existing = loadConfigFile();
   const agents = (
     existing.agents && typeof existing.agents === 'object' && !Array.isArray(existing.agents) ? existing.agents : {}
@@ -286,7 +298,15 @@ export function saveAgentConfig(provider: AgentProvider, key: 'apiKey', value: s
     agents[provider] && typeof agents[provider] === 'object' && !Array.isArray(agents[provider]) ? agents[provider] : {}
   ) as Record<string, unknown>;
 
-  section[key] = value;
+  if (value === '') {
+    // Empty string clears the key
+    delete section[key];
+  } else {
+    // Normalize baseUrl: strip trailing slash
+    const normalized = key === 'baseUrl' ? value.replace(/\/$/, '') : value;
+    section[key] = normalized;
+  }
+
   agents[provider] = section;
   existing.agents = agents;
   return writeConfigFile(existing);

@@ -68,6 +68,27 @@ The orchestrator manages its own task graph — you just provide the goal and gu
 - RetryTask to re-run a task from scratch
 - CancelTask / CancelLoop / CancelOrchestrator to stop work that's going wrong
 
+## Agent & Model Configuration
+
+### Per-task model override
+All task-creating tools accept an optional \`model\` field to override the agent's default model:
+- DelegateTask with model: "claude-opus-4-5" → uses that model for this task only
+- CreatePipeline steps can each have their own model, or set a top-level default
+- CreateLoop with model: "gemini-2.0-flash" → each iteration uses that model
+
+### Agent defaults (ConfigureAgent)
+Use ConfigureAgent to configure per-agent defaults that apply when no per-task override is set:
+- action: "set", apiKey: "sk-..." → store API key
+- action: "set", baseUrl: "https://proxy.example.com/v1" → route requests through a proxy
+- action: "set", model: "claude-opus-4-5" → default model for all tasks using that agent
+- action: "check" → see current auth status and stored config (baseUrl/model shown when set)
+- action: "reset" → clear all stored config for the agent
+
+Model resolution order (highest priority wins):
+1. Per-task \`model\` field (DelegateTask, pipeline step, etc.)
+2. Agent config default (\`ConfigureAgent\` set model)
+3. Agent's built-in default
+
 ## Key Principles
 
 1. **Parallelize when possible**: Independent tasks should run concurrently. Only use dependsOn when ordering matters.

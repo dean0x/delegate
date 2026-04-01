@@ -55,7 +55,12 @@ export interface TaskQueue {
  * Process spawning abstraction
  */
 export interface ProcessSpawner {
-  spawn(prompt: string, workingDirectory: string, taskId?: string): Result<{ process: ChildProcess; pid: number }>;
+  spawn(
+    prompt: string,
+    workingDirectory: string,
+    taskId?: string,
+    model?: string,
+  ): Result<{ process: ChildProcess; pid: number }>;
   kill(pid: number): Result<void>;
 }
 
