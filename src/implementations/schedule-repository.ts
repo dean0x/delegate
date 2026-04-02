@@ -87,6 +87,7 @@ const TaskRequestSchema = z.object({
   dependsOn: z.array(z.string()).optional(),
   continueFrom: z.string().optional(),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
+  model: z.string().optional(),
 });
 
 /**
@@ -106,6 +107,7 @@ const PipelineStepsSchema = z
       priority: z.enum(['P0', 'P1', 'P2']).optional(),
       workingDirectory: z.string().optional(),
       agent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
+      model: z.string().optional(),
     }),
   )
   .min(2)
@@ -131,6 +133,7 @@ const LoopConfigSchema = z.object({
   pipelineSteps: z.array(z.string()).optional(),
   priority: z.nativeEnum(Priority).optional(),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
+  model: z.string().optional(),
   gitBranch: z.string().optional(),
 }) satisfies z.ZodType<LoopCreateRequest>;
 

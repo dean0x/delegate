@@ -29,6 +29,7 @@ const OrchestrationRowSchema = z.object({
   state_file_path: z.string().min(1),
   working_directory: z.string().min(1),
   agent: z.string().nullable(),
+  model: z.string().nullable(),
   max_depth: z.number(),
   max_workers: z.number(),
   max_iterations: z.number(),
@@ -49,6 +50,7 @@ interface OrchestrationRow {
   readonly state_file_path: string;
   readonly working_directory: string;
   readonly agent: string | null;
+  readonly model: string | null;
   readonly max_depth: number;
   readonly max_workers: number;
   readonly max_iterations: number;
@@ -78,11 +80,11 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
     this.saveStmt = this.db.prepare(`
       INSERT INTO orchestrations (
         id, goal, loop_id, state_file_path, working_directory,
-        agent, max_depth, max_workers, max_iterations,
+        agent, model, max_depth, max_workers, max_iterations,
         status, created_at, updated_at, completed_at
       ) VALUES (
         @id, @goal, @loopId, @stateFilePath, @workingDirectory,
-        @agent, @maxDepth, @maxWorkers, @maxIterations,
+        @agent, @model, @maxDepth, @maxWorkers, @maxIterations,
         @status, @createdAt, @updatedAt, @completedAt
       )
     `);
@@ -94,6 +96,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
         state_file_path = @stateFilePath,
         working_directory = @workingDirectory,
         agent = @agent,
+        model = @model,
         max_depth = @maxDepth,
         max_workers = @maxWorkers,
         max_iterations = @maxIterations,
@@ -284,6 +287,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       stateFilePath: orchestration.stateFilePath,
       workingDirectory: orchestration.workingDirectory,
       agent: orchestration.agent ?? null,
+      model: orchestration.model ?? null,
       maxDepth: orchestration.maxDepth,
       maxWorkers: orchestration.maxWorkers,
       maxIterations: orchestration.maxIterations,
@@ -303,6 +307,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       stateFilePath: data.state_file_path,
       workingDirectory: data.working_directory,
       agent: data.agent ? this.toAgentProvider(data.agent) : undefined,
+      model: data.model ?? undefined,
       maxDepth: data.max_depth,
       maxWorkers: data.max_workers,
       maxIterations: data.max_iterations,

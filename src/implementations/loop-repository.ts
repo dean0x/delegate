@@ -96,6 +96,7 @@ const TaskRequestSchema = z.object({
   dependsOn: z.array(z.string()).optional(),
   continueFrom: z.string().optional(),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
+  model: z.string().optional(),
 });
 
 /**

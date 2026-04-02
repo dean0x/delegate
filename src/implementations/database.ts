@@ -760,6 +760,13 @@ export class Database implements TransactionRunner {
           db.exec('ALTER TABLE tasks ADD COLUMN model TEXT');
         },
       },
+      {
+        version: 17,
+        description: 'Add model column to orchestrations for per-orchestration model override',
+        up: (db) => {
+          db.exec('ALTER TABLE orchestrations ADD COLUMN model TEXT');
+        },
+      },
     ];
   }
 
