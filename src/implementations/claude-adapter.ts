@@ -6,7 +6,7 @@
  */
 
 import { AgentProvider } from '../core/agents.js';
-import { Configuration } from '../core/configuration.js';
+import { AgentConfig, Configuration } from '../core/configuration.js';
 import { BaseAgentAdapter } from './base-agent-adapter.js';
 
 export class ClaudeAdapter extends BaseAgentAdapter {
@@ -42,8 +42,8 @@ export class ClaudeAdapter extends BaseAgentAdapter {
    * (after stripping) ensures the value reaches the child process.
    * The parent env ANTHROPIC_BASE_URL is preserved via cleanEnv if already set.
    */
-  protected resolveBaseUrl(): Record<string, string> {
-    const baseUrlEnv = super.resolveBaseUrl();
+  protected resolveBaseUrl(agentConfig: AgentConfig): Record<string, string> {
+    const baseUrlEnv = super.resolveBaseUrl(agentConfig);
 
     // Determine if a baseUrl is active (from config or user env)
     const hasBaseUrl = Object.keys(baseUrlEnv).length > 0 || Boolean(process.env.ANTHROPIC_BASE_URL);

@@ -14,7 +14,7 @@
 
 import { ChildProcess, spawn } from 'child_process';
 import { AGENT_AUTH, AGENT_BASE_URL_ENV, AgentAdapter, AgentAuthConfig, AgentProvider, isCommandInPath } from '../core/agents.js';
-import { Configuration, loadAgentConfig } from '../core/configuration.js';
+import { AgentConfig, Configuration, loadAgentConfig } from '../core/configuration.js';
 import { AutobeatError, agentMisconfigured, ErrorCode, processSpawnFailed } from '../core/errors.js';
 import { err, ok, Result, tryCatch } from '../core/result.js';
 
@@ -60,9 +60,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * NOTE: spawn() verifies CLI binary exists before calling resolveAuth(),
    * so step 3 safely assumes login-based auth if no explicit key is configured.
    *
+   * @param agentConfig - Pre-loaded agent config (loaded once in spawn() to avoid redundant reads)
    * @returns Additional env vars to inject (e.g., stored API key), or error
    */
-  protected resolveAuth(): Result<{ injectedEnv: Record<string, string> }> {
+  protected resolveAuth(agentConfig: AgentConfig): Result<{ injectedEnv: Record<string, string> }> {
     const auth = this.authConfig;
 
     // 1. Check env vars (explicit override, CI use case)
@@ -73,7 +74,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     // 2. Check config file for stored API key
-    const agentConfig = loadAgentConfig(this.provider);
     if (agentConfig.apiKey) {
       // Inject stored key as the first env var for this agent
       return ok({ injectedEnv: { [auth.envVars[0]]: agentConfig.apiKey } });
@@ -92,15 +92,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Resolve base URL env var to inject into spawn env.
    * Resolution order: user env (already in cleanEnv, takes precedence) → config file.
    * Returns env var name → value to inject. Empty object means nothing to inject.
+   *
+   * @param agentConfig - Pre-loaded agent config (loaded once in spawn() to avoid redundant reads)
    */
-  protected resolveBaseUrl(): Record<string, string> {
+  protected resolveBaseUrl(agentConfig: AgentConfig): Record<string, string> {
     const baseUrlEnvVar = AGENT_BASE_URL_ENV[this.provider];
     // If user already has it set in their env, don't inject (cleanEnv will carry it through)
     if (process.env[baseUrlEnvVar]) {
       return {};
     }
     // Check config file
-    const agentConfig = loadAgentConfig(this.provider);
     if (agentConfig.baseUrl) {
       return { [baseUrlEnvVar]: agentConfig.baseUrl };
     }
@@ -110,10 +111,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   /**
    * Resolve the model to use for this spawn.
    * Resolution order: per-task model → agent-config model → undefined (use CLI default).
+   *
+   * @param agentConfig - Pre-loaded agent config (loaded once in spawn() to avoid redundant reads)
    */
-  protected resolveModel(taskModel?: string): string | undefined {
+  protected resolveModel(agentConfig: AgentConfig, taskModel?: string): string | undefined {
     if (taskModel) return taskModel;
-    const agentConfig = loadAgentConfig(this.provider);
     return agentConfig.model;
   }
 
@@ -134,11 +136,15 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         );
       }
 
+      // Load agent config once — passed to resolveAuth, resolveBaseUrl, resolveModel
+      // to avoid redundant readFileSync + JSON.parse calls per spawn
+      const agentConfig = loadAgentConfig(this.provider);
+
       // Pre-spawn auth validation
-      const authResult = this.resolveAuth();
+      const authResult = this.resolveAuth(agentConfig);
       if (!authResult.ok) return authResult;
 
-      const resolvedModel = this.resolveModel(model);
+      const resolvedModel = this.resolveModel(agentConfig, model);
       const finalPrompt = this.transformPrompt(prompt);
       const args = this.buildArgs(finalPrompt, resolvedModel);
 
@@ -148,7 +154,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           ([key]) => !this.envPrefixesToStrip.some((prefix) => key.startsWith(prefix)) && !exactMatches.includes(key),
         ),
       );
-      const baseUrlEnv = this.resolveBaseUrl();
+      const baseUrlEnv = this.resolveBaseUrl(agentConfig);
       const env = {
         ...this.additionalEnv,
         ...cleanEnv,
