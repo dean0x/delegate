@@ -369,4 +369,50 @@ describe('SQLiteTaskRepository', () => {
       expect(result.value!.model).toBeUndefined();
     });
   });
+
+  describe('countByStatus()', () => {
+    it('returns an empty record when no tasks exist', async () => {
+      const result = await repo.countByStatus();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toEqual({});
+    });
+
+    it('returns correct count for a single status', async () => {
+      await repo.save(createTestTask({ id: 'task-q-1', status: TaskStatus.QUEUED }));
+      await repo.save(createTestTask({ id: 'task-q-2', status: TaskStatus.QUEUED }));
+
+      const result = await repo.countByStatus();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value['queued']).toBe(2);
+    });
+
+    it('counts tasks across multiple statuses', async () => {
+      await repo.save(createTestTask({ id: 'r-1', status: TaskStatus.RUNNING }));
+      await repo.save(createTestTask({ id: 'r-2', status: TaskStatus.RUNNING }));
+      await repo.save(createTestTask({ id: 'q-1', status: TaskStatus.QUEUED }));
+      await repo.save(createTestTask({ id: 'f-1', status: TaskStatus.FAILED }));
+
+      const result = await repo.countByStatus();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value['running']).toBe(2);
+      expect(result.value['queued']).toBe(1);
+      expect(result.value['failed']).toBe(1);
+    });
+
+    it('reflects status changes via update()', async () => {
+      const task = createTestTask({ id: 'status-change', status: TaskStatus.QUEUED });
+      await repo.save(task);
+
+      await repo.update(TaskId('status-change'), { status: TaskStatus.RUNNING });
+
+      const result = await repo.countByStatus();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value['running']).toBe(1);
+      expect(result.value['queued']).toBeUndefined();
+    });
+  });
 });
