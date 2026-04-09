@@ -11,7 +11,7 @@ import type { ScheduleExecution } from '../../../core/interfaces.js';
 import { Field, StatusField } from '../components/field.js';
 import { ScrollableList } from '../components/scrollable-list.js';
 import { StatusBadge } from '../components/status-badge.js';
-import { formatRunProgress, relativeTime, truncateCell } from '../format.js';
+import { formatRunProgress, relativeTime, statusIcon, truncateCell } from '../format.js';
 
 interface ScheduleDetailProps {
   readonly schedule: Schedule;
@@ -35,6 +35,7 @@ function renderExecutionRow(exec: ScheduleExecution, index: number, isSelected: 
       : exec.status === 'failed' || exec.status === 'missed'
         ? 'red'
         : undefined;
+  const statusText = `${statusIcon(exec.status)} ${exec.status}`;
 
   return (
     <Box flexDirection="row" backgroundColor={bg}>
@@ -42,7 +43,7 @@ function renderExecutionRow(exec: ScheduleExecution, index: number, isSelected: 
         {String(index + 1).padStart(3, ' ')}
       </Text>
       <Text> </Text>
-      <Text color={statusColor}>{exec.status.padEnd(10, ' ')}</Text>
+      <Text color={statusColor}>{statusText.padEnd(12, ' ')}</Text>
       <Text> </Text>
       <Text dimColor>{scheduledFor.padEnd(12, ' ')}</Text>
       <Text> </Text>
