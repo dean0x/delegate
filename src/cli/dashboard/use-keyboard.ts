@@ -251,6 +251,11 @@ function handleMainKeys(
     const filteredItems = filter !== null ? allItems.filter((item) => item.status === filter) : allItems;
     const selectedItem = filteredItems[nav.selectedIndices[panel]];
     if (selectedItem === undefined) return true;
+    // Reset scroll offset for detail view so it starts at top, not at the main-list position
+    setNav((prev) => ({
+      ...prev,
+      scrollOffsets: { ...prev.scrollOffsets, [panel]: 0 },
+    }));
     // Cast id back to the branded type for the discriminated ViewState union.
     // The id originates from the domain entity — the cast is safe at this boundary.
     switch (panel) {

@@ -16,7 +16,6 @@ import {
   formatRunProgress,
   panelStatusSummary,
   relativeTime,
-  scoreTrend,
   truncateCell,
 } from '../format.js';
 import type { DashboardData, NavState } from '../types.js';
@@ -35,11 +34,8 @@ interface MainViewProps {
 
 function renderLoopRow(loop: Loop, _index: number, isSelected: boolean): React.ReactNode {
   const iterProgress = formatRunProgress(loop.currentIteration, loop.maxIterations);
-  const direction = loop.evalDirection ?? 'maximize';
   const scoreDisplay =
-    loop.bestScore !== undefined
-      ? `${loop.bestScore.toFixed(2)} ${scoreTrend(loop.bestScore, undefined, direction)}`
-      : '—';
+    loop.bestScore !== undefined ? `${loop.bestScore.toFixed(2)} →` : '—';
   const prompt = loop.taskTemplate.prompt;
 
   return (
