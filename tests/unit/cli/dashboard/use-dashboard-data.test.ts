@@ -7,7 +7,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { ViewState } from '../../../../src/cli/dashboard/types.js';
-import { buildEntityCounts, fetchAllData } from '../../../../src/cli/dashboard/use-dashboard-data.js';
+import { buildEntityCounts, FETCH_LIMIT, fetchAllData } from '../../../../src/cli/dashboard/use-dashboard-data.js';
 import type { ReadOnlyContext } from '../../../../src/cli/read-only-context.js';
 import { err, ok } from '../../../../src/core/result.js';
 
@@ -96,14 +96,14 @@ describe('fetchAllData', () => {
     expect(result.value.loopCounts.total).toBe(0);
   });
 
-  it('calls findAll(50) on all repositories', async () => {
+  it('calls findAll(FETCH_LIMIT) on all repositories', async () => {
     const ctx = makeCtx();
     await fetchAllData(ctx, MAIN_VIEW);
 
-    expect(ctx.taskRepository.findAll).toHaveBeenCalledWith(50);
-    expect(ctx.loopRepository.findAll).toHaveBeenCalledWith(50);
-    expect(ctx.scheduleRepository.findAll).toHaveBeenCalledWith(50);
-    expect(ctx.orchestrationRepository.findAll).toHaveBeenCalledWith(50);
+    expect(ctx.taskRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
+    expect(ctx.loopRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
+    expect(ctx.scheduleRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
+    expect(ctx.orchestrationRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
   });
 
   it('calls countByStatus on all repositories', async () => {
