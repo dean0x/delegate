@@ -10,7 +10,7 @@ import type { Loop, LoopIteration } from '../../../core/domain.js';
 import { Field, StatusField } from '../components/field.js';
 import { ScrollableList } from '../components/scrollable-list.js';
 import { StatusBadge } from '../components/status-badge.js';
-import { formatRunProgress, relativeTime, truncateCell } from '../format.js';
+import { formatDuration, formatRunProgress, relativeTime, statusIcon, truncateCell } from '../format.js';
 
 interface LoopDetailProps {
   readonly loop: Loop;
@@ -27,16 +27,10 @@ function renderIterationRow(iter: LoopIteration, _index: number, isSelected: boo
   const feedback = iter.evalFeedback ? truncateCell(iter.evalFeedback, 18) : '—';
   const errorMsg = iter.errorMessage ? truncateCell(iter.errorMessage, 18) : '—';
 
-  // Duration
-  let duration = '—';
-  if (iter.startedAt !== undefined && iter.completedAt !== undefined) {
-    const ms = iter.completedAt - iter.startedAt;
-    const secs = Math.floor(ms / 1_000);
-    const mins = Math.floor(secs / 60);
-    duration = mins > 0 ? `${mins}m ${secs % 60}s` : `${secs}s`;
-  }
+  const duration = formatDuration(iter.startedAt, iter.completedAt);
 
   const bg = isSelected ? 'blue' : undefined;
+  const statusText = `${statusIcon(iter.status)} ${iter.status}`;
   return (
     <Box flexDirection="row" backgroundColor={bg}>
       <Text bold={isSelected} color={isSelected ? 'white' : undefined}>
@@ -52,7 +46,7 @@ function renderIterationRow(iter: LoopIteration, _index: number, isSelected: boo
               : undefined
         }
       >
-        {iter.status.padEnd(9, ' ')}
+        {statusText.padEnd(11, ' ')}
       </Text>
       <Text> </Text>
       <Text>{score.padEnd(6, ' ')}</Text>
