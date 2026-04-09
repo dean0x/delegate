@@ -11,8 +11,18 @@ import type { DashboardData, NavState, PanelId, ViewState } from './types.js';
 /** Ordered panel cycle for Tab navigation */
 const PANEL_ORDER: readonly PanelId[] = ['loops', 'tasks', 'schedules', 'orchestrations'];
 
-/** Cycled filter states */
-const FILTER_CYCLE: readonly (string | null)[] = [null, 'running', 'completed', 'failed', 'cancelled'];
+/** Cycled filter states — covers all statuses across tasks, schedules, loops, and orchestrations */
+const FILTER_CYCLE: readonly (string | null)[] = [
+  null,
+  'running',
+  'active',
+  'queued',
+  'planning',
+  'paused',
+  'completed',
+  'failed',
+  'cancelled',
+];
 
 interface UseKeyboardParams {
   readonly view: ViewState;
