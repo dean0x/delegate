@@ -419,6 +419,17 @@ export class TestTaskRepository implements TaskRepository {
     return ok(deletedCount);
   }
 
+  async countByStatus(): Promise<Result<Record<string, number>, Error>> {
+    if (this.findError) {
+      return err(this.findError);
+    }
+    const counts: Record<string, number> = {};
+    for (const task of this.tasks.values()) {
+      counts[task.status] = (counts[task.status] ?? 0) + 1;
+    }
+    return ok(counts);
+  }
+
   async deleteAll(): Promise<Result<void, Error>> {
     this.tasks.clear();
     return ok(undefined);

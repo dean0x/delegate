@@ -200,6 +200,9 @@ class MockTaskRepo implements TaskRepository {
   async cleanupOldTasks(): Promise<Result<number>> {
     return ok(0);
   }
+  async countByStatus(): Promise<Result<Record<string, number>>> {
+    return ok({});
+  }
 }
 
 describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
