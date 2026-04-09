@@ -40,8 +40,32 @@ export function relativeTime(epochMs: number): string {
 }
 
 // ============================================================================
-// Status icons
+// Status colors and icons
 // ============================================================================
+
+/**
+ * Map a status string to an Ink color name.
+ * Covers all domain status values across tasks, loops, schedules, and orchestrations.
+ */
+export function statusColor(status: string): string {
+  switch (status) {
+    case 'running':
+    case 'active':
+    case 'planning':
+      return 'cyan';
+    case 'completed':
+      return 'green';
+    case 'failed':
+    case 'cancelled':
+      return 'red';
+    case 'paused':
+      return 'yellow';
+    case 'queued':
+    case 'expired':
+    default:
+      return 'gray';
+  }
+}
 
 const STATUS_ICONS: Record<string, string> = {
   running: '●',
@@ -95,11 +119,17 @@ export function scoreTrend(current: number, previous: number | undefined, direct
  * Appends "…" (single ellipsis char, 1 column) if truncation occurs.
  */
 export function truncateCell(text: string, maxWidth: number): string {
+  // ASCII fast-path: avoid stringWidth per-char overhead for common case
+  if (/^[\x20-\x7E]*$/.test(text)) {
+    if (text.length <= maxWidth) return text;
+    return `${text.slice(0, maxWidth - 1)}…`;
+  }
+
   if (stringWidth(text) <= maxWidth) {
     return text;
   }
 
-  // Reserve 1 column for the ellipsis character
+  // Unicode path: accumulate display width character-by-character (single pass)
   const targetWidth = maxWidth - 1;
   let result = '';
   let currentWidth = 0;
