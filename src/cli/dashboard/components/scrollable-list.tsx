@@ -14,6 +14,12 @@ interface ScrollableListProps<T> {
   readonly renderItem: (item: T, index: number, isSelected: boolean) => React.ReactNode;
   /** Optional stable key extractor — prevents remount when scroll offset shifts */
   readonly keyExtractor?: (item: T, index: number) => string;
+  /**
+   * Optional truncation notice shown in the footer when the displayed items are fewer
+   * than the total count in the database (e.g. "showing 50 of 247").
+   * When viewport also overflows, merged into the down-scroll indicator line.
+   */
+  readonly truncationNotice?: string | null;
 }
 
 // Generic component with forwardRef pattern — use a typed wrapper instead
@@ -24,15 +30,36 @@ function ScrollableListInner<T>({
   viewportHeight,
   renderItem,
   keyExtractor,
+  truncationNotice,
 }: ScrollableListProps<T>): React.ReactElement {
   const hasScrollUp = scrollOffset > 0;
   const hasScrollDown = scrollOffset + viewportHeight < items.length;
+  const hasTruncation = truncationNotice != null && truncationNotice.length > 0;
 
-  // Effective viewport adjusted for scroll indicators
-  const indicatorHeight = (hasScrollUp ? 1 : 0) + (hasScrollDown ? 1 : 0);
+  // Effective viewport adjusted for scroll indicators.
+  // The bottom slot is consumed by either the down-scroll indicator, the truncation notice, or both merged.
+  const indicatorHeight = (hasScrollUp ? 1 : 0) + (hasScrollDown || hasTruncation ? 1 : 0);
   const effectiveHeight = Math.max(1, viewportHeight - indicatorHeight);
 
   const visibleSlice = items.slice(scrollOffset, scrollOffset + effectiveHeight);
+
+  // Build the bottom indicator line:
+  //   - viewport overflow + truncation: "↓ N more · showing X of Y [status]"
+  //   - viewport overflow only:         "↓ more"
+  //   - truncation only (no overflow):  "showing X of Y [status]" (right-aligned dim)
+  //   - neither:                        nothing
+  const renderBottomIndicator = (): React.ReactNode => {
+    if (hasScrollDown && hasTruncation) {
+      return <Text dimColor>{`  ↓ more · ${truncationNotice}`}</Text>;
+    }
+    if (hasScrollDown) {
+      return <Text dimColor>{'  ↓ more'}</Text>;
+    }
+    if (hasTruncation) {
+      return <Text dimColor>{`  ${truncationNotice}`}</Text>;
+    }
+    return null;
+  };
 
   return (
     <Box flexDirection="column">
@@ -46,7 +73,7 @@ function ScrollableListInner<T>({
           </Box>
         );
       })}
-      {hasScrollDown && <Text dimColor>{'  ↓ more'}</Text>}
+      {renderBottomIndicator()}
     </Box>
   );
 }

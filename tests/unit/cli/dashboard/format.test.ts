@@ -12,6 +12,7 @@ import {
   statusColor,
   statusIcon,
   truncateCell,
+  truncationNotice,
 } from '../../../../src/cli/dashboard/format.js';
 
 describe('relativeTime', () => {
@@ -239,6 +240,37 @@ describe('formatRunProgress', () => {
 
   it('returns "3/∞" when max is 0', () => {
     expect(formatRunProgress(3, 0)).toBe('3/∞');
+  });
+});
+
+describe('truncationNotice', () => {
+  it('returns null when displayed equals total', () => {
+    expect(truncationNotice(50, 50, null)).toBeNull();
+  });
+
+  it('returns null when displayed exceeds total', () => {
+    // Defensive: shouldn't happen but guard against it
+    expect(truncationNotice(50, 47, null)).toBeNull();
+  });
+
+  it('returns "showing 50 of 247" when truncated with no filter', () => {
+    expect(truncationNotice(50, 247, null)).toBe('showing 50 of 247');
+  });
+
+  it('returns "showing 5 of 15 running" when truncated with filter', () => {
+    expect(truncationNotice(5, 15, 'running')).toBe('showing 5 of 15 running');
+  });
+
+  it('returns null when filtered count matches total', () => {
+    expect(truncationNotice(5, 5, 'running')).toBeNull();
+  });
+
+  it('returns null when both counts are 0', () => {
+    expect(truncationNotice(0, 0, null)).toBeNull();
+  });
+
+  it('handles filter with failed status', () => {
+    expect(truncationNotice(10, 32, 'failed')).toBe('showing 10 of 32 failed');
   });
 });
 

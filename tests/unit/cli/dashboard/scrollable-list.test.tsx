@@ -24,14 +24,16 @@ function renderList(options: {
   selectedIndex?: number;
   scrollOffset?: number;
   viewportHeight?: number;
+  truncationNotice?: string | null;
 }): string {
-  const { items, selectedIndex = 0, scrollOffset = 0, viewportHeight = 5 } = options;
+  const { items, selectedIndex = 0, scrollOffset = 0, viewportHeight = 5, truncationNotice } = options;
   const { lastFrame } = render(
     <ScrollableList
       items={items}
       selectedIndex={selectedIndex}
       scrollOffset={scrollOffset}
       viewportHeight={viewportHeight}
+      truncationNotice={truncationNotice}
       renderItem={(item, _index, isSelected) => (
         <Text>{isSelected ? `> ${item.label}` : `  ${item.label}`}</Text>
       )}
@@ -163,5 +165,45 @@ describe('ScrollableList scroll indicators', () => {
     expect(frame).toContain('item-6');
     expect(frame).toContain('item-7');
     expect(frame).not.toContain('item-8');
+  });
+});
+
+// ============================================================================
+// Truncation notice
+// ============================================================================
+
+describe('ScrollableList truncation notice', () => {
+  it('shows truncation notice when no viewport overflow exists', () => {
+    // 5 items fit in viewport of 10, but truncationNotice signals more exist in DB
+    const items = makeItems(5);
+    const frame = renderList({ items, viewportHeight: 10, truncationNotice: 'showing 5 of 15' });
+    expect(frame).toContain('showing 5 of 15');
+  });
+
+  it('merges truncation notice with down indicator when both apply', () => {
+    // 10 items overflow viewport of 5, AND truncationNotice signals DB has more
+    const items = makeItems(10);
+    const frame = renderList({ items, viewportHeight: 5, scrollOffset: 0, truncationNotice: 'showing 5 of 15 running' });
+    expect(frame).toContain('↓');
+    expect(frame).toContain('showing 5 of 15 running');
+  });
+
+  it('shows no truncation text when truncationNotice is null', () => {
+    const items = makeItems(3);
+    const frame = renderList({ items, viewportHeight: 10, truncationNotice: null });
+    expect(frame).not.toContain('showing');
+  });
+
+  it('shows no truncation text when truncationNotice is undefined', () => {
+    const items = makeItems(3);
+    const frame = renderList({ items, viewportHeight: 10 });
+    expect(frame).not.toContain('showing');
+  });
+
+  it('shows truncation notice without down indicator when no overflow', () => {
+    const items = makeItems(3);
+    const frame = renderList({ items, viewportHeight: 10, truncationNotice: 'showing 3 of 247' });
+    expect(frame).not.toContain('↓ more');
+    expect(frame).toContain('showing 3 of 247');
   });
 });

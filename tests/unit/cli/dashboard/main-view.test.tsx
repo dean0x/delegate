@@ -277,4 +277,86 @@ describe('MainView', () => {
       expect(lastFrame()).toContain('[2] Tasks');
     });
   });
+
+  describe('truncation notice', () => {
+    it('shows "showing N of M" when loop items count is less than total', () => {
+      // 3 loops fetched, but total is 75 — truncation should be visible
+      const loops = [makeLoop({ id: 'loop-1' as Loop['id'] }), makeLoop({ id: 'loop-2' as Loop['id'] }), makeLoop({ id: 'loop-3' as Loop['id'] })];
+      const data = makeDashboardData({
+        loops,
+        loopCounts: { total: 75, byStatus: { running: 75 } },
+      });
+
+      const { lastFrame } = render(<MainView data={data} nav={DEFAULT_NAV} />);
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('showing 3 of 75');
+    });
+
+    it('shows no truncation notice when item count matches total', () => {
+      const loops = [makeLoop({ id: 'loop-1' as Loop['id'] })];
+      const data = makeDashboardData({
+        loops,
+        loopCounts: { total: 1, byStatus: { running: 1 } },
+      });
+
+      const { lastFrame } = render(<MainView data={data} nav={DEFAULT_NAV} />);
+      const frame = lastFrame() ?? '';
+      expect(frame).not.toContain('showing 1 of 1');
+    });
+
+    it('shows truncation notice with filter status when filter is active', () => {
+      const loops = [
+        makeLoop({ id: 'loop-1' as Loop['id'], status: LoopStatus.RUNNING }),
+        makeLoop({ id: 'loop-2' as Loop['id'], status: LoopStatus.RUNNING }),
+      ];
+      const nav: NavState = {
+        ...DEFAULT_NAV,
+        filters: { ...DEFAULT_NAV.filters, loops: 'running' },
+      };
+      const data = makeDashboardData({
+        loops,
+        loopCounts: { total: 15, byStatus: { running: 15 } },
+      });
+
+      const { lastFrame } = render(<MainView data={data} nav={nav} />);
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('showing 2 of 15 running');
+    });
+  });
+
+  describe('smart EmptyState', () => {
+    it('shows "N failed loops exist — not in current view" when filtered and DB has items', () => {
+      // Filter "failed" is active, no failed loops in the fetched data,
+      // but loopCounts says 32 failed exist
+      const nav: NavState = {
+        ...DEFAULT_NAV,
+        filters: { ...DEFAULT_NAV.filters, loops: 'failed' },
+      };
+      const data = makeDashboardData({
+        loops: [makeLoop({ status: LoopStatus.RUNNING })], // only running in fetch
+        loopCounts: { total: 33, byStatus: { running: 1, failed: 32 } },
+      });
+
+      const { lastFrame } = render(<MainView data={data} nav={nav} />);
+      const frame = lastFrame() ?? '';
+      // After filter, 0 failed loops in view — smart EmptyState should show
+      expect(frame).toContain('32 failed loops exist — not in current view');
+    });
+
+    it('shows standard "No failed loops found" when filter active and 0 in DB', () => {
+      const nav: NavState = {
+        ...DEFAULT_NAV,
+        filters: { ...DEFAULT_NAV.filters, loops: 'failed' },
+      };
+      const data = makeDashboardData({
+        loops: [],
+        loopCounts: { total: 0, byStatus: {} },
+      });
+
+      const { lastFrame } = render(<MainView data={data} nav={nav} />);
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('No failed loops found');
+      expect(frame).not.toContain('exist — not in current view');
+    });
+  });
 });

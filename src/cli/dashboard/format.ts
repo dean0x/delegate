@@ -211,6 +211,30 @@ export function formatDuration(startedAt: number | undefined, completedAt: numbe
 }
 
 // ============================================================================
+// Truncation notice
+// ============================================================================
+
+/**
+ * Build a truncation notice string when a fetch limit hides items from the user.
+ * Returns null when all items are visible (no truncation).
+ *
+ * Examples:
+ *   truncationNotice(50, 247, null)       → "showing 50 of 247"
+ *   truncationNotice(5, 15, 'running')    → "showing 5 of 15 running"
+ *   truncationNotice(50, 50, null)        → null
+ */
+export function truncationNotice(
+  displayedCount: number,
+  totalCount: number,
+  filterStatus: string | null,
+): string | null {
+  if (displayedCount >= totalCount) return null;
+  return filterStatus !== null
+    ? `showing ${displayedCount} of ${totalCount} ${filterStatus}`
+    : `showing ${displayedCount} of ${totalCount}`;
+}
+
+// ============================================================================
 // Panel status summary
 // ============================================================================
 

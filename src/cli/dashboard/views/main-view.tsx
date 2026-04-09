@@ -17,8 +17,9 @@ import {
   panelStatusSummary,
   relativeTime,
   truncateCell,
+  truncationNotice,
 } from '../format.js';
-import type { DashboardData, NavState } from '../types.js';
+import type { DashboardData, EntityCounts, NavState } from '../types.js';
 
 // Viewport height per panel (approximate — panels split the terminal height)
 const PANEL_VIEWPORT_HEIGHT = 10;
@@ -130,6 +131,22 @@ function applyFilter<T extends { status: string }>(items: readonly T[], status: 
   return status !== null ? items.filter((item) => item.status === status) : items;
 }
 
+/**
+ * Compute a truncation notice string for a panel.
+ * Uses the true total from counts rather than the filtered list length.
+ * When a filter is active, uses the count for that specific status bucket.
+ * Returns null when all items are visible.
+ */
+function computeTruncation(
+  displayedItems: readonly unknown[],
+  counts: EntityCounts | undefined,
+  filterStatus: string | null,
+): string | null {
+  const total =
+    filterStatus !== null ? (counts?.byStatus[filterStatus] ?? 0) : (counts?.total ?? 0);
+  return truncationNotice(displayedItems.length, total, filterStatus);
+}
+
 export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
   const loops = applyFilter(data?.loops ?? [], nav.filters.loops);
   const tasks = applyFilter(data?.tasks ?? [], nav.filters.tasks);
@@ -147,7 +164,15 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
           filterStatus={nav.filters.loops}
         >
           {loops.length === 0 ? (
-            <EmptyState entityName="loops" filterStatus={nav.filters.loops} />
+            <EmptyState
+              entityName="loops"
+              filterStatus={nav.filters.loops}
+              totalForFilter={
+                nav.filters.loops !== null
+                  ? (data?.loopCounts.byStatus[nav.filters.loops] ?? 0)
+                  : undefined
+              }
+            />
           ) : (
             <ScrollableList
               items={loops}
@@ -156,6 +181,7 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
               viewportHeight={PANEL_VIEWPORT_HEIGHT}
               renderItem={renderLoopRow}
               keyExtractor={(item) => item.id}
+              truncationNotice={computeTruncation(loops, data?.loopCounts, nav.filters.loops)}
             />
           )}
         </Panel>
@@ -167,7 +193,15 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
           filterStatus={nav.filters.tasks}
         >
           {tasks.length === 0 ? (
-            <EmptyState entityName="tasks" filterStatus={nav.filters.tasks} />
+            <EmptyState
+              entityName="tasks"
+              filterStatus={nav.filters.tasks}
+              totalForFilter={
+                nav.filters.tasks !== null
+                  ? (data?.taskCounts.byStatus[nav.filters.tasks] ?? 0)
+                  : undefined
+              }
+            />
           ) : (
             <ScrollableList
               items={tasks}
@@ -176,6 +210,7 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
               viewportHeight={PANEL_VIEWPORT_HEIGHT}
               renderItem={renderTaskRow}
               keyExtractor={(item) => item.id}
+              truncationNotice={computeTruncation(tasks, data?.taskCounts, nav.filters.tasks)}
             />
           )}
         </Panel>
@@ -190,7 +225,15 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
           filterStatus={nav.filters.schedules}
         >
           {schedules.length === 0 ? (
-            <EmptyState entityName="schedules" filterStatus={nav.filters.schedules} />
+            <EmptyState
+              entityName="schedules"
+              filterStatus={nav.filters.schedules}
+              totalForFilter={
+                nav.filters.schedules !== null
+                  ? (data?.scheduleCounts.byStatus[nav.filters.schedules] ?? 0)
+                  : undefined
+              }
+            />
           ) : (
             <ScrollableList
               items={schedules}
@@ -199,6 +242,7 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
               viewportHeight={PANEL_VIEWPORT_HEIGHT}
               renderItem={renderScheduleRow}
               keyExtractor={(item) => item.id}
+              truncationNotice={computeTruncation(schedules, data?.scheduleCounts, nav.filters.schedules)}
             />
           )}
         </Panel>
@@ -210,7 +254,15 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
           filterStatus={nav.filters.orchestrations}
         >
           {orchestrations.length === 0 ? (
-            <EmptyState entityName="orchestrations" filterStatus={nav.filters.orchestrations} />
+            <EmptyState
+              entityName="orchestrations"
+              filterStatus={nav.filters.orchestrations}
+              totalForFilter={
+                nav.filters.orchestrations !== null
+                  ? (data?.orchestrationCounts.byStatus[nav.filters.orchestrations] ?? 0)
+                  : undefined
+              }
+            />
           ) : (
             <ScrollableList
               items={orchestrations}
@@ -219,6 +271,7 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
               viewportHeight={PANEL_VIEWPORT_HEIGHT}
               renderItem={renderOrchestrationRow}
               keyExtractor={(item) => item.id}
+              truncationNotice={computeTruncation(orchestrations, data?.orchestrationCounts, nav.filters.orchestrations)}
             />
           )}
         </Panel>

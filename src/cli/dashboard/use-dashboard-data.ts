@@ -23,6 +23,16 @@ export interface UseDashboardDataResult {
 }
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Maximum number of items fetched per entity panel.
+ * When the true total exceeds this limit, the UI shows a truncation notice.
+ */
+export const FETCH_LIMIT = 50;
+
+// ============================================================================
 // Pure helper functions (exported for unit testing)
 // ============================================================================
 
@@ -66,10 +76,10 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
     scheduleCountsResult,
     orchestrationCountsResult,
   ] = await Promise.all([
-    taskRepository.findAll(50),
-    loopRepository.findAll(50),
-    scheduleRepository.findAll(50),
-    orchestrationRepository.findAll(50),
+    taskRepository.findAll(FETCH_LIMIT),
+    loopRepository.findAll(FETCH_LIMIT),
+    scheduleRepository.findAll(FETCH_LIMIT),
+    orchestrationRepository.findAll(FETCH_LIMIT),
     taskRepository.countByStatus(),
     loopRepository.countByStatus(),
     scheduleRepository.countByStatus(),
