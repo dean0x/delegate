@@ -4,14 +4,21 @@
  * Pattern: Functional core — pure rendering based on data/nav snapshot
  */
 
-import { Box } from 'ink';
+import { Box, Text } from 'ink';
 import React, { useCallback } from 'react';
 import type { Loop, Orchestration, Schedule, Task } from '../../../core/domain.js';
 import { EmptyState } from '../components/empty-state.js';
 import { Panel } from '../components/panel.js';
 import { ScrollableList } from '../components/scrollable-list.js';
 import { TableRow } from '../components/table-row.js';
-import { formatRunProgress, panelStatusSummary, relativeTime } from '../format.js';
+import {
+  formatElapsed,
+  formatRunProgress,
+  panelStatusSummary,
+  relativeTime,
+  scoreTrend,
+  truncateCell,
+} from '../format.js';
 import type { DashboardData, NavState, PanelId } from '../types.js';
 
 // Viewport height per panel (approximate — panels split the terminal height)
@@ -29,40 +36,59 @@ interface MainViewProps {
 
 function renderLoopRow(loop: Loop, _index: number, isSelected: boolean): React.ReactNode {
   const iterProgress = formatRunProgress(loop.currentIteration, loop.maxIterations);
-  const score = loop.bestScore !== undefined ? loop.bestScore.toFixed(2) : '—';
+  const direction = loop.evalDirection ?? 'maximize';
+  const scoreDisplay =
+    loop.bestScore !== undefined
+      ? `${loop.bestScore.toFixed(2)} ${scoreTrend(loop.bestScore, undefined, direction)}`
+      : '—';
   const prompt = loop.taskTemplate.prompt;
 
   return (
-    <TableRow
-      key={loop.id}
-      selected={isSelected}
-      cells={[
-        { text: `${loop.status}`, width: 12 },
-        { text: iterProgress, width: 6 },
-        { text: score, width: 6 },
-        { text: loop.strategy, width: 8 },
-        { text: prompt, width: 30 },
-      ]}
-    />
+    <Box key={loop.id} flexDirection="column">
+      <TableRow
+        selected={isSelected}
+        cells={[
+          { text: `${loop.status}`, width: 12 },
+          { text: iterProgress, width: 6 },
+          { text: scoreDisplay, width: 9 },
+          { text: loop.strategy, width: 8 },
+          { text: prompt, width: 28 },
+        ]}
+      />
+    </Box>
   );
 }
 
 function renderTaskRow(task: Task, _index: number, isSelected: boolean): React.ReactNode {
   const agent = task.agent ?? '—';
-  const elapsed = task.startedAt !== undefined ? relativeTime(task.startedAt) : '—';
+  // For running tasks, show live elapsed; for others show relative time from startedAt
+  const elapsed =
+    task.startedAt !== undefined
+      ? task.status === 'running'
+        ? formatElapsed(task.startedAt)
+        : relativeTime(task.startedAt)
+      : '—';
   const prompt = task.prompt;
+  const errorText = task.error instanceof Error ? task.error.message : undefined;
 
   return (
-    <TableRow
-      key={task.id}
-      selected={isSelected}
-      cells={[
-        { text: task.status, width: 12 },
-        { text: agent, width: 8 },
-        { text: elapsed, width: 10 },
-        { text: prompt, width: 30 },
-      ]}
-    />
+    <Box key={task.id} flexDirection="column">
+      <TableRow
+        selected={isSelected}
+        cells={[
+          { text: task.status, width: 12 },
+          { text: agent, width: 8 },
+          { text: elapsed, width: 10 },
+          { text: prompt, width: 30 },
+        ]}
+      />
+      {task.status === 'failed' && errorText ? (
+        <Text dimColor>
+          {'  '}
+          {truncateCell(errorText, 40)}
+        </Text>
+      ) : null}
+    </Box>
   );
 }
 

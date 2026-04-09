@@ -40,7 +40,10 @@ export interface EntityCounts {
 }
 
 /**
- * Full dashboard data snapshot — refreshed on every polling interval
+ * Full dashboard data snapshot — refreshed on every polling interval.
+ * When in detail view, may include extras fetched by fetchDetailExtra():
+ * - iterations: LoopIteration[] when viewing a loop detail
+ * - executions: ScheduleExecution[] when viewing a schedule detail
  */
 export interface DashboardData {
   readonly tasks: readonly Task[];
@@ -51,6 +54,8 @@ export interface DashboardData {
   readonly loopCounts: EntityCounts;
   readonly scheduleCounts: EntityCounts;
   readonly orchestrationCounts: EntityCounts;
+  readonly iterations?: readonly LoopIteration[];
+  readonly executions?: readonly ScheduleExecution[];
 }
 
 /**

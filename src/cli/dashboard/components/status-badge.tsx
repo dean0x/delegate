@@ -1,10 +1,10 @@
 /**
  * StatusBadge component — colored status icon + text
- * ARCHITECTURE: Pure leaf component, no side effects
+ * ARCHITECTURE: Leaf component with optional running animation
  */
 
 import { Text } from 'ink';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { statusIcon } from '../format.js';
 
 /**
@@ -31,12 +31,31 @@ export function statusColor(status: string): string {
   }
 }
 
+/** Dot cycle frames for running animation */
+const RUNNING_FRAMES = ['●', '◉', '○', '◉'] as const;
+
+/** Statuses that animate */
+const ANIMATED_STATUSES = new Set(['running', 'active', 'planning']);
+
 interface StatusBadgeProps {
   readonly status: string;
 }
 
 export const StatusBadge: React.FC<StatusBadgeProps> = React.memo(({ status }) => {
-  const icon = statusIcon(status);
+  const isAnimated = ANIMATED_STATUSES.has(status);
+  const [frameIdx, setFrameIdx] = useState(0);
+
+  useEffect(() => {
+    if (!isAnimated) {
+      return;
+    }
+    const timer = setInterval(() => {
+      setFrameIdx((prev) => (prev + 1) % RUNNING_FRAMES.length);
+    }, 250);
+    return () => clearInterval(timer);
+  }, [isAnimated]);
+
+  const icon = isAnimated ? RUNNING_FRAMES[frameIdx] : statusIcon(status);
   const color = statusColor(status);
   return (
     <Text color={color}>

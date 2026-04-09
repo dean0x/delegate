@@ -4,7 +4,7 @@
  * Pattern: State lives here; pure view components receive data as props
  */
 
-import { Box, Text, useApp } from 'ink';
+import { Box, useApp } from 'ink';
 import React, { useState } from 'react';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { Footer } from './components/footer.js';
@@ -12,6 +12,7 @@ import { Header } from './components/header.js';
 import type { NavState, PanelId, ViewState } from './types.js';
 import { useDashboardData } from './use-dashboard-data.js';
 import { useKeyboard } from './use-keyboard.js';
+import { DetailView } from './views/detail-view.js';
 import { MainView } from './views/main-view.js';
 
 interface AppProps {
@@ -58,11 +59,12 @@ export const App: React.FC<AppProps> = React.memo(({ ctx }) => {
       {view.kind === 'main' ? (
         <MainView data={data} nav={nav} onSelect={handleSelect} />
       ) : (
-        <Text dimColor>
-          {'Detail view — '}
-          {view.entityType} {view.entityId}
-          {' (Phase 5)'}
-        </Text>
+        <DetailView
+          entityType={view.entityType}
+          entityId={view.entityId}
+          data={data}
+          scrollOffset={nav.scrollOffsets[view.entityType]}
+        />
       )}
       <Footer viewKind={view.kind} />
     </Box>

@@ -132,6 +132,37 @@ export function formatRunProgress(current: number, max: number | null | undefine
 }
 
 // ============================================================================
+// Elapsed time formatting
+// ============================================================================
+
+/**
+ * Format elapsed time from a start timestamp (epoch ms) to now.
+ * Returns human-readable string like "45s", "2m 30s", "1h 5m".
+ */
+export function formatElapsed(startedAt: number): string {
+  const elapsedMs = Date.now() - startedAt;
+  if (elapsedMs < 0) {
+    return '0s';
+  }
+
+  const totalSeconds = Math.floor(elapsedMs / 1_000);
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const totalHours = Math.floor(totalMinutes / 60);
+
+  if (totalHours > 0) {
+    const remainingMinutes = totalMinutes % 60;
+    return remainingMinutes > 0 ? `${totalHours}h ${remainingMinutes}m` : `${totalHours}h`;
+  }
+
+  if (totalMinutes > 0) {
+    const remainingSeconds = totalSeconds % 60;
+    return remainingSeconds > 0 ? `${totalMinutes}m ${remainingSeconds}s` : `${totalMinutes}m`;
+  }
+
+  return `${totalSeconds}s`;
+}
+
+// ============================================================================
 // Panel status summary
 // ============================================================================
 
