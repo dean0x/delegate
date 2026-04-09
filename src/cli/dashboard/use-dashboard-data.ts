@@ -36,6 +36,18 @@ export function buildEntityCounts(byStatus: Record<string, number>): EntityCount
 }
 
 /**
+ * Unwrap a single labeled Result.
+ * Returns the value directly or a string error tagged with the label.
+ *
+ * @example
+ *   const tasks = unwrapOrErr('Tasks', tasksResult);
+ *   if (!tasks.ok) return err(tasks.error);
+ */
+function unwrapOrErr<T>(label: string, result: Result<T, Error>): Result<T, string> {
+  return result.ok ? ok(result.value) : err(`${label} fetch failed: ${result.error.message}`);
+}
+
+/**
  * Fetch all dashboard data in parallel.
  * Returns a Result<DashboardData> — on any repository error, returns the error message.
  * For detail extras (iterations, executions), errors are handled gracefully (undefined).
@@ -64,16 +76,23 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
     orchestrationRepository.countByStatus(),
   ]);
 
-  // Unwrap results — on any error, return error string
-  if (!tasksResult.ok) return err(`Tasks fetch failed: ${tasksResult.error.message}`);
-  if (!loopsResult.ok) return err(`Loops fetch failed: ${loopsResult.error.message}`);
-  if (!schedulesResult.ok) return err(`Schedules fetch failed: ${schedulesResult.error.message}`);
-  if (!orchestrationsResult.ok) return err(`Orchestrations fetch failed: ${orchestrationsResult.error.message}`);
-  if (!taskCountsResult.ok) return err(`Task counts failed: ${taskCountsResult.error.message}`);
-  if (!loopCountsResult.ok) return err(`Loop counts failed: ${loopCountsResult.error.message}`);
-  if (!scheduleCountsResult.ok) return err(`Schedule counts failed: ${scheduleCountsResult.error.message}`);
-  if (!orchestrationCountsResult.ok)
-    return err(`Orchestration counts failed: ${orchestrationCountsResult.error.message}`);
+  // Unwrap each result — unwrapOrErr returns the value or a labeled error string
+  const tasksU = unwrapOrErr('Tasks', tasksResult);
+  if (!tasksU.ok) return err(tasksU.error);
+  const loopsU = unwrapOrErr('Loops', loopsResult);
+  if (!loopsU.ok) return err(loopsU.error);
+  const schedulesU = unwrapOrErr('Schedules', schedulesResult);
+  if (!schedulesU.ok) return err(schedulesU.error);
+  const orchestrationsU = unwrapOrErr('Orchestrations', orchestrationsResult);
+  if (!orchestrationsU.ok) return err(orchestrationsU.error);
+  const taskCountsU = unwrapOrErr('Task counts', taskCountsResult);
+  if (!taskCountsU.ok) return err(taskCountsU.error);
+  const loopCountsU = unwrapOrErr('Loop counts', loopCountsResult);
+  if (!loopCountsU.ok) return err(loopCountsU.error);
+  const scheduleCountsU = unwrapOrErr('Schedule counts', scheduleCountsResult);
+  if (!scheduleCountsU.ok) return err(scheduleCountsU.error);
+  const orchestrationCountsU = unwrapOrErr('Orchestration counts', orchestrationCountsResult);
+  if (!orchestrationCountsU.ok) return err(orchestrationCountsU.error);
 
   // Fetch detail extras if in detail view (best-effort — errors yield undefined)
   let detailExtra: DetailExtra = {};
@@ -82,14 +101,14 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
   }
 
   return ok({
-    tasks: tasksResult.value,
-    loops: loopsResult.value,
-    schedules: schedulesResult.value,
-    orchestrations: orchestrationsResult.value,
-    taskCounts: buildEntityCounts(taskCountsResult.value),
-    loopCounts: buildEntityCounts(loopCountsResult.value),
-    scheduleCounts: buildEntityCounts(scheduleCountsResult.value),
-    orchestrationCounts: buildEntityCounts(orchestrationCountsResult.value),
+    tasks: tasksU.value,
+    loops: loopsU.value,
+    schedules: schedulesU.value,
+    orchestrations: orchestrationsU.value,
+    taskCounts: buildEntityCounts(taskCountsU.value),
+    loopCounts: buildEntityCounts(loopCountsU.value),
+    scheduleCounts: buildEntityCounts(scheduleCountsU.value),
+    orchestrationCounts: buildEntityCounts(orchestrationCountsU.value),
     ...detailExtra,
   });
 }
