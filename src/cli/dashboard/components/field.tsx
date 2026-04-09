@@ -12,7 +12,7 @@ interface FieldProps {
 }
 
 /** Inline field row: bold cyan label (padded to 22 chars) followed by value */
-export function Field({ label, children }: FieldProps): React.ReactElement {
+export const Field: React.FC<FieldProps> = React.memo(({ label, children }) => {
   return (
     <Box flexDirection="row" marginBottom={0}>
       <Text bold color="cyan">
@@ -21,7 +21,9 @@ export function Field({ label, children }: FieldProps): React.ReactElement {
       <Text>{children}</Text>
     </Box>
   );
-}
+});
+
+Field.displayName = 'Field';
 
 interface LongFieldProps {
   readonly label: string;
@@ -29,7 +31,7 @@ interface LongFieldProps {
 }
 
 /** Multi-line field: bold cyan label above indented wrapped value */
-export function LongField({ label, value }: LongFieldProps): React.ReactElement {
+export const LongField: React.FC<LongFieldProps> = React.memo(({ label, value }) => {
   return (
     <Box flexDirection="column" marginBottom={0}>
       <Text bold color="cyan">
@@ -40,14 +42,16 @@ export function LongField({ label, value }: LongFieldProps): React.ReactElement 
       </Box>
     </Box>
   );
-}
+});
+
+LongField.displayName = 'LongField';
 
 interface StatusFieldProps {
   readonly children: React.ReactNode;
 }
 
 /** Inline field row pre-labelled "Status" — accepts a StatusBadge as children */
-export function StatusField({ children }: StatusFieldProps): React.ReactElement {
+export const StatusField: React.FC<StatusFieldProps> = React.memo(({ children }) => {
   return (
     <Box flexDirection="row" marginBottom={0}>
       <Text bold color="cyan">
@@ -56,4 +60,6 @@ export function StatusField({ children }: StatusFieldProps): React.ReactElement 
       {children}
     </Box>
   );
-}
+});
+
+StatusField.displayName = 'StatusField';
