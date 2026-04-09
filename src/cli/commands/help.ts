@@ -100,6 +100,7 @@ ${bold('Configuration:')}
   ${cyan('config path')}                Print config file location
 
   ${cyan('migrate')}                    Migrate from backbeat to autobeat (data, config, MCP)
+  ${cyan('dashboard')}, ${cyan('dash')}               Interactive terminal dashboard (requires TTY)
   ${cyan('help')}                       Show this help message
 
 ${bold('Examples:')}

@@ -146,6 +146,12 @@ export interface TaskRepository {
   findByStatus(status: string): Promise<Result<readonly Task[]>>;
   delete(taskId: TaskId): Promise<Result<void>>;
   cleanupOldTasks(olderThanMs: number): Promise<Result<number>>;
+  /**
+   * Count tasks grouped by status
+   * ARCHITECTURE: Used by dashboard for panel summary display
+   * @returns Map of status → count for all tasks in the repository
+   */
+  countByStatus(): Promise<Result<Record<string, number>>>;
 }
 
 /**
@@ -333,6 +339,13 @@ export interface ScheduleRepository {
    * Count total schedules
    */
   count(): Promise<Result<number>>;
+
+  /**
+   * Count schedules grouped by status
+   * ARCHITECTURE: Used by dashboard for panel summary display
+   * @returns Map of status → count for all schedules in the repository
+   */
+  countByStatus(): Promise<Result<Record<string, number>>>;
 
   /**
    * Record a schedule execution attempt
@@ -589,6 +602,13 @@ export interface LoopRepository {
   count(): Promise<Result<number>>;
 
   /**
+   * Count loops grouped by status
+   * ARCHITECTURE: Used by dashboard for panel summary display
+   * @returns Map of status → count for all loops in the repository
+   */
+  countByStatus(): Promise<Result<Record<string, number>>>;
+
+  /**
    * Delete a loop
    */
   delete(id: LoopId): Promise<Result<void>>;
@@ -716,6 +736,12 @@ export interface OrchestrationRepository {
   findByLoopId(loopId: LoopId): Promise<Result<Orchestration | null>>;
   delete(id: OrchestratorId): Promise<Result<void>>;
   cleanupOldOrchestrations(retentionMs: number): Promise<Result<number>>;
+  /**
+   * Count orchestrations grouped by status
+   * ARCHITECTURE: Used by dashboard for panel summary display
+   * @returns Map of status → count for all orchestrations in the repository
+   */
+  countByStatus(): Promise<Result<Record<string, number>>>;
 }
 
 /**

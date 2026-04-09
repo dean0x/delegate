@@ -22,8 +22,8 @@ export default defineConfig({
     testTimeout: 30000, // Increased for integration tests
     hookTimeout: 30000,
     include: [
-      'src/**/*.test.ts',
-      'tests/**/*.test.ts'
+      'src/**/*.test.{ts,tsx}',
+      'tests/**/*.test.{ts,tsx}'
     ],
     exclude: [
       'node_modules',

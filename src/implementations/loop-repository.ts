@@ -174,6 +174,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
   private readonly findAllPaginatedStmt: SQLite.Statement;
   private readonly findByStatusStmt: SQLite.Statement;
   private readonly countStmt: SQLite.Statement;
+  private readonly countByStatusStmt: SQLite.Statement;
   private readonly deleteStmt: SQLite.Statement;
   private readonly recordIterationStmt: SQLite.Statement;
   private readonly updateIterationStmt: SQLite.Statement;
@@ -248,6 +249,10 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
 
     this.countStmt = this.db.prepare(`
       SELECT COUNT(*) as count FROM loops
+    `);
+
+    this.countByStatusStmt = this.db.prepare(`
+      SELECT status, COUNT(*) as count FROM loops GROUP BY status
     `);
 
     this.deleteStmt = this.db.prepare(`
@@ -365,6 +370,17 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       const result = this.countStmt.get() as { count: number };
       return result.count;
     }, operationErrorHandler('count loops'));
+  }
+
+  async countByStatus(): Promise<Result<Record<string, number>>> {
+    return tryCatchAsync(async () => {
+      const rows = this.countByStatusStmt.all() as Array<{ status: string; count: number }>;
+      const counts: Record<string, number> = {};
+      for (const row of rows) {
+        counts[row.status] = row.count;
+      }
+      return counts;
+    }, operationErrorHandler('count loops by status'));
   }
 
   async delete(id: LoopId): Promise<Result<void>> {

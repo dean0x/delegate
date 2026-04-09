@@ -321,6 +321,9 @@ if (mainCommand === 'mcp') {
   }
 } else if (mainCommand === 'migrate') {
   await migrateCommand();
+} else if (mainCommand === 'dashboard' || mainCommand === 'dash') {
+  const { startDashboard } = await import('./cli/dashboard/index.js');
+  await startDashboard();
 } else if (mainCommand === 'help' || mainCommand === '--help' || mainCommand === '-h' || !mainCommand) {
   showHelp(__dirname);
 } else if (mainCommand === '--version' || mainCommand === '-v') {

@@ -33,6 +33,7 @@
     "test:cli": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/unit/cli.test.ts tests/unit/cli-init.test.ts tests/unit/cli-services.test.ts tests/unit/retry-functionality.test.ts tests/unit/read-only-context.test.ts --no-file-parallelism",
     "test:error-scenarios": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/unit/error-scenarios --no-file-parallelism",
     "test:integration": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/integration --no-file-parallelism",
+    "test:dashboard": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/unit/cli/dashboard --no-file-parallelism",
     "test:coverage": "NODE_OPTIONS='--max-old-space-size=2048' npm run test:unit -- --coverage && NODE_OPTIONS='--max-old-space-size=2048' npm run test:integration -- --coverage",
     "test:watch": "NODE_OPTIONS='--max-old-space-size=2048' vitest --watch",
     "test:e2e": "tsx tests/e2e/test-runner.ts",
@@ -91,17 +92,24 @@
   "dependencies": {
     "@clack/prompts": "^1.0.1",
     "@modelcontextprotocol/sdk": "^1.24.3",
+    "ansi-escapes": "^7.3.0",
     "better-sqlite3": "^12.8.0",
     "cron-parser": "^4.9.0",
+    "ink": "^6.8.0",
     "picocolors": "1.1.1",
+    "react": "^19.2.5",
+    "string-width": "^7.2.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",
+    "@testing-library/react": "^16.3.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.3.0",
+    "@types/react": "^19.2.14",
     "@vitest/coverage-v8": "^4.0.18",
     "@vitest/ui": "^4.0.18",
+    "ink-testing-library": "^4.0.0",
     "tsx": "^4.20.4",
     "typescript": "^5.9.2",
     "vitest": "^4.0.18"

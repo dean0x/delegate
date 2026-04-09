@@ -190,6 +190,7 @@ export class SQLiteScheduleRepository implements ScheduleRepository, SyncSchedul
   private readonly findDueStmt: SQLite.Statement;
   private readonly deleteStmt: SQLite.Statement;
   private readonly countStmt: SQLite.Statement;
+  private readonly countByStatusStmt: SQLite.Statement;
   private readonly updateStmt: SQLite.Statement;
   private readonly recordExecutionStmt: SQLite.Statement;
   private readonly getExecutionByIdStmt: SQLite.Statement;
@@ -262,6 +263,10 @@ export class SQLiteScheduleRepository implements ScheduleRepository, SyncSchedul
 
     this.countStmt = this.db.prepare(`
       SELECT COUNT(*) as count FROM schedules
+    `);
+
+    this.countByStatusStmt = this.db.prepare(`
+      SELECT status, COUNT(*) as count FROM schedules GROUP BY status
     `);
 
     this.recordExecutionStmt = this.db.prepare(`
@@ -500,6 +505,17 @@ export class SQLiteScheduleRepository implements ScheduleRepository, SyncSchedul
       const result = this.countStmt.get() as { count: number };
       return result.count;
     }, operationErrorHandler('count schedules'));
+  }
+
+  async countByStatus(): Promise<Result<Record<string, number>>> {
+    return tryCatchAsync(async () => {
+      const rows = this.countByStatusStmt.all() as Array<{ status: string; count: number }>;
+      const counts: Record<string, number> = {};
+      for (const row of rows) {
+        counts[row.status] = row.count;
+      }
+      return counts;
+    }, operationErrorHandler('count schedules by status'));
   }
 
   /**

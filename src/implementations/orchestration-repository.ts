@@ -73,6 +73,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
   private readonly findByLoopIdStmt: SQLite.Statement;
   private readonly deleteStmt: SQLite.Statement;
   private readonly cleanupStmt: SQLite.Statement;
+  private readonly countByStatusStmt: SQLite.Statement;
 
   constructor(database: Database) {
     this.db = database.getDatabase();
@@ -130,6 +131,10 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
     this.cleanupStmt = this.db.prepare(`
       SELECT id, state_file_path FROM orchestrations
       WHERE status IN ('completed', 'failed', 'cancelled') AND completed_at < ?
+    `);
+
+    this.countByStatusStmt = this.db.prepare(`
+      SELECT status, COUNT(*) as count FROM orchestrations GROUP BY status
     `);
   }
 
@@ -209,6 +214,17 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       },
       operationErrorHandler('delete orchestration', { orchestratorId: id }),
     );
+  }
+
+  async countByStatus(): Promise<Result<Record<string, number>>> {
+    return tryCatchAsync(async () => {
+      const rows = this.countByStatusStmt.all() as Array<{ status: string; count: number }>;
+      const counts: Record<string, number> = {};
+      for (const row of rows) {
+        counts[row.status] = row.count;
+      }
+      return counts;
+    }, operationErrorHandler('count orchestrations by status'));
   }
 
   async cleanupOldOrchestrations(retentionMs: number): Promise<Result<number>> {

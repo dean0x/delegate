@@ -74,6 +74,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
   private readonly deleteStmt: SQLite.Statement;
   private readonly cleanupOldTasksStmt: SQLite.Statement;
   private readonly countStmt: SQLite.Statement;
+  private readonly countByStatusStmt: SQLite.Statement;
   private readonly findAllPaginatedStmt: SQLite.Statement;
 
   /** Default pagination limit for findAll() */
@@ -147,6 +148,10 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
 
     this.countStmt = this.db.prepare(`
       SELECT COUNT(*) as count FROM tasks
+    `);
+
+    this.countByStatusStmt = this.db.prepare(`
+      SELECT status, COUNT(*) as count FROM tasks GROUP BY status
     `);
 
     this.findAllPaginatedStmt = this.db.prepare(`
@@ -315,6 +320,17 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       const result = this.cleanupOldTasksStmt.run(cutoffTime);
       return result.changes || 0;
     }, operationErrorHandler('cleanup old tasks'));
+  }
+
+  async countByStatus(): Promise<Result<Record<string, number>>> {
+    return tryCatchAsync(async () => {
+      const rows = this.countByStatusStmt.all() as Array<{ status: string; count: number }>;
+      const counts: Record<string, number> = {};
+      for (const row of rows) {
+        counts[row.status] = row.count;
+      }
+      return counts;
+    }, operationErrorHandler('count tasks by status'));
   }
 
   /**
