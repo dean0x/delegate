@@ -9,7 +9,7 @@ import React, { useState } from 'react';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { Footer } from './components/footer.js';
 import { Header } from './components/header.js';
-import type { NavState, PanelId, ViewState } from './types.js';
+import type { NavState, ViewState } from './types.js';
 import { useDashboardData } from './use-dashboard-data.js';
 import { useKeyboard } from './use-keyboard.js';
 import { DetailView } from './views/detail-view.js';
@@ -39,10 +39,6 @@ export const App: React.FC<AppProps> = React.memo(({ ctx }) => {
 
   const { data, error, refreshedAt, refreshNow } = useDashboardData(ctx, view);
 
-  const handleSelect = React.useCallback((panelId: PanelId, entityId: string) => {
-    setView({ kind: 'detail', entityType: panelId, entityId });
-  }, []);
-
   useKeyboard({
     view,
     nav,
@@ -57,7 +53,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx }) => {
     <Box flexDirection="column" width="100%">
       <Header data={data} refreshedAt={refreshedAt} error={error} />
       {view.kind === 'main' ? (
-        <MainView data={data} nav={nav} onSelect={handleSelect} />
+        <MainView data={data} nav={nav} />
       ) : (
         <DetailView
           entityType={view.entityType}

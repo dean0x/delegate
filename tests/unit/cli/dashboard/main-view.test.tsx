@@ -111,8 +111,6 @@ const DEFAULT_NAV: NavState = {
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
 };
 
-const noop = () => {};
-
 // ============================================================================
 // MainView tests
 // ============================================================================
@@ -120,7 +118,7 @@ const noop = () => {};
 describe('MainView', () => {
   describe('panel headers', () => {
     it('renders all 4 panel titles', () => {
-      const { lastFrame } = render(<MainView data={makeDashboardData()} nav={DEFAULT_NAV} onSelect={noop} />);
+      const { lastFrame } = render(<MainView data={makeDashboardData()} nav={DEFAULT_NAV}/>);
       const frame = lastFrame() ?? '';
       expect(frame).toContain('[1] Loops');
       expect(frame).toContain('[2] Tasks');
@@ -129,7 +127,7 @@ describe('MainView', () => {
     });
 
     it('shows empty state when data is null', () => {
-      const { lastFrame } = render(<MainView data={null} nav={DEFAULT_NAV} onSelect={noop} />);
+      const { lastFrame } = render(<MainView data={null} nav={DEFAULT_NAV}/>);
       const frame = lastFrame() ?? '';
       // Should have all panel titles but with empty states
       expect(frame).toContain('[1] Loops');
@@ -141,7 +139,7 @@ describe('MainView', () => {
     it('shows iteration progress', () => {
       const loop = makeLoop({ currentIteration: 3, maxIterations: 10 });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ loops: [loop] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ loops: [loop] })} nav={DEFAULT_NAV}/>,
       );
       expect(lastFrame()).toContain('3/10');
     });
@@ -149,7 +147,7 @@ describe('MainView', () => {
     it('shows best score when present', () => {
       const loop = makeLoop({ bestScore: 0.85 });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ loops: [loop] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ loops: [loop] })} nav={DEFAULT_NAV}/>,
       );
       expect(lastFrame()).toContain('0.85');
     });
@@ -157,7 +155,7 @@ describe('MainView', () => {
     it('shows loop strategy', () => {
       const loop = makeLoop({ strategy: LoopStrategy.OPTIMIZE });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ loops: [loop] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ loops: [loop] })} nav={DEFAULT_NAV}/>,
       );
       expect(lastFrame()).toContain('optimize');
     });
@@ -167,7 +165,7 @@ describe('MainView', () => {
         taskTemplate: { prompt: 'My test loop prompt', priority: 'normal' as Task['priority'] },
       });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ loops: [loop] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ loops: [loop] })} nav={DEFAULT_NAV}/>,
       );
       expect(lastFrame()).toContain('My test loop prompt');
     });
@@ -177,7 +175,7 @@ describe('MainView', () => {
     it('shows agent name', () => {
       const task = makeTask({ agent: 'claude' });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ tasks: [task] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ tasks: [task] })} nav={DEFAULT_NAV}/>,
       );
       expect(lastFrame()).toContain('claude');
     });
@@ -185,7 +183,7 @@ describe('MainView', () => {
     it('shows truncated prompt', () => {
       const task = makeTask({ prompt: 'Write unit tests for auth module' });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ tasks: [task] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ tasks: [task] })} nav={DEFAULT_NAV}/>,
       );
       // Prompt may be truncated to fit column width — check for prefix
       expect(lastFrame()).toContain('Write unit tests for auth');
@@ -194,7 +192,7 @@ describe('MainView', () => {
     it('shows status', () => {
       const task = makeTask({ status: TaskStatus.QUEUED });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ tasks: [task] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ tasks: [task] })} nav={DEFAULT_NAV}/>,
       );
       expect(lastFrame()).toContain('queued');
     });
@@ -204,7 +202,7 @@ describe('MainView', () => {
     it('shows schedule type', () => {
       const schedule = makeSchedule({ scheduleType: ScheduleType.CRON });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ schedules: [schedule] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ schedules: [schedule] })} nav={DEFAULT_NAV}/>,
       );
       expect(lastFrame()).toContain('cron');
     });
@@ -214,7 +212,7 @@ describe('MainView', () => {
       // Use 2 hours (7_200_000ms) to guarantee "in Xh" display
       const schedule = makeSchedule({ nextRunAt: Date.now() + 7_200_000 });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ schedules: [schedule] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ schedules: [schedule] })} nav={DEFAULT_NAV}/>,
       );
       // Should show "in 2h" or similar relative time
       const frame = lastFrame() ?? '';
@@ -224,7 +222,7 @@ describe('MainView', () => {
     it('shows run count progress', () => {
       const schedule = makeSchedule({ runCount: 5, maxRuns: 20 });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ schedules: [schedule] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ schedules: [schedule] })} nav={DEFAULT_NAV}/>,
       );
       expect(lastFrame()).toContain('5/20');
     });
@@ -234,7 +232,7 @@ describe('MainView', () => {
     it('shows agent name', () => {
       const orch = makeOrchestration({ agent: 'gemini' });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ orchestrations: [orch] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ orchestrations: [orch] })} nav={DEFAULT_NAV}/>,
       );
       expect(lastFrame()).toContain('gemini');
     });
@@ -242,7 +240,7 @@ describe('MainView', () => {
     it('shows goal text', () => {
       const orch = makeOrchestration({ goal: 'Refactor auth module' });
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ orchestrations: [orch] })} nav={DEFAULT_NAV} onSelect={noop} />,
+        <MainView data={makeDashboardData({ orchestrations: [orch] })} nav={DEFAULT_NAV}/>,
       );
       expect(lastFrame()).toContain('Refactor auth module');
     });
@@ -262,7 +260,7 @@ describe('MainView', () => {
       };
 
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ loops: [runningLoop, pausedLoop] })} nav={nav} onSelect={noop} />,
+        <MainView data={makeDashboardData({ loops: [runningLoop, pausedLoop] })} nav={nav}/>,
       );
       const frame = lastFrame() ?? '';
       // Running loop should appear, paused should not
@@ -278,7 +276,7 @@ describe('MainView', () => {
       };
 
       const { lastFrame } = render(
-        <MainView data={makeDashboardData({ loops: [completedLoop] })} nav={nav} onSelect={noop} />,
+        <MainView data={makeDashboardData({ loops: [completedLoop] })} nav={nav}/>,
       );
       const frame = lastFrame() ?? '';
       expect(frame).toContain('No running loops found');
@@ -290,7 +288,7 @@ describe('MainView', () => {
         filters: { ...DEFAULT_NAV.filters, tasks: 'failed' },
       };
 
-      const { lastFrame } = render(<MainView data={makeDashboardData()} nav={nav} onSelect={noop} />);
+      const { lastFrame } = render(<MainView data={makeDashboardData()} nav={nav}/>);
       const frame = lastFrame() ?? '';
       expect(frame).toContain('filter: failed');
     });
@@ -301,7 +299,7 @@ describe('MainView', () => {
       const nav: NavState = { ...DEFAULT_NAV, focusedPanel: 'tasks' };
       // We verify the panel renders — Ink's ANSI color codes make exact color assertion hard
       // in test output, so we just ensure the panel title renders correctly.
-      const { lastFrame } = render(<MainView data={makeDashboardData()} nav={nav} onSelect={noop} />);
+      const { lastFrame } = render(<MainView data={makeDashboardData()} nav={nav}/>);
       expect(lastFrame()).toContain('[2] Tasks');
     });
   });

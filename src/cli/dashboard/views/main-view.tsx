@@ -5,7 +5,7 @@
  */
 
 import { Box, Text } from 'ink';
-import React, { useCallback } from 'react';
+import React from 'react';
 import type { Loop, Orchestration, Schedule, Task } from '../../../core/domain.js';
 import { EmptyState } from '../components/empty-state.js';
 import { Panel } from '../components/panel.js';
@@ -19,7 +19,7 @@ import {
   scoreTrend,
   truncateCell,
 } from '../format.js';
-import type { DashboardData, NavState, PanelId } from '../types.js';
+import type { DashboardData, NavState } from '../types.js';
 
 // Viewport height per panel (approximate — panels split the terminal height)
 const PANEL_VIEWPORT_HEIGHT = 10;
@@ -27,7 +27,6 @@ const PANEL_VIEWPORT_HEIGHT = 10;
 interface MainViewProps {
   readonly data: DashboardData | null;
   readonly nav: NavState;
-  readonly onSelect: (panelId: PanelId, entityId: string) => void;
 }
 
 // ============================================================================
@@ -132,57 +131,16 @@ function renderOrchestrationRow(orch: Orchestration, _index: number, isSelected:
 // Main view component
 // ============================================================================
 
-export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav, onSelect }) => {
-  // Apply filters per panel
-  const filterLoops = useCallback(
-    (items: readonly Loop[]) =>
-      nav.filters.loops !== null ? items.filter((l) => l.status === nav.filters.loops) : items,
-    [nav.filters.loops],
-  );
+/** Filter an array to items matching status, or return all if filter is null */
+function applyFilter<T extends { status: string }>(items: readonly T[], status: string | null): readonly T[] {
+  return status !== null ? items.filter((item) => item.status === status) : items;
+}
 
-  const filterTasks = useCallback(
-    (items: readonly Task[]) =>
-      nav.filters.tasks !== null ? items.filter((t) => t.status === nav.filters.tasks) : items,
-    [nav.filters.tasks],
-  );
-
-  const filterSchedules = useCallback(
-    (items: readonly Schedule[]) =>
-      nav.filters.schedules !== null ? items.filter((s) => s.status === nav.filters.schedules) : items,
-    [nav.filters.schedules],
-  );
-
-  const filterOrchestrations = useCallback(
-    (items: readonly Orchestration[]) =>
-      nav.filters.orchestrations !== null ? items.filter((o) => o.status === nav.filters.orchestrations) : items,
-    [nav.filters.orchestrations],
-  );
-
-  const loops = filterLoops(data?.loops ?? []);
-  const tasks = filterTasks(data?.tasks ?? []);
-  const schedules = filterSchedules(data?.schedules ?? []);
-  const orchestrations = filterOrchestrations(data?.orchestrations ?? []);
-
-  // Render callbacks bound to entity id for onSelect
-  const renderLoop = useCallback((loop: Loop, index: number, isSelected: boolean) => {
-    // Using local renderLoopRow since onClick happens via keyboard in use-keyboard.ts
-    return renderLoopRow(loop, index, isSelected);
-  }, []);
-
-  const renderTask = useCallback(
-    (task: Task, index: number, isSelected: boolean) => renderTaskRow(task, index, isSelected),
-    [],
-  );
-
-  const renderSchedule = useCallback(
-    (schedule: Schedule, index: number, isSelected: boolean) => renderScheduleRow(schedule, index, isSelected),
-    [],
-  );
-
-  const renderOrchestration = useCallback(
-    (orch: Orchestration, index: number, isSelected: boolean) => renderOrchestrationRow(orch, index, isSelected),
-    [],
-  );
+export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
+  const loops = applyFilter(data?.loops ?? [], nav.filters.loops);
+  const tasks = applyFilter(data?.tasks ?? [], nav.filters.tasks);
+  const schedules = applyFilter(data?.schedules ?? [], nav.filters.schedules);
+  const orchestrations = applyFilter(data?.orchestrations ?? [], nav.filters.orchestrations);
 
   return (
     <Box flexDirection="column" flexGrow={1}>
@@ -202,7 +160,7 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav, onSele
               selectedIndex={nav.selectedIndices.loops}
               scrollOffset={nav.scrollOffsets.loops}
               viewportHeight={PANEL_VIEWPORT_HEIGHT}
-              renderItem={renderLoop}
+              renderItem={renderLoopRow}
             />
           )}
         </Panel>
@@ -221,7 +179,7 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav, onSele
               selectedIndex={nav.selectedIndices.tasks}
               scrollOffset={nav.scrollOffsets.tasks}
               viewportHeight={PANEL_VIEWPORT_HEIGHT}
-              renderItem={renderTask}
+              renderItem={renderTaskRow}
             />
           )}
         </Panel>
@@ -243,7 +201,7 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav, onSele
               selectedIndex={nav.selectedIndices.schedules}
               scrollOffset={nav.scrollOffsets.schedules}
               viewportHeight={PANEL_VIEWPORT_HEIGHT}
-              renderItem={renderSchedule}
+              renderItem={renderScheduleRow}
             />
           )}
         </Panel>
@@ -262,7 +220,7 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav, onSele
               selectedIndex={nav.selectedIndices.orchestrations}
               scrollOffset={nav.scrollOffsets.orchestrations}
               viewportHeight={PANEL_VIEWPORT_HEIGHT}
-              renderItem={renderOrchestration}
+              renderItem={renderOrchestrationRow}
             />
           )}
         </Panel>

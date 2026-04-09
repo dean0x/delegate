@@ -8,6 +8,7 @@ import { Box, Text } from 'ink';
 import React from 'react';
 import type { Schedule } from '../../../core/domain.js';
 import type { ScheduleExecution } from '../../../core/interfaces.js';
+import { Field, StatusField } from '../components/field.js';
 import { ScrollableList } from '../components/scrollable-list.js';
 import { StatusBadge } from '../components/status-badge.js';
 import { formatRunProgress, relativeTime, truncateCell } from '../format.js';
@@ -16,24 +17,6 @@ interface ScheduleDetailProps {
   readonly schedule: Schedule;
   readonly executions: readonly ScheduleExecution[] | undefined;
   readonly scrollOffset: number;
-}
-
-/** Render a field row with label + value */
-function Field({
-  label,
-  children,
-}: {
-  readonly label: string;
-  readonly children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <Box flexDirection="row" marginBottom={0}>
-      <Text bold color="cyan">
-        {label.padEnd(22, ' ')}
-      </Text>
-      <Text>{children}</Text>
-    </Box>
-  );
 }
 
 /** Render a single execution row */
@@ -90,12 +73,9 @@ export const ScheduleDetail: React.FC<ScheduleDetailProps> = React.memo(({ sched
       </Box>
 
       <Field label="ID">{truncateCell(schedule.id, 60)}</Field>
-      <Box flexDirection="row" marginBottom={0}>
-        <Text bold color="cyan">
-          {'Status'.padEnd(22, ' ')}
-        </Text>
+      <StatusField>
         <StatusBadge status={schedule.status} />
-      </Box>
+      </StatusField>
       <Field label="Schedule Type">{schedule.scheduleType}</Field>
       {schedule.cronExpression ? <Field label="Cron Expression">{schedule.cronExpression}</Field> : null}
       {schedule.scheduledAt !== undefined ? (

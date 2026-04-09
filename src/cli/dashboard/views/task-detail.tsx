@@ -7,43 +7,12 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { Task } from '../../../core/domain.js';
+import { Field, LongField, StatusField } from '../components/field.js';
 import { StatusBadge } from '../components/status-badge.js';
 import { formatElapsed, relativeTime, truncateCell } from '../format.js';
 
 interface TaskDetailProps {
   readonly task: Task;
-}
-
-/** Render a field row with label + value */
-function Field({
-  label,
-  children,
-}: {
-  readonly label: string;
-  readonly children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <Box flexDirection="row" marginBottom={0}>
-      <Text bold color="cyan">
-        {label.padEnd(22, ' ')}
-      </Text>
-      <Text>{children}</Text>
-    </Box>
-  );
-}
-
-/** Render a multi-line value under a label (for long text like prompt) */
-function LongField({ label, value }: { readonly label: string; readonly value: string }): React.ReactElement {
-  return (
-    <Box flexDirection="column" marginBottom={0}>
-      <Text bold color="cyan">
-        {label}
-      </Text>
-      <Box paddingLeft={2}>
-        <Text wrap="wrap">{value}</Text>
-      </Box>
-    </Box>
-  );
 }
 
 export const TaskDetail: React.FC<TaskDetailProps> = React.memo(({ task }) => {
@@ -61,12 +30,9 @@ export const TaskDetail: React.FC<TaskDetailProps> = React.memo(({ task }) => {
       </Box>
 
       <Field label="ID">{truncateCell(task.id, 60)}</Field>
-      <Box flexDirection="row" marginBottom={0}>
-        <Text bold color="cyan">
-          {'Status'.padEnd(22, ' ')}
-        </Text>
+      <StatusField>
         <StatusBadge status={task.status} />
-      </Box>
+      </StatusField>
       <Field label="Priority">{task.priority}</Field>
       {task.agent ? <Field label="Agent">{task.agent}</Field> : null}
       {task.model ? <Field label="Model">{task.model}</Field> : null}

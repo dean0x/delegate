@@ -24,24 +24,28 @@ interface UseKeyboardParams {
   readonly exit: () => void;
 }
 
+/** Return the raw item array for the given panel id. */
+function getPanelItems(panelId: PanelId, data: DashboardData): readonly { id: string; status: string }[] {
+  switch (panelId) {
+    case 'loops':
+      return data.loops as readonly { id: string; status: string }[];
+    case 'tasks':
+      return data.tasks as readonly { id: string; status: string }[];
+    case 'schedules':
+      return data.schedules as readonly { id: string; status: string }[];
+    case 'orchestrations':
+      return data.orchestrations as readonly { id: string; status: string }[];
+  }
+}
+
 /**
  * Get the filtered list length for the currently focused panel.
  * Used to clamp selectedIndex after navigation.
  */
 function filteredLength(panelId: PanelId, data: DashboardData | null, filterStatus: string | null): number {
   if (data === null) return 0;
-
-  const items =
-    panelId === 'loops'
-      ? data.loops
-      : panelId === 'tasks'
-        ? data.tasks
-        : panelId === 'schedules'
-          ? data.schedules
-          : data.orchestrations;
-
-  if (filterStatus === null) return items.length;
-  return items.filter((item) => (item as { status: string }).status === filterStatus).length;
+  const items = getPanelItems(panelId, data);
+  return filterStatus !== null ? items.filter((item) => item.status === filterStatus).length : items.length;
 }
 
 /**
@@ -128,21 +132,10 @@ export function useKeyboard({ view, nav, data, setView, setNav, refreshNow, exit
       return;
     }
 
-    // 1-4 — jump to panel
-    if (input === '1') {
-      setNav((prev) => ({ ...prev, focusedPanel: 'loops' }));
-      return;
-    }
-    if (input === '2') {
-      setNav((prev) => ({ ...prev, focusedPanel: 'tasks' }));
-      return;
-    }
-    if (input === '3') {
-      setNav((prev) => ({ ...prev, focusedPanel: 'schedules' }));
-      return;
-    }
-    if (input === '4') {
-      setNav((prev) => ({ ...prev, focusedPanel: 'orchestrations' }));
+    // 1-4 — jump to panel by number
+    const PANEL_BY_KEY: Record<string, PanelId> = { '1': 'loops', '2': 'tasks', '3': 'schedules', '4': 'orchestrations' };
+    if (input in PANEL_BY_KEY) {
+      setNav((prev) => ({ ...prev, focusedPanel: PANEL_BY_KEY[input] as PanelId }));
       return;
     }
 
@@ -186,29 +179,14 @@ export function useKeyboard({ view, nav, data, setView, setNav, refreshNow, exit
 
     // Enter — drill into detail view
     if (key.return) {
+      if (data === null) return;
       const panel = nav.focusedPanel;
       const filter = nav.filters[panel];
-      const length = filteredLength(panel, data, filter);
-      if (length === 0) return;
-
-      // Get the item at selectedIndex from filtered list
-      if (data === null) return;
-      const allItems =
-        panel === 'loops'
-          ? data.loops
-          : panel === 'tasks'
-            ? data.tasks
-            : panel === 'schedules'
-              ? data.schedules
-              : data.orchestrations;
-      const filteredItems =
-        filter !== null ? allItems.filter((item) => (item as { status: string }).status === filter) : allItems;
-
+      const allItems = getPanelItems(panel, data);
+      const filteredItems = filter !== null ? allItems.filter((item) => item.status === filter) : allItems;
       const selectedItem = filteredItems[nav.selectedIndices[panel]];
       if (selectedItem === undefined) return;
-
-      const entityId = (selectedItem as { id: string }).id;
-      setView({ kind: 'detail', entityType: panel, entityId });
+      setView({ kind: 'detail', entityType: panel, entityId: selectedItem.id });
       return;
     }
 

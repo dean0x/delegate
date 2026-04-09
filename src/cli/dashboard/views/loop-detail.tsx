@@ -7,6 +7,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { Loop, LoopIteration } from '../../../core/domain.js';
+import { Field, StatusField } from '../components/field.js';
 import { ScrollableList } from '../components/scrollable-list.js';
 import { StatusBadge } from '../components/status-badge.js';
 import { formatRunProgress, relativeTime, truncateCell } from '../format.js';
@@ -15,24 +16,6 @@ interface LoopDetailProps {
   readonly loop: Loop;
   readonly iterations: readonly LoopIteration[] | undefined;
   readonly scrollOffset: number;
-}
-
-/** Render a single field row with label + value */
-function Field({
-  label,
-  children,
-}: {
-  readonly label: string;
-  readonly children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <Box flexDirection="row" marginBottom={0}>
-      <Text bold color="cyan">
-        {label.padEnd(22, ' ')}
-      </Text>
-      <Text>{children}</Text>
-    </Box>
-  );
 }
 
 /** Render a single iteration row for the scrollable table */
@@ -99,12 +82,9 @@ export const LoopDetail: React.FC<LoopDetailProps> = React.memo(({ loop, iterati
       </Box>
 
       <Field label="ID">{truncateCell(loop.id, 60)}</Field>
-      <Box flexDirection="row" marginBottom={0}>
-        <Text bold color="cyan">
-          {'Status'.padEnd(22, ' ')}
-        </Text>
+      <StatusField>
         <StatusBadge status={loop.status} />
-      </Box>
+      </StatusField>
       <Field label="Strategy">{loop.strategy}</Field>
       <Field label="Eval Mode">{loop.evalMode}</Field>
       <Field label="Iteration Progress">{iterProgress}</Field>
