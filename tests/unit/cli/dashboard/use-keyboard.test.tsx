@@ -150,12 +150,22 @@ function KeyboardWrapper({
  *
  * Ink dispatches state updates from useInput via React's scheduler (microtask
  * queue). We need to flush those updates before asserting on the rendered frame.
+ *
+ * CI-safe strategy: flush microtasks, then wait for a macrotask, then flush
+ * microtasks again. This ensures React's commit phase and ink's effect-based
+ * re-registration of useInput both complete before the next press. A 10ms
+ * timer is generous enough to cover ink's internal escape-sequence debounce
+ * on Linux CI runners while still keeping tests fast.
  */
 async function press(stdin: { write: (s: string) => void }, key: string): Promise<void> {
   stdin.write(key);
-  // Flush React scheduler's microtask queue, then give the reconciler one more
-  // tick to commit the work and trigger onRender.
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  // Flush microtasks (React scheduler)
+  await Promise.resolve();
+  // Macrotask — allows useEffect and ink's internal scheduling to run.
+  // 10ms covers ink's escape-sequence debounce on Linux CI runners.
+  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  // Flush any microtasks queued during the macrotask
+  await Promise.resolve();
 }
 
 // ============================================================================

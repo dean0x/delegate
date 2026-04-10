@@ -3,6 +3,7 @@
  * Tests behavior (visual output) not implementation details
  */
 
+import { Text } from 'ink';
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it } from 'vitest';
@@ -50,7 +51,7 @@ describe('Panel', () => {
   it('renders children', () => {
     const { lastFrame } = render(
       <Panel title="[2] Tasks" statusSummary="" focused={false} filterStatus={null}>
-        <React.Fragment>child content</React.Fragment>
+        <Text>child content</Text>
       </Panel>,
     );
     const frame = lastFrame() ?? '';
