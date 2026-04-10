@@ -8,7 +8,13 @@ import { useInput } from 'ink';
 import type React from 'react';
 import { useRef } from 'react';
 import type { LoopId, OrchestratorId, ScheduleId, TaskId } from '../../core/domain.js';
-import type { DashboardData, NavState, PanelId, ViewState } from './types.js';
+import {
+  LoopStatus,
+  OrchestratorStatus,
+  ScheduleStatus,
+  TaskStatus,
+} from '../../core/domain.js';
+import type { DashboardData, DashboardMutationContext, NavState, PanelId, ViewState } from './types.js';
 
 /**
  * Minimal shape required for navigation — id and status are the only fields
@@ -52,6 +58,12 @@ interface UseKeyboardParams {
    * Defaults to a conservative upper bound (200) when omitted.
    */
   readonly detailContentLength?: number;
+  /**
+   * DECISION (2026-04-10): Optional mutation context for c/d keybindings.
+   * When provided, 'c' cancels the focused entity and 'd' deletes terminal entities.
+   * Unified UX across all four panels (loops, tasks, schedules, orchestrations).
+   */
+  readonly mutations?: DashboardMutationContext;
 }
 
 /** Conservative upper bound for detail scroll when caller does not provide content length */
@@ -70,6 +82,8 @@ interface KeyHandlerParams {
   readonly setView: (v: ViewState) => void;
   readonly setNav: React.Dispatch<React.SetStateAction<NavState>>;
   readonly detailContentLength: number;
+  readonly mutations?: DashboardMutationContext;
+  readonly refreshNow: () => void;
 }
 
 /**
@@ -270,6 +284,78 @@ function handleMainKeys(
     return true;
   }
 
+  // c — cancel focused entity (status-dependent, works when not terminal)
+  // DECISION (2026-04-10): Manual cancel/delete keybindings on ALL four panels
+  // (loops/tasks/schedules/orchestrations). 'c' dispatches to the focused entity's
+  // existing cancel service method — works whenever the row is not already terminal.
+  // 'd' is restricted to terminal statuses to prevent accidental data loss on active work.
+  // Unified UX across panels per user preference.
+  if (input === 'c' && params.mutations) {
+    const data = params.dataRef.current;
+    if (data !== null) {
+      const panel = nav.focusedPanel;
+      const filter = nav.filters[panel];
+      const allItems = getPanelItems(panel, data);
+      const filteredItems = filter !== null ? allItems.filter((item) => item.status === filter) : allItems;
+      const selectedItem = filteredItems[nav.selectedIndices[panel]];
+      if (selectedItem) {
+        const TERMINAL_ORCHESTRATION = [OrchestratorStatus.COMPLETED, OrchestratorStatus.FAILED, OrchestratorStatus.CANCELLED];
+        const TERMINAL_LOOP = [LoopStatus.COMPLETED, LoopStatus.FAILED, LoopStatus.CANCELLED];
+        const TERMINAL_TASK = [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED];
+        const TERMINAL_SCHEDULE = [ScheduleStatus.COMPLETED, ScheduleStatus.CANCELLED, ScheduleStatus.EXPIRED];
+
+        const { orchestrationService, loopService, taskManager, scheduleService } = params.mutations;
+        const reason = 'User cancelled via dashboard';
+
+        void (async () => {
+          if (panel === 'orchestrations' && !TERMINAL_ORCHESTRATION.includes(selectedItem.status as OrchestratorStatus)) {
+            await orchestrationService.cancelOrchestration(selectedItem.id as OrchestratorId, reason);
+            params.refreshNow();
+          } else if (panel === 'loops' && !TERMINAL_LOOP.includes(selectedItem.status as LoopStatus)) {
+            await loopService.cancelLoop(selectedItem.id as LoopId, reason, true);
+            params.refreshNow();
+          } else if (panel === 'tasks' && !TERMINAL_TASK.includes(selectedItem.status as TaskStatus)) {
+            await taskManager.cancel(selectedItem.id as TaskId, reason);
+            params.refreshNow();
+          } else if (panel === 'schedules' && !TERMINAL_SCHEDULE.includes(selectedItem.status as ScheduleStatus)) {
+            await scheduleService.cancelSchedule(selectedItem.id as ScheduleId, reason);
+            params.refreshNow();
+          }
+        })();
+      }
+    }
+    return true;
+  }
+
+  // d — delete focused terminal entity row
+  if (input === 'd' && params.mutations) {
+    const data = params.dataRef.current;
+    if (data !== null) {
+      const panel = nav.focusedPanel;
+      const filter = nav.filters[panel];
+      const allItems = getPanelItems(panel, data);
+      const filteredItems = filter !== null ? allItems.filter((item) => item.status === filter) : allItems;
+      const selectedItem = filteredItems[nav.selectedIndices[panel]];
+      if (selectedItem) {
+        const TERMINAL_ORCHESTRATION = [OrchestratorStatus.COMPLETED, OrchestratorStatus.FAILED, OrchestratorStatus.CANCELLED];
+        const TERMINAL_LOOP = [LoopStatus.COMPLETED, LoopStatus.FAILED, LoopStatus.CANCELLED];
+        const TERMINAL_TASK = [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED];
+        const TERMINAL_SCHEDULE = [ScheduleStatus.COMPLETED, ScheduleStatus.CANCELLED, ScheduleStatus.EXPIRED];
+
+        const { orchestrationRepo } = params.mutations;
+
+        void (async () => {
+          if (panel === 'orchestrations' && TERMINAL_ORCHESTRATION.includes(selectedItem.status as OrchestratorStatus)) {
+            await orchestrationRepo.delete(selectedItem.id as OrchestratorId);
+            params.refreshNow();
+          }
+          // NOTE: loop, task, schedule delete would go here when those repos are added to mutations context
+        })();
+      }
+    }
+    return true;
+  }
+
   // f — cycle filter for focused panel
   if (input === 'f') {
     setNav((prev) => {
@@ -310,6 +396,7 @@ export function useKeyboard({
   refreshNow,
   exit,
   detailContentLength,
+  mutations,
 }: UseKeyboardParams): void {
   // Keep a ref to the latest data so setNav functional updaters always see
   // current data, not stale closure data from the render that registered useInput.
@@ -335,6 +422,8 @@ export function useKeyboard({
       setView,
       setNav,
       detailContentLength: detailContentLength ?? DETAIL_SCROLL_MAX_DEFAULT,
+      mutations,
+      refreshNow,
     };
 
     if (view.kind === 'detail') {

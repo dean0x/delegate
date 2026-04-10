@@ -22,9 +22,10 @@ import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
 import React, { useCallback, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { DashboardData, NavState, ViewState } from '../../../../src/cli/dashboard/types.js';
+import type { DashboardData, DashboardMutationContext, NavState, ViewState } from '../../../../src/cli/dashboard/types.js';
 import { useKeyboard } from '../../../../src/cli/dashboard/use-keyboard.js';
 import type { Loop, Orchestration, Schedule, Task } from '../../../../src/core/domain.js';
+import type { LoopId, OrchestratorId, ScheduleId, TaskId } from '../../../../src/core/domain.js';
 import {
   LoopStatus,
   LoopStrategy,
@@ -47,6 +48,38 @@ function makeTask(id: string, status: TaskStatus = TaskStatus.RUNNING): Task {
     agent: 'claude',
     createdAt: Date.now(),
   } as Task;
+}
+
+function makeSchedule(id: string, status: ScheduleStatus = ScheduleStatus.ACTIVE): Schedule {
+  return {
+    id: id as Schedule['id'],
+    taskTemplate: { prompt: 'Run task', priority: 'normal' as Task['priority'] },
+    scheduleType: ScheduleType.CRON,
+    cronExpression: '0 9 * * 1-5',
+    timezone: 'UTC',
+    missedRunPolicy: 'skip' as Schedule['missedRunPolicy'],
+    status,
+    runCount: 0,
+    nextRunAt: Date.now() + 3_600_000,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  } as Schedule;
+}
+
+function makeOrchestration(id: string, status: OrchestratorStatus = OrchestratorStatus.RUNNING): Orchestration {
+  return {
+    id: id as Orchestration['id'],
+    goal: `Goal for ${id}`,
+    status,
+    agent: 'claude',
+    stateFilePath: '/tmp/state.json',
+    workingDirectory: '/tmp',
+    maxDepth: 3,
+    maxWorkers: 2,
+    maxIterations: 10,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  } as Orchestration;
 }
 
 function makeLoop(id: string, status: LoopStatus = LoopStatus.RUNNING): Loop {
@@ -101,6 +134,7 @@ interface WrapperProps {
   readonly initialView?: ViewState;
   readonly onExit?: () => void;
   readonly onRefresh?: () => void;
+  readonly mutations?: DashboardMutationContext;
 }
 
 /**
@@ -113,6 +147,7 @@ function KeyboardWrapper({
   initialView = { kind: 'main' },
   onExit,
   onRefresh,
+  mutations,
 }: WrapperProps): React.ReactElement {
   const [view, setView] = useState<ViewState>(initialView);
   const [nav, setNav] = useState<NavState>(initialNav);
@@ -121,7 +156,7 @@ function KeyboardWrapper({
   const exit = useCallback(() => onExit?.(), [onExit]);
   const refreshNow = useCallback(() => onRefresh?.(), [onRefresh]);
 
-  useKeyboard({ view, nav, data, setView, setNav, refreshNow, exit });
+  useKeyboard({ view, nav, data, setView, setNav, refreshNow, exit, mutations });
 
   return (
     <Box flexDirection="column">
@@ -422,6 +457,177 @@ describe('useKeyboard — global keys', () => {
     await press(stdin, '\r'); // enter detail
     await press(stdin, 'q');
     expect(onExit).toHaveBeenCalledOnce();
+  });
+});
+
+// ============================================================================
+// c/d keybindings — cancel and delete via mutation context
+// ============================================================================
+
+/**
+ * Build a minimal DashboardMutationContext with vi.fn() stubs.
+ * Each service method returns a resolved promise so async handlers complete.
+ */
+function makeMutations(): {
+  mutations: DashboardMutationContext;
+  cancelOrchestration: ReturnType<typeof vi.fn>;
+  cancelLoop: ReturnType<typeof vi.fn>;
+  cancelTask: ReturnType<typeof vi.fn>;
+  cancelSchedule: ReturnType<typeof vi.fn>;
+  deleteOrchestration: ReturnType<typeof vi.fn>;
+} {
+  const cancelOrchestration = vi.fn().mockResolvedValue({ ok: true, value: undefined });
+  const cancelLoop = vi.fn().mockResolvedValue({ ok: true, value: undefined });
+  const cancelTask = vi.fn().mockResolvedValue({ ok: true, value: undefined });
+  const cancelSchedule = vi.fn().mockResolvedValue({ ok: true, value: undefined });
+  const deleteOrchestration = vi.fn().mockResolvedValue({ ok: true, value: undefined });
+
+  const mutations: DashboardMutationContext = {
+    orchestrationService: {
+      cancelOrchestration,
+    } as unknown as DashboardMutationContext['orchestrationService'],
+    loopService: {
+      cancelLoop,
+    } as unknown as DashboardMutationContext['loopService'],
+    scheduleService: {
+      cancelSchedule,
+    } as unknown as DashboardMutationContext['scheduleService'],
+    taskManager: {
+      cancel: cancelTask,
+    } as unknown as DashboardMutationContext['taskManager'],
+    orchestrationRepo: {
+      delete: deleteOrchestration,
+    } as unknown as DashboardMutationContext['orchestrationRepo'],
+  };
+
+  return { mutations, cancelOrchestration, cancelLoop, cancelTask, cancelSchedule, deleteOrchestration };
+}
+
+describe('useKeyboard — c: cancel keybinding', () => {
+  it('"c" cancels a running orchestration', async () => {
+    const orch = makeOrchestration('orch-1', OrchestratorStatus.RUNNING);
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationCounts: { total: 1, byStatus: { running: 1 } },
+    });
+    const nav: NavState = { ...INITIAL_NAV, focusedPanel: 'orchestrations' };
+    const { mutations, cancelOrchestration } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
+
+    await press(stdin, 'c');
+    // Allow async handler to complete
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(cancelOrchestration).toHaveBeenCalledWith('orch-1', 'User cancelled via dashboard');
+  });
+
+  it('"c" cancels a running loop', async () => {
+    const loop = makeLoop('loop-1', LoopStatus.RUNNING);
+    const data = makeDashboardData({
+      loops: [loop],
+      loopCounts: { total: 1, byStatus: { running: 1 } },
+    });
+    const { mutations, cancelLoop } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} mutations={mutations} />);
+
+    await press(stdin, 'c');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(cancelLoop).toHaveBeenCalledWith('loop-1', 'User cancelled via dashboard', true);
+  });
+
+  it('"c" cancels a running task', async () => {
+    const task = makeTask('task-1', TaskStatus.RUNNING);
+    const data = makeDashboardData({
+      tasks: [task],
+      taskCounts: { total: 1, byStatus: { running: 1 } },
+    });
+    const nav: NavState = { ...INITIAL_NAV, focusedPanel: 'tasks' };
+    const { mutations, cancelTask } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
+
+    await press(stdin, 'c');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(cancelTask).toHaveBeenCalledWith('task-1', 'User cancelled via dashboard');
+  });
+
+  it('"c" cancels an active schedule', async () => {
+    const schedule = makeSchedule('sched-1', ScheduleStatus.ACTIVE);
+    const data = makeDashboardData({
+      schedules: [schedule],
+      scheduleCounts: { total: 1, byStatus: { active: 1 } },
+    });
+    const nav: NavState = { ...INITIAL_NAV, focusedPanel: 'schedules' };
+    const { mutations, cancelSchedule } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
+
+    await press(stdin, 'c');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(cancelSchedule).toHaveBeenCalledWith('sched-1', 'User cancelled via dashboard');
+  });
+
+  it('"c" does NOT cancel a terminal orchestration', async () => {
+    const orch = makeOrchestration('orch-2', OrchestratorStatus.COMPLETED);
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationCounts: { total: 1, byStatus: { completed: 1 } },
+    });
+    const nav: NavState = { ...INITIAL_NAV, focusedPanel: 'orchestrations' };
+    const { mutations, cancelOrchestration } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
+
+    await press(stdin, 'c');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(cancelOrchestration).not.toHaveBeenCalled();
+  });
+
+  it('"c" is a no-op when no mutations context is provided', async () => {
+    const orch = makeOrchestration('orch-3', OrchestratorStatus.RUNNING);
+    const data = makeDashboardData({ orchestrations: [orch] });
+    const nav: NavState = { ...INITIAL_NAV, focusedPanel: 'orchestrations' };
+    // No mutations prop — key should be silently ignored
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} />);
+
+    await press(stdin, 'c');
+    // Still in main view — no crash
+    expect(lastFrame()).toContain('view:main');
+  });
+});
+
+describe('useKeyboard — d: delete terminal entity keybinding', () => {
+  it('"d" deletes a completed orchestration', async () => {
+    const orch = makeOrchestration('orch-done', OrchestratorStatus.COMPLETED);
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationCounts: { total: 1, byStatus: { completed: 1 } },
+    });
+    const nav: NavState = { ...INITIAL_NAV, focusedPanel: 'orchestrations' };
+    const { mutations, deleteOrchestration } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
+
+    await press(stdin, 'd');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(deleteOrchestration).toHaveBeenCalledWith('orch-done');
+  });
+
+  it('"d" does NOT delete a running orchestration', async () => {
+    const orch = makeOrchestration('orch-live', OrchestratorStatus.RUNNING);
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationCounts: { total: 1, byStatus: { running: 1 } },
+    });
+    const nav: NavState = { ...INITIAL_NAV, focusedPanel: 'orchestrations' };
+    const { mutations, deleteOrchestration } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
+
+    await press(stdin, 'd');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(deleteOrchestration).not.toHaveBeenCalled();
   });
 });
 

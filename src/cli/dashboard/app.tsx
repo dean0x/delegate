@@ -9,7 +9,7 @@ import React, { useEffect, useState } from 'react';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { Footer } from './components/footer.js';
 import { Header } from './components/header.js';
-import type { NavState, ViewState } from './types.js';
+import type { DashboardMutationContext, NavState, ViewState } from './types.js';
 import { useDashboardData } from './use-dashboard-data.js';
 import { useKeyboard } from './use-keyboard.js';
 import { DetailView } from './views/detail-view.js';
@@ -18,6 +18,11 @@ import { MainView } from './views/main-view.js';
 interface AppProps {
   readonly ctx: ReadOnlyContext;
   readonly version: string;
+  /**
+   * Optional mutation context. When provided, 'c' and 'd' keybindings are
+   * enabled for cancel/delete operations. Omitted in read-only contexts.
+   */
+  readonly mutations?: DashboardMutationContext;
 }
 
 /** Initial navigation state — focus on loops panel, no selection, no filters */
@@ -32,7 +37,7 @@ const INITIAL_NAV: NavState = {
  * Root dashboard component.
  * Renders to stderr via the render() call in index.tsx.
  */
-export const App: React.FC<AppProps> = React.memo(({ ctx, version }) => {
+export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations }) => {
   const { exit } = useApp();
 
   const [view, setView] = useState<ViewState>({ kind: 'main' });
@@ -57,6 +62,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version }) => {
     setNav,
     refreshNow,
     exit,
+    mutations,
   });
 
   return (
@@ -73,7 +79,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version }) => {
           animFrame={animFrame}
         />
       )}
-      <Footer viewKind={view.kind} />
+      <Footer viewKind={view.kind} hasMutations={mutations !== undefined} />
     </Box>
   );
 });

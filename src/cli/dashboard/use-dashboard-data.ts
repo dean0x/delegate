@@ -10,8 +10,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { OrchestratorStatus } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
+import { checkOrchestrationLiveness, type Liveness } from '../../services/orchestration-liveness.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import type { DashboardData, DetailExtra, EntityCounts, ViewState } from './types.js';
 
@@ -63,7 +65,7 @@ function unwrapOrErr<T>(label: string, result: Result<T, Error>): Result<T, stri
  * For detail extras (iterations, executions), errors are handled gracefully (undefined).
  */
 export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): Promise<Result<DashboardData, string>> {
-  const { taskRepository, loopRepository, scheduleRepository, orchestrationRepository } = ctx;
+  const { taskRepository, loopRepository, scheduleRepository, orchestrationRepository, workerRepository } = ctx;
 
   // Parallel fetch: entity lists + status counts
   const [
@@ -107,6 +109,35 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
   // Fetch detail extras if in detail view (best-effort — errors yield undefined)
   const detailExtra: DetailExtra = viewState.kind === 'detail' ? await fetchDetailExtra(ctx, viewState) : {};
 
+  // Compute liveness for RUNNING orchestrations (best-effort — errors yield 'unknown')
+  const orchestrationLiveness: Record<string, Liveness> = {};
+  const isProcessAlive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code === 'EPERM';
+    }
+  };
+  for (const orch of orchestrations.value) {
+    if (orch.status === OrchestratorStatus.RUNNING) {
+      try {
+        const liveness = await checkOrchestrationLiveness(orch, {
+          loopRepo: loopRepository,
+          taskRepo: taskRepository,
+          workerRepo: workerRepository,
+          isProcessAlive,
+        });
+        orchestrationLiveness[orch.id] = liveness;
+      } catch {
+        orchestrationLiveness[orch.id] = 'unknown';
+      }
+    } else if (orch.status === OrchestratorStatus.PLANNING && !orch.loopId) {
+      // PLANNING with no loopId — orphan indicator
+      orchestrationLiveness[orch.id] = 'unknown';
+    }
+  }
+
   return ok({
     tasks: tasks.value,
     loops: loops.value,
@@ -116,6 +147,7 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
     loopCounts: buildEntityCounts(loopCounts.value),
     scheduleCounts: buildEntityCounts(scheduleCounts.value),
     orchestrationCounts: buildEntityCounts(orchestrationCounts.value),
+    orchestrationLiveness,
     ...detailExtra,
   });
 }

@@ -10,6 +10,10 @@
  * new Database() runs schema migrations on open, which is a write operation.
  * This is the same behavior as full bootstrap — we just skip the runtime
  * services that query commands never use.
+ *
+ * NOTE: The dashboard upgraded to withServices() (src/cli/dashboard/index.tsx)
+ * to enable cancel/delete keybindings. This context is now used only by
+ * lighter query commands (status, logs, list, etc.) that do not need mutations.
  */
 
 import { loadConfiguration } from '../core/configuration.js';
@@ -19,6 +23,7 @@ import type {
   OutputRepository,
   ScheduleRepository,
   TaskRepository,
+  WorkerRepository,
 } from '../core/interfaces.js';
 import { Result, tryCatch } from '../core/result.js';
 import { Database } from '../implementations/database.js';
@@ -27,6 +32,7 @@ import { SQLiteOrchestrationRepository } from '../implementations/orchestration-
 import { SQLiteOutputRepository } from '../implementations/output-repository.js';
 import { SQLiteScheduleRepository } from '../implementations/schedule-repository.js';
 import { SQLiteTaskRepository } from '../implementations/task-repository.js';
+import { SQLiteWorkerRepository } from '../implementations/worker-repository.js';
 
 export interface ReadOnlyContext {
   readonly taskRepository: TaskRepository;
@@ -34,6 +40,7 @@ export interface ReadOnlyContext {
   readonly scheduleRepository: ScheduleRepository;
   readonly loopRepository: LoopRepository;
   readonly orchestrationRepository: OrchestrationRepository;
+  readonly workerRepository: WorkerRepository;
   close(): void;
 }
 
@@ -50,6 +57,7 @@ export function createReadOnlyContext(): Result<ReadOnlyContext> {
     const scheduleRepository = new SQLiteScheduleRepository(database);
     const loopRepository = new SQLiteLoopRepository(database);
     const orchestrationRepository = new SQLiteOrchestrationRepository(database);
+    const workerRepository = new SQLiteWorkerRepository(database);
 
     return {
       taskRepository,
@@ -57,6 +65,7 @@ export function createReadOnlyContext(): Result<ReadOnlyContext> {
       scheduleRepository,
       loopRepository,
       orchestrationRepository,
+      workerRepository,
       close: () => database.close(),
     };
   });

@@ -15,7 +15,23 @@ import type {
   Task,
   TaskId,
 } from '../../core/domain.js';
+import type { LoopService, OrchestrationRepository, OrchestrationService, ScheduleService, TaskManager } from '../../core/interfaces.js';
 import type { ScheduleExecution } from '../../core/interfaces.js';
+import type { Liveness } from '../../services/orchestration-liveness.js';
+
+/**
+ * Mutation services passed to the dashboard for cancel/delete operations.
+ * DECISION (2026-04-10): The dashboard uses full bootstrap (withServices) because
+ * manual cancel/delete keybindings need mutation access. Adds ~200-500ms to
+ * dashboard startup but acceptable for interactive launch.
+ */
+export interface DashboardMutationContext {
+  readonly orchestrationService: OrchestrationService;
+  readonly loopService: LoopService;
+  readonly scheduleService: ScheduleService;
+  readonly taskManager: TaskManager;
+  readonly orchestrationRepo: OrchestrationRepository;
+}
 
 export type PanelId = 'loops' | 'tasks' | 'schedules' | 'orchestrations';
 
@@ -59,6 +75,7 @@ export interface EntityCounts {
  * When in detail view, may include extras fetched by fetchDetailExtra():
  * - iterations: LoopIteration[] when viewing a loop detail
  * - executions: ScheduleExecution[] when viewing a schedule detail
+ * - orchestrationLiveness: liveness badges for RUNNING orchestrations
  */
 export interface DashboardData {
   readonly tasks: readonly Task[];
@@ -71,6 +88,8 @@ export interface DashboardData {
   readonly orchestrationCounts: EntityCounts;
   readonly iterations?: readonly LoopIteration[];
   readonly executions?: readonly ScheduleExecution[];
+  /** Liveness state per orchestration ID — only populated for RUNNING orchestrations */
+  readonly orchestrationLiveness?: Readonly<Record<string, Liveness>>;
 }
 
 /**

@@ -7,6 +7,8 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { Loop, Orchestration, Schedule, Task } from '../../../core/domain.js';
+import { OrchestratorStatus } from '../../../core/domain.js';
+import type { Liveness } from '../../../services/orchestration-liveness.js';
 import { EmptyState } from '../components/empty-state.js';
 import { Panel } from '../components/panel.js';
 import { ScrollableList } from '../components/scrollable-list.js';
@@ -105,20 +107,52 @@ function renderScheduleRow(schedule: Schedule, _index: number, isSelected: boole
   );
 }
 
-function renderOrchestrationRow(orch: Orchestration, _index: number, isSelected: boolean): React.ReactNode {
-  const agent = orch.agent ?? '—';
-  const goal = orch.goal;
+/**
+ * Render a liveness badge for an orchestration row.
+ * - 'live' (RUNNING) → green dot
+ * - 'dead' (RUNNING, zombie) → red DEAD label
+ * - PLANNING with no loopId → yellow ORPHAN label
+ * - otherwise → no badge
+ */
+function OrchestrationLivenessBadge({
+  orch,
+  liveness,
+}: {
+  orch: Orchestration;
+  liveness: Liveness | undefined;
+}): React.ReactNode {
+  if (orch.status === OrchestratorStatus.RUNNING) {
+    if (liveness === 'live') return <Text color="green"> ●</Text>;
+    if (liveness === 'dead') return <Text color="red"> DEAD</Text>;
+  }
+  if (orch.status === OrchestratorStatus.PLANNING && !orch.loopId) {
+    return <Text color="yellow"> ORPHAN</Text>;
+  }
+  return null;
+}
 
-  return (
-    <TableRow
-      selected={isSelected}
-      cells={[
-        { text: orch.status, width: 12 },
-        { text: agent, width: 8 },
-        { text: goal, width: 36 },
-      ]}
-    />
-  );
+function makeOrchestrationRowRenderer(
+  livenessMap: Readonly<Record<string, Liveness>> | undefined,
+): (orch: Orchestration, _index: number, isSelected: boolean) => React.ReactNode {
+  return function renderOrchestrationRow(orch: Orchestration, _index: number, isSelected: boolean): React.ReactNode {
+    const agent = orch.agent ?? '—';
+    const goal = orch.goal;
+    const liveness = livenessMap?.[orch.id];
+
+    return (
+      <Box>
+        <TableRow
+          selected={isSelected}
+          cells={[
+            { text: orch.status, width: 12 },
+            { text: agent, width: 8 },
+            { text: goal, width: 30 },
+          ]}
+        />
+        <OrchestrationLivenessBadge orch={orch} liveness={liveness} />
+      </Box>
+    );
+  };
 }
 
 // ============================================================================
@@ -150,6 +184,7 @@ export const MainView: React.FC<MainViewProps> = React.memo(({ data, nav }) => {
   const tasks = applyFilter(data?.tasks ?? [], nav.filters.tasks);
   const schedules = applyFilter(data?.schedules ?? [], nav.filters.schedules);
   const orchestrations = applyFilter(data?.orchestrations ?? [], nav.filters.orchestrations);
+  const renderOrchestrationRow = makeOrchestrationRowRenderer(data?.orchestrationLiveness);
 
   return (
     <Box flexDirection="column" flexGrow={1}>
