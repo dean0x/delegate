@@ -70,4 +70,38 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
     expect(prompt).toContain('CONFLICT AVOIDANCE');
     expect(prompt).toContain('integration validation task');
   });
+
+  describe('agent and model passthrough', () => {
+    it('does not add --agent flag when agent is not provided', () => {
+      const prompt = buildOrchestratorPrompt(defaultParams);
+      // Default params have no agent — delegation examples should be plain "beat run"
+      expect(prompt).toContain('beat run "<prompt>"');
+      expect(prompt).not.toContain('--agent');
+    });
+
+    it('does not add --model flag when model is not provided', () => {
+      const prompt = buildOrchestratorPrompt(defaultParams);
+      expect(prompt).not.toContain('--model');
+    });
+
+    it('threads --agent flag into worker delegation example when agent is set', () => {
+      const prompt = buildOrchestratorPrompt({ ...defaultParams, agent: 'codex' });
+      expect(prompt).toContain('beat run --agent codex "<prompt>"');
+    });
+
+    it('threads --model flag into worker delegation example when model is set', () => {
+      const prompt = buildOrchestratorPrompt({ ...defaultParams, model: 'claude-opus-4-5' });
+      expect(prompt).toContain('beat run --model claude-opus-4-5 "<prompt>"');
+    });
+
+    it('threads both --agent and --model flags when both are set', () => {
+      const prompt = buildOrchestratorPrompt({ ...defaultParams, agent: 'gemini', model: 'gemini-2.5-pro' });
+      expect(prompt).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
+    });
+
+    it('threads flags into loop delegation examples too', () => {
+      const prompt = buildOrchestratorPrompt({ ...defaultParams, agent: 'claude', model: 'claude-opus-4-5' });
+      expect(prompt).toContain('beat loop --agent claude --model claude-opus-4-5 "<prompt>" --until');
+    });
+  });
 });

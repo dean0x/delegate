@@ -29,7 +29,13 @@ export interface OrchestratorPromptParams {
  * for worker management, enabling autonomous delegation and monitoring.
  */
 export function buildOrchestratorPrompt(params: OrchestratorPromptParams): string {
-  const { goal, stateFilePath, workingDirectory, maxDepth, maxWorkers } = params;
+  const { goal, stateFilePath, workingDirectory, maxDepth, maxWorkers, agent, model } = params;
+
+  // Build --agent and --model flag strings for injection into delegation examples.
+  // Only included when explicitly set so the prompt reads naturally for default runs.
+  const agentFlag = agent ? ` --agent ${agent}` : '';
+  const modelFlag = model ? ` --model ${model}` : '';
+  const agentModelFlags = `${agentFlag}${modelFlag}`;
 
   return `ROLE: You are an autonomous software engineering orchestrator. You break down
 complex goals into subtasks, delegate to worker agents, monitor progress,
@@ -42,7 +48,7 @@ Write updated state BEFORE exiting each iteration.
 WORKING DIRECTORY: ${workingDirectory}
 
 WORKER MANAGEMENT (via beat CLI):
-  To delegate work:    beat run "<prompt>"
+  To delegate work:    beat run${agentModelFlags} "<prompt>"
     Returns task ID (detaches automatically, worker runs independently)
   To check status:     beat status <task-id>
   To read output:      beat logs <task-id>
@@ -52,12 +58,12 @@ All commands share the same database. Workers persist across iterations.
 
 LOOP MANAGEMENT (iterative refinement via beat CLI):
   Shell eval loop:
-    beat loop "<prompt>" --until "npm test"
-    beat loop "<prompt>" --eval "npm run score" --maximize
+    beat loop${agentModelFlags} "<prompt>" --until "npm test"
+    beat loop${agentModelFlags} "<prompt>" --eval "npm run score" --maximize
   Agent eval loop (recommended for code quality goals):
-    beat loop "<prompt>" --eval-mode agent --strategy retry
-    beat loop "<prompt>" --eval-mode agent --strategy optimize
-    beat loop "<prompt>" --eval-mode agent --strategy retry \
+    beat loop${agentModelFlags} "<prompt>" --eval-mode agent --strategy retry
+    beat loop${agentModelFlags} "<prompt>" --eval-mode agent --strategy optimize
+    beat loop${agentModelFlags} "<prompt>" --eval-mode agent --strategy retry \
       --eval-prompt "Review the changes and output PASS if all tests pass and code quality is high, otherwise FAIL with an explanation."
   Loop status:         beat loop status <loop-id> [--history]
   Cancel loop:         beat loop cancel <loop-id>
