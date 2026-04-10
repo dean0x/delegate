@@ -16,7 +16,7 @@ import {
   WorkerRepository,
 } from '../core/interfaces.js';
 import { ok, Result } from '../core/result.js';
-import { checkOrchestrationLiveness } from './orchestration-liveness.js';
+import { checkOrchestrationLiveness, type Liveness } from './orchestration-liveness.js';
 
 export interface RecoveryManagerDeps {
   readonly taskRepo: TaskRepository;
@@ -227,23 +227,17 @@ export class RecoveryManager {
   private async failZombieRunningOrchestrations(): Promise<void> {
     if (!this.orchestrationRepo || !this.loopRepo) return;
 
-    let result;
-    try {
-      result = await this.orchestrationRepo.findByStatus(OrchestratorStatus.RUNNING);
-    } catch {
-      return; // Defensive: don't crash bootstrap on unexpected errors
-    }
-
+    const result = await this.orchestrationRepo.findByStatus(OrchestratorStatus.RUNNING);
     if (!result.ok) return;
 
     for (const o of result.value) {
-      let liveness: string;
+      let liveness: Liveness;
       try {
         liveness = await checkOrchestrationLiveness(o, {
           loopRepo: this.loopRepo,
           taskRepo: this.taskRepo,
           workerRepo: this.workerRepo,
-          isProcessAlive: (pid) => this.isProcessAlive(pid),
+          isProcessAlive: this.isProcessAlive,
         });
       } catch {
         continue; // Defensive: skip this orchestration on unexpected error

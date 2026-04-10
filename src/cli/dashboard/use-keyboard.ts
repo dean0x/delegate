@@ -39,6 +39,19 @@ const PANEL_JUMP_KEYS: Record<string, PanelId> = {
   '4': 'orchestrations',
 };
 
+/** Terminal statuses per panel — used by both 'c' (cancel guard) and 'd' (delete gate) handlers */
+const TERMINAL_STATUSES: {
+  orchestrations: OrchestratorStatus[];
+  loops: LoopStatus[];
+  tasks: TaskStatus[];
+  schedules: ScheduleStatus[];
+} = {
+  orchestrations: [OrchestratorStatus.COMPLETED, OrchestratorStatus.FAILED, OrchestratorStatus.CANCELLED],
+  loops: [LoopStatus.COMPLETED, LoopStatus.FAILED, LoopStatus.CANCELLED],
+  tasks: [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED],
+  schedules: [ScheduleStatus.COMPLETED, ScheduleStatus.CANCELLED, ScheduleStatus.EXPIRED],
+};
+
 interface UseKeyboardParams {
   readonly view: ViewState;
   readonly nav: NavState;
@@ -294,32 +307,26 @@ function handleMainKeys(
       const filteredItems = filter !== null ? allItems.filter((item) => item.status === filter) : allItems;
       const selectedItem = filteredItems[nav.selectedIndices[panel]];
       if (selectedItem) {
-        const TERMINAL_ORCHESTRATION = [
-          OrchestratorStatus.COMPLETED,
-          OrchestratorStatus.FAILED,
-          OrchestratorStatus.CANCELLED,
-        ];
-        const TERMINAL_LOOP = [LoopStatus.COMPLETED, LoopStatus.FAILED, LoopStatus.CANCELLED];
-        const TERMINAL_TASK = [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED];
-        const TERMINAL_SCHEDULE = [ScheduleStatus.COMPLETED, ScheduleStatus.CANCELLED, ScheduleStatus.EXPIRED];
-
         const { orchestrationService, loopService, taskManager, scheduleService } = params.mutations;
         const reason = 'User cancelled via dashboard';
 
         void (async () => {
           if (
             panel === 'orchestrations' &&
-            !TERMINAL_ORCHESTRATION.includes(selectedItem.status as OrchestratorStatus)
+            !TERMINAL_STATUSES.orchestrations.includes(selectedItem.status as OrchestratorStatus)
           ) {
             await orchestrationService.cancelOrchestration(selectedItem.id as OrchestratorId, reason);
             params.refreshNow();
-          } else if (panel === 'loops' && !TERMINAL_LOOP.includes(selectedItem.status as LoopStatus)) {
+          } else if (panel === 'loops' && !TERMINAL_STATUSES.loops.includes(selectedItem.status as LoopStatus)) {
             await loopService.cancelLoop(selectedItem.id as LoopId, reason, true);
             params.refreshNow();
-          } else if (panel === 'tasks' && !TERMINAL_TASK.includes(selectedItem.status as TaskStatus)) {
+          } else if (panel === 'tasks' && !TERMINAL_STATUSES.tasks.includes(selectedItem.status as TaskStatus)) {
             await taskManager.cancel(selectedItem.id as TaskId, reason);
             params.refreshNow();
-          } else if (panel === 'schedules' && !TERMINAL_SCHEDULE.includes(selectedItem.status as ScheduleStatus)) {
+          } else if (
+            panel === 'schedules' &&
+            !TERMINAL_STATUSES.schedules.includes(selectedItem.status as ScheduleStatus)
+          ) {
             await scheduleService.cancelSchedule(selectedItem.id as ScheduleId, reason);
             params.refreshNow();
           }
@@ -339,21 +346,12 @@ function handleMainKeys(
       const filteredItems = filter !== null ? allItems.filter((item) => item.status === filter) : allItems;
       const selectedItem = filteredItems[nav.selectedIndices[panel]];
       if (selectedItem) {
-        const TERMINAL_ORCHESTRATION = [
-          OrchestratorStatus.COMPLETED,
-          OrchestratorStatus.FAILED,
-          OrchestratorStatus.CANCELLED,
-        ];
-        const TERMINAL_LOOP = [LoopStatus.COMPLETED, LoopStatus.FAILED, LoopStatus.CANCELLED];
-        const TERMINAL_TASK = [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED];
-        const TERMINAL_SCHEDULE = [ScheduleStatus.COMPLETED, ScheduleStatus.CANCELLED, ScheduleStatus.EXPIRED];
-
         const { orchestrationRepo } = params.mutations;
 
         void (async () => {
           if (
             panel === 'orchestrations' &&
-            TERMINAL_ORCHESTRATION.includes(selectedItem.status as OrchestratorStatus)
+            TERMINAL_STATUSES.orchestrations.includes(selectedItem.status as OrchestratorStatus)
           ) {
             await orchestrationRepo.delete(selectedItem.id as OrchestratorId);
             params.refreshNow();

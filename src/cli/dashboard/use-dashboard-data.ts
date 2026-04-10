@@ -34,6 +34,19 @@ export interface UseDashboardDataResult {
  */
 export const FETCH_LIMIT = 50;
 
+/**
+ * Check if a process is alive by sending signal 0 (existence check, no signal sent).
+ * EPERM means the process exists but we lack permission — treated as alive.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 // ============================================================================
 // Pure helper functions (exported for unit testing)
 // ============================================================================
@@ -111,14 +124,6 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
 
   // Compute liveness for RUNNING orchestrations (best-effort — errors yield 'unknown')
   const orchestrationLiveness: Record<string, Liveness> = {};
-  const isProcessAlive = (pid: number): boolean => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (e) {
-      return (e as NodeJS.ErrnoException).code === 'EPERM';
-    }
-  };
   for (const orch of orchestrations.value) {
     if (orch.status === OrchestratorStatus.RUNNING) {
       try {
