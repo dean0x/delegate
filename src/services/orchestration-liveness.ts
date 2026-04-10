@@ -37,10 +37,7 @@ export interface LivenessDeps {
  * - 'unknown' — chain is broken (no loopId, no iteration, no task, no worker)
  *               Conservative: caller should leave these rows alone.
  */
-export async function checkOrchestrationLiveness(
-  orchestration: Orchestration,
-  deps: LivenessDeps,
-): Promise<Liveness> {
+export async function checkOrchestrationLiveness(orchestration: Orchestration, deps: LivenessDeps): Promise<Liveness> {
   // No loop assigned yet (PLANNING state or create failed before loop was set)
   if (!orchestration.loopId) return 'unknown';
 

@@ -10,15 +10,14 @@
  * of whether `taskManager` is resolved, matching production `beat orchestrate` behavior.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrap } from '../../src/bootstrap.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
-import { NoOpProcessSpawner } from '../fixtures/no-op-spawner.js';
 import { TestResourceMonitor } from '../../src/implementations/resource-monitor.js';
+import { NoOpProcessSpawner } from '../fixtures/no-op-spawner.js';
 
 describe('Bootstrap handler wiring (regression)', () => {
   let tempDir: string;

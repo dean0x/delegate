@@ -8,12 +8,7 @@ import { useInput } from 'ink';
 import type React from 'react';
 import { useRef } from 'react';
 import type { LoopId, OrchestratorId, ScheduleId, TaskId } from '../../core/domain.js';
-import {
-  LoopStatus,
-  OrchestratorStatus,
-  ScheduleStatus,
-  TaskStatus,
-} from '../../core/domain.js';
+import { LoopStatus, OrchestratorStatus, ScheduleStatus, TaskStatus } from '../../core/domain.js';
 import type { DashboardData, DashboardMutationContext, NavState, PanelId, ViewState } from './types.js';
 
 /**
@@ -299,7 +294,11 @@ function handleMainKeys(
       const filteredItems = filter !== null ? allItems.filter((item) => item.status === filter) : allItems;
       const selectedItem = filteredItems[nav.selectedIndices[panel]];
       if (selectedItem) {
-        const TERMINAL_ORCHESTRATION = [OrchestratorStatus.COMPLETED, OrchestratorStatus.FAILED, OrchestratorStatus.CANCELLED];
+        const TERMINAL_ORCHESTRATION = [
+          OrchestratorStatus.COMPLETED,
+          OrchestratorStatus.FAILED,
+          OrchestratorStatus.CANCELLED,
+        ];
         const TERMINAL_LOOP = [LoopStatus.COMPLETED, LoopStatus.FAILED, LoopStatus.CANCELLED];
         const TERMINAL_TASK = [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED];
         const TERMINAL_SCHEDULE = [ScheduleStatus.COMPLETED, ScheduleStatus.CANCELLED, ScheduleStatus.EXPIRED];
@@ -308,7 +307,10 @@ function handleMainKeys(
         const reason = 'User cancelled via dashboard';
 
         void (async () => {
-          if (panel === 'orchestrations' && !TERMINAL_ORCHESTRATION.includes(selectedItem.status as OrchestratorStatus)) {
+          if (
+            panel === 'orchestrations' &&
+            !TERMINAL_ORCHESTRATION.includes(selectedItem.status as OrchestratorStatus)
+          ) {
             await orchestrationService.cancelOrchestration(selectedItem.id as OrchestratorId, reason);
             params.refreshNow();
           } else if (panel === 'loops' && !TERMINAL_LOOP.includes(selectedItem.status as LoopStatus)) {
@@ -337,7 +339,11 @@ function handleMainKeys(
       const filteredItems = filter !== null ? allItems.filter((item) => item.status === filter) : allItems;
       const selectedItem = filteredItems[nav.selectedIndices[panel]];
       if (selectedItem) {
-        const TERMINAL_ORCHESTRATION = [OrchestratorStatus.COMPLETED, OrchestratorStatus.FAILED, OrchestratorStatus.CANCELLED];
+        const TERMINAL_ORCHESTRATION = [
+          OrchestratorStatus.COMPLETED,
+          OrchestratorStatus.FAILED,
+          OrchestratorStatus.CANCELLED,
+        ];
         const TERMINAL_LOOP = [LoopStatus.COMPLETED, LoopStatus.FAILED, LoopStatus.CANCELLED];
         const TERMINAL_TASK = [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED];
         const TERMINAL_SCHEDULE = [ScheduleStatus.COMPLETED, ScheduleStatus.CANCELLED, ScheduleStatus.EXPIRED];
@@ -345,7 +351,10 @@ function handleMainKeys(
         const { orchestrationRepo } = params.mutations;
 
         void (async () => {
-          if (panel === 'orchestrations' && TERMINAL_ORCHESTRATION.includes(selectedItem.status as OrchestratorStatus)) {
+          if (
+            panel === 'orchestrations' &&
+            TERMINAL_ORCHESTRATION.includes(selectedItem.status as OrchestratorStatus)
+          ) {
             await orchestrationRepo.delete(selectedItem.id as OrchestratorId);
             params.refreshNow();
           }

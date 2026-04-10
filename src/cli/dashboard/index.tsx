@@ -104,7 +104,9 @@ export async function startDashboard(): Promise<void> {
     orchestrationRepository: orchestrationRepository.value,
     workerRepository: workerRepository.value,
     outputRepository: outputRepository.value,
-    close: () => { /* handled by container.dispose() in cleanup() */ },
+    close: () => {
+      /* handled by container.dispose() in cleanup() */
+    },
   };
 
   // Extract mutation services for cancel/delete keybindings
@@ -115,10 +117,7 @@ export async function startDashboard(): Promise<void> {
 
   // Mutations are best-effort — dashboard degrades gracefully if unavailable
   const mutations: DashboardMutationContext | undefined =
-    orchestrationServiceResult.ok &&
-    loopServiceResult.ok &&
-    scheduleServiceResult.ok &&
-    taskManagerResult.ok
+    orchestrationServiceResult.ok && loopServiceResult.ok && scheduleServiceResult.ok && taskManagerResult.ok
       ? {
           orchestrationService: orchestrationServiceResult.value,
           loopService: loopServiceResult.value,

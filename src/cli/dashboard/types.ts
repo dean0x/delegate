@@ -15,8 +15,14 @@ import type {
   Task,
   TaskId,
 } from '../../core/domain.js';
-import type { LoopService, OrchestrationRepository, OrchestrationService, ScheduleService, TaskManager } from '../../core/interfaces.js';
-import type { ScheduleExecution } from '../../core/interfaces.js';
+import type {
+  LoopService,
+  OrchestrationRepository,
+  OrchestrationService,
+  ScheduleExecution,
+  ScheduleService,
+  TaskManager,
+} from '../../core/interfaces.js';
 import type { Liveness } from '../../services/orchestration-liveness.js';
 
 /**

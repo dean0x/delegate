@@ -22,10 +22,23 @@ import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
 import React, { useCallback, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { DashboardData, DashboardMutationContext, NavState, ViewState } from '../../../../src/cli/dashboard/types.js';
+import type {
+  DashboardData,
+  DashboardMutationContext,
+  NavState,
+  ViewState,
+} from '../../../../src/cli/dashboard/types.js';
 import { useKeyboard } from '../../../../src/cli/dashboard/use-keyboard.js';
-import type { Loop, Orchestration, Schedule, Task } from '../../../../src/core/domain.js';
-import type { LoopId, OrchestratorId, ScheduleId, TaskId } from '../../../../src/core/domain.js';
+import type {
+  Loop,
+  LoopId,
+  Orchestration,
+  OrchestratorId,
+  Schedule,
+  ScheduleId,
+  Task,
+  TaskId,
+} from '../../../../src/core/domain.js';
 import {
   LoopStatus,
   LoopStrategy,

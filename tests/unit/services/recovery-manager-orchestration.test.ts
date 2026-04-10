@@ -7,20 +7,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type Loop,
-  type LoopIteration,
   LoopId,
+  type LoopIteration,
   LoopStatus,
   LoopStrategy,
+  type Orchestration,
   OrchestratorId,
   OrchestratorStatus,
   TaskId,
-  WorkerId,
   updateOrchestration,
-  type Orchestration,
+  WorkerId,
 } from '../../../src/core/domain.js';
-import { ok, err } from '../../../src/core/result.js';
-import { RecoveryManager } from '../../../src/services/recovery-manager.js';
+import { err, ok } from '../../../src/core/result.js';
 import { checkOrchestrationLiveness } from '../../../src/services/orchestration-liveness.js';
+import { RecoveryManager } from '../../../src/services/recovery-manager.js';
 
 // ============================================================================
 // Mock factories
@@ -52,12 +52,14 @@ const createMockIteration = (overrides: Partial<LoopIteration> = {}): LoopIterat
   ...overrides,
 });
 
-const makeRecoveryManager = (deps: {
-  orchestrationRepo?: Record<string, unknown>;
-  loopRepo?: Record<string, unknown>;
-  taskRepo?: Record<string, unknown>;
-  workerRepo?: Record<string, unknown>;
-} = {}) => {
+const makeRecoveryManager = (
+  deps: {
+    orchestrationRepo?: Record<string, unknown>;
+    loopRepo?: Record<string, unknown>;
+    taskRepo?: Record<string, unknown>;
+    workerRepo?: Record<string, unknown>;
+  } = {},
+) => {
   const defaultTaskRepo = {
     findByStatus: vi.fn().mockResolvedValue(ok([])),
     findById: vi.fn().mockResolvedValue(ok(null)),
@@ -248,9 +250,7 @@ describe('RecoveryManager — zombie RUNNING orchestration detection', () => {
     const workerReg = { workerId: WorkerId('worker-1'), ownerPid: process.pid, taskId: TaskId('task-1') };
 
     const orchRepo = {
-      findByStatus: vi.fn((status: string) =>
-        status === OrchestratorStatus.RUNNING ? ok([orch]) : ok([]),
-      ),
+      findByStatus: vi.fn((status: string) => (status === OrchestratorStatus.RUNNING ? ok([orch]) : ok([]))),
       update: vi.fn().mockResolvedValue(ok(undefined)),
       cleanupOldOrchestrations: vi.fn().mockResolvedValue(ok(0)),
     };
@@ -287,9 +287,7 @@ describe('RecoveryManager — zombie RUNNING orchestration detection', () => {
     const workerReg = { workerId: WorkerId('worker-1'), ownerPid: 999999, taskId: TaskId('task-1') };
 
     const orchRepo = {
-      findByStatus: vi.fn((status: string) =>
-        status === OrchestratorStatus.RUNNING ? ok([orch]) : ok([]),
-      ),
+      findByStatus: vi.fn((status: string) => (status === OrchestratorStatus.RUNNING ? ok([orch]) : ok([]))),
       update: vi.fn().mockResolvedValue(ok(undefined)),
       cleanupOldOrchestrations: vi.fn().mockResolvedValue(ok(0)),
     };
@@ -322,9 +320,7 @@ describe('RecoveryManager — zombie RUNNING orchestration detection', () => {
     const orch = createMockOrchestration({ loopId: LoopId('loop-1') });
 
     const orchRepo = {
-      findByStatus: vi.fn((status: string) =>
-        status === OrchestratorStatus.RUNNING ? ok([orch]) : ok([]),
-      ),
+      findByStatus: vi.fn((status: string) => (status === OrchestratorStatus.RUNNING ? ok([orch]) : ok([]))),
       update: vi.fn().mockResolvedValue(ok(undefined)),
       cleanupOldOrchestrations: vi.fn().mockResolvedValue(ok(0)),
     };
