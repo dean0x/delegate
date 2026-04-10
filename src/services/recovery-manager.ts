@@ -3,7 +3,7 @@
  * Handles loading tasks from database and emits events for recovery actions
  */
 
-import { isTerminalState, Task, TaskStatus } from '../core/domain.js';
+import { isTerminalState, OrchestratorStatus, Task, TaskStatus, updateOrchestration } from '../core/domain.js';
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
 import {
@@ -16,6 +16,7 @@ import {
   WorkerRepository,
 } from '../core/interfaces.js';
 import { ok, Result } from '../core/result.js';
+import { checkOrchestrationLiveness } from './orchestration-liveness.js';
 
 export interface RecoveryManagerDeps {
   readonly taskRepo: TaskRepository;
@@ -84,6 +85,12 @@ export class RecoveryManager {
 
     // Phase 1c: Cleanup old completed orchestrations (state files + DB rows)
     await this.cleanupOldOrchestrations();
+
+    // Phase 1d: Detect zombie RUNNING orchestrations whose worker died silently.
+    // DECISION (2026-04-10): Stuck PLANNING orchestrations are NOT auto-cleaned by design.
+    // The user prefers visibility + manual control via dashboard keybindings (c/d)
+    // over silent automated cleanup.
+    await this.failZombieRunningOrchestrations();
 
     // Fetch non-terminal tasks for recovery
     const queuedResult = await this.taskRepo.findByStatus(TaskStatus.QUEUED);
@@ -207,6 +214,55 @@ export class RecoveryManager {
 
     if (cleanupResult.ok && cleanupResult.value > 0) {
       this.logger.info('Cleaned up old completed orchestrations', { count: cleanupResult.value });
+    }
+  }
+
+  /**
+   * DECISION (2026-04-10): Detect zombies by tracing:
+   * orchestration → loop → most-recent-iteration → task → worker.ownerPid → process.kill(pid, 0).
+   * Conservative: 'unknown' results (broken chain) leave the row alone — false positives
+   * marking live orchestrations as zombies would be far worse than false negatives
+   * leaving zombies for the user to clean manually via the dashboard.
+   */
+  private async failZombieRunningOrchestrations(): Promise<void> {
+    if (!this.orchestrationRepo || !this.loopRepo) return;
+
+    let result;
+    try {
+      result = await this.orchestrationRepo.findByStatus(OrchestratorStatus.RUNNING);
+    } catch {
+      return; // Defensive: don't crash bootstrap on unexpected errors
+    }
+
+    if (!result.ok) return;
+
+    for (const o of result.value) {
+      let liveness: string;
+      try {
+        liveness = await checkOrchestrationLiveness(o, {
+          loopRepo: this.loopRepo,
+          taskRepo: this.taskRepo,
+          workerRepo: this.workerRepo,
+          isProcessAlive: (pid) => this.isProcessAlive(pid),
+        });
+      } catch {
+        continue; // Defensive: skip this orchestration on unexpected error
+      }
+
+      if (liveness !== 'dead') continue;
+
+      const failed = updateOrchestration(o, {
+        status: OrchestratorStatus.FAILED,
+        completedAt: Date.now(),
+      });
+
+      const updateResult = await this.orchestrationRepo.update(failed);
+      if (updateResult.ok) {
+        this.logger.warn('Marked zombie RUNNING orchestration as FAILED (worker PID dead)', {
+          orchestratorId: o.id,
+          loopId: o.loopId,
+        });
+      }
     }
   }
 
