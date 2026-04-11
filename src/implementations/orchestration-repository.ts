@@ -543,7 +543,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
     return tryCatchAsync(
       async () => {
         const rows = this.findUpdatedSinceStmt.all(sinceMs, limit) as OrchestrationRow[];
-        return rows.map((row) => this.rowToOrchestration(OrchestrationRowSchema.parse(row)));
+        return rows.map((row) => this.rowToOrchestration(row));
       },
       operationErrorHandler('find orchestrations updated since', { sinceMs }),
     );

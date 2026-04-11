@@ -7,7 +7,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrchestratorId, TaskId } from '../../../../src/core/domain.js';
-import { OrchestratorStatus } from '../../../../src/core/domain.js';
 import { err, ok } from '../../../../src/core/result.js';
 import { AttributedTaskCancellationHandler } from '../../../../src/services/handlers/attributed-task-cancellation-handler.js';
 import { TestEventBus, TestLogger } from '../../../fixtures/test-doubles.js';

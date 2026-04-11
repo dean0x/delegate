@@ -332,8 +332,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   });
 
   // Register OrchestrationService for orchestrator mode (v0.9.0)
-  // v1.3.0: taskRepository + taskManager are injected so cancelOrchestration can cascade-cancel
-  // directly-attributed tasks (orchestrator_id). Both deps are already registered above.
+  // Cancel cascade (v1.3.0) is handled by AttributedTaskCancellationHandler via OrchestrationCancelled event.
   container.registerSingleton('orchestrationService', () => {
     return new OrchestrationManagerService({
       eventBus: getFromContainer<EventBus>(container, 'eventBus'),
@@ -341,8 +340,6 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       orchestrationRepo: getFromContainer<OrchestrationRepository>(container, 'orchestrationRepository'),
       loopService: getFromContainer<LoopService>(container, 'loopService'),
       config,
-      taskRepository: getFromContainer<TaskRepository>(container, 'taskRepository'),
-      taskManager: getFromContainer<TaskManager>(container, 'taskManager'),
     });
   });
 

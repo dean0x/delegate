@@ -216,8 +216,9 @@ export function extractHandlerDependencies(container: Container): Result<Handler
 /**
  * Create and setup all event handlers
  *
- * Initializes 7 handlers: 3 standard handlers via EventHandlerRegistry,
- * plus DependencyHandler, ScheduleHandler, CheckpointHandler, and LoopHandler via factory pattern.
+ * Initializes up to 10 handlers: 3 standard handlers via EventHandlerRegistry,
+ * plus DependencyHandler, ScheduleHandler, CheckpointHandler, LoopHandler, and 3 optional factory
+ * handlers (OrchestrationHandler, UsageCaptureHandler, AttributedTaskCancellationHandler).
  * On any failure, performs cleanup of already-initialized handlers before returning error.
  *
  * ARCHITECTURE: Standard handlers use setup(eventBus) pattern via registry.

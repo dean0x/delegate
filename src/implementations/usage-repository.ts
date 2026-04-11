@@ -53,6 +53,14 @@ const TaskUsageAggregateRowSchema = z.object({
 });
 
 /**
+ * Validates a row returned by topOrchestrationsByCost (GROUP BY aggregate).
+ */
+const TopOrchestrationRowSchema = z.object({
+  orchestration_id: z.string().min(1),
+  total_cost: z.number(),
+});
+
+/**
  * Zero-value aggregate returned when no usage rows match a query.
  * Avoids null in aggregate methods — callers can always read numeric fields.
  */
@@ -254,13 +262,9 @@ export class SQLiteUsageRepository implements UsageRepository {
     limit: number,
   ): Promise<Result<readonly { orchestrationId: OrchestratorId; totalCost: number }[]>> {
     return tryCatchAsync(async () => {
-      const TopRowSchema = z.object({
-        orchestration_id: z.string().min(1),
-        total_cost: z.number(),
-      });
       const rows = this.topOrchsByCostStmt.all(sinceMs, limit) as unknown[];
       return rows.map((r) => {
-        const parsed = TopRowSchema.parse(r);
+        const parsed = TopOrchestrationRowSchema.parse(r);
         return {
           orchestrationId: parsed.orchestration_id as OrchestratorId,
           totalCost: parsed.total_cost,

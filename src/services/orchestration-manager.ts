@@ -22,14 +22,7 @@ import {
 } from '../core/domain.js';
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import type { EventBus } from '../core/events/event-bus.js';
-import type {
-  Logger,
-  LoopService,
-  OrchestrationRepository,
-  OrchestrationService,
-  TaskManager,
-  TaskRepository,
-} from '../core/interfaces.js';
+import type { Logger, LoopService, OrchestrationRepository, OrchestrationService } from '../core/interfaces.js';
 import {
   createInitialState,
   getStateDir,
@@ -46,13 +39,6 @@ export interface OrchestrationManagerServiceDeps {
   readonly orchestrationRepo: OrchestrationRepository;
   readonly loopService: LoopService;
   readonly config: Configuration;
-  /**
-   * @deprecated v1.3.0: Cancel cascade is now handled by AttributedTaskCancellationHandler
-   * subscribing to OrchestrationCancelled. These deps are accepted for bootstrap
-   * backward-compatibility but are no longer used by this service.
-   */
-  readonly taskRepository?: TaskRepository;
-  readonly taskManager?: TaskManager;
 }
 
 export class OrchestrationManagerService implements OrchestrationService {

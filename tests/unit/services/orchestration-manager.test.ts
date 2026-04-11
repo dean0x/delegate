@@ -284,48 +284,21 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       expect(evt?.reason).toBe('cascade reason');
     });
 
-    it('should not cascade directly in service (AttributedTaskCancellationHandler handles it)', async () => {
-      // ARCHITECTURE: The service no longer directly cancels attributed tasks.
-      // The cascade is handled by AttributedTaskCancellationHandler on OrchestrationCancelled.
-      // This test verifies the service does not perform inline task cancellation.
-      const { createTask } = await import('../../../src/core/domain.js');
-      const { SQLiteTaskRepository } = await import('../../../src/implementations/task-repository.js');
-      const { ok } = await import('../../../src/core/result.js');
-
-      const taskRepo = new SQLiteTaskRepository(db);
-      const cancelledIds: string[] = [];
-      const taskManagerStub = {
-        cancel: async (taskId: string) => {
-          cancelledIds.push(taskId);
-          return ok(undefined);
-        },
-      } as unknown as import('../../../src/core/interfaces.js').TaskManager;
-
-      // Even when taskRepository and taskManager are passed (for backward-compat),
-      // the service should not call taskManager.cancel directly — cascade is event-driven.
-      const cascadeService = new OrchestrationManagerService({
-        eventBus,
-        logger,
-        orchestrationRepo,
-        loopService,
-        config,
-        taskRepository: taskRepo,
-        taskManager: taskManagerStub,
-      });
-
-      const createResult = await cascadeService.createOrchestration({ goal: 'No inline cascade' });
+    it('emits OrchestrationCancelled without performing inline task cancellation', async () => {
+      // ARCHITECTURE: v1.3.0 cancel cascade is entirely event-driven.
+      // OrchestrationManagerService emits OrchestrationCancelled and does not call
+      // taskManager.cancel directly — AttributedTaskCancellationHandler handles the cascade.
+      const createResult = await service.createOrchestration({ goal: 'No inline cascade' });
       expect(createResult.ok).toBe(true);
       if (!createResult.ok) return;
       const orch = createResult.value;
 
-      const attributed = createTask({ prompt: 'attributed', orchestratorId: orch.id });
-      await taskRepo.save(attributed);
-
-      const cancelResult = await cascadeService.cancelOrchestration(orch.id, 'cascade test');
+      const cancelResult = await service.cancelOrchestration(orch.id, 'cascade test');
       expect(cancelResult.ok).toBe(true);
 
-      // taskManager.cancel should NOT be called by the service — event handler does it
-      expect(cancelledIds).toHaveLength(0);
+      // OrchestrationCancelled must be emitted — no inline task cancellation in the service
+      const cancelledEvents = eventBus.getEmittedEvents('OrchestrationCancelled');
+      expect(cancelledEvents.length).toBeGreaterThanOrEqual(1);
     });
   });
 });

@@ -364,10 +364,10 @@ describe('buildActivityFeed', () => {
         kind: 'task',
         action: 'running',
       });
-      expect(feed[0].timestamp).toBeInstanceOf(Date);
+      expect(typeof feed[0].timestamp).toBe('number');
     });
 
-    it('uses updatedAt as the timestamp (converted to Date)', () => {
+    it('uses updatedAt as the timestamp (epoch ms number)', () => {
       const feed = buildActivityFeed({
         tasks: [{ ...taskBase, id: 'task-1', status: 'running', updatedAt: T1 }],
         loops: [],
@@ -375,7 +375,7 @@ describe('buildActivityFeed', () => {
         schedules: [],
         limit: 100,
       });
-      expect(feed[0].timestamp.getTime()).toBe(T1);
+      expect(feed[0].timestamp).toBe(T1);
     });
   });
 });
