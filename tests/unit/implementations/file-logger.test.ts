@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileLogger } from '../../../src/implementations/file-logger';
+import { LogLevel } from '../../../src/implementations/logger';
 
 const TEST_DIR = path.join(os.tmpdir(), `file-logger-test-${Date.now()}`);
 const LOG_FILE = path.join(TEST_DIR, 'test.log');
@@ -44,8 +45,8 @@ describe('FileLogger', () => {
       expect(typeof parsed.timestamp).toBe('string');
     });
 
-    it('writes debug message', async () => {
-      const logger = await FileLogger.create(LOG_FILE);
+    it('writes debug message when level is DEBUG', async () => {
+      const logger = await FileLogger.create(LOG_FILE, LogLevel.DEBUG);
       logger.debug('debug msg');
       await logger.dispose();
       const contents = await readFile(LOG_FILE, 'utf-8');
@@ -147,6 +148,93 @@ describe('FileLogger', () => {
       expect(() => logger.info('silent')).not.toThrow();
       expect(() => logger.error('silent', new Error('x'))).not.toThrow();
       await expect(logger.dispose()).resolves.not.toThrow();
+    });
+  });
+
+  describe('log level filtering', () => {
+    beforeEach(async () => {
+      await rm(TEST_DIR, { recursive: true, force: true });
+    });
+
+    it('suppresses debug writes when level is INFO', async () => {
+      const logger = await FileLogger.create(LOG_FILE, LogLevel.INFO);
+      logger.debug('should be suppressed');
+      logger.info('should be written');
+      await logger.dispose();
+      const contents = await readFile(LOG_FILE, 'utf-8');
+      const lines = contents.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      const parsed = JSON.parse(lines[0]) as Record<string, unknown>;
+      expect(parsed.level).toBe('info');
+    });
+
+    it('suppresses debug and info writes when level is WARN', async () => {
+      const logger = await FileLogger.create(LOG_FILE, LogLevel.WARN);
+      logger.debug('suppressed debug');
+      logger.info('suppressed info');
+      logger.warn('written warn');
+      await logger.dispose();
+      const contents = await readFile(LOG_FILE, 'utf-8');
+      const lines = contents.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      const parsed = JSON.parse(lines[0]) as Record<string, unknown>;
+      expect(parsed.level).toBe('warn');
+    });
+
+    it('writes all levels when level is DEBUG', async () => {
+      const logger = await FileLogger.create(LOG_FILE, LogLevel.DEBUG);
+      logger.debug('debug msg');
+      logger.info('info msg');
+      logger.warn('warn msg');
+      logger.error('error msg');
+      await logger.dispose();
+      const contents = await readFile(LOG_FILE, 'utf-8');
+      const lines = contents.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(4);
+      const levels = new Set(lines.map((l) => (JSON.parse(l) as { level: string }).level));
+      expect(levels).toEqual(new Set(['debug', 'info', 'warn', 'error']));
+    });
+
+    it('writes only error when level is ERROR', async () => {
+      const logger = await FileLogger.create(LOG_FILE, LogLevel.ERROR);
+      logger.debug('no');
+      logger.info('no');
+      logger.warn('no');
+      logger.error('yes');
+      await logger.dispose();
+      const contents = await readFile(LOG_FILE, 'utf-8');
+      const lines = contents.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      const parsed = JSON.parse(lines[0]) as Record<string, unknown>;
+      expect(parsed.level).toBe('error');
+    });
+
+    it('child() inherits parent log level filter', async () => {
+      const logger = await FileLogger.create(LOG_FILE, LogLevel.WARN);
+      const child = logger.child({ module: 'sub' });
+      child.debug('suppressed');
+      child.info('suppressed');
+      child.warn('written');
+      await logger.dispose();
+      const contents = await readFile(LOG_FILE, 'utf-8');
+      const lines = contents.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      const parsed = JSON.parse(lines[0]) as Record<string, unknown>;
+      expect(parsed.level).toBe('warn');
+      expect((parsed.context as Record<string, unknown>).module).toBe('sub');
+    });
+
+    it('defaults to INFO level when no level is provided', async () => {
+      // Default level should suppress debug
+      const logger = await FileLogger.create(LOG_FILE);
+      logger.debug('suppressed by default');
+      logger.info('written by default');
+      await logger.dispose();
+      const contents = await readFile(LOG_FILE, 'utf-8');
+      const lines = contents.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      const parsed = JSON.parse(lines[0]) as Record<string, unknown>;
+      expect(parsed.level).toBe('info');
     });
   });
 });

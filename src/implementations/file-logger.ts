@@ -15,6 +15,7 @@ import { mkdir, open } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Logger } from '../core/interfaces.js';
+import { LogLevel } from './logger.js';
 
 // ============================================================================
 // Default log path
@@ -74,10 +75,16 @@ class SilentLogger implements DisposableLogger {
 export class FileLogger implements Logger {
   private readonly fileHandle: import('node:fs/promises').FileHandle;
   private readonly context: Readonly<Record<string, unknown>>;
+  private readonly level: LogLevel;
   private disposed = false;
 
-  private constructor(fileHandle: import('node:fs/promises').FileHandle, context: Record<string, unknown> = {}) {
+  private constructor(
+    fileHandle: import('node:fs/promises').FileHandle,
+    level: LogLevel = LogLevel.INFO,
+    context: Record<string, unknown> = {},
+  ) {
     this.fileHandle = fileHandle;
+    this.level = level;
     this.context = { ...context };
   }
 
@@ -85,12 +92,16 @@ export class FileLogger implements Logger {
    * Create a FileLogger that writes to the given path.
    * Creates the parent directory if it does not exist (idempotent).
    * Returns a SilentLogger on any open/mkdir failure — never throws.
+   * Pass `level` to filter writes below that severity (mirrors StructuredLogger/ConsoleLogger).
    */
-  static async create(filePath: string = DEFAULT_DASHBOARD_LOG_PATH): Promise<DisposableLogger> {
+  static async create(
+    filePath: string = DEFAULT_DASHBOARD_LOG_PATH,
+    level: LogLevel = LogLevel.INFO,
+  ): Promise<DisposableLogger> {
     try {
       await mkdir(path.dirname(filePath), { recursive: true });
       const handle = await open(filePath, 'a');
-      return new FileLogger(handle);
+      return new FileLogger(handle, level);
     } catch {
       // Silent fallback — never throw into the dashboard UI
       return new SilentLogger();
@@ -98,23 +109,27 @@ export class FileLogger implements Logger {
   }
 
   debug(message: string, context?: Record<string, unknown>): void {
+    if (this.level > LogLevel.DEBUG) return;
     this.write('debug', message, undefined, context);
   }
 
   info(message: string, context?: Record<string, unknown>): void {
+    if (this.level > LogLevel.INFO) return;
     this.write('info', message, undefined, context);
   }
 
   warn(message: string, context?: Record<string, unknown>): void {
+    if (this.level > LogLevel.WARN) return;
     this.write('warn', message, undefined, context);
   }
 
   error(message: string, error?: Error, context?: Record<string, unknown>): void {
+    if (this.level > LogLevel.ERROR) return;
     this.write('error', message, error, context);
   }
 
   child(context: Record<string, unknown>): Logger {
-    return new FileLogger(this.fileHandle, { ...this.context, ...context });
+    return new FileLogger(this.fileHandle, this.level, { ...this.context, ...context });
   }
 
   /**

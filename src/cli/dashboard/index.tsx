@@ -31,6 +31,7 @@ import type {
   WorkerRepository,
 } from '../../core/interfaces.js';
 import { DEFAULT_DASHBOARD_LOG_PATH, type DisposableLogger, FileLogger } from '../../implementations/file-logger.js';
+import { LogLevel } from '../../implementations/logger.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { App } from './app.js';
 import type { DashboardMutationContext } from './types.js';
@@ -72,7 +73,7 @@ export async function startDashboard(): Promise<void> {
   // downstream log output does not interleave with Ink's frame rendering.
   // FileLogger.create() never throws — it falls back to a SilentLogger if the
   // file cannot be opened, so the dashboard always has a valid Logger.
-  const fileLogger: DisposableLogger = await FileLogger.create();
+  const fileLogger: DisposableLogger = await FileLogger.create(DEFAULT_DASHBOARD_LOG_PATH, LogLevel.INFO);
 
   // Bootstrap with mode: 'cli' — initialises repositories + services needed for mutations
   // (cancel/delete keybindings) without starting the MCP server or scheduler.
