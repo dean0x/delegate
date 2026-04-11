@@ -30,7 +30,7 @@ import type {
   UsageRepository,
   WorkerRepository,
 } from '../../core/interfaces.js';
-import { type DisposableLogger, FileLogger } from '../../implementations/file-logger.js';
+import { DEFAULT_DASHBOARD_LOG_PATH, type DisposableLogger, FileLogger } from '../../implementations/file-logger.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { App } from './app.js';
 import type { DashboardMutationContext } from './types.js';
@@ -147,6 +147,14 @@ export async function startDashboard(): Promise<void> {
           scheduleRepo: scheduleRepository.value,
         }
       : undefined;
+
+  // Emit discovery hint BEFORE entering alternate screen so the message lands in
+  // the normal scrollback buffer and is visible after the dashboard exits.
+  // Only written when the file logger is active (instanceof FileLogger) — skipped
+  // on the SilentLogger fallback path where there is no file to tail.
+  if (fileLogger instanceof FileLogger) {
+    process.stderr.write(`[dashboard] logs → ${DEFAULT_DASHBOARD_LOG_PATH}\n`);
+  }
 
   // Enter alternate screen and hide cursor on stderr
   process.stderr.write(ansiEscapes.enterAlternativeScreen);

@@ -43,6 +43,45 @@ describe('dashboard render options (source guard)', () => {
   });
 });
 
+describe('dashboard boot message (source guard)', () => {
+  /**
+   * Regression guard: Plan §Fix-1b requires a one-line discovery hint printed to
+   * stderr ONCE before render() mounts, so users know where to tail the log.
+   * The hint must appear only when the file logger is active (not the silent
+   * fallback) and must be emitted before enterAlternativeScreen so it lands in
+   * the normal scrollback buffer.
+   */
+  it('imports DEFAULT_DASHBOARD_LOG_PATH from file-logger', () => {
+    const source = readFileSync(INDEX_PATH, 'utf-8');
+    expect(source).toContain('DEFAULT_DASHBOARD_LOG_PATH');
+    expect(source).toContain("from '../../implementations/file-logger.js'");
+  });
+
+  it('emits process.stderr.write with the log path before render()', () => {
+    const source = readFileSync(INDEX_PATH, 'utf-8');
+    // The write call must reference DEFAULT_DASHBOARD_LOG_PATH as the path
+    expect(source).toMatch(
+      /process\.stderr\.write\s*\(\s*`\[dashboard\] logs → \$\{DEFAULT_DASHBOARD_LOG_PATH\}\\n`\s*\)/,
+    );
+  });
+
+  it('boot message write is guarded by instanceof FileLogger check', () => {
+    const source = readFileSync(INDEX_PATH, 'utf-8');
+    // Only write when using the real file logger, not the SilentLogger fallback
+    expect(source).toMatch(/instanceof\s+FileLogger/);
+  });
+
+  it('boot message write appears before enterAlternativeScreen', () => {
+    const source = readFileSync(INDEX_PATH, 'utf-8');
+    const bootIdx = source.indexOf('[dashboard] logs');
+    const altScreenIdx = source.indexOf('enterAlternativeScreen');
+    // Both must be present and boot message must come first
+    expect(bootIdx).toBeGreaterThan(-1);
+    expect(altScreenIdx).toBeGreaterThan(-1);
+    expect(bootIdx).toBeLessThan(altScreenIdx);
+  });
+});
+
 describe('dashboard FileLogger wiring (source guard)', () => {
   /**
    * Regression guard: dashboard must swap the default ConsoleLogger for a
