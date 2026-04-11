@@ -15,7 +15,7 @@ import { mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MCPAdapter } from '../../../src/adapters/mcp-adapter';
+import { DelegateTaskSchema, MCPAdapter } from '../../../src/adapters/mcp-adapter';
 import { _testSetConfigDir, saveAgentConfig } from '../../../src/core/configuration';
 import type {
   Loop,
@@ -2955,5 +2955,103 @@ describe('ConfigureAgent — Claude baseUrl warning via callTool()', () => {
       const codexEntry = response.agents.find((a: { provider: string }) => a.provider === 'codex');
       expect(codexEntry.warning).toBeUndefined();
     });
+  });
+});
+
+// ============================================================================
+// DelegateTaskSchema — orchestratorId validation (security hardening, v1.3.0)
+// Tests the Zod schema boundary directly, independent of the MCP protocol layer.
+// ============================================================================
+
+const VALID_ORCHESTRATOR_ID = 'orchestrator-550e8400-e29b-41d4-a716-446655440000';
+
+describe('DelegateTaskSchema - orchestratorId validation', () => {
+  it('accepts a canonical orchestratorId (orchestrator- + UUID)', () => {
+    const result = DelegateTaskSchema.safeParse({
+      prompt: 'test',
+      metadata: { orchestratorId: VALID_ORCHESTRATOR_ID },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.metadata?.orchestratorId).toBe(VALID_ORCHESTRATOR_ID);
+    }
+  });
+
+  it('accepts input with no metadata (field is optional)', () => {
+    const result = DelegateTaskSchema.safeParse({ prompt: 'test' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts input with metadata but no orchestratorId (field is optional)', () => {
+    const result = DelegateTaskSchema.safeParse({ prompt: 'test', metadata: {} });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects orchestratorId missing the required prefix', () => {
+    const result = DelegateTaskSchema.safeParse({
+      prompt: 'test',
+      metadata: { orchestratorId: '550e8400-e29b-41d4-a716-446655440000' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects orchestratorId with only the prefix and no UUID', () => {
+    const result = DelegateTaskSchema.safeParse({
+      prompt: 'test',
+      metadata: { orchestratorId: 'orchestrator-' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects orchestratorId with uppercase hex in UUID segment', () => {
+    // crypto.randomUUID() produces lowercase hex; uppercase fails the regex
+    const result = DelegateTaskSchema.safeParse({
+      prompt: 'test',
+      metadata: { orchestratorId: 'orchestrator-550E8400-E29B-41D4-A716-446655440000' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects orchestratorId with control characters (log injection attempt)', () => {
+    const result = DelegateTaskSchema.safeParse({
+      prompt: 'test',
+      metadata: { orchestratorId: 'orchestrator-\x00malicious\ninjected\x1b[31m' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an oversized orchestratorId (> 49 chars)', () => {
+    // Add extra chars beyond the canonical 49-char length
+    const oversized = VALID_ORCHESTRATOR_ID + 'extra';
+    const result = DelegateTaskSchema.safeParse({
+      prompt: 'test',
+      metadata: { orchestratorId: oversized },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an empty string orchestratorId', () => {
+    const result = DelegateTaskSchema.safeParse({
+      prompt: 'test',
+      metadata: { orchestratorId: '' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects orchestratorId shorter than canonical length (< 49 chars)', () => {
+    // orchestrator- prefix (13) + partial UUID
+    const result = DelegateTaskSchema.safeParse({
+      prompt: 'test',
+      metadata: { orchestratorId: 'orchestrator-550e8400' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects orchestratorId with non-hex characters in UUID segment', () => {
+    const result = DelegateTaskSchema.safeParse({
+      prompt: 'test',
+      metadata: { orchestratorId: 'orchestrator-gggggggg-gggg-gggg-gggg-gggggggggggg' },
+    });
+    expect(result.success).toBe(false);
   });
 });

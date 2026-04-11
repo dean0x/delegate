@@ -44,7 +44,8 @@ import { validatePath } from '../utils/validation.js';
 import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 
 // Zod schemas for MCP protocol validation
-const DelegateTaskSchema = z.object({
+// Exported for unit-testing schema validation independently of the MCP protocol layer
+export const DelegateTaskSchema = z.object({
   prompt: z.string().min(1).max(4000),
   priority: z.enum(['P0', 'P1', 'P2']).optional(),
   workingDirectory: z.string().optional(),
@@ -73,12 +74,23 @@ const DelegateTaskSchema = z.object({
    * IMPORTANT (Risk #8): This is intentionally per-request metadata, NOT an env var.
    * The MCP server is long-lived and shared across orchestrators; reading an env var
    * here would mix attribution across concurrent orchestrations.
+   *
+   * DESIGN NOTE: metadata is a nested object (not a flat field) to namespace future
+   * per-request metadata without polluting the top-level schema. The orchestratorId
+   * field is the first use of this namespace.
+   *
+   * SECURITY: orchestratorId is constrained to the canonical format produced by
+   * crypto.randomUUID() in domain.ts createOrchestration():
+   *   "orchestrator-" (13 chars) + UUID (36 chars) = 49 chars total
+   * Bounds enforce printable ASCII only, preventing log injection via control chars.
    */
   metadata: z
     .object({
       orchestratorId: z
         .string()
-        .regex(/^orchestrator-/)
+        .regex(/^orchestrator-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+        .min(49)
+        .max(49)
         .optional(),
     })
     .optional()
