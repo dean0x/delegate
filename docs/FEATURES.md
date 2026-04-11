@@ -24,8 +24,15 @@ Last Updated: April 2026 (2026-04-11)
 | `Enter` on Activity row | Drill into detail view for that entity |
 | `Tab` (from orchestrations panel) | Cycle focus into Activity feed |
 | `Esc` in Activity focus | Return to panel grid |
+| `Tab` / `Shift+Tab` (Workspace) | Cycle focus: nav ↔ grid panels |
+| `1`–`9` (Workspace grid) | Jump to panel by number |
 | `f` (Workspace grid) | Toggle fullscreen for focused task panel |
 | `[`/`]` | Scroll focused task panel up/down |
+| `g` | Jump to top of focused task panel (disables auto-tail) |
+| `G` | Jump to bottom of focused task panel (re-engages auto-tail) |
+| `c` (Workspace) | Cancel orchestration (nav focus) or child task (grid focus) |
+| `PgUp` / `PgDn` (Workspace) | Page through task grid |
+| `d` (Workspace grid) | Delete focused child task (terminal status only) |
 
 ### Database (v1.3.0)
 
@@ -189,6 +196,7 @@ Last Updated: April 2026 (2026-04-11)
 - `CPU_THRESHOLD`: CPU usage threshold (default: 80%)
 - `MEMORY_RESERVE`: Memory reserve in bytes (default: 1GB)
 - `LOG_LEVEL`: Logging verbosity (debug/info/warn/error)
+- `OUTPUT_FLUSH_INTERVAL_MS`: Dashboard output polling interval (default: 1000ms; use 5000 to reduce write pressure)
 
 ### Runtime Configuration
 - **Validation**: Zod schema validation with fallbacks
