@@ -53,10 +53,7 @@ describe('SQLiteUsageRepository', () => {
 
   describe('migrations', () => {
     it('tasks table should have orchestrator_id column (v18)', () => {
-      const columns = db
-        .getDatabase()
-        .prepare('PRAGMA table_info(tasks)')
-        .all() as Array<{ name: string }>;
+      const columns = db.getDatabase().prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>;
       const names = columns.map((c) => c.name);
       expect(names).toContain('orchestrator_id');
     });
@@ -65,10 +62,7 @@ describe('SQLiteUsageRepository', () => {
       const tables = db.getTables();
       expect(tables).toContain('task_usage');
 
-      const columns = db
-        .getDatabase()
-        .prepare('PRAGMA table_info(task_usage)')
-        .all() as Array<{ name: string }>;
+      const columns = db.getDatabase().prepare('PRAGMA table_info(task_usage)').all() as Array<{ name: string }>;
       const names = columns.map((c) => c.name);
       expect(names).toContain('task_id');
       expect(names).toContain('input_tokens');

@@ -184,9 +184,7 @@ describe('parseClaudeUsage', () => {
 
   describe('bounds validation', () => {
     it('returns ok(null) when cost is negative', () => {
-      const output = makeOutput([
-        validResultJson({ total_cost_usd: -1 }),
-      ]);
+      const output = makeOutput([validResultJson({ total_cost_usd: -1 })]);
       const result = parseClaudeUsage(output, undefined);
 
       expect(result.ok).toBe(true);
@@ -194,9 +192,7 @@ describe('parseClaudeUsage', () => {
     });
 
     it('returns ok(null) when cost exceeds MAX_COST_USD (>$1000)', () => {
-      const output = makeOutput([
-        validResultJson({ total_cost_usd: 1001 }),
-      ]);
+      const output = makeOutput([validResultJson({ total_cost_usd: 1001 })]);
       const result = parseClaudeUsage(output, undefined);
 
       expect(result.ok).toBe(true);
@@ -221,9 +217,7 @@ describe('parseClaudeUsage', () => {
     });
 
     it('accepts cost exactly at MAX_COST_USD ($1000)', () => {
-      const output = makeOutput([
-        validResultJson({ total_cost_usd: 1000 }),
-      ]);
+      const output = makeOutput([validResultJson({ total_cost_usd: 1000 })]);
       const result = parseClaudeUsage(output, undefined);
 
       // Boundary: $1000 is accepted (>$1000 is rejected)

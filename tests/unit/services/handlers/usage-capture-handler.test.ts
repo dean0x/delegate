@@ -17,11 +17,7 @@ import { TestLogger } from '../../../fixtures/test-doubles.js';
 import { flushEventLoop } from '../../../utils/event-helpers.js';
 
 // Minimal valid Claude JSON result appended to stdout
-const makeClaudeResultJson = (
-  inputTokens = 100,
-  outputTokens = 50,
-  cost = 0.001234,
-): string =>
+const makeClaudeResultJson = (inputTokens = 100, outputTokens = 50, cost = 0.001234): string =>
   JSON.stringify({
     type: 'result',
     usage: {

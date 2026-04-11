@@ -8,14 +8,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  createTask,
-  OrchestratorId,
-} from '../../src/core/domain.js';
+import { createOrchestration, createTask, OrchestratorId, TaskStatus, updateTask } from '../../src/core/domain.js';
 import { Database } from '../../src/implementations/database.js';
 import { SQLiteOrchestrationRepository } from '../../src/implementations/orchestration-repository.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
-import { createOrchestration } from '../../src/core/domain.js';
 
 describe('Integration: orchestratorId propagation', () => {
   let db: Database;
@@ -84,8 +80,10 @@ describe('Integration: orchestratorId propagation', () => {
     const orch = createOrchestration({ goal: 'status filter' }, '/tmp/state.json', '/workspace');
     await orchRepo.save(orch);
 
-    const running = createTask({ prompt: 'running task', orchestratorId: orch.id, status: 'running' });
-    const queued = createTask({ prompt: 'queued task', orchestratorId: orch.id, status: 'queued' });
+    // createTask always starts QUEUED — update one to RUNNING via updateTask
+    const runningBase = createTask({ prompt: 'running task', orchestratorId: orch.id });
+    const running = updateTask(runningBase, { status: TaskStatus.RUNNING });
+    const queued = createTask({ prompt: 'queued task', orchestratorId: orch.id });
 
     for (const t of [running, queued]) {
       await taskRepo.save(t);
@@ -100,14 +98,17 @@ describe('Integration: orchestratorId propagation', () => {
   });
 
   it('TaskRepository.findUpdatedSince() returns recently created tasks', async () => {
-    const past = Date.now() - 10000;
-    const oldTask = createTask({ prompt: 'old', createdAt: past });
+    const oldTask = createTask({ prompt: 'old' });
     const newTask = createTask({ prompt: 'new' });
 
     await taskRepo.save(oldTask);
     await taskRepo.save(newTask);
 
-    const cutoff = Date.now() - 5000;
+    // Backdate the old task by updating created_at directly (createTask always uses Date.now())
+    const past = Date.now() - 60000; // 1 minute ago
+    db.getDatabase().prepare('UPDATE tasks SET created_at = ? WHERE id = ?').run(past, oldTask.id);
+
+    const cutoff = Date.now() - 5000; // 5 seconds ago
     const result = await taskRepo.findUpdatedSince(cutoff, 100);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
