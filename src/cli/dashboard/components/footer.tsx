@@ -12,9 +12,9 @@ interface FooterProps {
   readonly hasMutations?: boolean;
 }
 
-const MAIN_HELP = 'v: workspace · Tab cycle · 1-4 jump · ↑↓ select · Enter detail · f filter · r refresh · q quit';
+const MAIN_HELP = 'v: workspace · Tab: activity · ↑↓: select · Enter: detail · f: filter · r refresh · q quit';
 const MAIN_HELP_MUTATIONS =
-  'v: workspace · Tab cycle · 1-4 jump · ↑↓ select · Enter detail · c cancel · d delete (terminal) · f filter · r refresh · q quit';
+  'v: workspace · Tab: activity · ↑↓: select · Enter: detail · c cancel · d delete (terminal) · f: filter · r refresh · q quit';
 const WORKSPACE_HELP =
   'v: metrics · ↑↓: orch · Enter commit/detail · Tab panel · f fullscreen · [/] scroll · G tail · c/d · Esc';
 const DETAIL_HELP = 'Esc back · ↑↓ scroll · r refresh · q quit';
