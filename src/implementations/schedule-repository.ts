@@ -88,6 +88,10 @@ const TaskRequestSchema = z.object({
   continueFrom: z.string().optional(),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
   model: z.string().optional(),
+  // v1.3.0: Orchestration attribution — preserved through DB round-trip for consistency
+  // with loop.taskTemplate. Schedules rarely carry this today, but the field must survive
+  // serialization for parity across the three taskTemplate sinks (tasks, loops, schedules).
+  orchestratorId: z.string().optional(),
 });
 
 /**

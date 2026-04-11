@@ -97,6 +97,10 @@ const TaskRequestSchema = z.object({
   continueFrom: z.string().optional(),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
   model: z.string().optional(),
+  // v1.3.0: Orchestration attribution — must round-trip through loop.taskTemplate so
+  // iteration tasks (single and pipeline) carry orchestrator_id into cost tracking and
+  // cancel cascade. Without this, Zod strips the field and attribution silently breaks.
+  orchestratorId: z.string().optional(),
 });
 
 /**

@@ -178,8 +178,9 @@ export async function runTask(
 
     // v1.3.0: Read orchestrator attribution env var (set by BaseAgentAdapter when running inside
     // an orchestration). Validated against DB — dropped silently if orchestration not found.
-    // SECURITY: Only trust env vars from our own process (AUTOBEAT_WORKER gate above ensures
-    // this runs as a spawned worker, not an arbitrary shell invocation).
+    // SECURITY: DB lookup is the authoritative check. Stale env leaks from a prior shell or
+    // manual misuse cannot attribute tasks to orchestrations that don't exist in the local DB,
+    // and since the DB is per-user the blast radius is limited to the caller's own orchestrations.
     let orchestratorId: OrchestratorId | undefined;
     const envOrchId = process.env.AUTOBEAT_ORCHESTRATOR_ID;
     if (envOrchId) {

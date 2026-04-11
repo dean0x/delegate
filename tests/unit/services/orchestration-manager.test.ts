@@ -259,5 +259,113 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       if (cancelResult.ok) return;
       expect(cancelResult.error.message).toContain('not active');
     });
+
+    it('should cascade-cancel directly-attributed tasks (v1.3.0)', async () => {
+      const { createTask, TaskStatus, updateTask } = await import('../../../src/core/domain.js');
+      const { SQLiteTaskRepository } = await import('../../../src/implementations/task-repository.js');
+      const { ok } = await import('../../../src/core/result.js');
+
+      // Wire in a taskRepository and a taskManager stub so cascade executes
+      const taskRepo = new SQLiteTaskRepository(db);
+      const cancelledIds: string[] = [];
+      const taskManagerStub = {
+        cancel: async (taskId: string, _reason?: string) => {
+          cancelledIds.push(taskId);
+          // Also flip the row to CANCELLED so downstream assertions see the state.
+          // TaskRepository.update signature is (taskId, partial), not (fullTask).
+          await taskRepo.update(taskId as ReturnType<typeof createTask>['id'], {
+            status: TaskStatus.CANCELLED,
+          });
+          return ok(undefined);
+        },
+      } as unknown as import('../../../src/core/interfaces.js').TaskManager;
+
+      const cascadeService = new OrchestrationManagerService({
+        eventBus,
+        logger,
+        orchestrationRepo,
+        loopService,
+        config,
+        taskRepository: taskRepo,
+        taskManager: taskManagerStub,
+      });
+
+      const createResult = await cascadeService.createOrchestration({ goal: 'Cascade test' });
+      expect(createResult.ok).toBe(true);
+      if (!createResult.ok) return;
+      const orch = createResult.value;
+
+      // Seed 3 directly-attributed tasks in queued/running states
+      const t1 = createTask({ prompt: 'attributed 1', orchestratorId: orch.id });
+      const t2Base = createTask({ prompt: 'attributed 2', orchestratorId: orch.id });
+      const t2 = updateTask(t2Base, { status: TaskStatus.RUNNING });
+      const t3 = createTask({ prompt: 'attributed 3', orchestratorId: orch.id });
+      await taskRepo.save(t1);
+      await taskRepo.save(t2);
+      await taskRepo.save(t3);
+
+      // A terminal task — must NOT be cancelled by cascade
+      const terminalBase = createTask({ prompt: 'already completed', orchestratorId: orch.id });
+      const terminal = updateTask(terminalBase, { status: TaskStatus.COMPLETED });
+      await taskRepo.save(terminal);
+
+      const cancelResult = await cascadeService.cancelOrchestration(orch.id, 'cascade');
+      expect(cancelResult.ok).toBe(true);
+
+      // All 3 active attributed tasks were cancelled via taskManager
+      expect(cancelledIds).toEqual(expect.arrayContaining([t1.id, t2.id, t3.id]));
+      expect(cancelledIds).not.toContain(terminal.id);
+
+      // DB state: t1/t2/t3 are CANCELLED, terminal is still COMPLETED
+      for (const id of [t1.id, t2.id, t3.id]) {
+        const row = await taskRepo.findById(id);
+        expect(row.ok).toBe(true);
+        if (!row.ok || !row.value) throw new Error('task row missing');
+        expect(row.value.status).toBe(TaskStatus.CANCELLED);
+      }
+      const terminalRow = await taskRepo.findById(terminal.id);
+      expect(terminalRow.ok).toBe(true);
+      if (!terminalRow.ok || !terminalRow.value) throw new Error('terminal task row missing');
+      expect(terminalRow.value.status).toBe(TaskStatus.COMPLETED);
+    });
+
+    it('should respect opts.cancelAttributedTasks=false (opt-out)', async () => {
+      const { createTask } = await import('../../../src/core/domain.js');
+      const { SQLiteTaskRepository } = await import('../../../src/implementations/task-repository.js');
+      const { ok } = await import('../../../src/core/result.js');
+
+      const taskRepo = new SQLiteTaskRepository(db);
+      const cancelledIds: string[] = [];
+      const taskManagerStub = {
+        cancel: async (taskId: string) => {
+          cancelledIds.push(taskId);
+          return ok(undefined);
+        },
+      } as unknown as import('../../../src/core/interfaces.js').TaskManager;
+
+      const noCascadeService = new OrchestrationManagerService({
+        eventBus,
+        logger,
+        orchestrationRepo,
+        loopService,
+        config,
+        taskRepository: taskRepo,
+        taskManager: taskManagerStub,
+      });
+
+      const createResult = await noCascadeService.createOrchestration({ goal: 'Opt-out' });
+      expect(createResult.ok).toBe(true);
+      if (!createResult.ok) return;
+      const orch = createResult.value;
+
+      const attributed = createTask({ prompt: 'should survive', orchestratorId: orch.id });
+      await taskRepo.save(attributed);
+
+      const cancelResult = await noCascadeService.cancelOrchestration(orch.id, 'no cascade', {
+        cancelAttributedTasks: false,
+      });
+      expect(cancelResult.ok).toBe(true);
+      expect(cancelledIds).toHaveLength(0);
+    });
   });
 });

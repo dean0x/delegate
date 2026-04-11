@@ -452,6 +452,40 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(task1Result.value).not.toBeNull();
     });
 
+    it('should propagate orchestratorId to every pipeline step task (v1.3.0)', async () => {
+      const { OrchestratorId, createOrchestration } = await import('../../../../src/core/domain.js');
+      const { SQLiteOrchestrationRepository } = await import(
+        '../../../../src/implementations/orchestration-repository.js'
+      );
+
+      // Seed an orchestration row first — tasks.orchestrator_id has a FK constraint
+      // (migration v18) so attribution to a non-existent orch would crash the save.
+      const orchRepo = new SQLiteOrchestrationRepository(database);
+      const seededOrch = createOrchestration({ goal: 'pipeline attr test' }, '/tmp/state.json', '/workspace');
+      await orchRepo.save(seededOrch);
+      const orchId: ReturnType<typeof OrchestratorId> = seededOrch.id;
+
+      const loop = await createAndEmitLoop({
+        pipelineSteps: ['step-1', 'step-2', 'step-3'],
+        prompt: undefined,
+        orchestratorId: orchId,
+      });
+
+      const iteration = await getLatestIteration(loop.id);
+      expect(iteration).toBeDefined();
+      const taskIds = iteration!.pipelineTaskIds!;
+      expect(taskIds.length).toBe(3);
+
+      // Every step task should carry the orchestratorId so that cancel cascade
+      // and cost attribution work for pipeline-strategy loops.
+      for (const taskId of taskIds) {
+        const taskResult = await taskRepo.findById(taskId);
+        expect(taskResult.ok).toBe(true);
+        if (!taskResult.ok || !taskResult.value) return;
+        expect(taskResult.value.orchestratorId).toBe(orchId);
+      }
+    });
+
     it('should only trigger evaluation when tail task completes (R4)', async () => {
       mockEvaluator.evaluate.mockResolvedValue({ passed: true, exitCode: 0 });
 

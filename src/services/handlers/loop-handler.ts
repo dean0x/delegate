@@ -728,14 +728,15 @@ export class LoopHandler extends BaseEventHandler {
     });
 
     // Pre-create ALL task domain objects OUTSIDE transaction (pure computation)
+    // Spread defaults (taskTemplate) so template fields like orchestratorId and model
+    // propagate to every pipeline step — then override the per-step fields.
     const tasks: Task[] = [];
     for (let i = 0; i < steps.length; i++) {
       tasks.push(
         createTask({
+          ...defaults,
           prompt: steps[i],
-          priority: defaults.priority,
           workingDirectory: loop.workingDirectory,
-          agent: defaults.agent,
           dependsOn: i > 0 ? [tasks[i - 1].id] : undefined,
         }),
       );
