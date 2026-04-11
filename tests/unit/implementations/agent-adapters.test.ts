@@ -722,3 +722,101 @@ describe('model passthrough', () => {
     adapter.dispose();
   });
 });
+
+// ============================================================================
+// BaseAgentAdapter — orchestratorId env injection validation (security, v1.3.0)
+// ============================================================================
+
+describe('BaseAgentAdapter - orchestratorId env injection', () => {
+  const VALID_ORCHESTRATOR_ID = 'orchestrator-550e8400-e29b-41d4-a716-446655440000';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsCommandInPath.mockReturnValue(true);
+  });
+
+  it('injects AUTOBEAT_ORCHESTRATOR_ID when orchestratorId matches canonical format', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn('test prompt', '/workspace', 'task-1', undefined, VALID_ORCHESTRATOR_ID);
+    adapter.dispose();
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.AUTOBEAT_ORCHESTRATOR_ID).toBe(VALID_ORCHESTRATOR_ID);
+  });
+
+  it('drops AUTOBEAT_ORCHESTRATOR_ID when orchestratorId is malformed', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    adapter.spawn('test prompt', '/workspace', 'task-1', undefined, 'not-an-orchestrator-id');
+    consoleSpy.mockRestore();
+    adapter.dispose();
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.AUTOBEAT_ORCHESTRATOR_ID).toBeUndefined();
+  });
+
+  it('drops AUTOBEAT_ORCHESTRATOR_ID when orchestratorId has uppercase hex (not canonical UUID)', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    adapter.spawn(
+      'test prompt',
+      '/workspace',
+      'task-1',
+      undefined,
+      'orchestrator-550E8400-E29B-41D4-A716-446655440000',
+    );
+    consoleSpy.mockRestore();
+    adapter.dispose();
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.AUTOBEAT_ORCHESTRATOR_ID).toBeUndefined();
+  });
+
+  it('drops AUTOBEAT_ORCHESTRATOR_ID when orchestratorId contains control characters', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    adapter.spawn('test prompt', '/workspace', 'task-1', undefined, 'orchestrator-\x00injected\nvalue');
+    consoleSpy.mockRestore();
+    adapter.dispose();
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.AUTOBEAT_ORCHESTRATOR_ID).toBeUndefined();
+  });
+
+  it('does not inject AUTOBEAT_ORCHESTRATOR_ID when orchestratorId is undefined', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn('test prompt', '/workspace', 'task-1', undefined, undefined);
+    adapter.dispose();
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.AUTOBEAT_ORCHESTRATOR_ID).toBeUndefined();
+  });
+
+  it('spawn still succeeds when orchestratorId is malformed (attribution fails but task runs)', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = adapter.spawn('test prompt', '/workspace', 'task-1', undefined, 'malformed-id');
+    consoleSpy.mockRestore();
+    adapter.dispose();
+
+    expect(result.ok).toBe(true);
+  });
+});

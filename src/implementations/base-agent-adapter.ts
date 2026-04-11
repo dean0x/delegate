@@ -167,6 +167,24 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       // We explicitly set AUTOBEAT_WORKER and AUTOBEAT_TASK_ID here, and optionally
       // AUTOBEAT_ORCHESTRATOR_ID so sub-tasks spawned by this agent are attributed to
       // the parent orchestration (v1.3.0).
+      //
+      // SECURITY: Validate orchestratorId format before injecting into child env.
+      // Belt-and-suspenders: the MCP path already validates via Zod, but the env var
+      // path (run.ts reading AUTOBEAT_ORCHESTRATOR_ID) or a persisted DB row may not
+      // have gone through the same boundary. Reject malformed values here to prevent
+      // log injection in child processes. Attribution silently fails but spawn succeeds.
+      const ORCHESTRATOR_ID_RE = /^orchestrator-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+      const safeOrchestratorId = orchestratorId && ORCHESTRATOR_ID_RE.test(orchestratorId) ? orchestratorId : undefined;
+      if (orchestratorId && !safeOrchestratorId) {
+        // Log structured warning — do not throw; spawn continues without attribution
+        console.error(
+          JSON.stringify({
+            level: 'warn',
+            message: 'spawn: dropping malformed AUTOBEAT_ORCHESTRATOR_ID — format did not match canonical pattern',
+            provider: this.provider,
+          }),
+        );
+      }
       const env = {
         ...this.additionalEnv,
         ...cleanEnv,
@@ -174,7 +192,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         ...baseUrlEnv,
         AUTOBEAT_WORKER: 'true',
         ...(taskId && { AUTOBEAT_TASK_ID: taskId }),
-        ...(orchestratorId && { AUTOBEAT_ORCHESTRATOR_ID: orchestratorId }),
+        ...(safeOrchestratorId && { AUTOBEAT_ORCHESTRATOR_ID: safeOrchestratorId }),
       };
 
       const child = spawn(this.command, [...args], {
