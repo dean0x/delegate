@@ -800,7 +800,9 @@ export interface OrchestrationRepository {
   /**
    * Get child tasks attributed to an orchestration (v1.3.0)
    * Unions direct attribution (tasks.orchestrator_id) and loop iteration chain.
-   * Application-layer deduplication: iteration kind preferred when both match.
+   * SQL-level deduplication via ROW_NUMBER inside the UNION CTE — the 'iteration'
+   * kind is preferred when a task appears in both chains. LIMIT/OFFSET is applied
+   * AFTER dedup so pagination is correct even when duplicates cross page boundaries.
    * @param orchestrationId - Orchestration to query
    * @param limit - Maximum tasks to return per page, ordered by updated_at DESC
    * @param offset - Zero-based row offset for pagination (default: 0)

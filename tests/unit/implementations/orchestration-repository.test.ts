@@ -348,6 +348,66 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
       if (!result.ok) return;
       expect(result.value).toHaveLength(0);
     });
+
+    it('deduplicates INSIDE the UNION CTE so pagination stays correct across pages', async () => {
+      // Invariant: seed 20 unique direct tasks + 5 of them also attributed via
+      // loop iteration. Raw UNION rows = 25; unique task_ids = 20. With page size
+      // 15, pages 0 and 1 must return 20 disjoint unique rows total — duplicates
+      // must be collapsed inside the CTE, not after LIMIT/OFFSET.
+      const orch = createTestOrchestration();
+      await repo.save(orch);
+
+      const loop = createLoop({ prompt: 'loop task', strategy: LoopStrategy.RETRY, exitCondition: 'true' }, '/tmp');
+      await loopRepo.save(loop);
+      const orchWithLoop = updateOrchestration(orch, { loopId: loop.id });
+      await repo.update(orchWithLoop);
+
+      const tasks = [];
+      for (let i = 0; i < 20; i++) {
+        const task = createTask({ prompt: `task ${i}`, orchestratorId: orchWithLoop.id as OrchestratorId });
+        await taskRepo.save(task);
+        tasks.push(task);
+      }
+
+      // Record loop_iteration rows for the FIRST 5 tasks — dual attribution.
+      for (let i = 0; i < 5; i++) {
+        await loopRepo.recordIteration({
+          id: 0,
+          loopId: loop.id,
+          iterationNumber: i + 1,
+          taskId: tasks[i].id,
+          status: 'running' as const,
+          startedAt: Date.now(),
+        });
+      }
+
+      // Count must be 20 (unique), not 25 (raw UNION)
+      const countResult = await repo.countOrchestratorChildren(orchWithLoop.id);
+      expect(countResult.ok).toBe(true);
+      if (!countResult.ok) return;
+      expect(countResult.value).toBe(20);
+
+      // Fetch both pages with PAGE_SIZE=15
+      const page0 = await repo.getOrchestratorChildren(orchWithLoop.id, 15, 0);
+      const page1 = await repo.getOrchestratorChildren(orchWithLoop.id, 15, 15);
+      expect(page0.ok && page1.ok).toBe(true);
+      if (!page0.ok || !page1.ok) return;
+
+      // Page 0 full, page 1 partial (20 - 15 = 5)
+      expect(page0.value).toHaveLength(15);
+      expect(page1.value).toHaveLength(5);
+
+      // Pages must be disjoint (no taskId appears in both pages)
+      const page0Ids = new Set(page0.value.map((c) => c.taskId));
+      const page1Ids = new Set(page1.value.map((c) => c.taskId));
+      for (const id of page1Ids) {
+        expect(page0Ids.has(id)).toBe(false);
+      }
+
+      // Union of both pages must contain exactly 20 distinct taskIds
+      const unionSize = new Set([...page0Ids, ...page1Ids]).size;
+      expect(unionSize).toBe(20);
+    });
   });
 
   describe('countOrchestratorChildren (v1.3.0)', () => {

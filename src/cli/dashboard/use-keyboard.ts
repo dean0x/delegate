@@ -248,7 +248,9 @@ function handleDetailKeys(
         if (newPage === prev.orchestrationChildPage) return prev;
         return { ...prev, orchestrationChildPage: newPage, orchestrationChildSelectedTaskId: null };
       });
-      // Force a refresh so the new page data is fetched immediately
+      // The useDashboardData effect auto-refetches when orchestrationChildPage
+      // changes; refreshNow() is called as a belt-and-braces signal so any
+      // listener (telemetry, manual indicator) also sees the page-change event.
       refreshNow();
       return true;
     }

@@ -30,6 +30,7 @@ import type {
   UsageRepository,
   WorkerRepository,
 } from '../../core/interfaces.js';
+import { type DisposableLogger, FileLogger } from '../../implementations/file-logger.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { App } from './app.js';
 import type { DashboardMutationContext } from './types.js';
@@ -67,11 +68,19 @@ export async function startDashboard(): Promise<void> {
     // Fallback — dashboard still works without version display
   }
 
+  // Swap the default stderr-based ConsoleLogger for a file-backed logger so
+  // downstream log output does not interleave with Ink's frame rendering.
+  // FileLogger.create() never throws — it falls back to a SilentLogger if the
+  // file cannot be opened, so the dashboard always has a valid Logger.
+  const fileLogger: DisposableLogger = await FileLogger.create();
+
   // Bootstrap with mode: 'cli' — initialises repositories + services needed for mutations
   // (cancel/delete keybindings) without starting the MCP server or scheduler.
-  const bootstrapResult = await bootstrap({ mode: 'cli' });
+  // Pass the file logger so ConsoleLogger is never registered on stderr.
+  const bootstrapResult = await bootstrap({ mode: 'cli', logger: fileLogger });
   if (!bootstrapResult.ok) {
     process.stderr.write(`Error: Failed to initialize: ${bootstrapResult.error.message}\n`);
+    await fileLogger.dispose();
     process.exit(1);
   }
 
@@ -153,8 +162,10 @@ export async function startDashboard(): Promise<void> {
     process.stderr.write(ansiEscapes.cursorShow);
     process.stderr.write(ansiEscapes.exitAlternativeScreen);
 
-    // Dispose container (closes DB, stops monitors, etc.)
-    void container.dispose();
+    // Dispose container (closes DB, stops monitors, etc.) then flush/close the
+    // file-backed logger. Both are best-effort — errors are swallowed so
+    // exit paths always complete.
+    void container.dispose().finally(() => fileLogger.dispose());
   };
 
   // Handle SIGTERM for graceful shutdown

@@ -71,6 +71,13 @@ export interface BootstrapOptions {
   processSpawner?: ProcessSpawner;
   /** Custom ResourceMonitor (e.g., TestResourceMonitor for tests) */
   resourceMonitor?: ResourceMonitor;
+  /**
+   * Custom Logger instance — when provided, this logger is used instead of the
+   * default ConsoleLogger/StructuredLogger. Used by the dashboard to swap in
+   * FileLogger so log output does not interleave with Ink's frame rendering
+   * on stderr.
+   */
+  logger?: Logger;
 }
 
 // Adapters
@@ -170,12 +177,19 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   const logLevel = LOG_LEVEL_MAP[config.logLevel];
 
-  container.registerSingleton('logger', () => {
-    if (process.env.NODE_ENV === 'production') {
-      return new StructuredLogger({}, logLevel);
-    }
-    return new ConsoleLogger('[Autobeat]', true, logLevel);
-  });
+  // If the caller provided a Logger instance (e.g. FileLogger from the dashboard),
+  // use it directly. Otherwise construct the default logger based on NODE_ENV.
+  if (options.logger) {
+    const providedLogger = options.logger;
+    container.registerSingleton('logger', () => providedLogger);
+  } else {
+    container.registerSingleton('logger', () => {
+      if (process.env.NODE_ENV === 'production') {
+        return new StructuredLogger({}, logLevel);
+      }
+      return new ConsoleLogger('[Autobeat]', true, logLevel);
+    });
+  }
 
   // Validate configuration against system (component-level validation)
   const bootstrapLoggerResult = getFromContainerSafe<Logger>(container, 'logger');

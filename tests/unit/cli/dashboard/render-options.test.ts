@@ -42,3 +42,34 @@ describe('dashboard render options (source guard)', () => {
     expect(hasStdinBeforeStdout || hasStdoutBeforeStdin).toBe(true);
   });
 });
+
+describe('dashboard FileLogger wiring (source guard)', () => {
+  /**
+   * Regression guard: dashboard must swap the default ConsoleLogger for a
+   * FileLogger so log output does not interleave with Ink's frame rendering.
+   * The commit introducing FileLogger only delivers that behaviour if the
+   * dashboard actually passes it to bootstrap() — this test guards against
+   * the wiring being dropped.
+   */
+  it('imports FileLogger from implementations', () => {
+    const source = readFileSync(INDEX_PATH, 'utf-8');
+    expect(source).toContain('FileLogger');
+    expect(source).toContain("from '../../implementations/file-logger.js'");
+  });
+
+  it('constructs a FileLogger before calling bootstrap', () => {
+    const source = readFileSync(INDEX_PATH, 'utf-8');
+    expect(source).toMatch(/FileLogger\.create\s*\(/);
+  });
+
+  it('passes the file logger into bootstrap() via the logger option', () => {
+    const source = readFileSync(INDEX_PATH, 'utf-8');
+    // bootstrap({ mode: 'cli', logger: fileLogger }) — logger field must be present
+    expect(source).toMatch(/bootstrap\s*\(\s*\{[\s\S]*?logger\s*:/);
+  });
+
+  it('disposes the file logger during cleanup', () => {
+    const source = readFileSync(INDEX_PATH, 'utf-8');
+    expect(source).toMatch(/fileLogger\.dispose\s*\(\s*\)/);
+  });
+});

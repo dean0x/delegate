@@ -424,7 +424,10 @@ export function useDashboardData(
   useEffect(() => {
     closing.current = false;
 
-    // Initial fetch immediately on mount
+    // Initial fetch immediately on mount. Also re-runs when orchestrationChildPage
+    // changes so PgUp/PgDn in orchestration detail produces an immediate fetch
+    // with the new page (otherwise the ref-read pattern would lag by one poll
+    // tick because setNav schedules the re-render asynchronously).
     void doFetch();
 
     // Poll every 1 second
@@ -436,7 +439,7 @@ export function useDashboardData(
       closing.current = true;
       clearInterval(intervalId);
     };
-  }, [doFetch]);
+  }, [doFetch, orchestrationChildPage]);
 
   const refreshNow = useCallback(() => {
     void doFetch();
