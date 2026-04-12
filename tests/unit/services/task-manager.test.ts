@@ -878,6 +878,39 @@ describe('TaskManagerService', () => {
         expect(result.value.model).toBeUndefined();
       });
     });
+
+    describe('orchestrator attribution', () => {
+      it('retry task preserves orchestratorId from original for cost roll-up', async () => {
+        // A2: orchestratorId must be copied so retry tasks roll up into the same
+        // cost accounting as the original task.
+        const orchId = 'orch-abc-123' as ReturnType<typeof import('../../../src/core/domain').OrchestratorId>;
+        const failedTask = buildFailedTask({
+          id: TaskId('attr-retry-1'),
+          orchestratorId: orchId,
+        });
+        (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(failedTask));
+
+        const result = await service.retry(TaskId('attr-retry-1'));
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.orchestratorId).toBe(orchId);
+      });
+
+      it('retry task orchestratorId is undefined when original has none', async () => {
+        const failedTask = buildFailedTask({
+          id: TaskId('attr-retry-2'),
+          orchestratorId: undefined,
+        });
+        (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(failedTask));
+
+        const result = await service.retry(TaskId('attr-retry-2'));
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.orchestratorId).toBeUndefined();
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1122,6 +1155,39 @@ describe('TaskManagerService', () => {
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         expect(result.value.model).toBeUndefined();
+      });
+    });
+
+    describe('orchestrator attribution', () => {
+      it('resume task preserves orchestratorId from original for cost roll-up', async () => {
+        // A2: orchestratorId must be copied so resume tasks roll up into the same
+        // cost accounting as the original task.
+        const orchId = 'orch-def-456' as ReturnType<typeof import('../../../src/core/domain').OrchestratorId>;
+        const failed = buildFailedTask({
+          id: TaskId('attr-resume-1'),
+          orchestratorId: orchId,
+        });
+        (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(failed));
+
+        const result = await svcWithCheckpoint.resume({ taskId: TaskId('attr-resume-1') });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.orchestratorId).toBe(orchId);
+      });
+
+      it('resume task orchestratorId is undefined when original has none', async () => {
+        const failed = buildFailedTask({
+          id: TaskId('attr-resume-2'),
+          orchestratorId: undefined,
+        });
+        (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(failed));
+
+        const result = await svcWithCheckpoint.resume({ taskId: TaskId('attr-resume-2') });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.orchestratorId).toBeUndefined();
       });
     });
   });

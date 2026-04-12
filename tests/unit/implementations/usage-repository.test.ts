@@ -6,14 +6,19 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  createLoop,
   createOrchestration,
   createTask,
   LoopId,
+  LoopStatus,
+  LoopStrategy,
   OrchestratorId,
   TaskId,
+  TaskStatus,
   type TaskUsage,
 } from '../../../src/core/domain.js';
 import { Database } from '../../../src/implementations/database.js';
+import { SQLiteLoopRepository } from '../../../src/implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from '../../../src/implementations/orchestration-repository.js';
 import { SQLiteTaskRepository } from '../../../src/implementations/task-repository.js';
 import { SQLiteUsageRepository } from '../../../src/implementations/usage-repository.js';
@@ -36,11 +41,13 @@ describe('SQLiteUsageRepository', () => {
   let db: Database;
   let repo: SQLiteUsageRepository;
   let taskRepo: SQLiteTaskRepository;
+  let loopRepo: SQLiteLoopRepository;
 
   beforeEach(() => {
     db = new Database(':memory:');
     repo = new SQLiteUsageRepository(db);
     taskRepo = new SQLiteTaskRepository(db);
+    loopRepo = new SQLiteLoopRepository(db);
   });
 
   afterEach(() => {
@@ -335,6 +342,35 @@ describe('SQLiteUsageRepository', () => {
       expect(result.value.inputTokens).toBe(200);
       expect(result.value.totalCostUsd).toBeCloseTo(1.0);
     });
+
+    it('A1: does not double-count a task that appears in both base case and retry chain', async () => {
+      // Bug: task attributed directly AND appearing as a retry of another attributed task
+      // produced two (root_id, task_id) tuples — (T, T) and (P, T) — causing double-count.
+      // Fix: DISTINCT task_id in the final SELECT.
+      const orchId = OrchestratorId('orch-distinct-test');
+      const orchRepo = new SQLiteOrchestrationRepository(db);
+      const orch = createOrchestration({ goal: 'test' }, '/tmp/state.json', '/workspace');
+      await orchRepo.save({ ...orch, id: orchId });
+
+      // Parent task: directly attributed to orchestration
+      const parent = createTask({ prompt: 'parent', orchestratorId: orchId });
+      await taskRepo.save(parent);
+      await repo.save(makeUsage(parent.id, { inputTokens: 100, totalCostUsd: 0.1 }));
+
+      // Retry task: also attributed (A2 fix applies going forward), AND retry_of parent
+      // This is the double-count scenario: retry appears in base case (orchestrator_id match)
+      // AND in the recursive arm (retry_of = parent.id which is in the tree)
+      const retry = createTask({ prompt: 'retry', orchestratorId: orchId, retryOf: parent.id });
+      await taskRepo.save(retry);
+      await repo.save(makeUsage(retry.id, { inputTokens: 50, totalCostUsd: 0.05 }));
+
+      const result = await repo.sumByOrchestrationId(orchId);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // Should be 150, not 200 (if retry was double-counted)
+      expect(result.value.inputTokens).toBe(150);
+      expect(result.value.totalCostUsd).toBeCloseTo(0.15);
+    });
   });
 
   // ============================================================================
@@ -372,6 +408,113 @@ describe('SQLiteUsageRepository', () => {
       // Should be sorted descending by cost: $5.0, $0.5
       expect(result.value[0].orchestrationId).toBe(orchIds[1]); // cost 5.0
       expect(result.value[1].orchestrationId).toBe(orchIds[2]); // cost 0.5
+    });
+
+    it('A3: retry task without orchestrator_id is attributed to parent orchestration via retry_of chain', async () => {
+      // Defense-in-depth: A2 fixes new retries, but historical retries may lack orchestrator_id.
+      // The recursive CTE in topOrchestrationsByCost walks retry_of to find the root orchestrator_id.
+      const orchRepo = new SQLiteOrchestrationRepository(db);
+      const orchId = OrchestratorId('orch-top-chain');
+      const orch = createOrchestration({ goal: 'test' }, '/tmp/state.json', '/workspace');
+      await orchRepo.save({ ...orch, id: orchId });
+
+      // Original task: attributed to orchestration
+      const original = createTask({ prompt: 'original', orchestratorId: orchId });
+      await taskRepo.save(original);
+      await repo.save(makeUsage(original.id, { totalCostUsd: 1.0, capturedAt: Date.now() }));
+
+      // Retry task: lacks orchestrator_id (historical data, before A2 fix)
+      // Must still roll up to orchId via retry_of chain
+      const retry = createTask({ prompt: 'retry', retryOf: original.id });
+      // Force orchestratorId to be undefined (createTask does not set it without the field)
+      await taskRepo.save(retry);
+      await repo.save(makeUsage(retry.id, { totalCostUsd: 0.5, capturedAt: Date.now() }));
+
+      const result = await repo.topOrchestrationsByCost(0, 10);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const entry = result.value.find((r) => r.orchestrationId === orchId);
+      expect(entry).toBeDefined();
+      // Both tasks (1.0 + 0.5) should roll up to the orchestration
+      expect(entry!.totalCost).toBeCloseTo(1.5);
+    });
+  });
+
+  // ============================================================================
+  // sumByLoopId()
+  // ============================================================================
+
+  describe('sumByLoopId()', () => {
+    async function createLoopWithIteration(loopId: string): Promise<{
+      loop: Awaited<ReturnType<typeof createLoop>>;
+      task: ReturnType<typeof createTask>;
+    }> {
+      const loop = createLoop({ prompt: 'test', strategy: LoopStrategy.RETRY, exitCondition: 'exit 0' }, '/workspace');
+      const savedLoop = { ...loop, id: LoopId(loopId), status: LoopStatus.RUNNING };
+      await loopRepo.save(savedLoop);
+
+      const task = createTask({ prompt: 'loop task' });
+      // Set status to completed so we can record the iteration
+      const completedTask = { ...task, status: TaskStatus.COMPLETED };
+      await taskRepo.save(completedTask);
+
+      await loopRepo.recordIteration({
+        id: 0, // autoincrement
+        loopId: savedLoop.id,
+        iterationNumber: 1,
+        taskId: task.id,
+        status: 'pass',
+        startedAt: Date.now(),
+      });
+
+      return { loop: savedLoop, task };
+    }
+
+    it('A4: sums usage for loop iteration tasks', async () => {
+      const { loop, task } = await createLoopWithIteration('loop-sum-basic');
+      await repo.save(makeUsage(task.id, { inputTokens: 200, totalCostUsd: 0.2 }));
+
+      const result = await repo.sumByLoopId(loop.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.inputTokens).toBe(200);
+      expect(result.value.totalCostUsd).toBeCloseTo(0.2);
+    });
+
+    it('A4: retry of a loop iteration task is included in the sum', async () => {
+      // Bug: sumByLoopId only joined loop_iterations.task_id directly.
+      // If the iteration's task was retried, the retry has usage but is not in loop_iterations.
+      // Fix: recursive CTE walks retry chains from iteration tasks.
+      const { loop, task } = await createLoopWithIteration('loop-sum-retry');
+
+      // Original iteration task: some usage
+      await repo.save(makeUsage(task.id, { inputTokens: 100, totalCostUsd: 0.1 }));
+
+      // Retry of the iteration task: NOT in loop_iterations directly, but should roll up
+      const retry = createTask({ prompt: 'retry of loop task', retryOf: task.id });
+      const completedRetry = { ...retry, status: TaskStatus.COMPLETED };
+      await taskRepo.save(completedRetry);
+      await repo.save(makeUsage(retry.id, { inputTokens: 75, totalCostUsd: 0.075 }));
+
+      const result = await repo.sumByLoopId(loop.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // Should include both original (100) and retry (75) = 175
+      expect(result.value.inputTokens).toBe(175);
+      expect(result.value.totalCostUsd).toBeCloseTo(0.175);
+    });
+
+    it('returns zero aggregate when loop has no iteration tasks with usage', async () => {
+      const loop = createLoop({ prompt: 'empty', strategy: LoopStrategy.RETRY, exitCondition: 'exit 0' }, '/workspace');
+      const savedLoop = { ...loop, id: LoopId('loop-empty'), status: LoopStatus.RUNNING };
+      await loopRepo.save(savedLoop);
+
+      const result = await repo.sumByLoopId(savedLoop.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.inputTokens).toBe(0);
+      expect(result.value.totalCostUsd).toBe(0);
     });
   });
 });
