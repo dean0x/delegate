@@ -114,6 +114,14 @@ export class SQLiteUsageRepository implements UsageRepository {
 
     // Recursive CTE walks the retry chain so retries roll up into root task cost.
     // idx_tasks_retry_of (migration v20) covers the recursive JOIN on tasks.retry_of.
+    //
+    // A1 FIX — DISTINCT task_id in the final SELECT:
+    // UNION (not UNION ALL) deduplicates on the full (root_id, task_id) tuple, not on
+    // task_id alone. A retry task attributed directly to the orchestration AND reached
+    // via the recursive arm produces two distinct tuples — (T, T) and (P, T) — both
+    // survive UNION, causing that task's usage to be summed twice. Selecting from
+    // (SELECT DISTINCT task_id FROM task_tree) collapses duplicates before the JOIN.
+    // UNION (vs UNION ALL) is kept in the CTE as a cycle guard.
     this.sumByOrchestrationStmt = this.db.prepare(`
       WITH RECURSIVE task_tree(root_id, task_id) AS (
         -- Base: tasks directly attributed OR via loop iterations
@@ -137,20 +145,35 @@ export class SQLiteUsageRepository implements UsageRepository {
         COALESCE(SUM(u.cache_creation_input_tokens), 0)  AS cache_creation_input_tokens,
         COALESCE(SUM(u.cache_read_input_tokens), 0)      AS cache_read_input_tokens,
         COALESCE(SUM(u.total_cost_usd), 0)               AS total_cost_usd
-      FROM task_tree tt
+      FROM (SELECT DISTINCT task_id FROM task_tree) tt
       LEFT JOIN task_usage u ON u.task_id = tt.task_id
     `);
 
+    // A4 FIX — recursive CTE walks retry chains from iteration tasks.
+    // The simple JOIN on loop_iterations.task_id silently drops usage for retry tasks:
+    // a retry of an iteration task is not recorded in loop_iterations, so its cost
+    // is never counted. The CTE walks tasks.retry_of so all retries roll up.
+    // Consistent with sumByOrchestrationId and topOrchestrationsByCost — all usage
+    // aggregation in this repository walks retry chains.
+    // idx_tasks_retry_of (migration v20) covers the recursive JOIN on tasks.retry_of.
     this.sumByLoopStmt = this.db.prepare(`
+      WITH RECURSIVE iter_tasks(task_id) AS (
+        -- Base: tasks directly referenced by loop iterations
+        SELECT task_id FROM loop_iterations
+          WHERE loop_id = ? AND task_id IS NOT NULL
+        UNION
+        -- Recurse: retries of iteration tasks
+        SELECT t.id FROM tasks t
+          INNER JOIN iter_tasks it ON t.retry_of = it.task_id
+      )
       SELECT
         COALESCE(SUM(u.input_tokens), 0)                 AS input_tokens,
         COALESCE(SUM(u.output_tokens), 0)                AS output_tokens,
         COALESCE(SUM(u.cache_creation_input_tokens), 0)  AS cache_creation_input_tokens,
         COALESCE(SUM(u.cache_read_input_tokens), 0)      AS cache_read_input_tokens,
         COALESCE(SUM(u.total_cost_usd), 0)               AS total_cost_usd
-      FROM loop_iterations li
-      LEFT JOIN task_usage u ON u.task_id = li.task_id
-      WHERE li.loop_id = ?
+      FROM iter_tasks it
+      LEFT JOIN task_usage u ON u.task_id = it.task_id
     `);
 
     // sumGlobal has two variants (with/without sinceMs). Both are cached to
@@ -177,15 +200,32 @@ export class SQLiteUsageRepository implements UsageRepository {
       WHERE captured_at >= ?
     `);
 
+    // A3 FIX — recursive CTE walks retry_of chains to find root orchestrator_id.
+    // The simple JOIN on tasks.orchestrator_id misses retry tasks created before A2
+    // (i.e., historical data where orchestrator_id was not propagated on retry).
+    // Defense-in-depth: A2 fixes the root cause for new retries, but this CTE
+    // handles historical data where orchestrator_id was null on retry tasks.
+    // WHERE t.orchestrator_id IS NULL in the recursive arm prevents double-counting
+    // tasks that already have orchestrator_id set (A2-fixed retries).
+    // idx_tasks_retry_of (migration v20) covers the recursive JOIN on tasks.retry_of.
     this.topOrchsByCostStmt = this.db.prepare(`
+      WITH RECURSIVE task_with_orch(task_id, orchestrator_id) AS (
+        -- Base: tasks that are directly attributed to an orchestration
+        SELECT id, orchestrator_id FROM tasks WHERE orchestrator_id IS NOT NULL
+        UNION
+        -- Recurse: retries of attributed tasks that lack their own orchestrator_id
+        SELECT t.id, tw.orchestrator_id
+          FROM tasks t
+          INNER JOIN task_with_orch tw ON t.retry_of = tw.task_id
+          WHERE t.orchestrator_id IS NULL
+      )
       SELECT
-        t.orchestrator_id AS orchestration_id,
+        tw.orchestrator_id AS orchestration_id,
         COALESCE(SUM(u.total_cost_usd), 0) AS total_cost
-      FROM task_usage u
-      JOIN tasks t ON t.id = u.task_id
+      FROM task_with_orch tw
+      JOIN task_usage u ON u.task_id = tw.task_id
       WHERE u.captured_at >= ?
-        AND t.orchestrator_id IS NOT NULL
-      GROUP BY t.orchestrator_id
+      GROUP BY tw.orchestrator_id
       ORDER BY total_cost DESC
       LIMIT ?
     `);
@@ -238,6 +278,15 @@ export class SQLiteUsageRepository implements UsageRepository {
     );
   }
 
+  /**
+   * Sum tokens/cost for all tasks associated with a loop (via loop_iterations).
+   * Follows retry_of chains so retries of iteration tasks roll up into the total.
+   *
+   * ARCHITECTURE: Uses a recursive CTE consistent with sumByOrchestrationId and
+   * topOrchestrationsByCost — all usage aggregation walks retry chains so that
+   * no cost is silently dropped when an iteration task is retried.
+   * idx_tasks_retry_of (migration v20) covers the recursive JOIN.
+   */
   async sumByLoopId(loopId: LoopId): Promise<Result<TaskUsage>> {
     return tryCatchAsync(
       async () => {
@@ -257,6 +306,16 @@ export class SQLiteUsageRepository implements UsageRepository {
     }, operationErrorHandler('sum global usage'));
   }
 
+  /**
+   * Return top N orchestrations by total cost since sinceMs.
+   * Follows retry_of chains so historical retry tasks (created before A2 propagated
+   * orchestratorId on retry) still roll up into the root orchestration's cost.
+   *
+   * ARCHITECTURE: Defense-in-depth — A2 fixes the root cause for new retries, but
+   * this CTE handles historical data where orchestrator_id was not propagated.
+   * The WHERE t.orchestrator_id IS NULL in the recursive arm prevents double-counting
+   * tasks that already have orchestrator_id set (A2-fixed retries).
+   */
   async topOrchestrationsByCost(
     sinceMs: number,
     limit: number,
