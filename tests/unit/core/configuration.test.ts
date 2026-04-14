@@ -62,8 +62,8 @@ describe('ConfigurationSchema - REAL Validation Behavior', () => {
 
     it('should accept maximum valid values', () => {
       const config = {
-        // FIX: Max timeout is 1 hour (3,600,000ms), not 24 hours
-        timeout: 60 * 60 * 1000, // 1 hour (max allowed)
+        // DECISION: Max timeout is 24 hours (86,400,000ms). Safety cap for runaway tasks.
+        timeout: 86400000, // 24 hours (max allowed)
         maxOutputBuffer: 1073741824, // 1GB
         cpuCoresReserved: 32,
         // FIX: Max memory reserve is 64GB, not MAX_SAFE_INTEGER
@@ -74,6 +74,24 @@ describe('ConfigurationSchema - REAL Validation Behavior', () => {
       const result = ConfigurationSchema.safeParse(config);
 
       expect(result.success).toBe(true);
+    });
+
+    it('accepts timeout of 0 (no timeout)', () => {
+      // DECISION: timeout=0 means disabled (no timeout). Default since v1.4.0.
+      const config = {
+        timeout: 0,
+        maxOutputBuffer: BUFFER_SIZES.SMALL,
+        cpuCoresReserved: 2,
+        memoryReserve: 1000000000,
+        logLevel: 'info' as const,
+      };
+
+      const result = ConfigurationSchema.safeParse(config);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.timeout).toBe(0);
+      }
     });
 
     it('should accept all valid log levels', () => {
@@ -95,9 +113,9 @@ describe('ConfigurationSchema - REAL Validation Behavior', () => {
   });
 
   describe('Invalid configurations', () => {
-    it('should reject timeout below minimum', () => {
+    it('should reject timeout below minimum (negative)', () => {
       const config = {
-        timeout: 999,
+        timeout: -1,
         maxOutputBuffer: BUFFER_SIZES.SMALL,
         cpuCoresReserved: 2,
         memoryReserve: 1000000000,
@@ -112,10 +130,10 @@ describe('ConfigurationSchema - REAL Validation Behavior', () => {
       }
     });
 
-    it('should reject timeout above maximum', () => {
+    it('should reject timeout above maximum (> 24 hours)', () => {
       const config = {
-        // FIX: Max timeout is 1 hour (3,600,000ms), not 24 hours
-        timeout: 60 * 60 * 1000 + 1, // 1 hour + 1ms (exceeds max)
+        // DECISION: Max timeout is 24 hours (86,400,000ms). Safety cap for runaway tasks.
+        timeout: 86400000 + 1, // 24 hours + 1ms (exceeds max)
         maxOutputBuffer: BUFFER_SIZES.SMALL,
         cpuCoresReserved: 2,
         memoryReserve: 1000000000,
@@ -129,12 +147,8 @@ describe('ConfigurationSchema - REAL Validation Behavior', () => {
         expect(result.error.issues[0].path).toContain('timeout');
         expect(result.error.issues).toHaveLength(1);
         expect(result.error.issues[0].code).toBe('too_big');
-        // FIX: Max is 1 hour, not 24 hours
-        expect(result.error.issues[0].maximum).toBe(60 * 60 * 1000);
-        // Note: Zod error structure may vary by version, check what's available
-        if (result.error.issues[0].received !== undefined) {
-          expect(result.error.issues[0].received).toBe(60 * 60 * 1000 + 1);
-        }
+        // Max is 24 hours (86,400,000ms)
+        expect(result.error.issues[0].maximum).toBe(86400000);
         expect(result.error.issues[0].inclusive).toBe(true);
         expect(typeof result.error.issues[0].message).toBe('string');
       }
@@ -342,7 +356,8 @@ describe('loadConfiguration - REAL Configuration Loading', () => {
       const config = loadConfiguration();
 
       // FIX: loadConfiguration returns 20+ fields, check core fields only
-      expect(config.timeout).toBe(1800000); // 30 minutes
+      // DECISION: Default timeout 0 (disabled). Why: tasks run 2.5+ hours; timeout was killing them.
+      expect(config.timeout).toBe(0); // 0 = disabled (no timeout)
       expect(config.maxOutputBuffer).toBe(BUFFER_SIZES.MEDIUM); // 10MB
       expect(config.cpuCoresReserved).toBe(2);
       expect(config.memoryReserve).toBe(2684354560); // 2.5GB default
@@ -394,7 +409,8 @@ describe('loadConfiguration - REAL Configuration Loading', () => {
       const config = loadConfiguration();
 
       // Should use defaults for invalid numbers
-      expect(config.timeout).toBe(1800000);
+      // DECISION: Default timeout is 0 (disabled) since v1.4.0
+      expect(config.timeout).toBe(0);
       expect(config.maxOutputBuffer).toBe(BUFFER_SIZES.MEDIUM);
       expect(config.cpuCoresReserved).toBe(2);
       expect(config.memoryReserve).toBe(2684354560); // Default (2.5GB)
@@ -419,11 +435,13 @@ describe('loadConfiguration - REAL Configuration Loading', () => {
 
   describe('Validation fallback', () => {
     it('should fallback to defaults on invalid timeout', () => {
-      process.env.TASK_TIMEOUT = '500'; // Below minimum
+      // DECISION: min=0, max=86400000. Use a negative value to trigger below-minimum.
+      process.env.TASK_TIMEOUT = '-1'; // Below minimum (0)
 
       const config = loadConfiguration();
 
-      expect(config.timeout).toBe(1800000); // Default
+      // DECISION: Default timeout is 0 (disabled) since v1.4.0
+      expect(config.timeout).toBe(0); // Default
     });
 
     it('should fallback to defaults on invalid CPU threshold', () => {
@@ -453,7 +471,8 @@ describe('loadConfiguration - REAL Configuration Loading', () => {
       const config = loadConfiguration();
 
       // FIX: Check core fields only (20+ fields returned)
-      expect(config.timeout).toBe(1800000);
+      // DECISION: Default timeout is 0 (disabled) since v1.4.0
+      expect(config.timeout).toBe(0);
       expect(config.maxOutputBuffer).toBe(BUFFER_SIZES.MEDIUM);
       expect(config.cpuCoresReserved).toBe(2);
       expect(config.memoryReserve).toBe(2684354560); // 2.5GB default
