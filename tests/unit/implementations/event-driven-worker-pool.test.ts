@@ -723,12 +723,12 @@ describe('EventDrivenWorkerPool', () => {
       // Capture the setInterval callback for the heartbeat timer (30s interval)
       const setIntervalCalls: { fn: Function; delay: number }[] = [];
       const origSetInterval = global.setInterval;
-      const setIntervalSpy = vi.spyOn(global, 'setInterval').mockImplementation(
-        (fn: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      const setIntervalSpy = vi
+        .spyOn(global, 'setInterval')
+        .mockImplementation((fn: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
           setIntervalCalls.push({ fn, delay: delay ?? 0 });
           return origSetInterval(fn, delay, ...args);
-        },
-      );
+        });
 
       const task = buildTask();
       await pool.spawn(task);
@@ -758,7 +758,9 @@ describe('EventDrivenWorkerPool', () => {
       const workerId = spawnResult.value.id;
 
       // Worker should have a heartbeat timer after spawn
-      const workerState = (pool as unknown as { workers: Map<string, { heartbeatTimer?: NodeJS.Timeout }> }).workers.get(workerId);
+      const workerState = (
+        pool as unknown as { workers: Map<string, { heartbeatTimer?: NodeJS.Timeout }> }
+      ).workers.get(workerId);
       expect(workerState?.heartbeatTimer).toBeDefined();
 
       // Kill the worker
@@ -773,12 +775,12 @@ describe('EventDrivenWorkerPool', () => {
       // Capture the heartbeat callback
       const setIntervalCalls: { fn: Function; delay: number }[] = [];
       const origSetInterval = global.setInterval;
-      const setIntervalSpy = vi.spyOn(global, 'setInterval').mockImplementation(
-        (fn: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      const setIntervalSpy = vi
+        .spyOn(global, 'setInterval')
+        .mockImplementation((fn: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
           setIntervalCalls.push({ fn, delay: delay ?? 0 });
           return origSetInterval(fn, delay, ...args);
-        },
-      );
+        });
 
       const task = buildTask();
       const spawnResult = await pool.spawn(task);

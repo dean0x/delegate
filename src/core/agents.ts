@@ -242,6 +242,7 @@ export interface AgentAdapter {
    * @param taskId - Optional task ID for identification
    * @param model - Optional model override (per-task model overrides agent config model)
    * @param orchestratorId - Optional orchestration ID for sub-task attribution (v1.3.0)
+   * @param jsonSchema - Optional JSON schema string for structured output (v1.4.0, Claude only)
    * @returns Process handle with PID, or error
    */
   spawn(
@@ -250,6 +251,7 @@ export interface AgentAdapter {
     taskId?: string,
     model?: string,
     orchestratorId?: string,
+    jsonSchema?: string,
   ): Result<{ process: ChildProcess; pid: number }>;
 
   /**

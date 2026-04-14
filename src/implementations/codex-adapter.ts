@@ -16,7 +16,9 @@ export class CodexAdapter extends BaseAgentAdapter {
     super(config, codexCommand);
   }
 
-  protected buildArgs(prompt: string, model?: string): readonly string[] {
+  // jsonSchema parameter accepted but ignored — Codex CLI does not support structured output
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  protected buildArgs(prompt: string, model?: string, _jsonSchema?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
     return ['--quiet', '--full-auto', ...modelArgs, '--', prompt];
   }

@@ -20,9 +20,10 @@ export class ClaudeAdapter extends BaseAgentAdapter {
     this.baseArgs = Object.freeze(['--print', '--dangerously-skip-permissions', '--output-format', 'json']);
   }
 
-  protected buildArgs(prompt: string, model?: string): readonly string[] {
+  protected buildArgs(prompt: string, model?: string, jsonSchema?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
-    return [...this.baseArgs, ...modelArgs, '--', prompt];
+    const schemaArgs: string[] = jsonSchema ? ['--json-schema', jsonSchema] : [];
+    return [...this.baseArgs, ...modelArgs, ...schemaArgs, '--', prompt];
   }
 
   protected get envPrefixesToStrip(): readonly string[] {
