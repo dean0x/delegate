@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { AGENT_PROVIDERS_TUPLE } from '../core/agents.js';
 import {
   EvalMode,
+  EvalType,
   Loop,
   LoopId,
   LoopIteration,
@@ -59,6 +60,10 @@ const LoopRowSchema = z.object({
   git_base_branch: z.string().nullable(),
   git_start_commit_sha: z.string().nullable(),
   schedule_id: z.string().nullable(),
+  // Eval redesign fields (v1.4.0) — added by migration v21, nullable for backward compat
+  eval_type: z.string().nullable().optional(),
+  judge_agent: z.string().nullable().optional(),
+  judge_prompt: z.string().nullable().optional(),
 });
 
 const LoopIterationRowSchema = z.object({
@@ -78,6 +83,8 @@ const LoopIterationRowSchema = z.object({
   git_commit_sha: z.string().nullable(),
   pre_iteration_commit_sha: z.string().nullable(),
   git_diff_summary: z.string().nullable(),
+  // Eval redesign fields (v1.4.0) — added by migration v21, nullable for backward compat
+  eval_response: z.string().nullable().optional(),
 });
 
 /**
@@ -146,6 +153,10 @@ interface LoopRow {
   readonly git_base_branch: string | null;
   readonly git_start_commit_sha: string | null;
   readonly schedule_id: string | null;
+  // Eval redesign (v1.4.0)
+  readonly eval_type: string | null | undefined;
+  readonly judge_agent: string | null | undefined;
+  readonly judge_prompt: string | null | undefined;
 }
 
 interface LoopIterationRow {
@@ -165,6 +176,8 @@ interface LoopIterationRow {
   readonly git_commit_sha: string | null;
   readonly pre_iteration_commit_sha: string | null;
   readonly git_diff_summary: string | null;
+  // Eval redesign (v1.4.0)
+  readonly eval_response: string | null | undefined;
 }
 
 export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations {
@@ -200,14 +213,16 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         max_consecutive_failures, cooldown_ms, fresh_context, status,
         current_iteration, best_score, best_iteration_id, best_iteration_commit_sha,
         consecutive_failures, created_at, updated_at, completed_at,
-        git_branch, git_base_branch, git_start_commit_sha, schedule_id
+        git_branch, git_base_branch, git_start_commit_sha, schedule_id,
+        eval_type, judge_agent, judge_prompt
       ) VALUES (
         @id, @strategy, @taskTemplate, @pipelineSteps, @exitCondition,
         @evalDirection, @evalTimeout, @evalMode, @evalPrompt, @workingDirectory, @maxIterations,
         @maxConsecutiveFailures, @cooldownMs, @freshContext, @status,
         @currentIteration, @bestScore, @bestIterationId, @bestIterationCommitSha,
         @consecutiveFailures, @createdAt, @updatedAt, @completedAt,
-        @gitBranch, @gitBaseBranch, @gitStartCommitSha, @scheduleId
+        @gitBranch, @gitBaseBranch, @gitStartCommitSha, @scheduleId,
+        @evalType, @judgeAgent, @judgePrompt
       )
     `);
 
@@ -237,7 +252,10 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         git_branch = @gitBranch,
         git_base_branch = @gitBaseBranch,
         git_start_commit_sha = @gitStartCommitSha,
-        schedule_id = @scheduleId
+        schedule_id = @scheduleId,
+        eval_type = @evalType,
+        judge_agent = @judgeAgent,
+        judge_prompt = @judgePrompt
       WHERE id = @id
     `);
 
@@ -269,8 +287,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       INSERT INTO loop_iterations (
         loop_id, iteration_number, task_id, pipeline_task_ids,
         status, score, exit_code, error_message, eval_feedback, started_at, completed_at,
-        git_branch, git_commit_sha, pre_iteration_commit_sha, git_diff_summary
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        git_branch, git_commit_sha, pre_iteration_commit_sha, git_diff_summary, eval_response
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.updateIterationStmt = this.db.prepare(`
@@ -284,7 +302,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         git_branch = @gitBranch,
         git_commit_sha = @gitCommitSha,
         pre_iteration_commit_sha = @preIterationCommitSha,
-        git_diff_summary = @gitDiffSummary
+        git_diff_summary = @gitDiffSummary,
+        eval_response = @evalResponse
       WHERE id = @id
     `);
 
@@ -447,6 +466,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
           iteration.gitCommitSha ?? null,
           iteration.preIterationCommitSha ?? null,
           iteration.gitDiffSummary ?? null,
+          iteration.evalResponse ?? null, // Eval redesign (v1.4.0)
         );
       },
       operationErrorHandler('record loop iteration', {
@@ -501,6 +521,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
           gitCommitSha: iteration.gitCommitSha ?? null,
           preIterationCommitSha: iteration.preIterationCommitSha ?? null,
           gitDiffSummary: iteration.gitDiffSummary ?? null,
+          evalResponse: iteration.evalResponse ?? null, // Eval redesign (v1.4.0)
         });
       },
       operationErrorHandler('update loop iteration', {
@@ -536,6 +557,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       iteration.gitCommitSha ?? null,
       iteration.preIterationCommitSha ?? null,
       iteration.gitDiffSummary ?? null,
+      iteration.evalResponse ?? null, // Eval redesign (v1.4.0)
     );
   }
 
@@ -558,6 +580,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       gitCommitSha: iteration.gitCommitSha ?? null,
       preIterationCommitSha: iteration.preIterationCommitSha ?? null,
       gitDiffSummary: iteration.gitDiffSummary ?? null,
+      evalResponse: iteration.evalResponse ?? null, // Eval redesign (v1.4.0)
     });
   }
 
@@ -599,6 +622,10 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       gitBaseBranch: loop.gitBaseBranch ?? null,
       gitStartCommitSha: loop.gitStartCommitSha ?? null,
       scheduleId: loop.scheduleId ?? null,
+      // Eval redesign (v1.4.0)
+      evalType: loop.evalType ?? null,
+      judgeAgent: loop.judgeAgent ?? null,
+      judgePrompt: loop.judgePrompt ?? null,
     };
   }
 
@@ -655,6 +682,10 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       gitBaseBranch: data.git_base_branch ?? undefined,
       gitStartCommitSha: data.git_start_commit_sha ?? undefined,
       scheduleId: data.schedule_id ? ScheduleId(data.schedule_id) : undefined,
+      // Eval redesign (v1.4.0)
+      evalType: data.eval_type ? (data.eval_type as EvalType) : undefined,
+      judgeAgent: data.judge_agent ? (data.judge_agent as Loop['judgeAgent']) : undefined,
+      judgePrompt: data.judge_prompt ?? undefined,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
       completedAt: data.completed_at ?? undefined,
@@ -696,6 +727,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       gitCommitSha: data.git_commit_sha ?? undefined,
       preIterationCommitSha: data.pre_iteration_commit_sha ?? undefined,
       gitDiffSummary: data.git_diff_summary ?? undefined,
+      // Eval redesign (v1.4.0)
+      evalResponse: data.eval_response ?? undefined,
       startedAt: data.started_at,
       completedAt: data.completed_at ?? undefined,
     };
