@@ -857,28 +857,7 @@ export class LoopHandler extends BaseEventHandler {
       return;
     }
     if (evalResult.decision === 'stop') {
-      // Record iteration result before completing the loop — prevents orphan 'running' iterations
-      const { gitCommitSha, gitDiffSummary } = await this.handleIterationGitOutcome(loop, iteration, 'pass');
-      const txResult = this.database.runInTransaction(() => {
-        this.loopRepo.updateIterationSync({
-          ...iteration,
-          status: 'pass',
-          exitCode: evalResult.exitCode,
-          evalFeedback: evalResult.feedback,
-          evalResponse: evalResult.evalResponse,
-          gitCommitSha,
-          gitDiffSummary,
-          completedAt: Date.now(),
-        });
-        this.loopRepo.updateSync(updateLoop(loop, { status: LoopStatus.COMPLETED, completedAt: Date.now() }));
-      });
-      if (!txResult.ok) {
-        this.logger.error('Failed to persist stop decision', txResult.error, { loopId: loop.id });
-        await this.completeLoop(loop, LoopStatus.FAILED, 'Failed to persist stop decision');
-        return;
-      }
-      // Status already committed in transaction above — only cleanup needed
-      await this.finishLoop(loop, LoopStatus.COMPLETED, 'Eval decision: stop');
+      await this.handleStopDecision(loop, iteration, evalResult, 'pass');
       return;
     }
 
@@ -966,29 +945,7 @@ export class LoopHandler extends BaseEventHandler {
       return;
     }
     if (evalResult.decision === 'stop') {
-      // Record iteration result before completing the loop — prevents orphan 'running' iterations
-      const { gitCommitSha, gitDiffSummary } = await this.handleIterationGitOutcome(loop, iteration, 'keep');
-      const txResult = this.database.runInTransaction(() => {
-        this.loopRepo.updateIterationSync({
-          ...iteration,
-          status: 'keep',
-          score: evalResult.score,
-          exitCode: evalResult.exitCode,
-          evalFeedback: evalResult.feedback,
-          evalResponse: evalResult.evalResponse,
-          gitCommitSha,
-          gitDiffSummary,
-          completedAt: Date.now(),
-        });
-        this.loopRepo.updateSync(updateLoop(loop, { status: LoopStatus.COMPLETED, completedAt: Date.now() }));
-      });
-      if (!txResult.ok) {
-        this.logger.error('Failed to persist stop decision', txResult.error, { loopId });
-        await this.completeLoop(loop, LoopStatus.FAILED, 'Failed to persist stop decision');
-        return;
-      }
-      // Status already committed in transaction above — only cleanup needed
-      await this.finishLoop(loop, LoopStatus.COMPLETED, 'Eval decision: stop');
+      await this.handleStopDecision(loop, iteration, evalResult, 'keep');
       return;
     }
 
@@ -1262,6 +1219,49 @@ export class LoopHandler extends BaseEventHandler {
     } else {
       await this.startNextIteration(loop);
     }
+  }
+
+  /**
+   * Handle EvalResult.decision === 'stop' for both RETRY and OPTIMIZE strategies.
+   * Persists the iteration with the appropriate terminal status, marks loop as COMPLETED,
+   * and runs post-commit cleanup via finishLoop. Score is preserved from evalResult
+   * (undefined for retry/pass, set for optimize/keep).
+   *
+   * DECISION: Extracted from handleRetryResult and handleOptimizeResult to eliminate
+   * ~25 lines of duplication. Differs only in iterationStatus ('pass' vs 'keep') and
+   * score inclusion (evalResult.score is undefined for retry, set for optimize).
+   * Logger key standardised to loopId: loop.id (retry used loop.id, optimize used loopId
+   * shorthand — functionally identical, now consistent).
+   */
+  private async handleStopDecision(
+    loop: Loop,
+    iteration: LoopIteration,
+    evalResult: EvalResult,
+    iterationStatus: 'pass' | 'keep',
+  ): Promise<void> {
+    // Record iteration result before completing the loop — prevents orphan 'running' iterations
+    const { gitCommitSha, gitDiffSummary } = await this.handleIterationGitOutcome(loop, iteration, iterationStatus);
+    const txResult = this.database.runInTransaction(() => {
+      this.loopRepo.updateIterationSync({
+        ...iteration,
+        status: iterationStatus,
+        score: evalResult.score,
+        exitCode: evalResult.exitCode,
+        evalFeedback: evalResult.feedback,
+        evalResponse: evalResult.evalResponse,
+        gitCommitSha,
+        gitDiffSummary,
+        completedAt: Date.now(),
+      });
+      this.loopRepo.updateSync(updateLoop(loop, { status: LoopStatus.COMPLETED, completedAt: Date.now() }));
+    });
+    if (!txResult.ok) {
+      this.logger.error('Failed to persist stop decision', txResult.error, { loopId: loop.id });
+      await this.completeLoop(loop, LoopStatus.FAILED, 'Failed to persist stop decision');
+      return;
+    }
+    // Status already committed in transaction above — only cleanup needed
+    await this.finishLoop(loop, LoopStatus.COMPLETED, 'Eval decision: stop');
   }
 
   /**
