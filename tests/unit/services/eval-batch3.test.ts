@@ -13,131 +13,26 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Loop } from '../../../src/core/domain.js';
-import { createLoop, EvalMode, EvalType, LoopStrategy, OptimizeDirection, TaskId } from '../../../src/core/domain.js';
-import type {
-  EvalResult,
-  ExitConditionEvaluator,
-  LoopRepository,
-  OutputRepository,
-} from '../../../src/core/interfaces.js';
-import { ok } from '../../../src/core/result.js';
+import { EvalMode, EvalType, LoopStrategy, OptimizeDirection, TaskId } from '../../../src/core/domain.js';
+import type { EvalResult, ExitConditionEvaluator } from '../../../src/core/interfaces.js';
 import { CompositeExitConditionEvaluator } from '../../../src/services/composite-exit-condition-evaluator.js';
 import { FeedforwardEvaluator } from '../../../src/services/feedforward-evaluator.js';
+import {
+  createLoopRepo,
+  createOutputRepo,
+  createTestLoop,
+  evaluateWithCompletions,
+  simulateTaskComplete,
+  simulateTaskFailed,
+} from '../../fixtures/eval-test-helpers.js';
 import { TestEventBus, TestLogger } from '../../fixtures/test-doubles.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared helpers
+// File-specific helpers (not shared — only used for CompositeExitConditionEvaluator)
 // ─────────────────────────────────────────────────────────────────────────────
-
-function createOutputRepo(lines: string[]): OutputRepository {
-  return {
-    get: vi.fn().mockResolvedValue(
-      ok({
-        stdout: lines,
-        stderr: [],
-        truncated: false,
-        byteSize: lines.join('\n').length,
-      }),
-    ),
-    save: vi.fn().mockResolvedValue(ok(undefined)),
-    delete: vi.fn().mockResolvedValue(ok(undefined)),
-    getByteSize: vi.fn().mockResolvedValue(ok(0)),
-  } as unknown as OutputRepository;
-}
-
-function createLoopRepo(preIterationCommitSha?: string): LoopRepository {
-  return {
-    findIterationByTaskId: vi
-      .fn()
-      .mockResolvedValue(
-        ok(preIterationCommitSha ? { iterationNumber: 1, preIterationCommitSha, status: 'running' } : null),
-      ),
-    findById: vi.fn().mockResolvedValue(ok(null)),
-    findAll: vi.fn().mockResolvedValue(ok([])),
-    findByStatus: vi.fn().mockResolvedValue(ok([])),
-    save: vi.fn().mockResolvedValue(ok(undefined)),
-    updateStatus: vi.fn().mockResolvedValue(ok(undefined)),
-    recordIteration: vi.fn().mockResolvedValue(ok(undefined)),
-    updateIteration: vi.fn().mockResolvedValue(ok(undefined)),
-    getIterations: vi.fn().mockResolvedValue(ok([])),
-    saveSync: vi.fn().mockReturnValue(ok(undefined)),
-    updateStatusSync: vi.fn().mockReturnValue(ok(undefined)),
-    recordIterationSync: vi.fn().mockReturnValue(ok(undefined)),
-    updateIterationSync: vi.fn().mockReturnValue(ok(undefined)),
-  } as unknown as LoopRepository;
-}
 
 function createMockEvaluator(result: EvalResult): ExitConditionEvaluator {
   return { evaluate: vi.fn().mockResolvedValue(result) };
-}
-
-function createTestLoop(overrides: Partial<Parameters<typeof createLoop>[0]> = {}): Loop {
-  return createLoop(
-    {
-      prompt: 'Improve the code quality',
-      strategy: LoopStrategy.RETRY,
-      exitCondition: '',
-      evalMode: EvalMode.AGENT,
-      maxIterations: 5,
-      evalTimeout: 10000,
-      ...overrides,
-    },
-    '/workspace',
-  );
-}
-
-/**
- * Evaluate with automatic task completion simulation.
- * Captures the eval task ID from TaskDelegated, then drives it to completion.
- * Can handle multiple sequential task delegations (e.g., judge phase 1 + phase 2).
- */
-async function evaluateWithCompletions<
-  T extends { evaluate: (loop: Loop, taskId: ReturnType<typeof TaskId>) => Promise<EvalResult> },
->(
-  evaluator: T,
-  loop: Loop,
-  taskId: ReturnType<typeof TaskId>,
-  eventBus: TestEventBus,
-  simulateFns: Array<(evalTaskId: string) => Promise<void>>,
-): Promise<EvalResult> {
-  const capturedTaskIds: string[] = [];
-  const origEmit = eventBus.emit.bind(eventBus);
-  vi.spyOn(eventBus, 'emit').mockImplementation(async (type: string, payload: unknown) => {
-    if (type === 'TaskDelegated') {
-      capturedTaskIds.push((payload as { task: { id: string } }).task.id);
-    }
-    return origEmit(type as never, payload as never);
-  });
-
-  const evalPromise = evaluator.evaluate(loop, taskId);
-
-  for (let i = 0; i < simulateFns.length; i++) {
-    // Give subscriptions a tick to register
-    await new Promise((r) => setImmediate(r));
-    const taskIdForPhase = capturedTaskIds[i];
-    if (taskIdForPhase) {
-      await simulateFns[i](taskIdForPhase);
-    }
-    // Give the evaluator a tick to process the event
-    await new Promise((r) => setImmediate(r));
-  }
-
-  return evalPromise;
-}
-
-async function simulateTaskComplete(eventBus: TestEventBus, taskId: string): Promise<void> {
-  await eventBus.emit('TaskCompleted', {
-    taskId: taskId as ReturnType<typeof TaskId>,
-    workerId: 'w1' as unknown as never,
-  });
-}
-
-async function simulateTaskFailed(eventBus: TestEventBus, taskId: string): Promise<void> {
-  await eventBus.emit('TaskFailed', {
-    taskId: taskId as ReturnType<typeof TaskId>,
-    error: new Error('task failed'),
-    workerId: 'w1' as unknown as never,
-  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

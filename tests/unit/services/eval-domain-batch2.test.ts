@@ -11,9 +11,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Loop } from '../../../src/core/domain.js';
 import { createLoop, createTask, EvalMode, EvalType, LoopId, LoopStrategy, TaskId } from '../../../src/core/domain.js';
-import type { EvalResult, LoopRepository, OutputRepository } from '../../../src/core/interfaces.js';
+import type { EvalResult } from '../../../src/core/interfaces.js';
 import { ok } from '../../../src/core/result.js';
 import { AgentExitConditionEvaluator } from '../../../src/services/agent-exit-condition-evaluator.js';
+import { createLoopRepo, createOutputRepo, createTestLoop } from '../../fixtures/eval-test-helpers.js';
 import { TestEventBus, TestLogger } from '../../fixtures/test-doubles.js';
 
 // ============================================================================
@@ -84,67 +85,9 @@ describe('EvalType enum', () => {
 // Section 2: Structured output parsing + dual prompt directive
 // ============================================================================
 
-function createTestLoop(overrides: Record<string, unknown> = {}): Loop {
-  return createLoop(
-    {
-      prompt: 'Improve code quality',
-      strategy: LoopStrategy.RETRY,
-      exitCondition: '',
-      evalMode: EvalMode.AGENT,
-      maxIterations: 5,
-      evalTimeout: 10000,
-      agent: 'claude',
-      ...overrides,
-    },
-    '/workspace',
-  );
-}
-
-function createOutputRepo(lines: string[]): OutputRepository {
-  return {
-    get: vi.fn().mockResolvedValue(
-      ok({
-        stdout: lines,
-        stderr: [],
-        truncated: false,
-        byteSize: lines.join('').length,
-      }),
-    ),
-    save: vi.fn().mockResolvedValue(ok(undefined)),
-    delete: vi.fn().mockResolvedValue(ok(undefined)),
-    getByteSize: vi.fn().mockResolvedValue(ok(0)),
-  } as unknown as OutputRepository;
-}
-
-function createLoopRepo(preIterationCommitSha?: string): LoopRepository {
-  return {
-    findIterationByTaskId: vi
-      .fn()
-      .mockResolvedValue(
-        ok(preIterationCommitSha ? { iterationNumber: 1, preIterationCommitSha, status: 'running' } : null),
-      ),
-    findById: vi.fn().mockResolvedValue(ok(null)),
-    findAll: vi.fn().mockResolvedValue(ok([])),
-    findByStatus: vi.fn().mockResolvedValue(ok([])),
-    save: vi.fn().mockResolvedValue(ok(undefined)),
-    update: vi.fn().mockResolvedValue(ok(undefined)),
-    count: vi.fn().mockResolvedValue(ok(0)),
-    countByStatus: vi.fn().mockResolvedValue(ok({})),
-    delete: vi.fn().mockResolvedValue(ok(undefined)),
-    cleanupOldLoops: vi.fn().mockResolvedValue(ok(0)),
-    findByScheduleId: vi.fn().mockResolvedValue(ok([])),
-    recordIteration: vi.fn().mockResolvedValue(ok(undefined)),
-    getIterations: vi.fn().mockResolvedValue(ok([])),
-    findRunningIterations: vi.fn().mockResolvedValue(ok([])),
-    updateIteration: vi.fn().mockResolvedValue(ok(undefined)),
-    findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
-    // Sync methods
-    updateSync: vi.fn(),
-    recordIterationSync: vi.fn(),
-    findByIdSync: vi.fn().mockReturnValue(null),
-    updateIterationSync: vi.fn(),
-  } as unknown as LoopRepository;
-}
+// createTestLoop, createOutputRepo, createLoopRepo imported from eval-test-helpers.js
+// Note: createTestLoop in eval-domain-batch2 originally defaulted agent:'claude'.
+// Tests that require a specific agent pass it explicitly in overrides.
 
 /**
  * Evaluate with automatic completion simulation.
