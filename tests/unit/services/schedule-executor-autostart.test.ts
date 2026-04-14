@@ -16,7 +16,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // We test utility functions that don't spawn real processes
-import { getExecutorPidPath, isProcessAlive } from '../../../src/cli/commands/schedule-executor.js';
+import { acquirePidFile, getExecutorPidPath, isProcessAlive } from '../../../src/cli/commands/schedule-executor.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getExecutorPidPath
@@ -282,5 +282,97 @@ describe('ensureScheduleExecutorRunning — alive check contract', () => {
      */
     // This test serves as documentation, not as an executable assertion.
     expect(true).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// acquirePidFile — atomic PID file locking (#141)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('acquirePidFile — atomic O_EXCL locking', () => {
+  let tempDir: string;
+  let tempPidPath: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autobeat-acquire-test-'));
+    tempPidPath = path.join(tempDir, 'test-executor.pid');
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+    vi.restoreAllMocks();
+  });
+
+  it("returns ok('acquired') when no PID file exists", () => {
+    const result = acquirePidFile(tempPidPath, process.pid);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBe('acquired');
+    // PID file should now contain our PID
+    const written = fs.readFileSync(tempPidPath, 'utf-8').trim();
+    expect(parseInt(written, 10)).toBe(process.pid);
+  });
+
+  it("returns ok('acquired') and creates parent directory if missing", () => {
+    const nestedPath = path.join(tempDir, 'new-subdir', 'executor.pid');
+    const result = acquirePidFile(nestedPath, process.pid);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBe('acquired');
+    expect(fs.existsSync(nestedPath)).toBe(true);
+  });
+
+  it("returns ok('already-running') when another live executor holds the file", () => {
+    // Write current process PID (guaranteed alive)
+    fs.writeFileSync(tempPidPath, String(process.pid), 'utf-8');
+
+    const result = acquirePidFile(tempPidPath, process.pid + 1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBe('already-running');
+  });
+
+  it("returns ok('acquired') after removing stale PID file (dead process)", () => {
+    // Write a PID for a guaranteed-dead process
+    const deadPid = 999999999;
+    fs.writeFileSync(tempPidPath, String(deadPid), 'utf-8');
+
+    const result = acquirePidFile(tempPidPath, process.pid);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBe('acquired');
+    // PID file should now contain our PID
+    const written = fs.readFileSync(tempPidPath, 'utf-8').trim();
+    expect(parseInt(written, 10)).toBe(process.pid);
+  });
+
+  it('returns err when mkdirSync fails (invalid parent path on some systems)', () => {
+    // Pass a pidPath under an existing FILE — mkdirSync will fail because you can't
+    // create a directory inside a regular file.
+    const existingFile = path.join(tempDir, 'notadir');
+    fs.writeFileSync(existingFile, 'content', 'utf-8');
+    const invalidPath = path.join(existingFile, 'subdir', 'test.pid');
+
+    const result = acquirePidFile(invalidPath, process.pid);
+    // On all supported platforms, mkdirSync fails here → acquirePidFile returns err
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toMatch(/Failed to create PID directory/);
+  });
+
+  it("returns err on path creation failure and does not crash", () => {
+    // Pass a path we can't write to by choosing root-owned directory
+    // This test validates the code path without using ESM module spies.
+    // On most systems writing to /proc is not permitted, giving a real ENOENT/EACCES.
+    // We use the InvalidPath approach instead:
+    const existingFile = path.join(tempDir, 'collision');
+    fs.writeFileSync(existingFile, 'blocker', 'utf-8');
+    const conflictPath = path.join(existingFile, 'pid.pid');
+    const result = acquirePidFile(conflictPath, process.pid);
+    expect(result.ok).toBe(false);
   });
 });

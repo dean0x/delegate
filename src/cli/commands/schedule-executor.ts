@@ -22,6 +22,8 @@ import * as path from 'node:path';
 import { bootstrap } from '../../bootstrap.js';
 import { ScheduleStatus } from '../../core/domain.js';
 import type { ScheduleRepository } from '../../core/interfaces.js';
+import { err, ok } from '../../core/result.js';
+import type { Result } from '../../core/result.js';
 
 /** Path to the PID file for the background executor process */
 export function getExecutorPidPath(): string {
@@ -29,11 +31,14 @@ export function getExecutorPidPath(): string {
   return path.join(dir, 'schedule-executor.pid');
 }
 
-/** Read PID from the PID file. Returns null if file doesn't exist or is invalid. */
-export function readExecutorPid(): number | null {
-  const pidPath = getExecutorPidPath();
+/**
+ * Read PID from the PID file. Returns null if file doesn't exist or is invalid.
+ * @param pidPath Optional explicit path — defaults to getExecutorPidPath()
+ */
+export function readExecutorPid(pidPath?: string): number | null {
+  const resolvedPath = pidPath ?? getExecutorPidPath();
   try {
-    const content = fs.readFileSync(pidPath, 'utf-8').trim();
+    const content = fs.readFileSync(resolvedPath, 'utf-8').trim();
     const pid = parseInt(content, 10);
     return Number.isFinite(pid) && pid > 0 ? pid : null;
   } catch {
@@ -51,6 +56,60 @@ export function isProcessAlive(pid: number): boolean {
     return true;
   } catch (e) {
     return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Atomically acquire the PID file using O_EXCL (create-or-fail).
+ *
+ * DECISION: Atomic O_EXCL create-or-fail prevents PID file race.
+ * Returns sentinel rather than calling process.exit() to keep exit
+ * logic at the caller, which is easier to test and audit.
+ *
+ * Residual TOCTOU: After unlinking a stale PID and before re-opening,
+ * a concurrent racing process could create the file. Accepted — extremely
+ * unlikely (3+ concurrent racing executors with the same stale PID).
+ *
+ * @returns ok('acquired') when PID file was created and owned
+ * @returns ok('already-running') when another live executor holds the PID file
+ * @returns err(Error) on unrecoverable I/O failures
+ */
+export function acquirePidFile(
+  pidPath: string,
+  pid: number,
+): Result<'acquired' | 'already-running', Error> {
+  try {
+    fs.mkdirSync(path.dirname(pidPath), { recursive: true });
+  } catch (mkdirErr) {
+    return err(new Error(`Failed to create PID directory: ${String(mkdirErr)}`));
+  }
+
+  try {
+    // O_EXCL | O_CREAT — atomic: fails with EEXIST if file already present
+    const fd = fs.openSync(pidPath, 'wx');
+    fs.writeSync(fd, String(pid));
+    fs.closeSync(fd);
+    return ok('acquired');
+  } catch (e1) {
+    const errno = e1 as NodeJS.ErrnoException;
+    if (errno.code !== 'EEXIST') {
+      return err(new Error(`Failed to acquire PID file: ${String(errno)}`));
+    }
+    // File exists — check if the owning process is still alive
+    const existingPid = readExecutorPid(pidPath);
+    if (existingPid !== null && isProcessAlive(existingPid)) {
+      return ok('already-running');
+    }
+    // Stale file — unlink and retry once
+    try {
+      fs.unlinkSync(pidPath);
+      const fd = fs.openSync(pidPath, 'wx');
+      fs.writeSync(fd, String(pid));
+      fs.closeSync(fd);
+      return ok('acquired');
+    } catch (e2) {
+      return err(new Error(`Failed to acquire PID file after stale-file retry: ${String(e2)}`));
+    }
   }
 }
 
@@ -97,27 +156,16 @@ export async function ensureScheduleExecutorRunning(): Promise<void> {
  * SIGTERM/SIGINT trigger a clean exit with PID file cleanup.
  */
 export async function handleScheduleExecutor(): Promise<void> {
-  // Ensure the ~/.autobeat directory exists for the PID file
+  // Atomically acquire the PID file — prevents race between concurrent executor startups
   const pidPath = getExecutorPidPath();
-  const pidDir = path.dirname(pidPath);
-
-  try {
-    fs.mkdirSync(pidDir, { recursive: true });
-  } catch (err) {
-    process.stderr.write(
-      `Schedule executor: failed to create PID directory ${pidDir}: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
+  const acquireResult = acquirePidFile(pidPath, process.pid);
+  if (!acquireResult.ok) {
+    process.stderr.write(`Schedule executor: PID file acquisition failed: ${acquireResult.error.message}\n`);
     process.exit(1);
   }
-
-  // Write our PID so ensureScheduleExecutorRunning() can detect us
-  try {
-    fs.writeFileSync(pidPath, String(process.pid), 'utf-8');
-  } catch (err) {
-    process.stderr.write(
-      `Schedule executor: failed to write PID file ${pidPath}: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-    process.exit(1);
+  if (acquireResult.value === 'already-running') {
+    // Another executor is alive — nothing to do, exit cleanly
+    process.exit(0);
   }
 
   const cleanup = (): void => {
