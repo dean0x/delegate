@@ -1987,9 +1987,12 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
       expect(updatedLoop!.consecutiveFailures).toBe(0);
 
-      // Side-effect: iteration must be recorded as 'discard' (no penalty, no fail cascade)
-      const iter = await getLatestIteration(loop.id);
-      expect(iter!.status).toBe('discard');
+      // Side-effect: iteration 1 must be recorded as 'discard' (no penalty, no fail cascade).
+      // getLatestIteration returns iteration 2 (currently 'running'), so query all and filter.
+      const iters = await loopRepo.getIterations(loop.id, 10);
+      expect(iters.ok).toBe(true);
+      const iter1 = iters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1!.status).toBe('discard');
     });
 
     it('decision: stop — completes optimize loop and marks iteration as keep', async () => {

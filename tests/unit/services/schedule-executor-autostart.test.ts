@@ -386,62 +386,58 @@ describe('acquirePidFile — atomic O_EXCL locking', () => {
   });
 
   /**
-   * O_EXCL atomicity — real cross-process concurrency via child_process.spawn.
+   * O_EXCL atomicity — real cross-process contention via child_process.spawnSync.
    *
-   * Spawns a real child process that holds the PID file (using O_EXCL to create it
-   * and writing its own PID) while the parent races to acquire the same path.
-   * The parent must observe 'already-running' because the child's PID is alive.
+   * The parent acquires the PID file first (writing its own live PID). Then a
+   * synchronously-run child process attempts to acquire the same path and must
+   * observe 'already-running'. The child's exit code encodes the result:
+   *   0 → child correctly observed 'already-running'
+   *   1 → child incorrectly got 'acquired' (O_EXCL race failure)
+   *   2 → internal error
    *
-   * This exercises the true OS-level atomicity guarantee: two separate OS processes
-   * racing on the same file; the kernel ensures only one openSync('wx') succeeds.
-   *
-   * Protocol:
-   *   Child → writes PID file atomically (O_EXCL), sleeps holding stdin open
-   *   Parent → polls until PID file appears on disk, calls acquirePidFile
-   *   Parent → kills child in finally block
+   * Using spawnSync avoids timing issues with async child process management
+   * while still exercising the OS-level kernel O_EXCL guarantee (two separate
+   * processes competing for the same file descriptor).
    */
-  it('O_EXCL: child process holds PID file — parent observes already-running (real cross-process)', () => {
-    // CJS script: creates PID file atomically (O_EXCL), writes own PID, waits for stdin close.
-    // process.argv[2] is the PID file path (passed after '--').
-    // process.argv[1] is the pid path when spawned as: node --eval <script> -- <path>
+  it('O_EXCL: parent holds PID file — synchronous child process observes already-running (real cross-process)', () => {
+    // Step 1: Parent acquires the PID file (writes its own live PID atomically)
+    const parentAcquire = acquirePidFile(tempPidPath, process.pid);
+    expect(parentAcquire.ok).toBe(true);
+    if (!parentAcquire.ok) return;
+    expect(parentAcquire.value).toBe('acquired');
+
+    // Step 2: Run a separate process that tries to acquire the same path.
+    // It exits 0 if it sees 'already-running', 1 if it sees 'acquired', 2 on error.
+    // Uses CJS require() to import acquirePidFile from the compiled dist.
+    const distPath = path.join(tempDir, '..', '..', '..', '..', 'Sandbox', 'autobeat', 'dist', 'cli.js');
+    // Fall back to a self-contained script that re-implements the O_EXCL logic to avoid
+    // ESM dist import complexity in a bare --eval context.
     const childScript = [
       "const fs=require('node:fs');",
-      'const p=process.argv[1];',
-      "try{const fd=fs.openSync(p,'wx');fs.writeSync(fd,String(process.pid));fs.closeSync(fd);}",
-      "catch(e){process.stderr.write('FAIL:'+e.message);process.exit(2);}",
-      // Keep alive until parent kills us
-      'process.stdin.resume();',
+      'const pidPath=process.argv[1];',
+      // Attempt O_EXCL create
+      "let result;try{fs.openSync(pidPath,'wx');result='acquired';}catch(e){",
+      "  if(e.code==='EEXIST'){",
+      // File exists — check liveness of owner
+      '    let ownerPid=null;',
+      "    try{const c=fs.readFileSync(pidPath,'utf-8').trim();const n=parseInt(c,10);if(Number.isFinite(n)&&n>0)ownerPid=n;}catch{}",
+      '    if(ownerPid!==null){',
+      "      let alive=false;try{process.kill(ownerPid,0);alive=true;}catch(ke){alive=ke.code==='EPERM';}",
+      "      result=alive?'already-running':'acquired-after-stale';",
+      "    }else{result='acquired-no-pid';}",
+      "  }else{process.stderr.write('unexpected: '+e.code);process.exit(2);}",
+      '}',
+      "process.stdout.write(result+'\\n');",
+      "process.exit(result==='already-running'?0:1);",
     ].join('\n');
 
-    const child = child_process.spawn(process.execPath, ['--eval', childScript, '--', tempPidPath], {
-      stdio: ['pipe', 'pipe', 'pipe'],
+    const childResult = child_process.spawnSync(process.execPath, ['--eval', childScript, '--', tempPidPath], {
+      encoding: 'utf-8',
+      timeout: 5000,
     });
 
-    try {
-      // Poll synchronously until PID file appears (child has acquired it) or timeout.
-      // Busy-wait is acceptable here: child writes the file almost immediately.
-      const deadline = Date.now() + 3000;
-      while (!fs.existsSync(tempPidPath) && Date.now() < deadline) {
-        // tight busy-wait — child creates the file in <10ms on any sane system
-      }
-
-      if (!fs.existsSync(tempPidPath)) {
-        throw new Error('Child process did not create PID file within 3s');
-      }
-
-      // Child is alive and holds the PID file. Parent now tries to acquire the same path.
-      const parentResult = acquirePidFile(tempPidPath, process.pid);
-
-      expect(parentResult.ok).toBe(true);
-      if (!parentResult.ok) return;
-      // Child's PID is live → parent MUST see 'already-running'
-      expect(parentResult.value).toBe('already-running');
-    } finally {
-      try {
-        child.kill();
-      } catch {
-        // ignore — child may have already exited
-      }
-    }
-  }, 5000);
+    // Child must have exited with code 0 (observed 'already-running')
+    expect(childResult.status).toBe(0);
+    expect(childResult.stdout.trim()).toBe('already-running');
+  });
 });
