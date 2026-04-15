@@ -66,11 +66,11 @@ export interface LoopHandlerDeps {
  * Extracted to avoid duplicating the inline type across the five recordAndContinue call sites.
  */
 export type IterationResultFields = {
-  score?: number;
-  exitCode?: number;
-  errorMessage?: string;
-  evalFeedback?: string;
-  evalResponse?: string; // Raw eval agent output for audit (v1.4.0)
+  readonly score?: number;
+  readonly exitCode?: number;
+  readonly errorMessage?: string;
+  readonly evalFeedback?: string;
+  readonly evalResponse?: string; // Raw eval agent output for audit (v1.4.0)
 };
 
 export class LoopHandler extends BaseEventHandler {
@@ -253,12 +253,10 @@ export class LoopHandler extends BaseEventHandler {
         return ok(undefined);
       }
 
-      // Determine outcome based on event type
-      const isTaskFailed = event.type === 'TaskFailed';
-
-      if (isTaskFailed) {
+      // Determine outcome based on event type — branch directly on event.type so TypeScript
+      // narrows the discriminated union automatically (no intermediate boolean needed).
+      if (event.type === 'TaskFailed') {
         // Task FAILED — record failure, check limits
-        const failedEvent = event as TaskFailedEvent;
         const newConsecutiveFailures = loop.consecutiveFailures + 1;
 
         // Git reset: revert working directory to pre-iteration state on failure (v0.8.1)
@@ -270,8 +268,8 @@ export class LoopHandler extends BaseEventHandler {
           this.loopRepo.updateIterationSync({
             ...iteration,
             status: 'fail',
-            exitCode: failedEvent.exitCode,
-            errorMessage: failedEvent.error?.message ?? 'Task failed',
+            exitCode: event.exitCode,
+            errorMessage: event.error?.message ?? 'Task failed',
             completedAt: Date.now(),
           });
           this.loopRepo.updateSync(updatedLoop);
@@ -1587,8 +1585,7 @@ export class LoopHandler extends BaseEventHandler {
       return ok(undefined);
     }
 
-    // Cancel remaining pipeline tasks
-    const failedEvent = event as TaskFailedEvent;
+    // Cancel remaining pipeline tasks — event is narrowed to TaskFailedEvent (TaskCompleted returned early above)
     this.logger.info('Pipeline intermediate task failed, failing iteration', {
       taskId,
       loopId,
@@ -1607,8 +1604,8 @@ export class LoopHandler extends BaseEventHandler {
       this.loopRepo.updateIterationSync({
         ...iteration,
         status: 'fail',
-        exitCode: failedEvent.exitCode,
-        errorMessage: `Pipeline step failed: ${failedEvent.error?.message ?? 'Task failed'}`,
+        exitCode: event.exitCode,
+        errorMessage: `Pipeline step failed: ${event.error?.message ?? 'Task failed'}`,
         completedAt: Date.now(),
       });
       this.loopRepo.updateSync(updatedLoop);

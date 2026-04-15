@@ -6,7 +6,8 @@ New evaluation modes for loops, a two-phase judge evaluator, atomic PID file man
 
 ## Highlights
 
-- **Three evaluation modes**: `agent` (unchanged), `feedforward` (findings without a stop decision), and `judge` (two-phase eval+judge with TOCTOU-safe file decisions)
+- **Three evaluation modes**: `feedforward` (default — findings without a stop decision), `judge` (two-phase eval+judge with TOCTOU-safe file decisions), and `schema` (deterministic Claude `--json-schema` eval)
+- **Database migrations v21 and v22**: Worker heartbeat column, loop eval columns (v21); CHECK constraints on `eval_type` and `judge_agent` via table recreation (v22) — back up your database before upgrading
 - **Atomic PID file locking**: Schedule executor uses O_EXCL file creation to prevent double-execution races
 - **SpawnOptions refactor**: `AgentAdapter.spawn()` now accepts a named options object instead of 6 positional parameters
 - **Extracted pure functions**: `refetchAfterAgentEval`, `handleStopDecision`, `buildEvalPromptBase`, `checkActiveSchedules`, `registerSignalHandlers`, `startIdleCheckLoop` — all fully unit-tested
@@ -15,7 +16,9 @@ New evaluation modes for loops, a two-phase judge evaluator, atomic PID file man
 
 ## New Evaluation Modes
 
-### Feedforward (`evalType: feedforward`)
+The `evalType` field accepts three values: `'feedforward'` (default), `'judge'`, or `'schema'`. It is set per loop and stored in the `loops.eval_type` column.
+
+### Feedforward (`evalType: 'feedforward'`) — Default
 
 Gathers agent findings on every iteration and injects them as context into the next iteration's prompt — without making a stop/continue decision. The loop always runs to `maxIterations`.
 
@@ -29,14 +32,16 @@ Use this when you want progressive feedback during iteration but don't need a qu
 }
 ```
 
-### Judge (`evalType: judge`)
+**No `evalPrompt` configured?** The evaluator returns immediately with no findings (`{ decision: 'continue', feedback: undefined }`) — a pure pass-through. The loop runs to `maxIterations` with no eval agent spawned.
+
+### Judge (`evalType: 'judge'`)
 
 Two-phase evaluation:
 
 1. **Eval agent** (phase 1): runs `evalPrompt` and produces narrative findings
-2. **Judge agent** (phase 2): reads findings and writes a structured JSON decision to `.autobeat-judge-{judgeTaskId}` in the working directory
+2. **Judge agent** (phase 2): reads findings and writes a structured JSON decision to `.autobeat-judge-task-{uuid}` in the working directory
 
-The unique per-task filename prevents TOCTOU races with the work agent. Claude's `--json-schema` is used as belt-and-suspenders when `judgeAgent: 'claude'`.
+The filename includes the full judge task ID (`task-{uuid}`) to prevent TOCTOU races — the work agent cannot guess it. Claude's `--json-schema` is used as belt-and-suspenders when `judgeAgent: 'claude'`. If both mechanisms fail, the evaluator defaults to `continue: true` (never blocks unexpectedly).
 
 ```json
 {
@@ -54,6 +59,24 @@ Decision file format written by the judge agent:
 or
 ```json
 {"continue": false, "reasoning": "All tests pass and code review is clean."}
+```
+
+### Schema (`evalType: 'schema'`)
+
+Deterministic structured output evaluation using Claude's `--json-schema` flag. The eval agent is prompted with `evalPrompt` and must respond with a JSON object matching a fixed schema:
+
+```json
+{"continue": true, "reasoning": "..."}
+```
+
+Use this when you want strict structured output from Claude (no judge agent required). Only works with `judgeAgent: 'claude'` (or the loop's default agent if it is Claude).
+
+```json
+{
+  "evalType": "schema",
+  "evalPrompt": "Assess whether all acceptance criteria are met. Respond with continue=false only when all criteria pass.",
+  "maxIterations": 5
+}
 ```
 
 ---
@@ -113,9 +136,27 @@ All extracted functions are DI-injectable and have dedicated unit tests:
 
 ---
 
-## Database
+## Database Migrations
 
-No new migrations in v1.4.0. All changes are in-process behaviour.
+Two migrations are applied automatically on first startup after upgrading to v1.4.0.
+
+**Back up your database before upgrading.** Migration v22 recreates the `loops` table — it is a destructive operation that cannot be rolled back without a backup.
+
+### Migration v21 — Worker heartbeat + loop eval columns
+
+- `workers.last_heartbeat INTEGER` — nullable; tracks when the owning process last wrote to the DB. Used for liveness detection.
+- `loops.eval_type TEXT DEFAULT 'feedforward'` — evaluation strategy for the loop (`'feedforward'`, `'judge'`, or `'schema'`). Defaults to `'feedforward'` for backward compatibility with existing loops.
+- `loops.judge_agent TEXT` — which agent runs the judge phase (`'claude'`, `'codex'`, or `'gemini'`). Nullable.
+- `loops.judge_prompt TEXT` — custom prompt for the judge agent. Nullable.
+
+### Migration v22 — CHECK constraints on eval_type and judge_agent (table rebuild)
+
+SQLite does not support adding CHECK constraints via `ALTER TABLE`, so v22 recreates the `loops` table with:
+
+- `eval_type CHECK (eval_type IS NULL OR eval_type IN ('feedforward', 'judge', 'schema'))`
+- `judge_agent CHECK (judge_agent IS NULL OR judge_agent IN ('claude', 'codex', 'gemini'))`
+
+All existing rows are copied into the new table before the old one is dropped. **This is a full table rebuild — back up your `~/.autobeat/autobeat.db` file before upgrading.**
 
 ---
 
@@ -134,9 +175,10 @@ No new migrations in v1.4.0. All changes are in-process behaviour.
 
 ## Migration Notes
 
+- **Back up your database before upgrading.** Migrations v21 and v22 are applied automatically on first startup. v22 recreates the `loops` table — a backup is required if you need rollback capability. Back up `~/.autobeat/autobeat.db` before running `npm install -g autobeat@1.4.0`.
 - **`AgentAdapter.spawn()` signature change**: If you have custom `AgentAdapter` implementations (not using `BaseAgentAdapter`), update `spawn(prompt, workingDirectory, ...)` to `spawn({ prompt, workingDirectory, ... })`. The `ProcessSpawnerAdapter` compatibility shim is unaffected.
-- No database migrations — no schema changes.
-- No config changes — new `evalType`, `judgeAgent`, `judgePrompt` fields are optional with sensible defaults.
+- Existing loops with no `evalType` configured are treated as `feedforward` (backward-compatible default set by migration v21).
+- New optional fields `evalType`, `judgeAgent`, `judgePrompt` on loop creation — all optional with sensible defaults.
 
 ---
 

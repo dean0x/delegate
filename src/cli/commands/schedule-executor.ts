@@ -164,15 +164,23 @@ export async function checkActiveSchedules(scheduleRepo: ScheduleRepository): Pr
 /**
  * Register SIGTERM and SIGINT handlers that call cleanup and exit.
  *
- * DECISION: Inject process abstraction for testability.
- * Default to global `process` in production. Tests pass a fake.
+ * DECISION: Inject process abstraction and exit callable for testability.
+ * Default to global `process` and `process.exit` in production. Tests pass fakes.
  * Avoids spying on globals (cleanup risk between tests).
+ *
+ * @param cleanup - Cleanup function to call before exiting
+ * @param proc - Process-like object with `.on()` for signal registration (default: global process)
+ * @param exit - Exit callable (default: process.exit.bind(process)) — injected in tests to avoid real exit
  */
-export function registerSignalHandlers(cleanup: () => void, proc: Pick<NodeJS.Process, 'on'> = process): void {
+export function registerSignalHandlers(
+  cleanup: () => void,
+  proc: Pick<NodeJS.Process, 'on'> = process,
+  exit: (code: number) => void = process.exit.bind(process),
+): void {
   const exitCleanly = (signal: string): void => {
     process.stderr.write(`Schedule executor: received ${signal}, shutting down\n`);
     cleanup();
-    process.exit(0);
+    exit(0);
   };
   proc.on('SIGTERM', () => exitCleanly('SIGTERM'));
   proc.on('SIGINT', () => exitCleanly('SIGINT'));
@@ -223,6 +231,10 @@ export async function handleScheduleExecutor(): Promise<void> {
   if (acquireResult.value === 'already-running') {
     // Another executor is alive — nothing to do, exit cleanly
     process.exit(0);
+  } else if (acquireResult.value !== 'acquired') {
+    // Exhaustiveness guard: if a new sentinel is ever added to the Result union this becomes a type error
+    const _exhaustive: never = acquireResult.value;
+    throw new Error(`Unhandled acquire result: ${_exhaustive}`);
   }
 
   const cleanup = (): void => {

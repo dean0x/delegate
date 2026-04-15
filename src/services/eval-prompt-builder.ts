@@ -22,12 +22,13 @@ export const MAX_EVAL_FEEDBACK_LENGTH = 16_000;
  *
  * All evaluators compose these with their own strategy-specific content:
  * - contextHeader: "IMPORTANT: Do NOT modify files..." + working dir + iteration + task ID
- * - gitDiffInstructions: `git diff <sha>..HEAD` or fallback to `git diff HEAD~1..HEAD`
  * - toolInstructions: git diff command + `beat logs <taskId>` (byte-identical across all 3 evaluators)
+ *
+ * Note: gitDiffInstructions is an internal intermediate used to compose toolInstructions;
+ * it is not exposed on the interface since no caller reads it directly.
  */
 export interface EvalPromptBase {
   readonly contextHeader: string;
-  readonly gitDiffInstructions: string;
   readonly toolInstructions: string;
 }
 
@@ -65,5 +66,5 @@ Working directory: ${loop.workingDirectory}
 Iteration: ${loop.currentIteration}
 Task ID: ${taskId}`;
 
-  return { contextHeader, gitDiffInstructions, toolInstructions };
+  return { contextHeader, toolInstructions };
 }

@@ -1,12 +1,17 @@
 # Autobeat Development Roadmap
 
-## Current Status: v1.3.0 RELEASED (2026-04-11)
+## Current Status: v1.4.0 RELEASED (2026-04-15)
 
-Dashboard redesign with two-view layout (Metrics + Workspace), live agent output streaming, cost and token tracking for Claude agents, orchestrator attribution propagation, cancel cascade, and responsive layout.
+Evaluator redesign (feedforward, judge, schema strategies), atomic PID file locking for schedule executor, SpawnOptions refactor, and extracted pure functions for improved testability. Includes database migrations v21 and v22.
 
 ---
 
 ## Released Versions
+
+### v1.4.0 - Eval Redesign & Reliability Cleanup ✅
+**Status**: **RELEASED** (2026-04-15)
+
+Three eval strategies for loop exit conditions (`feedforward` default, `judge` two-phase, `schema` deterministic Claude structured output). Atomic PID file locking for schedule executor prevents double-execution. SpawnOptions refactor cleans up AgentAdapter interface. Database migrations v21 (eval columns) and v22 (CHECK constraints via table rebuild).
 
 ### v1.3.0 - Dashboard Redesign ✅
 **Status**: **RELEASED** (2026-04-11)
@@ -155,6 +160,8 @@ Multi-server support, shared state (Redis backend), fault tolerance, task affini
 | **v1.0.0** | ✅ Released | **Autonomous Orchestration** |
 | **v1.1.0** | ✅ Released | **Agent Eval Mode & Skill System** |
 | **v1.2.0** | ✅ Released | **Terminal Dashboard & Agent Config** |
+| **v1.3.0** | ✅ Released | **Dashboard Redesign & Cost Tracking** |
+| **v1.4.0** | ✅ Released | **Eval Redesign & Reliability Cleanup** |
 
 ---
 

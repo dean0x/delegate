@@ -2,7 +2,23 @@
 
 This document lists all features that are **currently implemented and working** in Autobeat.
 
-Last Updated: April 2026 (2026-04-11)
+Last Updated: April 2026 (2026-04-15)
+
+## ✅ Eval Redesign & Reliability Cleanup (v1.4.0)
+
+- **Three eval strategies** via `evalType` field on loop creation:
+  - `'feedforward'` (default) — gathers agent findings per iteration and injects them as context into the next iteration's prompt; always continues to `maxIterations`. When no `evalPrompt` is set, acts as a pure pass-through (no eval agent spawned).
+  - `'judge'` — two-phase eval+judge: Phase 1 eval agent generates findings; Phase 2 judge agent reads findings and writes a decision to `.autobeat-judge-task-{uuid}` in the working directory (TOCTOU-safe). Safe fallback to `continue: true` if both structured output and file mechanisms fail.
+  - `'schema'` — deterministic Claude `--json-schema` eval; the eval agent must respond with `{"continue": bool, "reasoning": string}`. No judge agent required.
+- **`judgeAgent` and `judgePrompt`** fields for configuring the judge phase independently of the eval agent
+- **Atomic PID file locking** for the schedule executor — `O_EXCL` file creation prevents double-execution races; stale PID files are cleaned up automatically
+- **`SpawnOptions` interface** — `AgentAdapter.spawn()` now accepts a named options object instead of 6 positional parameters (internal refactor, no user-visible behavior change)
+- **Extracted pure functions** with full unit test coverage: `refetchAfterAgentEval`, `handleStopDecision`, `buildEvalPromptBase`, `acquirePidFile`, `checkActiveSchedules`, `registerSignalHandlers`, `startIdleCheckLoop`
+
+### Database (v1.4.0)
+
+- **Migration 21**: Adds `workers.last_heartbeat`, `loops.eval_type` (default `'feedforward'`), `loops.judge_agent`, `loops.judge_prompt` columns
+- **Migration 22**: Recreates `loops` table with CHECK constraints on `eval_type` and `judge_agent` — **full table rebuild; back up `~/.autobeat/autobeat.db` before upgrading**
 
 ## ✅ Dashboard Redesign (v1.3.0)
 
