@@ -77,6 +77,17 @@ See `docs/TASK-DEPENDENCIES.md` for usage patterns.
 
 A mechanical, execution-ready recipe for cutting a release. Follow top-to-bottom.
 
+### 0. Pre-Flight Checks
+
+Before starting a release, verify:
+
+- [ ] On `main` branch with clean working tree
+- [ ] `git pull origin main` — up to date
+- [ ] `npm whoami` — authenticated to npm
+- [ ] `npm view autobeat version` — confirms last published version
+- [ ] `gh auth status` — authenticated to GitHub
+- [ ] No open release PRs or in-flight workflow runs
+
 ### 1. Version Decision Matrix
 
 | Bump | Example | When |
@@ -91,10 +102,10 @@ A mechanical, execution-ready recipe for cutting a release. Follow top-to-bottom
 |------|-----------|------|
 | `package.json` + `package-lock.json` | ✅ | Use `npm version <bump> --no-git-tag-version` (updates both atomically) |
 | `docs/releases/RELEASE_NOTES_v<version>.md` | ✅ | Release workflow hard-fails without it |
-| `CHANGELOG.md` | ✅ | Add `## [<version>] - <date>` entry under `[Unreleased]` (keep `[Unreleased]` as empty placeholder per Keep-a-Changelog) |
+| `CHANGELOG.md` | ✅ | Add `## [<version>] - <date>` entry **immediately below** the `[Unreleased]` section and its `---` separator (keep `[Unreleased]` as empty placeholder per Keep-a-Changelog) |
 | `docs/releases/RELEASE_NOTES.md` | ✅ | Update latest/previous lists |
-| `docs/FEATURES.md` | If new user-facing feature | Add `## ✅ <Feature> (v<version>)` section, update "Last Updated" header |
-| `docs/ROADMAP.md` | If feature advances roadmap | Update current status, add to Released Versions, remove delivered items from upcoming sections |
+| `docs/FEATURES.md` | ✅ minor/major, skip patch | Add `## ✅ <Feature> (v<version>)` section, update "Last Updated" header. Patch releases: skip unless the fix changes user-visible behavior |
+| `docs/ROADMAP.md` | ✅ minor/major, skip patch | Update current status, add to Released Versions, remove delivered items from upcoming sections. Patch releases: skip unless the fix changes user-visible behavior |
 | `README.md` | Only if pinned version references change | `grep 'autobeat@' README.md` first |
 | `CLAUDE.md` MCP tools list | Only if new MCP tools added | Check `src/adapters/mcp-adapter.ts` — existing tools with new params don't require updates |
 | `skills/autobeat/` | Only if skill files change | Rarely updated per release |
@@ -135,7 +146,7 @@ Run `mcp__Snyk__snyk_code_scan` on `src/` with `severity_threshold: medium`.
 - **High/Critical findings introduced by new code**: stop, fix, re-scan
 - **Medium/Low findings**: note in PR description; do not block
 
-Pre-existing findings in unchanged code paths are not regressions — continue.
+Pre-existing findings in unchanged code paths are not regressions — continue. To distinguish: run `git diff v<prev>..HEAD -- <flagged file>`. Unchanged files = pre-existing findings, note and continue. Changed files = potentially introduced, evaluate and fix if High/Critical.
 
 ### 6. Commit / PR / Merge
 
@@ -180,12 +191,31 @@ gh run list --workflow=release.yml --limit=1 # must show status: completed/succe
 - **`package.json` version must be bumped BEFORE triggering the workflow.** The workflow hard-fails if `npm view autobeat version` equals `package.json` version.
 - **Release notes file must exist** with exact name `RELEASE_NOTES_v<version>.md` in `docs/releases/` before triggering the workflow.
 - **`npm test` is BLOCKED in Claude Code** by a safeguard script. Use grouped suites (`test:core`, `test:handlers`, etc.). Full `test:all` runs in CI and the release workflow.
-- **Orphan published version recovery**: If the workflow fails between `npm publish` and `git tag` push, the npm version exists but the tag and GitHub release do not. Manual recovery:
-  ```bash
-  git tag v<version> && git push origin v<version>
-  gh release create v<version> --notes-file docs/releases/RELEASE_NOTES_v<version>.md
-  ```
+- **Orphan published version recovery** — three failure modes:
+  1. Fails **before** `npm publish` → re-run the workflow
+  2. `npm publish` succeeds, `git tag` fails → manual tag + release:
+     ```bash
+     git tag v<version> && git push origin v<version>
+     gh release create v<version> --notes-file docs/releases/RELEASE_NOTES_v<version>.md
+     ```
+  3. Tag succeeds, GitHub release fails → `gh release create v<version> --notes-file docs/releases/RELEASE_NOTES_v<version>.md`
 - **Branch protection on `main`**: Release PRs may require `gh pr merge --squash --admin` if no reviewer is available. Use sparingly and only for release chores.
+- **Consolidating skipped versions**: If multiple version bumps landed without publishing, pick the lowest unpublished version. Merge all CHANGELOG sections, release notes, FEATURES/ROADMAP entries. Delete release notes files for folded versions. Update source code version comments to match the chosen version.
+- **Release notes index validation**: Verify the index matches the files on disk:
+  ```bash
+  diff <(ls docs/releases/RELEASE_NOTES_v*.md | sed 's|.*/RELEASE_NOTES_||;s|\.md||' | sort -V) \
+       <(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' docs/releases/RELEASE_NOTES.md | sort -V | uniq)
+  ```
+
+### 10. Release Infrastructure
+
+Safety nets that exist in the codebase but are not part of the manual release steps:
+
+- **`prepublishOnly` script** (`package.json`): Runs `npm run build && test -f dist/cli.js` — prevents `npm publish` if the build fails silently. If this fails, fix the build before retrying.
+- **`.npmignore`**: Controls what ships to npm (excludes tests, source maps, dev configs, `.github/`). If adding new file categories, verify they appear/don't appear in the published package.
+- **`publishConfig: { "access": "public" }`** (`package.json`): Ensures scoped package publishes publicly. Removing this causes `npm publish` to fail with 402 for non-paid scopes.
+- **CI workflow (`ci.yml`)**: Runs typecheck + lint + build + full test suite on every push to main and PRs. This is an implicit gate before any release branch merges.
+- **Pre-flight script** (`scripts/release-preflight.sh`): Validates auth, branch state, version bump, release notes existence, and runs build pipeline. Run before starting any release.
 
 ## Project-Specific Guidelines
 
