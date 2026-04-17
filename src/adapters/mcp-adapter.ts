@@ -284,9 +284,7 @@ const CreateOrchestratorSchema = z.object({
     .string()
     .max(16000)
     .optional()
-    .describe(
-      'Custom system prompt for the orchestrator (overrides auto-generated role instructions when provided)',
-    ),
+    .describe('Custom system prompt for the orchestrator (overrides auto-generated role instructions when provided)'),
 });
 
 const OrchestratorStatusSchema = z.object({
@@ -391,11 +389,7 @@ const CreateLoopSchema = z.object({
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
    * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
    */
-  systemPrompt: z
-    .string()
-    .max(16000)
-    .optional()
-    .describe('System prompt injected into each iteration task agent'),
+  systemPrompt: z.string().max(16000).optional().describe('System prompt injected into each iteration task agent'),
 });
 
 const LoopStatusSchema = z.object({

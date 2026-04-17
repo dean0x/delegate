@@ -12,6 +12,7 @@ import {
   agentsConfigShow,
   checkAgents,
   listAgents,
+  refreshBasePrompt,
 } from './cli/commands/agents.js';
 import { cancelTask } from './cli/commands/cancel.js';
 import { configPath, configReset, configSet, configShow } from './cli/commands/config.js';
@@ -301,9 +302,12 @@ if (mainCommand === 'mcp') {
       ui.error('Usage: beat agents config <set|show|reset>');
       process.exit(1);
     }
+  } else if (subCommand === 'refresh-base-prompt') {
+    // Optional agent arg — defaults to gemini
+    await refreshBasePrompt(args[2]);
   } else {
     ui.error(`Unknown agents subcommand: ${subCommand}`);
-    process.stderr.write('Valid subcommands: list, check, config\n');
+    process.stderr.write('Valid subcommands: list, check, config, refresh-base-prompt\n');
     process.exit(1);
   }
 } else if (mainCommand === 'resume') {
