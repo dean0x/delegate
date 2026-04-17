@@ -189,8 +189,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       let systemPromptEnv: Record<string, string> = {};
 
       if (systemPrompt) {
-        // Compute temp file path — passed to adapters that need to write a file (e.g. Gemini)
-        const systemPromptPath = path.join(os.homedir(), '.autobeat', 'system-prompts', `${taskId ?? 'unknown'}.md`);
+        // Compute temp file path — passed to adapters that need to write a file (e.g. Gemini).
+        // Use a random suffix when taskId is absent to avoid path collisions across concurrent spawns.
+        const safeId = taskId ?? crypto.randomUUID().substring(0, 8);
+        const systemPromptPath = path.join(os.homedir(), '.autobeat', 'system-prompts', `${safeId}.md`);
 
         const config = this.getSystemPromptConfig(systemPrompt, systemPromptPath);
 

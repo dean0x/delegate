@@ -316,7 +316,7 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
       gitBranch = next;
       i++;
     } else if (arg === '--system-prompt') {
-      if (!next || next.startsWith('-')) {
+      if (next === undefined) {
         return err('--system-prompt requires a prompt string');
       }
       systemPrompt = next;

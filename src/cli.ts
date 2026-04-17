@@ -179,7 +179,7 @@ if (mainCommand === 'mcp') {
         }
       } else if (arg === '--system-prompt') {
         const next = foregroundArgs[i + 1];
-        if (next && !next.startsWith('-')) {
+        if (next !== undefined) {
           options.systemPrompt = next;
           i++;
         } else {

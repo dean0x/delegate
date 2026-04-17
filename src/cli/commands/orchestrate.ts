@@ -161,7 +161,7 @@ export function parseOrchestrateCreateArgs(args: readonly string[]): Result<Orch
       i++;
     } else if (arg === '--system-prompt') {
       const next = args[i + 1];
-      if (!next || next.startsWith('-')) return err('--system-prompt requires a prompt string');
+      if (next === undefined) return err('--system-prompt requires a prompt string');
       systemPrompt = next;
       i++;
     } else if (arg === '--max-depth') {
