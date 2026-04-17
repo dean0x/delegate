@@ -103,7 +103,7 @@ export const DelegateTaskSchema = z.object({
    */
   jsonSchema: z.string().max(16000).optional().describe('JSON schema for structured output (Claude only)'),
   /**
-   * v1.4.0: System prompt to inject into the agent.
+   * System prompt to inject into the agent.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
    * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
    */
@@ -118,8 +118,8 @@ export const DelegateTaskSchema = z.object({
 
 const TaskStatusSchema = z.object({
   taskId: z.string().optional(),
-  /** @design System prompts can be up to 16KB. Default omission keeps status responses compact.
-   * Opt-in flag provides inspection capability without cluttering normal status queries. */
+  // DECISION: System prompts can be up to 16KB. Default omission keeps status responses compact.
+  // Opt-in flag provides inspection capability without cluttering normal status queries.
   includeSystemPrompt: z.boolean().optional().default(false),
 });
 
@@ -168,6 +168,18 @@ const ScheduleTaskSchema = z.object({
     .max(200)
     .optional()
     .describe('Model override for this task (overrides agent-config default)'),
+  /**
+   * v1.4.0: System prompt injected into the agent on every scheduled run.
+   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
+   * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
+   */
+  systemPrompt: z
+    .string()
+    .max(16000)
+    .optional()
+    .describe(
+      'System prompt to inject into the agent on every scheduled run (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+    ),
 });
 
 const ListSchedulesSchema = z.object({
@@ -261,6 +273,18 @@ const SchedulePipelineSchema = z.object({
     .optional()
     .describe('Default agent for all steps (individual steps can override)'),
   model: z.string().min(1).max(200).optional().describe('Default model for all steps (individual steps can override)'),
+  /**
+   * v1.4.0: System prompt injected into every step task agent on each scheduled trigger.
+   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
+   * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
+   */
+  systemPrompt: z
+    .string()
+    .max(16000)
+    .optional()
+    .describe(
+      'System prompt to inject into every step task agent on each scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+    ),
 });
 
 // Orchestrator-related Zod schemas (v0.9.0 Orchestrator Mode)
@@ -278,7 +302,7 @@ const CreateOrchestratorSchema = z.object({
   maxWorkers: z.number().min(1).max(20).optional().default(5).describe('Max concurrent workers'),
   maxIterations: z.number().min(1).max(200).optional().default(50).describe('Max orchestrator iterations'),
   /**
-   * v1.4.0: Custom system prompt for the orchestrator agent.
+   * Custom system prompt for the orchestrator agent.
    * DECISION: When provided, replaces the auto-generated role instructions entirely —
    * appending would create confusing duplication (two conflicting ROLE sections).
    * Max 16000 chars.
@@ -388,7 +412,7 @@ const CreateLoopSchema = z.object({
     .describe('Agent for judge decisions (judge evalType only — defaults to loop agent if omitted)'),
   judgePrompt: z.string().max(8000).optional().describe('Custom judge instructions (judge evalType only)'),
   /**
-   * v1.4.0: System prompt for each iteration task.
+   * System prompt for each iteration task.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
    * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
    */
@@ -399,7 +423,7 @@ const LoopStatusSchema = z.object({
   loopId: z.string().min(1).describe('Loop ID'),
   includeHistory: z.boolean().optional().default(false).describe('Include iteration history'),
   historyLimit: z.number().min(1).optional().default(20).describe('Max iterations to return'),
-  /** @design System prompts can be up to 16KB. Default omission keeps status responses compact. */
+  // DECISION: System prompts can be up to 16KB. Default omission keeps status responses compact.
   includeSystemPrompt: z.boolean().optional().default(false).describe('Include system prompt in response'),
 });
 
@@ -469,6 +493,18 @@ const ScheduleLoopSchema = z.object({
   missedRunPolicy: z.enum(['skip', 'catchup', 'fail']).optional().default('skip'),
   maxRuns: z.number().min(1).optional().describe('Maximum number of loop runs for cron schedules'),
   expiresAt: z.string().optional().describe('ISO 8601 datetime when schedule expires'),
+  /**
+   * v1.4.0: System prompt injected into each iteration task agent on every scheduled trigger.
+   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
+   * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
+   */
+  systemPrompt: z
+    .string()
+    .max(16000)
+    .optional()
+    .describe(
+      'System prompt to inject into each iteration task agent on every scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+    ),
 });
 
 const CancelLoopSchema = z.object({
@@ -870,6 +906,12 @@ export class MCPAdapter {
                     minLength: 1,
                     maxLength: 200,
                   },
+                  systemPrompt: {
+                    type: 'string',
+                    description:
+                      'System prompt to inject into the agent on every scheduled run (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+                    maxLength: 16000,
+                  },
                 },
                 required: ['prompt', 'scheduleType'],
               },
@@ -1132,6 +1174,12 @@ export class MCPAdapter {
                     description: 'Default model for all steps (individual steps can override)',
                     minLength: 1,
                     maxLength: 200,
+                  },
+                  systemPrompt: {
+                    type: 'string',
+                    description:
+                      'System prompt to inject into every step task agent on each scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+                    maxLength: 16000,
                   },
                 },
                 required: ['steps', 'scheduleType'],
@@ -1399,6 +1447,12 @@ export class MCPAdapter {
                   missedRunPolicy: { type: 'string', enum: ['skip', 'catchup', 'fail'] },
                   maxRuns: { type: 'number', description: 'Maximum number of loop runs for cron schedules' },
                   expiresAt: { type: 'string', description: 'ISO 8601 expiration datetime' },
+                  systemPrompt: {
+                    type: 'string',
+                    description:
+                      'System prompt to inject into each iteration task agent on every scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+                    maxLength: 16000,
+                  },
                 },
                 required: ['strategy', 'scheduleType'],
               },
@@ -1970,6 +2024,7 @@ export class MCPAdapter {
       afterScheduleId: data.afterSchedule ? ScheduleId(data.afterSchedule) : undefined,
       agent: data.agent as AgentProvider | undefined,
       model: data.model,
+      systemPrompt: data.systemPrompt,
     };
 
     const result = await this.scheduleService.createSchedule(request);
@@ -2383,6 +2438,7 @@ export class MCPAdapter {
       afterScheduleId: data.afterSchedule ? ScheduleId(data.afterSchedule) : undefined,
       agent: data.agent as AgentProvider | undefined,
       model: data.model,
+      systemPrompt: data.systemPrompt,
     };
 
     const result = await this.scheduleService.createScheduledPipeline(request);
@@ -2804,6 +2860,7 @@ export class MCPAdapter {
       priority: data.priority as Priority | undefined,
       agent: data.agent as AgentProvider | undefined,
       model: data.model,
+      systemPrompt: data.systemPrompt,
     };
 
     const request: ScheduledLoopCreateRequest = {

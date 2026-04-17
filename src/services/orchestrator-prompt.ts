@@ -4,7 +4,7 @@
  * Returns { systemPrompt, userPrompt } — role/capability instructions belong in
  * the system prompt; the goal belongs in the user prompt.
  *
- * @design Separation enables proper prompt routing per agent's native mechanism
+ * DECISION: Separation enables proper prompt routing per agent's native mechanism
  * (e.g., --append-system-prompt for Claude). Callers that cannot use a system
  * prompt can concatenate: systemPrompt + "\n\n" + userPrompt.
  */

@@ -118,10 +118,10 @@ const TaskRequestSchema = z.object({
   // so schema-mode eval loops pass the JSON schema string to iteration tasks.
   // Without this, Zod strips the field and schema-mode evaluation silently breaks.
   jsonSchema: z.string().optional(),
-  /** @design systemPrompt must round-trip through loop.taskTemplate JSON blob so iteration
-   * tasks carry the system prompt into each agent spawn. Without this Zod field, parse()
-   * strips the property and system prompt silently breaks. Same pattern as orchestratorId
-   * and jsonSchema. */
+  // DECISION: systemPrompt must round-trip through loop.taskTemplate JSON blob so iteration
+  // tasks carry the system prompt into each agent spawn. Without this Zod field, parse()
+  // strips the property and system prompt silently breaks. Same pattern as orchestratorId
+  // and jsonSchema.
   systemPrompt: z.string().optional(),
 });
 

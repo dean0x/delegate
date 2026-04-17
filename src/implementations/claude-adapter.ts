@@ -37,7 +37,7 @@ export class ClaudeAdapter extends BaseAgentAdapter {
   }
 
   /**
-   * @design Uses --append-system-prompt (not --system-prompt) to preserve Claude Code's
+   * DECISION: Uses --append-system-prompt (not --system-prompt) to preserve Claude Code's
    * default system prompt (tool definitions, safety instructions). --system-prompt replaces
    * the built-in system prompt entirely, losing tool access and permission grants.
    */

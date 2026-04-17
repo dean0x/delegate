@@ -216,7 +216,7 @@ export class OrchestrationManagerService implements OrchestrationService {
       model: orchestration.model,
     });
 
-    // DECISION (v1.4.0): Users providing systemPrompt on CreateOrchestrator opt out of
+    // DECISION: Users providing systemPrompt on CreateOrchestrator opt out of
     // the default role instructions. Appending would create confusing duplication —
     // two conflicting ROLE sections. Override entirely with the user-provided prompt.
     const finalSystemPrompt = request.systemPrompt ?? orchestratorSystemPrompt;
@@ -233,7 +233,7 @@ export class OrchestrationManagerService implements OrchestrationService {
       ...(orchestration.model !== undefined && { model: orchestration.model }),
       // v1.3.0: attribute all loop iteration tasks to this orchestration
       orchestratorId: orchestration.id,
-      // v1.4.0: thread system prompt through to each loop iteration task
+      // Thread system prompt through to each loop iteration task
       systemPrompt: finalSystemPrompt,
     });
 

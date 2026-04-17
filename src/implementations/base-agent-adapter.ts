@@ -56,7 +56,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   /**
    * Declare how this adapter injects a system prompt into the spawned agent.
    *
-   * @design Each agent CLI has a different mechanism for system prompts (inline flag,
+   * DECISION: Each agent CLI has a different mechanism for system prompts (inline flag,
    * config override, env var + file). This pattern lets each adapter declare its needs.
    * Adapters that require a file (e.g. Gemini) must write it inside this method.
    * The base class handles prompt prepending when prependToPrompt is true.

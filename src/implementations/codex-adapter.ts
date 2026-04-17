@@ -29,7 +29,7 @@ export class CodexAdapter extends BaseAgentAdapter {
   }
 
   /**
-   * @design Uses -c developer_instructions (not model_instructions_file) to append after
+   * DECISION: Uses -c developer_instructions (not model_instructions_file) to append after
    * the default system prompt and preserve AGENTS.md. model_instructions_file replaces
    * AGENTS.md entirely, which would break project-level configuration.
    * Ref: codex#7296 — developer_instructions is appended, not replaced.
