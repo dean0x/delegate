@@ -3112,6 +3112,36 @@ describe('CLI - Loop Commands', () => {
       if (result.ok) return;
       expect(result.error).toContain('Cannot specify both');
     });
+
+    it('should parse --system-prompt flag', () => {
+      const result = parseLoopCreateArgs(['fix', '--until', 'true', '--system-prompt', 'Always respond in JSON']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.systemPrompt).toBe('Always respond in JSON');
+    });
+
+    it('should parse --system-prompt with dash-prefixed value (e.g., multi-line text)', () => {
+      // A system prompt value that happens to start with a dash should be accepted
+      // because the parser uses next === undefined check (not startsWith('-'))
+      const result = parseLoopCreateArgs(['fix', '--until', 'true', '--system-prompt', '--special format OK']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.systemPrompt).toBe('--special format OK');
+    });
+
+    it('should leave systemPrompt undefined when not specified', () => {
+      const result = parseLoopCreateArgs(['fix', '--until', 'true']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.systemPrompt).toBeUndefined();
+    });
+
+    it('should reject --system-prompt with no value', () => {
+      const result = parseLoopCreateArgs(['fix', '--until', 'true', '--system-prompt']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('--system-prompt');
+    });
   });
 
   describe('loop create — service integration', () => {

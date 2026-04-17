@@ -173,4 +173,58 @@ describe('parseOrchestrateCreateArgs - Unit Tests', () => {
       expect(result.value.foreground).toBe(true);
     });
   });
+
+  describe('--system-prompt flag', () => {
+    it('should parse --system-prompt with a plain string value', () => {
+      const result = parseOrchestrateCreateArgs(['deploy', '--system-prompt', 'Always respond in JSON']);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.systemPrompt).toBe('Always respond in JSON');
+    });
+
+    it('should parse --system-prompt with a dash-prefixed value (no startsWith check)', () => {
+      // The orchestrate parser uses next === undefined (not startsWith('-')), so dash-prefixed
+      // values must be accepted.
+      const result = parseOrchestrateCreateArgs(['deploy', '--system-prompt', '--special instructions']);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.systemPrompt).toBe('--special instructions');
+    });
+
+    it('should leave systemPrompt undefined when not specified', () => {
+      const result = parseOrchestrateCreateArgs(['deploy']);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.systemPrompt).toBeUndefined();
+    });
+
+    it('should reject --system-prompt with no value', () => {
+      const result = parseOrchestrateCreateArgs(['deploy', '--system-prompt']);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('--system-prompt');
+    });
+
+    it('should parse --system-prompt alongside other flags', () => {
+      const result = parseOrchestrateCreateArgs([
+        'Build auth',
+        '--system-prompt',
+        'Be concise',
+        '-a',
+        'claude',
+        '--foreground',
+      ]);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.goal).toBe('Build auth');
+      expect(result.value.systemPrompt).toBe('Be concise');
+      expect(result.value.agent).toBe('claude');
+      expect(result.value.foreground).toBe(true);
+    });
+  });
 });

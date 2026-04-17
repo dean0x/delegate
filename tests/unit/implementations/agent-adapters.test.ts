@@ -8,8 +8,8 @@
  */
 
 import type { ChildProcess } from 'child_process';
-import { mkdirSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
+import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import os, { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Configuration } from '../../../src/core/configuration';
@@ -852,5 +852,185 @@ describe('BaseAgentAdapter - orchestratorId env injection', () => {
     adapter.dispose();
 
     expect(result.ok).toBe(true);
+  });
+});
+
+// ============================================================================
+// System Prompt Passthrough Tests
+// ============================================================================
+
+describe('system prompt passthrough', () => {
+  let testDir: string;
+  let restoreConfig: () => void;
+  let homedirSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    testDir = path.join(tmpdir(), `autobeat-systemprompt-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    restoreConfig = _testSetConfigDir(testDir);
+    mockIsCommandInPath.mockReturnValue(true);
+    // Redirect os.homedir() to our temp directory so Gemini cache reads are isolated
+    homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(testDir);
+  });
+
+  afterEach(() => {
+    homedirSpy.mockRestore();
+    restoreConfig();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  // ---- Claude ----------------------------------------------------------------
+
+  it('ClaudeAdapter: --append-system-prompt appears in spawn args when systemPrompt set', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    const result = adapter.spawn({
+      prompt: 'test prompt',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      systemPrompt: 'Always respond in JSON',
+    });
+    adapter.dispose();
+
+    expect(result.ok).toBe(true);
+    const [, args] = mockSpawn.mock.calls[0];
+    expect(args).toContain('--append-system-prompt');
+    const idx = (args as string[]).indexOf('--append-system-prompt');
+    expect((args as string[])[idx + 1]).toBe('Always respond in JSON');
+    // --append-system-prompt must appear AFTER '--' separator (it's a system-prompt arg, appended after buildArgs)
+    // Actually it's appended after buildArgs which puts '--' before the prompt.
+    // Verify it appears somewhere in args.
+    expect(idx).toBeGreaterThan(-1);
+  });
+
+  it('ClaudeAdapter: no --append-system-prompt when systemPrompt is absent (regression guard)', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1' });
+    adapter.dispose();
+
+    const [, args] = mockSpawn.mock.calls[0];
+    expect(args).not.toContain('--append-system-prompt');
+  });
+
+  // ---- Codex -----------------------------------------------------------------
+
+  it('CodexAdapter: -c developer_instructions=<text> appears in spawn args when systemPrompt set', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new CodexAdapter(testConfig, 'codex');
+    const result = adapter.spawn({
+      prompt: 'test prompt',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      systemPrompt: 'Be concise',
+    });
+    adapter.dispose();
+
+    expect(result.ok).toBe(true);
+    const [, args] = mockSpawn.mock.calls[0];
+    const cIdx = (args as string[]).indexOf('-c');
+    expect(cIdx).toBeGreaterThan(-1);
+    expect((args as string[])[cIdx + 1]).toBe('developer_instructions=Be concise');
+  });
+
+  it('CodexAdapter: no -c developer_instructions when systemPrompt is absent (regression guard)', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new CodexAdapter(testConfig, 'codex');
+    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1' });
+    adapter.dispose();
+
+    const [, args] = mockSpawn.mock.calls[0];
+    // Verify no developer_instructions entry
+    expect((args as string[]).some((a) => typeof a === 'string' && a.startsWith('developer_instructions='))).toBe(false);
+  });
+
+  // ---- Gemini: no cache (fallback to prependToPrompt) -----------------------
+
+  it('GeminiAdapter: without base cache — falls back to prependToPrompt (systemPrompt prepended to prompt arg)', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // No cache file created — fallback path
+    const adapter = new GeminiAdapter(testConfig, 'gemini');
+    const result = adapter.spawn({
+      prompt: 'do the work',
+      workingDirectory: '/workspace',
+      taskId: 'task-fallback',
+      systemPrompt: 'Be careful',
+    });
+    consoleSpy.mockRestore();
+    adapter.dispose();
+
+    expect(result.ok).toBe(true);
+    const [, args] = mockSpawn.mock.calls[0];
+    // --prompt arg value should contain both systemPrompt and original prompt
+    const promptIdx = (args as string[]).indexOf('--prompt');
+    expect(promptIdx).toBeGreaterThan(-1);
+    const promptValue = (args as string[])[promptIdx + 1];
+    expect(promptValue).toContain('Be careful');
+    expect(promptValue).toContain('do the work');
+    // GEMINI_SYSTEM_MD env var should NOT be set in fallback
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.GEMINI_SYSTEM_MD).toBeUndefined();
+  });
+
+  // ---- Gemini: with cache (GEMINI_SYSTEM_MD injection) ---------------------
+
+  it('GeminiAdapter: with valid base cache — sets GEMINI_SYSTEM_MD env var with combined file', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    // Create the base cache file that GeminiAdapter looks for
+    const cacheDir = path.join(testDir, '.autobeat', 'system-prompts');
+    mkdirSync(cacheDir, { recursive: true });
+    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
+    writeFileSync(baseCachePath, 'Base Gemini system prompt content', 'utf8');
+
+    const adapter = new GeminiAdapter(testConfig, 'gemini');
+    const result = adapter.spawn({
+      prompt: 'do the work',
+      workingDirectory: '/workspace',
+      taskId: 'task-with-cache',
+      systemPrompt: 'Additional instructions',
+    });
+    adapter.dispose();
+
+    expect(result.ok).toBe(true);
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    // GEMINI_SYSTEM_MD must be set to the task-scoped combined file
+    expect(spawnOptions.env.GEMINI_SYSTEM_MD).toBeDefined();
+    expect(spawnOptions.env.GEMINI_SYSTEM_MD).toContain('task-with-cache');
+    // The --prompt arg should be the original prompt (not prepended)
+    const [, args] = mockSpawn.mock.calls[0];
+    const promptIdx = (args as string[]).indexOf('--prompt');
+    const promptValue = (args as string[])[promptIdx + 1];
+    expect(promptValue).toBe('do the work');
+    expect(promptValue).not.toContain('Additional instructions');
+  });
+
+  it('GeminiAdapter: without systemPrompt — no GEMINI_SYSTEM_MD or prepend (regression guard)', () => {
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new GeminiAdapter(testConfig, 'gemini');
+    adapter.spawn({ prompt: 'do the work', workingDirectory: '/workspace', taskId: 'task-no-sp' });
+    adapter.dispose();
+
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.GEMINI_SYSTEM_MD).toBeUndefined();
+    const [, args] = mockSpawn.mock.calls[0];
+    const promptIdx = (args as string[]).indexOf('--prompt');
+    const promptValue = (args as string[])[promptIdx + 1];
+    expect(promptValue).toBe('do the work');
   });
 });
