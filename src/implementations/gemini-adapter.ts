@@ -27,6 +27,7 @@ export class GeminiBasePromptCache {
 
   constructor(cacheDir = path.join(os.homedir(), '.autobeat', 'system-prompts')) {
     this.#cacheDir = cacheDir;
+    mkdirSync(this.#cacheDir, { recursive: true, mode: 0o700 });
   }
 
   /**
@@ -54,15 +55,19 @@ export class GeminiBasePromptCache {
       return null;
     }
 
-    mkdirSync(this.#cacheDir, { recursive: true, mode: 0o700 });
     writeFileSync(outputPath, combined, { encoding: 'utf8', mode: 0o600 });
     return outputPath;
   }
 
   /** Remove a task-scoped temp file. Non-fatal if the file doesn't exist. */
   cleanupTaskFile(taskId: string): void {
+    // Path-traversal guard: resolve before deleting
+    // (pattern reused from orchestration-manager.ts:isWithinStateDir)
+    const resolvedCacheDir = path.resolve(this.#cacheDir);
+    const filePath = path.resolve(path.join(this.#cacheDir, `${taskId}.md`));
+    if (!filePath.startsWith(resolvedCacheDir + path.sep)) return;
     try {
-      unlinkSync(path.join(this.#cacheDir, `${taskId}.md`));
+      unlinkSync(filePath);
     } catch {
       // File may not exist (task had no system prompt, or prependToPrompt fallback was used)
     }

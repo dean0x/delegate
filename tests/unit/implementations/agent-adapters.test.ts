@@ -8,7 +8,7 @@
  */
 
 import type { ChildProcess } from 'child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import os, { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1073,7 +1073,6 @@ describe('GeminiBasePromptCache', () => {
 
     // Backdate the file's mtime to 31 days ago
     const thirtyOneDaysAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
-    const { utimesSync } = await import('fs');
     utimesSync(baseCachePath, thirtyOneDaysAgo, thirtyOneDaysAgo);
 
     const result = cache.buildCombinedFile('user system prompt', path.join(cacheDir, 'task-stale.md'));
@@ -1102,7 +1101,6 @@ describe('GeminiBasePromptCache', () => {
     const result = cache.buildCombinedFile('User instructions', outputPath);
 
     expect(result).toBe(outputPath);
-    const { readFileSync } = await import('fs');
     const written = readFileSync(outputPath, 'utf8');
     expect(written).toContain('Base instructions');
     expect(written).toContain('User instructions');
@@ -1124,7 +1122,6 @@ describe('GeminiBasePromptCache', () => {
     // Second call should use cached in-memory value (original "Base instructions")
     const result2 = cache.buildCombinedFile('prompt', out2);
     expect(result2).toBe(out2);
-    const { readFileSync } = await import('fs');
     const written2 = readFileSync(out2, 'utf8');
     expect(written2).toContain('Base instructions');
     expect(written2).not.toContain('CHANGED base');
@@ -1144,7 +1141,6 @@ describe('GeminiBasePromptCache', () => {
     const out2 = path.join(cacheDir, 'task-after.md');
     const result2 = cache.buildCombinedFile('prompt', out2);
     expect(result2).toBe(out2);
-    const { readFileSync } = await import('fs');
     const written2 = readFileSync(out2, 'utf8');
     expect(written2).toContain('Updated base');
   });
@@ -1156,7 +1152,6 @@ describe('GeminiBasePromptCache', () => {
 
     cache.cleanupTaskFile(taskId);
 
-    const { existsSync } = await import('fs');
     expect(existsSync(taskFile)).toBe(false);
   });
 
@@ -1165,22 +1160,19 @@ describe('GeminiBasePromptCache', () => {
   });
 
   it('cleanupTaskFile rejects path traversal attempts', () => {
-    // Create a file outside cacheDir that a traversal would target
-    const outsideDir = path.join(tmpdir(), `outside-${Date.now()}`);
-    mkdirSync(outsideDir, { recursive: true });
-    const outsideFile = path.join(outsideDir, 'sensitive.md');
+    // Create a file one level above cacheDir that a traversal would target
+    const outsideFile = path.join(path.dirname(cacheDir), 'sensitive.md');
     writeFileSync(outsideFile, 'sensitive', 'utf8');
 
     try {
-      // Attempt traversal: taskId that resolves outside cacheDir
-      const traversalId = `../outside-${Date.now().toString()}/sensitive`;
+      // Attempt traversal: taskId containing ../ to escape cacheDir
+      const traversalId = `../sensitive`;
       cache.cleanupTaskFile(traversalId);
 
       // File should still exist — traversal was blocked
-      const { existsSync } = await import('fs');
       expect(existsSync(outsideFile)).toBe(true);
     } finally {
-      rmSync(outsideDir, { recursive: true, force: true });
+      try { rmSync(outsideFile, { force: true }); } catch { /* best effort */ }
     }
   });
 });
