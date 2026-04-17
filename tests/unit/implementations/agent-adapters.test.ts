@@ -1048,26 +1048,26 @@ describe('system prompt passthrough', () => {
 describe('GeminiBasePromptCache', () => {
   let cacheDir: string;
   let cache: GeminiBasePromptCache;
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     cacheDir = path.join(tmpdir(), `gemini-cache-test-${Date.now()}`);
     mkdirSync(cacheDir, { recursive: true });
     cache = new GeminiBasePromptCache(cacheDir);
+    consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
+    consoleSpy.mockRestore();
     rmSync(cacheDir, { recursive: true, force: true });
   });
 
   it('returns null when no gemini-base.md exists (no cache file)', () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const result = cache.buildCombinedFile('user system prompt', path.join(cacheDir, 'task-1.md'));
-    consoleSpy.mockRestore();
     expect(result).toBeNull();
   });
 
   it('returns null when gemini-base.md is stale (older than 30 days)', () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const baseCachePath = path.join(cacheDir, 'gemini-base.md');
     writeFileSync(baseCachePath, 'base content', 'utf8');
 
@@ -1076,12 +1076,10 @@ describe('GeminiBasePromptCache', () => {
     utimesSync(baseCachePath, thirtyOneDaysAgo, thirtyOneDaysAgo);
 
     const result = cache.buildCombinedFile('user system prompt', path.join(cacheDir, 'task-stale.md'));
-    consoleSpy.mockRestore();
     expect(result).toBeNull();
   });
 
   it('returns null when combined prompt exceeds 64KB size guard', () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const baseCachePath = path.join(cacheDir, 'gemini-base.md');
     // Write a base prompt that fills most of the 64KB budget
     const bigBase = 'x'.repeat(60 * 1024);
@@ -1089,7 +1087,6 @@ describe('GeminiBasePromptCache', () => {
 
     const bigUserPrompt = 'y'.repeat(10 * 1024); // combined exceeds 64KB
     const result = cache.buildCombinedFile(bigUserPrompt, path.join(cacheDir, 'task-big.md'));
-    consoleSpy.mockRestore();
     expect(result).toBeNull();
   });
 
@@ -1172,7 +1169,11 @@ describe('GeminiBasePromptCache', () => {
       // File should still exist — traversal was blocked
       expect(existsSync(outsideFile)).toBe(true);
     } finally {
-      try { rmSync(outsideFile, { force: true }); } catch { /* best effort */ }
+      try {
+        rmSync(outsideFile, { force: true });
+      } catch {
+        /* best effort */
+      }
     }
   });
 });

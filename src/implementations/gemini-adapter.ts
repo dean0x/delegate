@@ -24,9 +24,11 @@ const STALENESS_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export class GeminiBasePromptCache {
   #cached: string | null = null;
   readonly #cacheDir: string;
+  readonly #resolvedCacheDir: string;
 
   constructor(cacheDir = path.join(os.homedir(), '.autobeat', 'system-prompts')) {
     this.#cacheDir = cacheDir;
+    this.#resolvedCacheDir = path.resolve(cacheDir);
     mkdirSync(this.#cacheDir, { recursive: true, mode: 0o700 });
   }
 
@@ -63,9 +65,8 @@ export class GeminiBasePromptCache {
   cleanupTaskFile(taskId: string): void {
     // Path-traversal guard: resolve before deleting
     // (pattern reused from orchestration-manager.ts:isWithinStateDir)
-    const resolvedCacheDir = path.resolve(this.#cacheDir);
     const filePath = path.resolve(path.join(this.#cacheDir, `${taskId}.md`));
-    if (!filePath.startsWith(resolvedCacheDir + path.sep)) return;
+    if (!filePath.startsWith(this.#resolvedCacheDir + path.sep)) return;
     try {
       unlinkSync(filePath);
     } catch {
