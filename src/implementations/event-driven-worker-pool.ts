@@ -7,9 +7,6 @@
  */
 
 import { ChildProcess } from 'child_process';
-import { unlinkSync } from 'fs';
-import os from 'os';
-import path from 'path';
 
 import { AgentRegistry } from '../core/agents.js';
 import { Task, TaskId, Worker, WorkerId } from '../core/domain.js';
@@ -285,8 +282,10 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * and unregister from DB. Shared by kill() and handleWorkerCompletion().
    */
   private cleanupWorkerState(workerId: WorkerId, taskId: TaskId): void {
-    // Clear heartbeat timer before removing from maps (timer holds reference to worker)
+    // Capture worker ref before deleting from map — needed for task-scoped cleanup below
     const worker = this.workers.get(workerId);
+
+    // Clear heartbeat timer before removing from maps (timer holds reference to worker)
     if (worker?.heartbeatTimer) {
       clearInterval(worker.heartbeatTimer);
       worker.heartbeatTimer = undefined;
@@ -302,13 +301,14 @@ export class EventDrivenWorkerPool implements WorkerPool {
       this.logger.error('Failed to unregister worker from DB', unregResult.error, { workerId });
     }
 
-    // Best-effort cleanup of system-prompt temp file written during spawn (v1.4.0).
-    // Failures are non-fatal — orphan files are small and harmless.
-    const systemPromptPath = path.join(os.homedir(), '.autobeat', 'system-prompts', `${taskId}.md`);
-    try {
-      unlinkSync(systemPromptPath);
-    } catch {
-      // File may not exist (task had no system prompt, or Gemini used prependToPrompt fallback)
+    // Best-effort cleanup of task-scoped resources via the agent adapter (e.g. Gemini temp files).
+    // Only attempted when a system prompt was set — other agents and tasks without systemPrompt
+    // have nothing to clean up. Each adapter's cleanup() is a no-op by default.
+    if (worker?.task.systemPrompt) {
+      const agentResult = this.agentRegistry.get(worker.task.agent ?? 'claude');
+      if (agentResult.ok) {
+        agentResult.value.cleanup(taskId);
+      }
     }
   }
 

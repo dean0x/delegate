@@ -244,7 +244,7 @@ export interface SpawnOptions {
   /** Optional JSON schema string for structured output (v1.3.0, Claude only) */
   readonly jsonSchema?: string;
   /**
-   * Optional system prompt to inject into the agent (v1.4.0).
+   * Optional system prompt to inject into the agent.
    * Each agent CLI has a different mechanism:
    *   Claude:  --append-system-prompt (appends to default, preserving tool definitions)
    *   Codex:   -c developer_instructions=<text> (appends after default, preserves AGENTS.md)
@@ -285,6 +285,15 @@ export interface AgentAdapter {
    * Clean up resources (kill timeouts, etc.)
    */
   dispose(): void;
+
+  /**
+   * Clean up any task-scoped resources created during spawn (e.g. temp files).
+   * Called by the worker pool after the worker process exits.
+   * Implementations that write no task-scoped files should no-op.
+   *
+   * @param taskId - The task whose resources should be cleaned up
+   */
+  cleanup(taskId: string): void;
 }
 
 /**

@@ -239,7 +239,7 @@ export async function refreshBasePrompt(agent?: string): Promise<void> {
   const baseCachePath = path.join(cacheDir, 'gemini-base.md');
   const metaPath = path.join(cacheDir, 'gemini-base.meta.json');
 
-  mkdirSync(cacheDir, { recursive: true });
+  mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
 
   ui.step(`Exporting Gemini base system prompt...`);
   ui.info(`Target: ${baseCachePath}`);
@@ -292,7 +292,7 @@ export async function refreshBasePrompt(agent?: string): Promise<void> {
     source: 'refresh-base-prompt',
     geminiCliExit: result.status ?? 0,
   };
-  writeFileSync(metaPath, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+  writeFileSync(metaPath, JSON.stringify(meta, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
 
   ui.success(`Base prompt exported: ${baseCachePath}`);
   ui.info(`Size: ${exportedContent.length} chars`);

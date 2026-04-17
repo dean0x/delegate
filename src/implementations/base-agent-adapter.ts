@@ -183,7 +183,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       const resolvedModel = this.resolveModel(agentConfig, model);
 
-      // Resolve system prompt injection (v1.4.0)
+      // Resolve system prompt injection
       let effectivePrompt = prompt;
       let systemPromptArgs: readonly string[] = [];
       let systemPromptEnv: Record<string, string> = {};
@@ -293,6 +293,15 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       clearTimeout(timeoutId);
     }
     this.killTimeouts.clear();
+  }
+
+  /**
+   * Default no-op cleanup. Adapters that write task-scoped files (e.g. Gemini)
+   * override this to remove them.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  cleanup(_taskId: string): void {
+    // no-op — subclasses override if they create task-scoped resources
   }
 
   private clearKillTimeout(pid: number): void {
