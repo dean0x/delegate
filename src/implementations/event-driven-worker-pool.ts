@@ -307,7 +307,14 @@ export class EventDrivenWorkerPool implements WorkerPool {
     if (worker?.task.systemPrompt) {
       const agentResult = this.agentRegistry.get(worker.task.agent ?? 'claude');
       if (agentResult.ok) {
-        agentResult.value.cleanup(taskId);
+        try {
+          agentResult.value.cleanup(taskId);
+        } catch (cleanupErr) {
+          this.logger.warn('Adapter cleanup() threw — task-scoped resources may not be freed', {
+            taskId,
+            error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          });
+        }
       }
     }
   }

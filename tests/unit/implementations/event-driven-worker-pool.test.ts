@@ -812,4 +812,104 @@ describe('EventDrivenWorkerPool', () => {
       expect(workerRepository.updateHeartbeat).not.toHaveBeenCalled();
     });
   });
+
+  // --- Adapter cleanup delegation ---
+
+  describe('adapter cleanup delegation', () => {
+    it('should call cleanup() on the correct adapter when worker with systemPrompt completes', async () => {
+      const cleanupFn = vi.fn();
+      const cleanupAdapter = {
+        provider: 'claude' as const,
+        spawn: vi.fn().mockReturnValue(ok({ process: mockProcess, pid: mockProcess.pid })),
+        kill: vi.fn().mockReturnValue(ok(undefined)),
+        cleanup: cleanupFn,
+        dispose: vi.fn(),
+      };
+      const cleanupRegistry = new InMemoryAgentRegistry([cleanupAdapter]);
+      const cleanupPool = new EventDrivenWorkerPool({
+        agentRegistry: cleanupRegistry,
+        monitor,
+        logger,
+        eventBus,
+        outputCapture,
+        workerRepository,
+        outputRepository,
+      });
+
+      const task = { ...buildTask(), systemPrompt: 'You are a helpful assistant.' } as Task;
+      await cleanupPool.spawn(task);
+
+      mockProcess.emit('exit', 0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(cleanupFn).toHaveBeenCalledOnce();
+      expect(cleanupFn).toHaveBeenCalledWith(task.id);
+    });
+
+    it('should NOT call cleanup() when worker has no systemPrompt', async () => {
+      const cleanupFn = vi.fn();
+      const cleanupAdapter = {
+        provider: 'claude' as const,
+        spawn: vi.fn().mockReturnValue(ok({ process: mockProcess, pid: mockProcess.pid })),
+        kill: vi.fn().mockReturnValue(ok(undefined)),
+        cleanup: cleanupFn,
+        dispose: vi.fn(),
+      };
+      const cleanupRegistry = new InMemoryAgentRegistry([cleanupAdapter]);
+      const cleanupPool = new EventDrivenWorkerPool({
+        agentRegistry: cleanupRegistry,
+        monitor,
+        logger,
+        eventBus,
+        outputCapture,
+        workerRepository,
+        outputRepository,
+      });
+
+      const task = { ...buildTask(), systemPrompt: undefined } as Task;
+      await cleanupPool.spawn(task);
+
+      mockProcess.emit('exit', 0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(cleanupFn).not.toHaveBeenCalled();
+    });
+
+    it('should complete worker cleanup even if adapter cleanup() throws', async () => {
+      const throwingAdapter = {
+        provider: 'claude' as const,
+        spawn: vi.fn().mockReturnValue(ok({ process: mockProcess, pid: mockProcess.pid })),
+        kill: vi.fn().mockReturnValue(ok(undefined)),
+        cleanup: vi.fn().mockImplementation(() => {
+          throw new Error('cleanup failed unexpectedly');
+        }),
+        dispose: vi.fn(),
+      };
+      const throwingRegistry = new InMemoryAgentRegistry([throwingAdapter]);
+      const throwingPool = new EventDrivenWorkerPool({
+        agentRegistry: throwingRegistry,
+        monitor,
+        logger,
+        eventBus,
+        outputCapture,
+        workerRepository,
+        outputRepository,
+      });
+
+      const task = { ...buildTask(), systemPrompt: 'You are a helpful assistant.' } as Task;
+      await throwingPool.spawn(task);
+
+      // Should not throw — best-effort cleanup
+      mockProcess.emit('exit', 0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Worker state must still be cleaned up despite cleanup() throwing
+      expect(throwingPool.getWorkerCount()).toBe(0);
+      expect(monitor.decrementWorkerCount as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Adapter cleanup() threw — task-scoped resources may not be freed',
+        expect.objectContaining({ taskId: task.id, error: 'cleanup failed unexpectedly' }),
+      );
+    });
+  });
 });
