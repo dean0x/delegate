@@ -939,6 +939,12 @@ export class Database implements TransactionRunner {
       },
       {
         version: 23,
+        /**
+         * @design system_prompt is persisted per-task (not per-agent) so retry/resume
+         * reconstructs the full spawn context from the original task record. Unlike
+         * jsonSchema (in-memory only for eval), system prompt must round-trip through
+         * the DB to survive process restarts.
+         */
         description: 'Add system_prompt column to tasks table (v1.4.0)',
         up: (db) => {
           // Nullable TEXT — no data migration needed. Existing tasks have NULL system_prompt.

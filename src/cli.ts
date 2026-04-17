@@ -224,15 +224,18 @@ if (mainCommand === 'mcp') {
   }
 } else if (mainCommand === 'status') {
   let taskId: string | undefined;
+  let showSystemPrompt = false;
 
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
-    if (!arg.startsWith('-')) {
+    if (arg === '--system-prompt') {
+      showSystemPrompt = true;
+    } else if (!arg.startsWith('-')) {
       taskId = arg;
     }
   }
 
-  await getTaskStatus(taskId);
+  await getTaskStatus(taskId, { showSystemPrompt });
 } else if (mainCommand === 'logs') {
   const taskId = args[1];
   if (!taskId) {

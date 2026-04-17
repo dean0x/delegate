@@ -118,6 +118,9 @@ export const DelegateTaskSchema = z.object({
 
 const TaskStatusSchema = z.object({
   taskId: z.string().optional(),
+  /** @design System prompts can be up to 16KB. Default omission keeps status responses compact.
+   * Opt-in flag provides inspection capability without cluttering normal status queries. */
+  includeSystemPrompt: z.boolean().optional().default(false),
 });
 
 const TaskLogsSchema = z.object({
@@ -396,6 +399,8 @@ const LoopStatusSchema = z.object({
   loopId: z.string().min(1).describe('Loop ID'),
   includeHistory: z.boolean().optional().default(false).describe('Include iteration history'),
   historyLimit: z.number().min(1).optional().default(20).describe('Max iterations to return'),
+  /** @design System prompts can be up to 16KB. Default omission keeps status responses compact. */
+  includeSystemPrompt: z.boolean().optional().default(false).describe('Include system prompt in response'),
 });
 
 const ListLoopsSchema = z.object({
@@ -715,6 +720,10 @@ export class MCPAdapter {
                     type: 'string',
                     description: 'Task ID to check (omit for all tasks)',
                     pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+                  },
+                  includeSystemPrompt: {
+                    type: 'boolean',
+                    description: 'Include system prompt in response (default: false)',
                   },
                 },
               },
@@ -1252,6 +1261,10 @@ export class MCPAdapter {
                     description: 'Max iterations to return (default: 20)',
                     minimum: 1,
                   },
+                  includeSystemPrompt: {
+                    type: 'boolean',
+                    description: 'Include system prompt in response (default: false)',
+                  },
                 },
                 required: ['loopId'],
               },
@@ -1668,7 +1681,7 @@ export class MCPAdapter {
       };
     }
 
-    const { taskId } = parseResult.data;
+    const { taskId, includeSystemPrompt } = parseResult.data;
 
     const result = await this.taskManager.getStatus(taskId ? TaskId(taskId) : undefined);
 
@@ -1710,6 +1723,7 @@ export class MCPAdapter {
                   workingDirectory: task.workingDirectory,
                   agent: task.agent ?? 'unknown',
                   ...(task.model && { model: task.model }),
+                  ...(includeSystemPrompt && task.systemPrompt && { systemPrompt: task.systemPrompt }),
                 }),
               },
             ],
@@ -2498,7 +2512,7 @@ export class MCPAdapter {
       };
     }
 
-    const { loopId, includeHistory, historyLimit } = parseResult.data;
+    const { loopId, includeHistory, historyLimit, includeSystemPrompt } = parseResult.data;
 
     const result = await this.loopService.getLoop(LoopId(loopId), includeHistory, historyLimit);
 
@@ -2539,6 +2553,10 @@ export class MCPAdapter {
                   })),
                 }
               : {}),
+            ...(includeSystemPrompt &&
+              loop.taskTemplate.systemPrompt && {
+                systemPrompt: loop.taskTemplate.systemPrompt,
+              }),
           },
         };
 
