@@ -30,9 +30,12 @@ export interface OrchestratorPromptParams {
 /**
  * Build the orchestrator agent prompts
  *
- * Returns { systemPrompt, userPrompt }:
+ * Returns { systemPrompt, userPrompt, operationalContract }:
  *   - systemPrompt: Role/capability instructions (ROLE through RESILIENCE sections)
  *   - userPrompt: The specific goal the orchestrator should achieve
+ *   - operationalContract: Minimal operational essentials (state file, working dir,
+ *     beat CLI commands, constraints) — injected into userPrompt when a custom
+ *     systemPrompt replaces the auto-generated one so the agent can still function.
  *
  * The prompt instructs the agent to use `beat` CLI commands (NOT MCP tools)
  * for worker management, enabling autonomous delegation and monitoring.
@@ -40,6 +43,7 @@ export interface OrchestratorPromptParams {
 export function buildOrchestratorPrompt(params: OrchestratorPromptParams): {
   systemPrompt: string;
   userPrompt: string;
+  operationalContract: string;
 } {
   const { goal, stateFilePath, workingDirectory, maxDepth, maxWorkers, agent, model } = params;
 
@@ -131,5 +135,28 @@ RESILIENCE:
 
   const userPrompt = `YOUR GOAL:\n${goal}`;
 
-  return { systemPrompt, userPrompt };
+  // Minimal operational knowledge the agent needs to function, regardless of
+  // whether the user provides a custom systemPrompt. Extracted from the full
+  // system prompt above — covers state file, working dir, CLI commands, constraints.
+  const operationalContract = `REQUIRED — ORCHESTRATOR CONTRACT:
+
+STATE FILE: ${stateFilePath}
+Read this file at the START of every iteration to understand current progress.
+Write updated state BEFORE exiting each iteration.
+When the goal is complete, set status: "complete" in the state file.
+If you cannot achieve the goal, set status: "failed" with an explanation in the context field.
+
+WORKING DIRECTORY: ${workingDirectory}
+
+DELEGATION (via beat CLI):
+  Delegate work:    beat run${agentModelFlags} "<prompt>"
+  Check status:     beat status <task-id>
+  Read output:      beat logs <task-id>
+  Cancel:           beat cancel <task-id>
+
+CONSTRAINTS:
+- Max concurrent workers: ${maxWorkers}
+- Max delegation depth: ${maxDepth}`;
+
+  return { systemPrompt, userPrompt, operationalContract };
 }

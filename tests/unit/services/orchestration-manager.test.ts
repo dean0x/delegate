@@ -182,6 +182,65 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       // No model should be set when not requested
       expect(createdLoop?.taskTemplate?.model).toBeUndefined();
     });
+
+    describe('systemPrompt handling', () => {
+      it('uses user-provided systemPrompt on loop when custom systemPrompt is given', async () => {
+        const result = await service.createOrchestration({
+          goal: 'Build auth',
+          systemPrompt: 'You are a security expert.',
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+
+        const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+        const loop = (loopEvents[0] as { loop: { taskTemplate: { systemPrompt?: string } } }).loop;
+        expect(loop.taskTemplate.systemPrompt).toBe('You are a security expert.');
+      });
+
+      it('injects operational contract into prompt when custom systemPrompt is given', async () => {
+        const result = await service.createOrchestration({
+          goal: 'Build auth',
+          systemPrompt: 'You are a security expert.',
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+
+        const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+        const loop = (loopEvents[0] as { loop: { taskTemplate: { prompt: string } } }).loop;
+        // Contract must be present before the goal
+        expect(loop.taskTemplate.prompt).toContain('ORCHESTRATOR CONTRACT');
+        expect(loop.taskTemplate.prompt).toContain('Build auth');
+      });
+
+      it('does not inject contract when no custom systemPrompt (default flow)', async () => {
+        const result = await service.createOrchestration({
+          goal: 'Build auth',
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+
+        const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+        const loop = (loopEvents[0] as { loop: { taskTemplate: { prompt: string } } }).loop;
+        // Default flow: prompt is just the goal, no contract
+        expect(loop.taskTemplate.prompt).not.toContain('ORCHESTRATOR CONTRACT');
+        expect(loop.taskTemplate.prompt).toContain('Build auth');
+      });
+
+      it('treats empty-string systemPrompt as absent (uses auto-generated)', async () => {
+        const result = await service.createOrchestration({
+          goal: 'Build auth',
+          systemPrompt: '   ',
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+
+        const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+        const loop = (loopEvents[0] as { loop: { taskTemplate: { systemPrompt?: string; prompt: string } } }).loop;
+        // Empty/whitespace systemPrompt → uses auto-generated, no contract in prompt
+        expect(loop.taskTemplate.systemPrompt).not.toBe('   ');
+        expect(loop.taskTemplate.prompt).not.toContain('ORCHESTRATOR CONTRACT');
+      });
+    });
   });
 
   describe('getOrchestration()', () => {

@@ -206,7 +206,11 @@ export class OrchestrationManagerService implements OrchestrationService {
     // Build prompt and create loop
     // ========================================================================
 
-    const { systemPrompt: orchestratorSystemPrompt, userPrompt } = buildOrchestratorPrompt({
+    const {
+      systemPrompt: orchestratorSystemPrompt,
+      userPrompt,
+      operationalContract,
+    } = buildOrchestratorPrompt({
       goal: request.goal,
       stateFilePath,
       workingDirectory: validatedWorkingDirectory,
@@ -217,13 +221,20 @@ export class OrchestrationManagerService implements OrchestrationService {
     });
 
     // DECISION: Users providing systemPrompt on CreateOrchestrator opt out of
-    // the default role instructions. Appending would create confusing duplication —
-    // two conflicting ROLE sections. Override entirely with the user-provided prompt.
-    const finalSystemPrompt = request.systemPrompt ?? orchestratorSystemPrompt;
+    // the default role instructions. Override entirely with the user-provided prompt.
+    // Operational essentials (state file, working dir, commands) are injected into
+    // the user prompt instead — see operationalContract.
+    const hasCustomSystemPrompt = Boolean(request.systemPrompt?.trim());
+    const finalSystemPrompt = hasCustomSystemPrompt ? request.systemPrompt! : orchestratorSystemPrompt;
+
+    // When custom systemPrompt replaces the auto-generated one, operational
+    // knowledge (state file path, working dir, delegation commands) is lost.
+    // Inject minimal contract into user prompt so the agent can still function.
+    const finalUserPrompt = hasCustomSystemPrompt ? `${operationalContract}\n\n${userPrompt}` : userPrompt;
 
     const loopResult = await this.loopService.createLoop({
       strategy: LoopStrategy.RETRY,
-      prompt: userPrompt,
+      prompt: finalUserPrompt,
       exitCondition: `node ${JSON.stringify(exitConditionScript)}`,
       maxIterations: orchestration.maxIterations,
       maxConsecutiveFailures: 5,

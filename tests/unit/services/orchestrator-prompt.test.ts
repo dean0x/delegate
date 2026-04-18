@@ -129,4 +129,25 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
       expect(systemPrompt).toContain('beat loop --agent claude --model claude-opus-4-5 "<prompt>" --until');
     });
   });
+
+  describe('operationalContract', () => {
+    it('contains state file path', () => {
+      const { operationalContract } = buildOrchestratorPrompt(defaultParams);
+      expect(operationalContract).toContain(defaultParams.stateFilePath);
+    });
+
+    it('contains completion signal', () => {
+      const { operationalContract } = buildOrchestratorPrompt(defaultParams);
+      expect(operationalContract).toContain('status: "complete"');
+    });
+
+    it('contains working directory and beat CLI commands', () => {
+      const { operationalContract } = buildOrchestratorPrompt(defaultParams);
+      expect(operationalContract).toContain(defaultParams.workingDirectory);
+      expect(operationalContract).toContain('beat run');
+      expect(operationalContract).toContain('beat status');
+      expect(operationalContract).toContain('beat logs');
+      expect(operationalContract).toContain('beat cancel');
+    });
+  });
 });
