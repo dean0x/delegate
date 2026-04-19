@@ -221,6 +221,7 @@ const CreatePipelineSchema = z.object({
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
         agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
         model: z.string().min(1).max(200).optional().describe('Model override for this step'),
+        systemPrompt: z.string().max(16000).optional().describe('System prompt override for this step'),
       }),
     )
     .min(2, 'Pipeline requires at least 2 steps')
@@ -239,6 +240,11 @@ const CreatePipelineSchema = z.object({
     .optional()
     .describe('Default agent for all steps (individual steps can override)'),
   model: z.string().min(1).max(200).optional().describe('Default model for all steps (individual steps can override)'),
+  systemPrompt: z
+    .string()
+    .max(16000)
+    .optional()
+    .describe('Default system prompt for all steps (individual steps can override)'),
 });
 
 const SchedulePipelineSchema = z.object({
@@ -1046,6 +1052,11 @@ export class MCPAdapter {
                           minLength: 1,
                           maxLength: 200,
                         },
+                        systemPrompt: {
+                          type: 'string',
+                          description: 'System prompt override for this step',
+                          maxLength: 16000,
+                        },
                       },
                       required: ['prompt'],
                     },
@@ -1071,6 +1082,11 @@ export class MCPAdapter {
                     description: 'Default model for all steps (individual steps can override)',
                     minLength: 1,
                     maxLength: 200,
+                  },
+                  systemPrompt: {
+                    type: 'string',
+                    description: 'Default system prompt for all steps (individual steps can override)',
+                    maxLength: 16000,
                   },
                 },
                 required: ['steps'],
@@ -2367,9 +2383,11 @@ export class MCPAdapter {
         workingDirectory: s.workingDirectory,
         agent: (s.agent ?? data.agent) as AgentProvider | undefined,
         model: s.model ?? data.model,
+        systemPrompt: s.systemPrompt,
       })),
       priority: data.priority as Priority | undefined,
       workingDirectory: data.workingDirectory,
+      systemPrompt: data.systemPrompt,
     };
 
     const result = await this.scheduleService.createPipeline(request);

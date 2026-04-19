@@ -447,6 +447,7 @@ export interface PipelineStepRequest {
   readonly workingDirectory?: string;
   readonly agent?: AgentProvider; // Multi-agent support (v0.5.0)
   readonly model?: string; // Per-step model override
+  readonly systemPrompt?: string; // Per-step system prompt override
 }
 
 export interface PipelineCreateRequest {
@@ -455,6 +456,7 @@ export interface PipelineCreateRequest {
   readonly workingDirectory?: string; // shared default for all steps
   readonly agent?: AgentProvider; // shared default for all steps
   readonly model?: string; // shared default model for all steps
+  readonly systemPrompt?: string; // system prompt injected into every step task agent
 }
 
 /**

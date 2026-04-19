@@ -369,6 +369,7 @@ export class ScheduleManagerService implements ScheduleService {
         afterScheduleId: previousScheduleId,
         agent: step.agent ?? request.agent,
         model: step.model ?? request.model,
+        systemPrompt: step.systemPrompt ?? request.systemPrompt,
       });
 
       if (!result.ok) {

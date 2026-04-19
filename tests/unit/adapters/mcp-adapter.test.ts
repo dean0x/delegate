@@ -931,6 +931,29 @@ describe('MCPAdapter - CreatePipeline Tool', () => {
     expect(mockScheduleService.createPipelineCalls[0].priority).toBe('P0');
   });
 
+  it('should pass shared systemPrompt through to service', async () => {
+    await simulateCreatePipeline(mockScheduleService, {
+      steps: [{ prompt: 'Step one' }, { prompt: 'Step two' }],
+      systemPrompt: 'You are a CI assistant.',
+    });
+
+    expect(mockScheduleService.createPipelineCalls).toHaveLength(1);
+    expect(mockScheduleService.createPipelineCalls[0].systemPrompt).toBe('You are a CI assistant.');
+  });
+
+  it('should pass per-step systemPrompt through to service', async () => {
+    await simulateCreatePipeline(mockScheduleService, {
+      steps: [
+        { prompt: 'Step one', systemPrompt: 'You are a linter.' },
+        { prompt: 'Step two' },
+      ],
+    });
+
+    expect(mockScheduleService.createPipelineCalls).toHaveLength(1);
+    expect(mockScheduleService.createPipelineCalls[0].steps[0].systemPrompt).toBe('You are a linter.');
+    expect(mockScheduleService.createPipelineCalls[0].steps[1].systemPrompt).toBeUndefined();
+  });
+
   it('should return error on service failure', async () => {
     mockScheduleService.shouldFailPipeline = true;
 
@@ -1621,9 +1644,10 @@ async function simulateRetryTask(
 async function simulateCreatePipeline(
   scheduleService: MockScheduleService,
   args: {
-    steps: Array<{ prompt: string; priority?: string; workingDirectory?: string }>;
+    steps: Array<{ prompt: string; priority?: string; workingDirectory?: string; systemPrompt?: string }>;
     priority?: string;
     workingDirectory?: string;
+    systemPrompt?: string;
   },
 ): Promise<MCPToolResponse> {
   // Validate min/max steps (mirrors Zod schema)
@@ -1655,9 +1679,11 @@ async function simulateCreatePipeline(
       prompt: s.prompt,
       priority: s.priority as Priority | undefined,
       workingDirectory: s.workingDirectory,
+      systemPrompt: s.systemPrompt,
     })),
     priority: args.priority as Priority | undefined,
     workingDirectory: args.workingDirectory,
+    systemPrompt: args.systemPrompt,
   });
 
   if (!result.ok) {
