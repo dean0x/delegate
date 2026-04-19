@@ -64,29 +64,32 @@ function createMockChildProcess(pid: number): ChildProcess {
   } as unknown as ChildProcess;
 }
 
-describe('ClaudeAdapter', () => {
-  let adapter: ClaudeAdapter;
-
+/** Shared setup/teardown for adapter describe blocks that follow the common pattern. */
+function setupAdapter<T extends { dispose(): void }>(createFn: () => T): { getAdapter: () => T } {
+  let adapter: T;
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: CLI found in PATH (auth passes)
     mockIsCommandInPath.mockReturnValue(true);
-    adapter = new ClaudeAdapter(testConfig, 'claude');
+    adapter = createFn();
   });
-
   afterEach(() => {
     adapter.dispose();
   });
+  return { getAdapter: () => adapter };
+}
+
+describe('ClaudeAdapter', () => {
+  const { getAdapter } = setupAdapter(() => new ClaudeAdapter(testConfig, 'claude'));
 
   it('should have provider set to claude', () => {
-    expect(adapter.provider).toBe('claude');
+    expect(getAdapter().provider).toBe('claude');
   });
 
   it('should spawn with --print and --dangerously-skip-permissions flags', () => {
     const mockChild = createMockChildProcess(1234);
     mockSpawn.mockReturnValue(mockChild);
 
-    const result = adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1' });
+    const result = getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1' });
 
     expect(result.ok).toBe(true);
     expect(mockSpawn).toHaveBeenCalledOnce();
@@ -104,12 +107,11 @@ describe('ClaudeAdapter', () => {
     mockSpawn.mockReturnValue(mockChild);
 
     // Set env vars that should be stripped
-    const originalEnv = { ...process.env };
     process.env.CLAUDECODE = 'true';
     process.env.CLAUDE_CODE_SESSION = 'test';
 
     try {
-      adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
+      getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
 
       const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
       expect(spawnOptions.env.CLAUDECODE).toBeUndefined();
@@ -126,7 +128,7 @@ describe('ClaudeAdapter', () => {
     const mockChild = createMockChildProcess(1234);
     mockSpawn.mockReturnValue(mockChild);
 
-    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-123' });
+    getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-123' });
 
     const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
     expect(spawnOptions.env.AUTOBEAT_TASK_ID).toBe('task-123');
@@ -137,7 +139,7 @@ describe('ClaudeAdapter', () => {
     (mockChild as { pid: number | undefined }).pid = undefined;
     mockSpawn.mockReturnValue(mockChild);
 
-    const result = adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
+    const result = getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -150,7 +152,7 @@ describe('ClaudeAdapter', () => {
       throw new Error('spawn ENOENT');
     });
 
-    const result = adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
+    const result = getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -160,27 +162,17 @@ describe('ClaudeAdapter', () => {
 });
 
 describe('CodexAdapter', () => {
-  let adapter: CodexAdapter;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockIsCommandInPath.mockReturnValue(true);
-    adapter = new CodexAdapter(testConfig, 'codex');
-  });
-
-  afterEach(() => {
-    adapter.dispose();
-  });
+  const { getAdapter } = setupAdapter(() => new CodexAdapter(testConfig, 'codex'));
 
   it('should have provider set to codex', () => {
-    expect(adapter.provider).toBe('codex');
+    expect(getAdapter().provider).toBe('codex');
   });
 
   it('should spawn with --quiet and --full-auto flags', () => {
     const mockChild = createMockChildProcess(1234);
     mockSpawn.mockReturnValue(mockChild);
 
-    const result = adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
+    const result = getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
 
     expect(result.ok).toBe(true);
     const [command, args] = mockSpawn.mock.calls[0];
@@ -196,7 +188,7 @@ describe('CodexAdapter', () => {
 
     process.env.CODEX_SESSION = 'test';
     try {
-      adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
+      getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
 
       const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
       expect(spawnOptions.env.CODEX_SESSION).toBe('test');
@@ -208,27 +200,17 @@ describe('CodexAdapter', () => {
 });
 
 describe('GeminiAdapter', () => {
-  let adapter: GeminiAdapter;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockIsCommandInPath.mockReturnValue(true);
-    adapter = new GeminiAdapter(testConfig, 'gemini');
-  });
-
-  afterEach(() => {
-    adapter.dispose();
-  });
+  const { getAdapter } = setupAdapter(() => new GeminiAdapter(testConfig, 'gemini'));
 
   it('should have provider set to gemini', () => {
-    expect(adapter.provider).toBe('gemini');
+    expect(getAdapter().provider).toBe('gemini');
   });
 
   it('should spawn with --yolo --prompt flags for non-interactive auto-accept mode', () => {
     const mockChild = createMockChildProcess(1234);
     mockSpawn.mockReturnValue(mockChild);
 
-    const result = adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
+    const result = getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
 
     expect(result.ok).toBe(true);
     const [command, args] = mockSpawn.mock.calls[0];
@@ -244,7 +226,7 @@ describe('GeminiAdapter', () => {
 
     process.env.GEMINI_API_KEY = 'secret';
     try {
-      adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
+      getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
 
       const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
       expect(spawnOptions.env.GEMINI_API_KEY).toBe('secret');
@@ -340,23 +322,13 @@ describe('BaseAgentAdapter kill', () => {
 // ============================================================================
 
 describe('GeminiAdapter env', () => {
-  let adapter: GeminiAdapter;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockIsCommandInPath.mockReturnValue(true);
-    adapter = new GeminiAdapter(testConfig, 'gemini');
-  });
-
-  afterEach(() => {
-    adapter.dispose();
-  });
+  const { getAdapter } = setupAdapter(() => new GeminiAdapter(testConfig, 'gemini'));
 
   it('should set GEMINI_SANDBOX=false in spawn env', () => {
     const mockChild = createMockChildProcess(1234);
     mockSpawn.mockReturnValue(mockChild);
 
-    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
+    getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
 
     const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
     expect(spawnOptions.env.GEMINI_SANDBOX).toBe('false');
@@ -368,7 +340,7 @@ describe('GeminiAdapter env', () => {
 
     process.env.GEMINI_SANDBOX = 'true';
     try {
-      adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
+      getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
 
       const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
       // User's env (cleanEnv) spreads after additionalEnv, so user wins
