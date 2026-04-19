@@ -964,7 +964,7 @@ describe('system prompt passthrough', () => {
 
     // No cache file created — fallback path
     const adapter = new GeminiAdapter(testConfig, 'gemini');
-    let result: ReturnType<typeof adapter.spawn>;
+    let result: ReturnType<typeof adapter.spawn> | undefined;
     try {
       result = adapter.spawn({
         prompt: 'do the work',
@@ -977,6 +977,7 @@ describe('system prompt passthrough', () => {
       adapter.dispose();
     }
 
+    expect(result).toBeDefined();
     expect(result!.ok).toBe(true);
     const [, args] = mockSpawn.mock.calls[0];
     // --prompt arg value should contain both systemPrompt and original prompt
