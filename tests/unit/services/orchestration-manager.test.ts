@@ -182,7 +182,7 @@ describe('OrchestrationManagerService - Unit Tests', () => {
     });
 
     describe('systemPrompt handling', () => {
-      it('uses user-provided systemPrompt on loop when custom systemPrompt is given', async () => {
+      it('should use user-provided systemPrompt on loop when custom systemPrompt is given', async () => {
         const result = await service.createOrchestration({
           goal: 'Build auth',
           systemPrompt: 'You are a security expert.',
@@ -195,7 +195,7 @@ describe('OrchestrationManagerService - Unit Tests', () => {
         expect(loop.taskTemplate.systemPrompt).toBe('You are a security expert.');
       });
 
-      it('injects operational contract into prompt when custom systemPrompt is given', async () => {
+      it('should inject operational contract into prompt when custom systemPrompt is given', async () => {
         const result = await service.createOrchestration({
           goal: 'Build auth',
           systemPrompt: 'You are a security expert.',
@@ -210,7 +210,7 @@ describe('OrchestrationManagerService - Unit Tests', () => {
         expect(loop.taskTemplate.prompt).toContain('Build auth');
       });
 
-      it('does not inject contract when no custom systemPrompt (default flow)', async () => {
+      it('should not inject contract when no custom systemPrompt (default flow)', async () => {
         const result = await service.createOrchestration({
           goal: 'Build auth',
         });
@@ -224,7 +224,7 @@ describe('OrchestrationManagerService - Unit Tests', () => {
         expect(loop.taskTemplate.prompt).toContain('Build auth');
       });
 
-      it('treats empty-string systemPrompt as absent (uses auto-generated)', async () => {
+      it('should treat empty-string systemPrompt as absent (uses auto-generated)', async () => {
         const result = await service.createOrchestration({
           goal: 'Build auth',
           systemPrompt: '   ',
@@ -341,7 +341,7 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       expect(evt?.reason).toBe('cascade reason');
     });
 
-    it('emits OrchestrationCancelled without performing inline task cancellation', async () => {
+    it('should emit OrchestrationCancelled without performing inline task cancellation', async () => {
       // ARCHITECTURE: v1.3.0 cancel cascade is entirely event-driven.
       // OrchestrationManagerService emits OrchestrationCancelled and does not call
       // taskManager.cancel directly — AttributedTaskCancellationHandler handles the cascade.

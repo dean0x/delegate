@@ -90,29 +90,29 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
   });
 
   describe('agent and model passthrough', () => {
-    it('does not add --agent flag when agent is not provided', () => {
+    it('should not add --agent flag when agent is not provided', () => {
       const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
       // Default params have no agent — delegation examples should be plain "beat run"
       expect(systemPrompt).toContain('beat run "<prompt>"');
       expect(systemPrompt).not.toContain('--agent');
     });
 
-    it('does not add --model flag when model is not provided', () => {
+    it('should not add --model flag when model is not provided', () => {
       const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
       expect(systemPrompt).not.toContain('--model');
     });
 
-    it('threads --agent flag into worker delegation example when agent is set', () => {
+    it('should thread --agent flag into worker delegation example when agent is set', () => {
       const { systemPrompt } = buildOrchestratorPrompt({ ...defaultParams, agent: 'codex' });
       expect(systemPrompt).toContain('beat run --agent codex "<prompt>"');
     });
 
-    it('threads --model flag into worker delegation example when model is set', () => {
+    it('should thread --model flag into worker delegation example when model is set', () => {
       const { systemPrompt } = buildOrchestratorPrompt({ ...defaultParams, model: 'claude-opus-4-5' });
       expect(systemPrompt).toContain('beat run --model claude-opus-4-5 "<prompt>"');
     });
 
-    it('threads both --agent and --model flags when both are set', () => {
+    it('should thread both --agent and --model flags when both are set', () => {
       const { systemPrompt } = buildOrchestratorPrompt({
         ...defaultParams,
         agent: 'gemini',
@@ -121,7 +121,7 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
       expect(systemPrompt).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
     });
 
-    it('threads flags into loop delegation examples too', () => {
+    it('should thread flags into loop delegation examples too', () => {
       const { systemPrompt } = buildOrchestratorPrompt({
         ...defaultParams,
         agent: 'claude',
@@ -132,17 +132,17 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
   });
 
   describe('operationalContract', () => {
-    it('contains state file path', () => {
+    it('should contain state file path', () => {
       const { operationalContract } = buildOrchestratorPrompt(defaultParams);
       expect(operationalContract).toContain(defaultParams.stateFilePath);
     });
 
-    it('contains completion signal', () => {
+    it('should contain completion signal', () => {
       const { operationalContract } = buildOrchestratorPrompt(defaultParams);
       expect(operationalContract).toContain('status: "complete"');
     });
 
-    it('contains working directory and beat CLI commands', () => {
+    it('should contain working directory and beat CLI commands', () => {
       const { operationalContract } = buildOrchestratorPrompt(defaultParams);
       expect(operationalContract).toContain(defaultParams.workingDirectory);
       expect(operationalContract).toContain('beat run');
@@ -151,7 +151,7 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
       expect(operationalContract).toContain('beat cancel');
     });
 
-    it('threads --agent and --model flags into delegation command', () => {
+    it('should thread --agent and --model flags into delegation command', () => {
       const { operationalContract } = buildOrchestratorPrompt({
         ...defaultParams,
         agent: 'gemini',
@@ -160,12 +160,12 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
       expect(operationalContract).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
     });
 
-    it('contains failure signal', () => {
+    it('should contain failure signal', () => {
       const { operationalContract } = buildOrchestratorPrompt(defaultParams);
       expect(operationalContract).toContain('status: "failed"');
     });
 
-    it('contains constraints', () => {
+    it('should contain constraints', () => {
       const { operationalContract } = buildOrchestratorPrompt({
         ...defaultParams,
         maxWorkers: 12,
