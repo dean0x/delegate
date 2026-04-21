@@ -96,6 +96,19 @@ Model resolution order (highest priority wins):
 2. Agent config default (\`ConfigureAgent\` set model)
 3. Agent's built-in default
 
+### Per-task system prompt (systemPrompt)
+DelegateTask, CreateLoop, and CreateOrchestrator accept an optional \`systemPrompt\` field.
+The mechanism is per-agent:
+- Claude: \`--append-system-prompt\` — appended after Claude Code's built-in instructions (preserves tool access)
+- Codex: \`-c developer_instructions=<text>\` — appended after default, preserves AGENTS.md
+- Gemini: \`GEMINI_SYSTEM_MD\` combining cached base prompt + user system prompt (fallback: prepended to user prompt)
+
+Priority rules:
+- DelegateTask: systemPrompt is used for that task and any retry/resume tasks created from it
+- CreateLoop: systemPrompt is injected into each iteration task
+- CreateOrchestrator: when provided, replaces the auto-generated role instructions entirely
+  (appending would cause conflicting ROLE sections — provide a complete system prompt)
+
 ## Key Principles
 
 1. **Parallelize when possible**: Independent tasks should run concurrently. Only use dependsOn when ordering matters.

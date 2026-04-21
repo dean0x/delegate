@@ -37,19 +37,10 @@ describe('DelegateTaskSchema — jsonSchema field (v1.3.0)', () => {
     }
   });
 
-  it('rejects jsonSchema exceeding 16000 chars', () => {
+  it('should accept jsonSchema of any length', () => {
     const result = DelegateTaskSchema.safeParse({
       prompt: 'Do something',
-      jsonSchema: 'x'.repeat(16001),
-    });
-
-    expect(result.success).toBe(false);
-  });
-
-  it('accepts jsonSchema up to 16000 chars', () => {
-    const result = DelegateTaskSchema.safeParse({
-      prompt: 'Do something',
-      jsonSchema: 'x'.repeat(16000),
+      jsonSchema: 'x'.repeat(20000),
     });
 
     expect(result.success).toBe(true);

@@ -16,6 +16,7 @@ function createMockAdapter(provider: AgentProvider): AgentAdapter {
     spawn: vi.fn().mockReturnValue(ok({ process: {}, pid: 1234 })),
     kill: vi.fn().mockReturnValue(ok(undefined)),
     dispose: vi.fn(),
+    cleanup: vi.fn(),
   };
 }
 

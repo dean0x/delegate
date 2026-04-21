@@ -12,6 +12,7 @@ import {
   agentsConfigShow,
   checkAgents,
   listAgents,
+  refreshBasePrompt,
 } from './cli/commands/agents.js';
 import { cancelTask } from './cli/commands/cancel.js';
 import { configPath, configReset, configSet, configShow } from './cli/commands/config.js';
@@ -77,6 +78,7 @@ if (mainCommand === 'mcp') {
       maxOutputBuffer?: number;
       agent?: string;
       model?: string;
+      systemPrompt?: string;
     } = {};
 
     let promptWords: string[] = [];
@@ -175,6 +177,15 @@ if (mainCommand === 'mcp') {
           ui.error('--model requires a model name (e.g. claude-opus-4-5)');
           process.exit(1);
         }
+      } else if (arg === '--system-prompt') {
+        const next = foregroundArgs[i + 1];
+        if (next !== undefined) {
+          options.systemPrompt = next;
+          i++;
+        } else {
+          ui.error('--system-prompt requires a prompt string');
+          process.exit(1);
+        }
       } else if (arg.startsWith('-')) {
         ui.error(`Unknown flag: ${arg}`);
         process.exit(1);
@@ -194,6 +205,7 @@ if (mainCommand === 'mcp') {
           '  -w, --working-directory DIR   Working directory for task execution',
           '  -a, --agent AGENT            AI agent to use (claude, codex, gemini)',
           '  -m, --model MODEL            Model override (e.g. claude-opus-4-5)',
+          '  --system-prompt TEXT          System prompt to inject into the agent',
           '  -t, --timeout MS              Task timeout in milliseconds',
           '  --max-output-buffer BYTES     Maximum output buffer size',
           '',
@@ -212,15 +224,18 @@ if (mainCommand === 'mcp') {
   }
 } else if (mainCommand === 'status') {
   let taskId: string | undefined;
+  let showSystemPrompt = false;
 
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
-    if (!arg.startsWith('-')) {
+    if (arg === '--system-prompt') {
+      showSystemPrompt = true;
+    } else if (!arg.startsWith('-')) {
       taskId = arg;
     }
   }
 
-  await getTaskStatus(taskId);
+  await getTaskStatus(taskId, { showSystemPrompt });
 } else if (mainCommand === 'logs') {
   const taskId = args[1];
   if (!taskId) {
@@ -290,9 +305,12 @@ if (mainCommand === 'mcp') {
       ui.error('Usage: beat agents config <set|show|reset>');
       process.exit(1);
     }
+  } else if (subCommand === 'refresh-base-prompt') {
+    // Optional agent arg — defaults to gemini
+    await refreshBasePrompt(args[2]);
   } else {
     ui.error(`Unknown agents subcommand: ${subCommand}`);
-    process.stderr.write('Valid subcommands: list, check, config\n');
+    process.stderr.write('Valid subcommands: list, check, config, refresh-base-prompt\n');
     process.exit(1);
   }
 } else if (mainCommand === 'resume') {

@@ -102,6 +102,7 @@ interface OrchestrateCreateParsed {
   readonly maxWorkers?: number;
   readonly maxIterations?: number;
   readonly foreground: boolean;
+  readonly systemPrompt?: string;
 }
 
 interface OrchestrateStatusParsed {
@@ -134,6 +135,7 @@ export function parseOrchestrateCreateArgs(args: readonly string[]): Result<Orch
   let maxWorkers: number | undefined;
   let maxIterations: number | undefined;
   let foreground = false;
+  let systemPrompt: string | undefined;
   const goalWords: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -156,6 +158,11 @@ export function parseOrchestrateCreateArgs(args: readonly string[]): Result<Orch
       const next = args[i + 1];
       if (!next || next.startsWith('-')) return err('--model requires a model name (e.g. claude-opus-4-5)');
       model = next;
+      i++;
+    } else if (arg === '--system-prompt') {
+      const next = args[i + 1];
+      if (next === undefined) return err('--system-prompt requires a prompt string');
+      systemPrompt = next;
       i++;
     } else if (arg === '--max-depth') {
       const parsed = parseIntFlag('--max-depth', args[i + 1], 1, 10);
@@ -192,6 +199,7 @@ export function parseOrchestrateCreateArgs(args: readonly string[]): Result<Orch
     maxWorkers,
     maxIterations,
     foreground,
+    systemPrompt,
   });
 }
 
@@ -300,6 +308,7 @@ async function handleOrchestrateForeground(parsed: OrchestrateCreateParsed): Pro
       maxDepth: parsed.maxDepth,
       maxWorkers: parsed.maxWorkers,
       maxIterations: parsed.maxIterations,
+      systemPrompt: parsed.systemPrompt,
     });
 
     if (!result.ok) {

@@ -27,6 +27,8 @@ import type {
   PipelineResult,
   PipelineStepRequest,
   Schedule,
+  ScheduleCreateRequest,
+  ScheduledLoopCreateRequest,
   ScheduledPipelineCreateRequest,
   Task,
   TaskRequest,
@@ -147,6 +149,11 @@ class MockTaskManager implements TaskManager {
 
   setFailStatus(shouldFail: boolean) {
     this.shouldFailStatus = shouldFail;
+  }
+
+  /** Store an arbitrary task directly for test setup */
+  storeTask(task: Task) {
+    this.taskStorage.set(task.id, task);
   }
 
   reset() {
@@ -926,6 +933,26 @@ describe('MCPAdapter - CreatePipeline Tool', () => {
     expect(mockScheduleService.createPipelineCalls[0].priority).toBe('P0');
   });
 
+  it('should pass shared systemPrompt through to service', async () => {
+    await simulateCreatePipeline(mockScheduleService, {
+      steps: [{ prompt: 'Step one' }, { prompt: 'Step two' }],
+      systemPrompt: 'You are a CI assistant.',
+    });
+
+    expect(mockScheduleService.createPipelineCalls).toHaveLength(1);
+    expect(mockScheduleService.createPipelineCalls[0].systemPrompt).toBe('You are a CI assistant.');
+  });
+
+  it('should pass per-step systemPrompt through to service', async () => {
+    await simulateCreatePipeline(mockScheduleService, {
+      steps: [{ prompt: 'Step one', systemPrompt: 'You are a linter.' }, { prompt: 'Step two' }],
+    });
+
+    expect(mockScheduleService.createPipelineCalls).toHaveLength(1);
+    expect(mockScheduleService.createPipelineCalls[0].steps[0].systemPrompt).toBe('You are a linter.');
+    expect(mockScheduleService.createPipelineCalls[0].steps[1].systemPrompt).toBeUndefined();
+  });
+
   it('should return error on service failure', async () => {
     mockScheduleService.shouldFailPipeline = true;
 
@@ -1226,6 +1253,8 @@ describe('MCPAdapter - SchedulePipeline & Enhanced Schedule Tools', () => {
  * Mock ScheduleService for CreatePipeline / SchedulePipeline testing
  */
 class MockScheduleService {
+  createScheduleCalls: ScheduleCreateRequest[] = [];
+  createScheduledLoopCalls: ScheduledLoopCreateRequest[] = [];
   createPipelineCalls: PipelineCreateRequest[] = [];
   createScheduledPipelineCalls: ScheduledPipelineCreateRequest[] = [];
   cancelScheduleCalls: Array<{ scheduleId: string; reason?: string; cancelTasks?: boolean }> = [];
@@ -1246,8 +1275,24 @@ class MockScheduleService {
   shouldFailListSchedules = false;
   shouldFailScheduleStatus = false;
 
-  async createSchedule() {
-    return ok(null);
+  async createSchedule(request: ScheduleCreateRequest) {
+    this.createScheduleCalls.push(request);
+    const now = Date.now();
+    return ok(
+      Object.freeze({
+        id: ScheduleId('schedule-mock-task'),
+        taskTemplate: { prompt: request.prompt, systemPrompt: request.systemPrompt },
+        scheduleType: request.scheduleType,
+        cronExpression: request.cronExpression,
+        timezone: request.timezone ?? 'UTC',
+        missedRunPolicy: request.missedRunPolicy ?? MissedRunPolicy.SKIP,
+        status: ScheduleStatus.ACTIVE,
+        runCount: 0,
+        nextRunAt: now + 60000,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
   }
 
   async listSchedules(): Promise<Result<readonly Schedule[]>> {
@@ -1314,16 +1359,21 @@ class MockScheduleService {
     });
   }
 
-  async createScheduledLoop(): Promise<Result<Schedule>> {
+  async createScheduledLoop(request: ScheduledLoopCreateRequest): Promise<Result<Schedule>> {
+    this.createScheduledLoopCalls.push(request);
     const now = Date.now();
     return ok(
       Object.freeze({
         id: ScheduleId('schedule-mock-loop'),
-        taskTemplate: { prompt: 'loop prompt', workingDirectory: '/tmp' },
-        scheduleType: ScheduleType.CRON,
-        cronExpression: '0 9 * * *',
-        timezone: 'UTC',
-        missedRunPolicy: MissedRunPolicy.SKIP,
+        taskTemplate: {
+          prompt: request.loopConfig.prompt ?? 'loop prompt',
+          workingDirectory: request.loopConfig.workingDirectory ?? '/tmp',
+          systemPrompt: request.loopConfig.systemPrompt,
+        },
+        scheduleType: request.scheduleType,
+        cronExpression: request.cronExpression ?? '0 9 * * *',
+        timezone: request.timezone ?? 'UTC',
+        missedRunPolicy: request.missedRunPolicy ?? MissedRunPolicy.SKIP,
         status: ScheduleStatus.ACTIVE,
         runCount: 0,
         nextRunAt: now + 60000,
@@ -1616,9 +1666,10 @@ async function simulateRetryTask(
 async function simulateCreatePipeline(
   scheduleService: MockScheduleService,
   args: {
-    steps: Array<{ prompt: string; priority?: string; workingDirectory?: string }>;
+    steps: Array<{ prompt: string; priority?: string; workingDirectory?: string; systemPrompt?: string }>;
     priority?: string;
     workingDirectory?: string;
+    systemPrompt?: string;
   },
 ): Promise<MCPToolResponse> {
   // Validate min/max steps (mirrors Zod schema)
@@ -1650,9 +1701,11 @@ async function simulateCreatePipeline(
       prompt: s.prompt,
       priority: s.priority as Priority | undefined,
       workingDirectory: s.workingDirectory,
+      systemPrompt: s.systemPrompt,
     })),
     priority: args.priority as Priority | undefined,
     workingDirectory: args.workingDirectory,
+    systemPrompt: args.systemPrompt,
   });
 
   if (!result.ok) {
@@ -2408,6 +2461,78 @@ describe('MCPAdapter - Loop Tools', () => {
     });
   });
 
+  describe('Schedule tools systemPrompt passthrough via callTool()', () => {
+    let scheduleService: MockScheduleService;
+    let adapter: MCPAdapter;
+
+    beforeEach(() => {
+      scheduleService = new MockScheduleService();
+      adapter = new MCPAdapter({
+        taskManager: new MockTaskManager(),
+        logger: new MockLogger(),
+        scheduleService,
+        loopService: mockLoopService,
+        agentRegistry: undefined,
+        config: testConfig,
+      });
+    });
+
+    it('should pass systemPrompt through ScheduleTask to service', async () => {
+      const result = await adapter.callTool('ScheduleTask', {
+        prompt: 'Run daily check',
+        scheduleType: 'cron',
+        cronExpression: '0 9 * * *',
+        systemPrompt: 'You are a monitoring agent',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(scheduleService.createScheduleCalls).toHaveLength(1);
+      expect(scheduleService.createScheduleCalls[0].systemPrompt).toBe('You are a monitoring agent');
+    });
+
+    it('should pass shared systemPrompt through SchedulePipeline to service', async () => {
+      const result = await adapter.callTool('SchedulePipeline', {
+        steps: [{ prompt: 'Lint' }, { prompt: 'Test' }],
+        scheduleType: 'cron',
+        cronExpression: '0 9 * * *',
+        systemPrompt: 'Be thorough',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(scheduleService.createScheduledPipelineCalls).toHaveLength(1);
+      expect(scheduleService.createScheduledPipelineCalls[0].systemPrompt).toBe('Be thorough');
+    });
+
+    it('should pass per-step systemPrompt through SchedulePipeline with shared fallback', async () => {
+      const result = await adapter.callTool('SchedulePipeline', {
+        steps: [{ prompt: 'Lint', systemPrompt: 'Step-specific prompt' }, { prompt: 'Test' }],
+        scheduleType: 'cron',
+        cronExpression: '0 9 * * *',
+        systemPrompt: 'Shared default',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const call = scheduleService.createScheduledPipelineCalls[0];
+      expect(call.steps[0].systemPrompt).toBe('Step-specific prompt');
+      expect(call.steps[1].systemPrompt).toBe('Shared default');
+    });
+
+    it('should pass systemPrompt through ScheduleLoop to service', async () => {
+      const result = await adapter.callTool('ScheduleLoop', {
+        prompt: 'Fix tests',
+        strategy: 'retry',
+        exitCondition: 'npm test passes',
+        scheduleType: 'cron',
+        cronExpression: '0 9 * * *',
+        systemPrompt: 'Focus on unit tests only',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(scheduleService.createScheduledLoopCalls).toHaveLength(1);
+      expect(scheduleService.createScheduledLoopCalls[0].loopConfig.systemPrompt).toBe('Focus on unit tests only');
+    });
+  });
+
   describe('CreateLoop with evalMode via callTool()', () => {
     it('should accept evalMode agent with strategy and no exitCondition', async () => {
       const adapter = new MCPAdapter({
@@ -3053,5 +3178,117 @@ describe('DelegateTaskSchema - orchestratorId validation', () => {
       metadata: { orchestratorId: 'orchestrator-gggggggg-gggg-gggg-gggg-gggggggggggg' },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// ============================================================================
+// includeSystemPrompt flag — TaskStatus and LoopStatus via callTool()
+// ============================================================================
+
+describe('includeSystemPrompt flag via callTool()', () => {
+  let localTaskManager: MockTaskManager;
+  let localLoopService: MockLoopService;
+  let adapter: MCPAdapter;
+
+  beforeEach(() => {
+    localTaskManager = new MockTaskManager();
+    localLoopService = new MockLoopService();
+    adapter = new MCPAdapter({
+      taskManager: localTaskManager,
+      logger: new MockLogger(),
+      scheduleService: stubScheduleService,
+      loopService: localLoopService,
+      agentRegistry: undefined,
+      config: testConfig,
+    });
+  });
+
+  afterEach(() => {
+    localTaskManager.reset();
+    localLoopService.reset();
+  });
+
+  describe('TaskStatus with includeSystemPrompt', () => {
+    it('should include systemPrompt field when includeSystemPrompt=true and task has systemPrompt', async () => {
+      // Store a task with systemPrompt in the mock manager
+      const taskWithSp: Task = {
+        ...new TaskFactory().withId('task-sp-123').withPrompt('do something').build(),
+        systemPrompt: 'Always respond in JSON',
+      };
+      localTaskManager.storeTask(taskWithSp);
+
+      const result = await adapter.callTool('TaskStatus', {
+        taskId: 'task-sp-123',
+        includeSystemPrompt: true,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.systemPrompt).toBe('Always respond in JSON');
+    });
+
+    it('should omit systemPrompt field when includeSystemPrompt is false (default)', async () => {
+      const taskWithSp: Task = {
+        ...new TaskFactory().withId('task-sp-456').withPrompt('do something').build(),
+        systemPrompt: 'Always respond in JSON',
+      };
+      localTaskManager.storeTask(taskWithSp);
+
+      const result = await adapter.callTool('TaskStatus', {
+        taskId: 'task-sp-456',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.systemPrompt).toBeUndefined();
+    });
+
+    it('should omit systemPrompt even with includeSystemPrompt=true when task has no systemPrompt', async () => {
+      const taskNoSp: Task = new TaskFactory().withId('task-no-sp').withPrompt('do something').build();
+      localTaskManager.storeTask(taskNoSp);
+
+      const result = await adapter.callTool('TaskStatus', {
+        taskId: 'task-no-sp',
+        includeSystemPrompt: true,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.systemPrompt).toBeUndefined();
+    });
+  });
+
+  describe('LoopStatus with includeSystemPrompt', () => {
+    it('should include systemPrompt in loop response when includeSystemPrompt=true and loop has systemPrompt', async () => {
+      const loopWithSp = localLoopService.makeLoop({ systemPrompt: 'Be thorough and precise' });
+      localLoopService.setGetLoopResult(ok({ loop: loopWithSp }));
+
+      const result = await adapter.callTool('LoopStatus', {
+        loopId: loopWithSp.id,
+        includeSystemPrompt: true,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.loop.systemPrompt).toBe('Be thorough and precise');
+    });
+
+    it('should omit systemPrompt from loop response when includeSystemPrompt is absent (default)', async () => {
+      const loopWithSp = localLoopService.makeLoop({ systemPrompt: 'Be thorough and precise' });
+      localLoopService.setGetLoopResult(ok({ loop: loopWithSp }));
+
+      const result = await adapter.callTool('LoopStatus', {
+        loopId: loopWithSp.id,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.loop.systemPrompt).toBeUndefined();
+    });
   });
 });

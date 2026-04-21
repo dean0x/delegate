@@ -72,6 +72,7 @@ export class ScheduleManagerService implements ScheduleService {
         workingDirectory: validatedWorkingDirectory,
         agent: agentResult.value,
         model: request.model,
+        systemPrompt: request.systemPrompt,
       },
       scheduleType: request.scheduleType,
       cronExpression: request.cronExpression,
@@ -300,6 +301,7 @@ export class ScheduleManagerService implements ScheduleService {
         workingDirectory: validatedWorkingDirectory,
         agent: agentResult.value,
         model: request.model,
+        systemPrompt: request.systemPrompt,
       },
       pipelineSteps: normalizedSteps,
       scheduleType: request.scheduleType,
@@ -367,6 +369,7 @@ export class ScheduleManagerService implements ScheduleService {
         afterScheduleId: previousScheduleId,
         agent: step.agent ?? request.agent,
         model: step.model ?? request.model,
+        systemPrompt: step.systemPrompt ?? request.systemPrompt,
       });
 
       if (!result.ok) {
@@ -509,6 +512,7 @@ export class ScheduleManagerService implements ScheduleService {
         workingDirectory: request.loopConfig.workingDirectory,
         agent: request.loopConfig.agent,
         model: request.loopConfig.model,
+        systemPrompt: request.loopConfig.systemPrompt,
       },
       scheduleType: request.scheduleType,
       cronExpression: request.cronExpression,

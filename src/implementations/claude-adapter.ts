@@ -37,6 +37,18 @@ export class ClaudeAdapter extends BaseAgentAdapter {
   }
 
   /**
+   * DECISION: Uses --append-system-prompt (not --system-prompt) to preserve Claude Code's
+   * default system prompt (tool definitions, safety instructions). --system-prompt replaces
+   * the built-in system prompt entirely, losing tool access and permission grants.
+   */
+  protected getSystemPromptConfig(
+    systemPrompt: string,
+    _path: string,
+  ): { args: readonly string[]; env: Record<string, string>; prependToPrompt: boolean } {
+    return { args: ['--append-system-prompt', systemPrompt], env: {}, prependToPrompt: false };
+  }
+
+  /**
    * Override resolveBaseUrl to also inject CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
    * when a baseUrl is active (prevents proxy failures from experimental beta headers).
    *

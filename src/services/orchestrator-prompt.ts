@@ -1,7 +1,12 @@
 /**
  * Orchestrator prompt builder
- * ARCHITECTURE: Pure function that constructs the system prompt for orchestrator agents
- * Pattern: No side effects, fully parameterized — easy to test
+ * ARCHITECTURE: Pure function that constructs the orchestrator prompts.
+ * Returns { systemPrompt, userPrompt } — role/capability instructions belong in
+ * the system prompt; the goal belongs in the user prompt.
+ *
+ * DECISION: Separation enables proper prompt routing per agent's native mechanism
+ * (e.g., --append-system-prompt for Claude). Callers that cannot use a system
+ * prompt can concatenate: systemPrompt + "\n\n" + userPrompt.
  */
 
 /**
@@ -23,12 +28,23 @@ export interface OrchestratorPromptParams {
 }
 
 /**
- * Build the orchestrator agent prompt
+ * Build the orchestrator agent prompts
+ *
+ * Returns { systemPrompt, userPrompt, operationalContract }:
+ *   - systemPrompt: Role/capability instructions (ROLE through RESILIENCE sections)
+ *   - userPrompt: The specific goal the orchestrator should achieve
+ *   - operationalContract: Minimal operational essentials (state file, working dir,
+ *     beat CLI commands, constraints) — injected into userPrompt when a custom
+ *     systemPrompt replaces the auto-generated one so the agent can still function.
  *
  * The prompt instructs the agent to use `beat` CLI commands (NOT MCP tools)
  * for worker management, enabling autonomous delegation and monitoring.
  */
-export function buildOrchestratorPrompt(params: OrchestratorPromptParams): string {
+export function buildOrchestratorPrompt(params: OrchestratorPromptParams): {
+  systemPrompt: string;
+  userPrompt: string;
+  operationalContract: string;
+} {
   const { goal, stateFilePath, workingDirectory, maxDepth, maxWorkers, agent, model } = params;
 
   // Build --agent and --model flag strings for injection into delegation examples.
@@ -37,15 +53,35 @@ export function buildOrchestratorPrompt(params: OrchestratorPromptParams): strin
   const modelFlag = model ? ` --model ${model}` : '';
   const agentModelFlags = `${agentFlag}${modelFlag}`;
 
-  return `ROLE: You are an autonomous software engineering orchestrator. You break down
+  // ── Shared fragments ─────────────────────────────────────────────────────────
+  // Each appears verbatim in both systemPrompt and operationalContract so that
+  // updating one location keeps both in sync.
+
+  const stateFileSection = `STATE FILE: ${stateFilePath}
+Read this file at the START of every iteration to understand current progress.
+Write updated state BEFORE exiting each iteration.`;
+
+  const workingDirectorySection = `WORKING DIRECTORY: ${workingDirectory}`;
+
+  const delegationSection = `DELEGATION (via beat CLI):
+  Delegate work:    beat run${agentModelFlags} "<prompt>"
+  Check status:     beat status <task-id>
+  Read output:      beat logs <task-id>
+  Cancel:           beat cancel <task-id>`;
+
+  const constraintsSection = `CONSTRAINTS:
+- Max concurrent workers: ${maxWorkers}
+- Max delegation depth: ${maxDepth}`;
+
+  // ── Full system prompt ────────────────────────────────────────────────────────
+
+  const systemPrompt = `ROLE: You are an autonomous software engineering orchestrator. You break down
 complex goals into subtasks, delegate to worker agents, monitor progress,
 and iterate until the goal is achieved.
 
-STATE FILE: ${stateFilePath}
-Read this file at the START of every iteration to understand current progress.
-Write updated state BEFORE exiting each iteration.
+${stateFileSection}
 
-WORKING DIRECTORY: ${workingDirectory}
+${workingDirectorySection}
 
 WORKER MANAGEMENT (via beat CLI):
   To delegate work:    beat run${agentModelFlags} "<prompt>"
@@ -63,7 +99,7 @@ LOOP MANAGEMENT (iterative refinement via beat CLI):
   Agent eval loop (recommended for code quality goals):
     beat loop${agentModelFlags} "<prompt>" --eval-mode agent --strategy retry
     beat loop${agentModelFlags} "<prompt>" --eval-mode agent --strategy optimize
-    beat loop${agentModelFlags} "<prompt>" --eval-mode agent --strategy retry \
+    beat loop${agentModelFlags} "<prompt>" --eval-mode agent --strategy retry \\
       --eval-prompt "Review the changes and output PASS if all tests pass and code quality is high, otherwise FAIL with an explanation."
   Loop status:         beat loop status <loop-id> [--history]
   Cancel loop:         beat loop cancel <loop-id>
@@ -76,9 +112,7 @@ AGENT EVAL MODE:
   For --strategy retry: evaluator last line must be "PASS" or "FAIL"
   For --strategy optimize: evaluator last line must be a numeric score
 
-CONSTRAINTS:
-- Max concurrent workers: ${maxWorkers}
-- Max delegation depth: ${maxDepth}
+${constraintsSection}
 - Prefer sequential work for tasks touching overlapping files
 - Max 3 workers modifying the same module simultaneously
 
@@ -115,8 +149,26 @@ RESILIENCE:
 - Always write the state file BEFORE exiting -- the system reads it to
   determine if the goal is complete
 - If you cannot achieve the goal, write status: "failed" with an explanation
-  in the context field. The system will terminate after a few iterations.
+  in the context field. The system will terminate after a few iterations.`;
 
-YOUR GOAL:
-${goal}`;
+  const userPrompt = `YOUR GOAL:\n${goal}`;
+
+  // ── Operational contract ──────────────────────────────────────────────────────
+  // Minimal operational knowledge the agent needs to function when a custom
+  // systemPrompt replaces the auto-generated one. Built from the same shared
+  // fragments as systemPrompt above — covers state file, working dir, CLI
+  // commands, and constraints.
+  const operationalContract = `REQUIRED — ORCHESTRATOR CONTRACT:
+
+${stateFileSection}
+When the goal is complete, set status: "complete" in the state file.
+If you cannot achieve the goal, set status: "failed" with an explanation in the context field.
+
+${workingDirectorySection}
+
+${delegationSection}
+
+${constraintsSection}`;
+
+  return { systemPrompt, userPrompt, operationalContract };
 }

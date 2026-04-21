@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Schedule } from '../../../src/core/domain.js';
 import {
   createSchedule,
+  LoopStrategy,
   MissedRunPolicy,
   ScheduleId,
   ScheduleStatus,
@@ -764,6 +765,74 @@ describe('SQLiteScheduleRepository - Unit Tests', () => {
       // runCount should not have changed
       const found = repo.findByIdSync(schedule.id);
       expect(found!.runCount).toBe(0);
+    });
+  });
+
+  describe('systemPrompt DB round-trip', () => {
+    it('should preserve systemPrompt in taskTemplate through save/findById', async () => {
+      const schedule = createTestSchedule({
+        taskTemplate: {
+          prompt: 'Scheduled task with system prompt',
+          systemPrompt: 'You are an expert engineer.',
+        },
+      });
+
+      await repo.save(schedule);
+      const findResult = await repo.findById(schedule.id);
+
+      expect(findResult.ok).toBe(true);
+      if (!findResult.ok) return;
+
+      expect(findResult.value!.taskTemplate.systemPrompt).toBe('You are an expert engineer.');
+    });
+
+    it('should preserve absent systemPrompt in taskTemplate through save/findById', async () => {
+      const schedule = createTestSchedule();
+
+      await repo.save(schedule);
+      const findResult = await repo.findById(schedule.id);
+
+      expect(findResult.ok).toBe(true);
+      if (!findResult.ok) return;
+
+      expect(findResult.value!.taskTemplate.systemPrompt).toBeUndefined();
+    });
+
+    it('should preserve systemPrompt in loopConfig through save/findById', async () => {
+      const schedule = createTestSchedule({
+        loopConfig: {
+          strategy: LoopStrategy.RETRY,
+          exitCondition: 'npm test',
+          systemPrompt: 'You are a loop iteration agent.',
+        },
+      });
+
+      await repo.save(schedule);
+      const findResult = await repo.findById(schedule.id);
+
+      expect(findResult.ok).toBe(true);
+      if (!findResult.ok) return;
+
+      expect(findResult.value!.loopConfig).toBeDefined();
+      expect(findResult.value!.loopConfig!.systemPrompt).toBe('You are a loop iteration agent.');
+    });
+
+    it('should preserve absent systemPrompt in loopConfig through save/findById', async () => {
+      const schedule = createTestSchedule({
+        loopConfig: {
+          strategy: LoopStrategy.RETRY,
+          exitCondition: 'npm test',
+        },
+      });
+
+      await repo.save(schedule);
+      const findResult = await repo.findById(schedule.id);
+
+      expect(findResult.ok).toBe(true);
+      if (!findResult.ok) return;
+
+      expect(findResult.value!.loopConfig).toBeDefined();
+      expect(findResult.value!.loopConfig!.systemPrompt).toBeUndefined();
     });
   });
 });

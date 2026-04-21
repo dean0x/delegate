@@ -26,6 +26,7 @@ import { ProcessConnector } from '../services/process-connector.js';
 interface WorkerState extends Worker {
   process: ChildProcess;
   task: Task;
+  cleanupFn?: (taskId: string) => void;
   timeoutTimer?: NodeJS.Timeout;
   heartbeatTimer?: NodeJS.Timeout;
 }
@@ -105,7 +106,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const adapter = adapterResult.value;
     const finalWorkingDirectory = task.workingDirectory || process.cwd();
 
-    // Spawn the process using the resolved adapter (pass model, orchestratorId, and jsonSchema)
+    // Spawn the process using the resolved adapter (pass model, orchestratorId, jsonSchema, systemPrompt)
     const spawnResult = adapter.spawn({
       prompt: task.prompt,
       workingDirectory: finalWorkingDirectory,
@@ -113,6 +114,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
       model: task.model,
       orchestratorId: task.orchestratorId,
       jsonSchema: task.jsonSchema,
+      systemPrompt: task.systemPrompt,
     });
 
     if (!spawnResult.ok) {
@@ -121,7 +123,12 @@ export class EventDrivenWorkerPool implements WorkerPool {
 
     const { process: childProcess, pid } = spawnResult.value;
 
-    const registerResult = this.registerWorker(task, childProcess, pid, agentProvider);
+    // Capture adapter cleanup at spawn time so cleanupWorkerState doesn't need
+    // a runtime registry lookup (P3: eliminates silent ?? 'claude' fallback and
+    // silent failure if registry is disposed after spawn).
+    const cleanupFn = task.systemPrompt ? (taskId: string) => adapter.cleanup(taskId) : undefined;
+
+    const registerResult = this.registerWorker(task, childProcess, pid, agentProvider, cleanupFn);
     if (!registerResult.ok) {
       return registerResult;
     }
@@ -242,6 +249,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     childProcess: ChildProcess,
     pid: number,
     agentProvider: string,
+    cleanupFn?: (taskId: string) => void,
   ): Result<WorkerState> {
     const workerId = WorkerId(`worker-${pid}`);
     const worker: WorkerState = {
@@ -253,6 +261,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
       memoryUsage: 0,
       process: childProcess,
       task,
+      cleanupFn,
     };
 
     this.workers.set(workerId, worker);
@@ -281,8 +290,10 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * and unregister from DB. Shared by kill() and handleWorkerCompletion().
    */
   private cleanupWorkerState(workerId: WorkerId, taskId: TaskId): void {
-    // Clear heartbeat timer before removing from maps (timer holds reference to worker)
+    // Capture worker ref before deleting from map — needed for task-scoped cleanup below
     const worker = this.workers.get(workerId);
+
+    // Clear heartbeat timer before removing from maps (timer holds reference to worker)
     if (worker?.heartbeatTimer) {
       clearInterval(worker.heartbeatTimer);
       worker.heartbeatTimer = undefined;
@@ -296,6 +307,19 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const unregResult = this.workerRepository.unregister(workerId);
     if (!unregResult.ok) {
       this.logger.error('Failed to unregister worker from DB', unregResult.error, { workerId });
+    }
+
+    // Best-effort cleanup of task-scoped resources via the adapter closure captured at spawn time.
+    // Only present when task.systemPrompt was set — other tasks have nothing to clean up.
+    if (worker?.cleanupFn) {
+      try {
+        worker.cleanupFn(taskId);
+      } catch (cleanupErr) {
+        this.logger.warn('Adapter cleanup() threw — task-scoped resources may not be freed', {
+          taskId,
+          error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+        });
+      }
     }
   }
 

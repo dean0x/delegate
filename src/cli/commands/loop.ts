@@ -27,6 +27,7 @@ interface ParsedLoopBaseArgs {
   readonly priority?: 'P0' | 'P1' | 'P2';
   readonly agent?: AgentProvider;
   readonly gitBranch?: string;
+  readonly systemPrompt?: string;
 }
 
 type ParsedLoopArgs =
@@ -57,6 +58,7 @@ interface RawLoopFlags {
   readonly workingDirectory: string | undefined;
   readonly agent: AgentProvider | undefined;
   readonly gitBranch: string | undefined;
+  readonly systemPrompt: string | undefined;
 }
 
 /**
@@ -116,6 +118,7 @@ function parseAgentModeArgs(flags: RawLoopFlags): Result<ParsedLoopArgs, string>
     priority: flags.priority,
     agent: flags.agent,
     gitBranch: flags.gitBranch,
+    systemPrompt: flags.systemPrompt,
   };
   if (flags.isPipeline) {
     return ok({ ...shared, isPipeline: true as const, pipelineSteps: flags.pipelineSteps as string[] });
@@ -191,6 +194,7 @@ function parseShellModeArgs(flags: RawLoopFlags): Result<ParsedLoopArgs, string>
     priority: flags.priority,
     agent: flags.agent,
     gitBranch: flags.gitBranch,
+    systemPrompt: flags.systemPrompt,
   };
 
   if (flags.isPipeline) {
@@ -224,6 +228,7 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
   let workingDirectory: string | undefined;
   let agent: AgentProvider | undefined;
   let gitBranch: string | undefined;
+  let systemPrompt: string | undefined;
 
   for (let i = 0; i < loopArgs.length; i++) {
     const arg = loopArgs[i];
@@ -310,6 +315,12 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
     } else if (arg === '--git-branch' && next) {
       gitBranch = next;
       i++;
+    } else if (arg === '--system-prompt') {
+      if (next === undefined) {
+        return err('--system-prompt requires a prompt string');
+      }
+      systemPrompt = next;
+      i++;
     } else if (arg.startsWith('-')) {
       return err(`Unknown flag: ${arg}`);
     } else {
@@ -342,6 +353,7 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
     workingDirectory,
     agent,
     gitBranch,
+    systemPrompt,
   };
 
   if (evalMode === EvalMode.AGENT) {
@@ -421,6 +433,7 @@ async function handleLoopCreate(loopArgs: string[]): Promise<void> {
     priority: args.priority ? Priority[args.priority] : undefined,
     agent: args.agent,
     gitBranch: args.gitBranch,
+    systemPrompt: args.systemPrompt,
   });
 
   const loop = exitOnError(result, s, 'Failed to create loop');

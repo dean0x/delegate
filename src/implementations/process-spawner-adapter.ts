@@ -34,4 +34,9 @@ export class ProcessSpawnerAdapter implements AgentAdapter {
   dispose(): void {
     // ProcessSpawner interface does not define dispose — nothing to clean up
   }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  cleanup(_taskId: string): void {
+    // ProcessSpawner does not write task-scoped files — nothing to clean up
+  }
 }

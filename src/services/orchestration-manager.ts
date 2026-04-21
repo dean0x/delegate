@@ -8,7 +8,7 @@
 import { mkdirSync, unlinkSync } from 'fs';
 import os from 'os';
 import path from 'path';
-import { resolveDefaultAgent } from '../core/agents.js';
+import { type AgentProvider, resolveDefaultAgent } from '../core/agents.js';
 import type { Configuration } from '../core/configuration.js';
 import {
   createOrchestration,
@@ -70,17 +70,9 @@ export class OrchestrationManagerService implements OrchestrationService {
     // Input validation
     // ========================================================================
 
-    // Validate goal: 1-8000 chars
+    // Validate goal: non-empty
     if (!request.goal || request.goal.trim().length === 0) {
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, 'goal is required', { field: 'goal' }));
-    }
-    if (request.goal.length > 8000) {
-      return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, 'goal must not exceed 8000 characters', {
-          field: 'goal',
-          length: request.goal.length,
-        }),
-      );
     }
 
     // Validate working directory
@@ -206,19 +198,17 @@ export class OrchestrationManagerService implements OrchestrationService {
     // Build prompt and create loop
     // ========================================================================
 
-    const prompt = buildOrchestratorPrompt({
-      goal: request.goal,
+    const { finalSystemPrompt, finalUserPrompt } = this.buildFinalPrompts(
+      request,
+      orchestration,
       stateFilePath,
-      workingDirectory: validatedWorkingDirectory,
-      maxDepth: orchestration.maxDepth,
-      maxWorkers: orchestration.maxWorkers,
+      validatedWorkingDirectory,
       agent,
-      model: orchestration.model,
-    });
+    );
 
     const loopResult = await this.loopService.createLoop({
       strategy: LoopStrategy.RETRY,
-      prompt,
+      prompt: finalUserPrompt,
       exitCondition: `node ${JSON.stringify(exitConditionScript)}`,
       maxIterations: orchestration.maxIterations,
       maxConsecutiveFailures: 5,
@@ -228,6 +218,8 @@ export class OrchestrationManagerService implements OrchestrationService {
       ...(orchestration.model !== undefined && { model: orchestration.model }),
       // v1.3.0: attribute all loop iteration tasks to this orchestration
       orchestratorId: orchestration.id,
+      // Thread system prompt through to each loop iteration task
+      systemPrompt: finalSystemPrompt,
     });
 
     if (!loopResult.ok) {
@@ -295,6 +287,42 @@ export class OrchestrationManagerService implements OrchestrationService {
     });
 
     return ok(updatedOrchestration);
+  }
+
+  /**
+   * Build finalSystemPrompt and finalUserPrompt from request + generated prompts.
+   *
+   * DECISION: When a custom systemPrompt is provided, it replaces the auto-generated
+   * role instructions entirely. The operationalContract (state file path, working dir,
+   * delegation commands) is injected into the user prompt so the agent can still
+   * function without the default system prompt.
+   */
+  private buildFinalPrompts(
+    request: OrchestratorCreateRequest,
+    orchestration: Orchestration,
+    stateFilePath: string,
+    workingDirectory: string,
+    agent: AgentProvider,
+  ): { finalSystemPrompt: string; finalUserPrompt: string } {
+    const {
+      systemPrompt: orchestratorSystemPrompt,
+      userPrompt,
+      operationalContract,
+    } = buildOrchestratorPrompt({
+      goal: request.goal,
+      stateFilePath,
+      workingDirectory,
+      maxDepth: orchestration.maxDepth,
+      maxWorkers: orchestration.maxWorkers,
+      agent,
+      model: orchestration.model,
+    });
+
+    const customSystemPrompt = request.systemPrompt?.trim();
+    const finalSystemPrompt = customSystemPrompt || orchestratorSystemPrompt;
+    const finalUserPrompt = customSystemPrompt ? `${operationalContract}\n\n${userPrompt}` : userPrompt;
+
+    return { finalSystemPrompt, finalUserPrompt };
   }
 
   async getOrchestration(id: OrchestratorId): Promise<Result<Orchestration>> {

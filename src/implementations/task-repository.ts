@@ -37,6 +37,7 @@ const TaskRowSchema = z.object({
   agent: z.enum(AGENT_PROVIDERS_TUPLE).nullable(),
   model: z.string().nullable(),
   orchestrator_id: z.string().nullable().optional(),
+  system_prompt: z.string().nullable().optional(),
 });
 
 /**
@@ -64,6 +65,7 @@ interface TaskRow {
   readonly agent: string | null;
   readonly model: string | null;
   readonly orchestrator_id?: string | null;
+  readonly system_prompt?: string | null;
 }
 
 export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations {
@@ -96,12 +98,14 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
         id, prompt, status, priority, working_directory,
         timeout, max_output_buffer,
         created_at, started_at, completed_at, worker_id, exit_code, dependencies,
-        parent_task_id, retry_count, retry_of, continue_from, agent, model, orchestrator_id
+        parent_task_id, retry_count, retry_of, continue_from, agent, model, orchestrator_id,
+        system_prompt
       ) VALUES (
         @id, @prompt, @status, @priority, @workingDirectory,
         @timeout, @maxOutputBuffer,
         @createdAt, @startedAt, @completedAt, @workerId, @exitCode, @dependencies,
-        @parentTaskId, @retryCount, @retryOf, @continueFrom, @agent, @model, @orchestratorId
+        @parentTaskId, @retryCount, @retryOf, @continueFrom, @agent, @model, @orchestratorId,
+        @systemPrompt
       )
     `);
 
@@ -126,7 +130,8 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
         continue_from = @continueFrom,
         agent = @agent,
         model = @model,
-        orchestrator_id = @orchestratorId
+        orchestrator_id = @orchestratorId,
+        system_prompt = @systemPrompt
       WHERE id = @id
     `);
 
@@ -134,7 +139,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent, model, orchestrator_id
+             dependencies, continue_from, agent, model, orchestrator_id, system_prompt
       FROM tasks WHERE id = ?
     `);
 
@@ -142,7 +147,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent, model, orchestrator_id
+             dependencies, continue_from, agent, model, orchestrator_id, system_prompt
       FROM tasks ORDER BY created_at DESC
     `);
 
@@ -150,7 +155,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent, model, orchestrator_id
+             dependencies, continue_from, agent, model, orchestrator_id, system_prompt
       FROM tasks WHERE status = ? ORDER BY created_at DESC
     `);
 
@@ -166,7 +171,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent, model, orchestrator_id
+             dependencies, continue_from, agent, model, orchestrator_id, system_prompt
       FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?
     `);
 
@@ -177,7 +182,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent, model, orchestrator_id
+             dependencies, continue_from, agent, model, orchestrator_id, system_prompt
       FROM tasks
       WHERE COALESCE(completed_at, started_at, created_at) >= ?
       ORDER BY COALESCE(completed_at, started_at, created_at) DESC
@@ -191,7 +196,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent, model, orchestrator_id
+             dependencies, continue_from, agent, model, orchestrator_id, system_prompt
       FROM tasks
       WHERE orchestrator_id = ?
       ORDER BY created_at DESC
@@ -256,6 +261,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       agent: task.agent || null,
       model: task.model || null,
       orchestratorId: task.orchestratorId ?? null,
+      systemPrompt: task.systemPrompt ?? null,
     };
   }
 
@@ -413,6 +419,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       agent: data.agent ?? undefined,
       model: data.model ?? undefined,
       orchestratorId: data.orchestrator_id ? (data.orchestrator_id as OrchestratorId) : undefined,
+      systemPrompt: data.system_prompt ?? undefined,
       createdAt: data.created_at,
       startedAt: data.started_at || undefined,
       completedAt: data.completed_at || undefined,
@@ -437,7 +444,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
             SELECT id, prompt, status, priority, working_directory,
                    timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
                    created_at, started_at, completed_at, worker_id, exit_code,
-                   dependencies, continue_from, agent, model, orchestrator_id
+                   dependencies, continue_from, agent, model, orchestrator_id, system_prompt
             FROM tasks
             WHERE orchestrator_id = ? AND status IN (${placeholders})
             ORDER BY created_at DESC

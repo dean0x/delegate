@@ -5,7 +5,7 @@ import type { ReadOnlyContext } from '../read-only-context.js';
 import { errorMessage, exitOnError, exitOnNull, withReadOnlyContext } from '../services.js';
 import * as ui from '../ui.js';
 
-export async function getTaskStatus(taskId?: string): Promise<void> {
+export async function getTaskStatus(taskId?: string, options: { showSystemPrompt?: boolean } = {}): Promise<void> {
   const s = ui.createSpinner();
   let ctx: ReadOnlyContext | undefined;
   try {
@@ -30,6 +30,9 @@ export async function getTaskStatus(taskId?: string): Promise<void> {
         lines.push(`Duration: ${ui.formatDuration(task.completedAt - task.startedAt)}`);
       }
       lines.push(`Prompt:   ${truncatePrompt(task.prompt, 100)}`);
+      if (options.showSystemPrompt && task.systemPrompt) {
+        lines.push(`System:   ${truncatePrompt(task.systemPrompt, 200)}`);
+      }
 
       // Dependencies
       if (task.dependsOn && task.dependsOn.length > 0) {

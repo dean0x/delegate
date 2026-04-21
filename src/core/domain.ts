@@ -112,6 +112,11 @@ export interface Task {
   // Only applicable to agents that support structured output (e.g., Claude Code).
   readonly jsonSchema?: string;
 
+  // System prompt override: injected into agent via per-agent mechanism
+  // Claude: --append-system-prompt (preserves defaults); Codex: -c developer_instructions;
+  // Gemini: GEMINI_SYSTEM_MD env var (combined with base prompt).
+  readonly systemPrompt?: string;
+
   // Orchestration attribution (v1.3.0): orchestration that spawned this task
   // Set when a task is created inside an orchestration context (CLI env var or MCP metadata).
   // Validated against DB on receipt — dropped silently if orchestration not found.
@@ -202,6 +207,10 @@ export interface TaskRequest {
   // Only applicable to agents that support structured output (e.g., Claude Code).
   readonly jsonSchema?: string;
 
+  // System prompt override: injected into agent via per-agent mechanism
+  // Claude: --append-system-prompt; Codex: -c developer_instructions; Gemini: GEMINI_SYSTEM_MD.
+  readonly systemPrompt?: string;
+
   // Orchestration attribution (v1.3.0): orchestration that spawned this task
   // Passed through CLI env var (AUTOBEAT_ORCHESTRATOR_ID) or MCP metadata field.
   readonly orchestratorId?: OrchestratorId;
@@ -261,6 +270,9 @@ export const createTask = (request: TaskRequest): Task => {
 
     // Structured output for eval tasks (v1.3.0)
     jsonSchema: request.jsonSchema,
+
+    // System prompt override
+    systemPrompt: request.systemPrompt,
 
     // Orchestration attribution (v1.3.0)
     orchestratorId: request.orchestratorId,
@@ -422,6 +434,7 @@ export interface ScheduleCreateRequest {
   readonly afterScheduleId?: ScheduleId; // Chain: block until after-schedule's latest task completes
   readonly agent?: AgentProvider; // Multi-agent support (v0.5.0)
   readonly model?: string; // Per-schedule model override
+  readonly systemPrompt?: string; // system prompt injected into the agent on every scheduled run
 }
 
 /**
@@ -434,6 +447,7 @@ export interface PipelineStepRequest {
   readonly workingDirectory?: string;
   readonly agent?: AgentProvider; // Multi-agent support (v0.5.0)
   readonly model?: string; // Per-step model override
+  readonly systemPrompt?: string; // Per-step system prompt override
 }
 
 export interface PipelineCreateRequest {
@@ -442,6 +456,7 @@ export interface PipelineCreateRequest {
   readonly workingDirectory?: string; // shared default for all steps
   readonly agent?: AgentProvider; // shared default for all steps
   readonly model?: string; // shared default model for all steps
+  readonly systemPrompt?: string; // system prompt injected into every step task agent
 }
 
 /**
@@ -463,6 +478,7 @@ export interface ScheduledPipelineCreateRequest {
   readonly afterScheduleId?: ScheduleId;
   readonly agent?: AgentProvider; // shared default for all steps
   readonly model?: string; // shared default model for all steps
+  readonly systemPrompt?: string; // system prompt injected into every step task agent on each trigger
 }
 
 /**
@@ -674,6 +690,8 @@ export interface LoopCreateRequest {
   readonly evalType?: EvalType; // Agent eval sub-strategy (default: feedforward)
   readonly judgeAgent?: AgentProvider; // Agent provider for judge mode (judge evalType only)
   readonly judgePrompt?: string; // Custom prompt for judge agent (judge evalType only)
+  // System prompt override: injected into iteration task agent via per-agent mechanism
+  readonly systemPrompt?: string;
 }
 
 /**
@@ -693,6 +711,7 @@ export const createLoop = (request: LoopCreateRequest, workingDirectory: string,
       agent: request.agent,
       model: request.model,
       orchestratorId: request.orchestratorId,
+      systemPrompt: request.systemPrompt,
     },
     pipelineSteps: request.pipelineSteps,
     exitCondition: request.exitCondition ?? '',
@@ -784,6 +803,9 @@ export interface OrchestratorCreateRequest {
   readonly maxDepth?: number;
   readonly maxWorkers?: number;
   readonly maxIterations?: number;
+  // System prompt override: replaces default role instructions when provided.
+  // Orchestrator's role/capability instructions are auto-generated; setting this overrides them.
+  readonly systemPrompt?: string;
 }
 
 /**

@@ -128,12 +128,10 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       expect(result.error.message).toContain('goal is required');
     });
 
-    it('should reject goal exceeding 8000 characters', async () => {
-      const result = await service.createOrchestration({ goal: 'x'.repeat(8001) });
+    it('should accept goals of any length', async () => {
+      const result = await service.createOrchestration({ goal: 'x'.repeat(10000) });
 
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.error.message).toContain('8000 characters');
+      expect(result.ok).toBe(true);
     });
 
     it('should use custom maxDepth and maxWorkers', async () => {
@@ -181,6 +179,65 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       const createdLoop = (loopEvents[0] as { loop: { taskTemplate?: { model?: string } } }).loop;
       // No model should be set when not requested
       expect(createdLoop?.taskTemplate?.model).toBeUndefined();
+    });
+
+    describe('systemPrompt handling', () => {
+      it('should use user-provided systemPrompt on loop when custom systemPrompt is given', async () => {
+        const result = await service.createOrchestration({
+          goal: 'Build auth',
+          systemPrompt: 'You are a security expert.',
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+
+        const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+        const loop = (loopEvents[0] as { loop: { taskTemplate: { systemPrompt?: string } } }).loop;
+        expect(loop.taskTemplate.systemPrompt).toBe('You are a security expert.');
+      });
+
+      it('should inject operational contract into prompt when custom systemPrompt is given', async () => {
+        const result = await service.createOrchestration({
+          goal: 'Build auth',
+          systemPrompt: 'You are a security expert.',
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+
+        const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+        const loop = (loopEvents[0] as { loop: { taskTemplate: { prompt: string } } }).loop;
+        // Contract must be present before the goal
+        expect(loop.taskTemplate.prompt).toContain('ORCHESTRATOR CONTRACT');
+        expect(loop.taskTemplate.prompt).toContain('Build auth');
+      });
+
+      it('should not inject contract when no custom systemPrompt (default flow)', async () => {
+        const result = await service.createOrchestration({
+          goal: 'Build auth',
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+
+        const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+        const loop = (loopEvents[0] as { loop: { taskTemplate: { prompt: string } } }).loop;
+        // Default flow: prompt is just the goal, no contract
+        expect(loop.taskTemplate.prompt).not.toContain('ORCHESTRATOR CONTRACT');
+        expect(loop.taskTemplate.prompt).toContain('Build auth');
+      });
+
+      it('should treat empty-string systemPrompt as absent (uses auto-generated)', async () => {
+        const result = await service.createOrchestration({
+          goal: 'Build auth',
+          systemPrompt: '   ',
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+
+        const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+        const loop = (loopEvents[0] as { loop: { taskTemplate: { systemPrompt?: string; prompt: string } } }).loop;
+        // Empty/whitespace systemPrompt → uses auto-generated, no contract in prompt
+        expect(loop.taskTemplate.systemPrompt).not.toBe('   ');
+        expect(loop.taskTemplate.prompt).not.toContain('ORCHESTRATOR CONTRACT');
+      });
     });
   });
 
@@ -284,7 +341,7 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       expect(evt?.reason).toBe('cascade reason');
     });
 
-    it('emits OrchestrationCancelled without performing inline task cancellation', async () => {
+    it('should emit OrchestrationCancelled without performing inline task cancellation', async () => {
       // ARCHITECTURE: v1.3.0 cancel cascade is entirely event-driven.
       // OrchestrationManagerService emits OrchestrationCancelled and does not call
       // taskManager.cancel directly — AttributedTaskCancellationHandler handles the cascade.

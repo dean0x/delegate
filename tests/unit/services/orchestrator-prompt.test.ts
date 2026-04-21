@@ -1,6 +1,11 @@
 /**
  * Unit tests for orchestrator prompt builder
  * ARCHITECTURE: Tests pure function output for correct content
+ *
+ * buildOrchestratorPrompt returns { systemPrompt, userPrompt, operationalContract }.
+ * - systemPrompt: role/capability instructions (ROLE through RESILIENCE)
+ * - userPrompt: the goal statement
+ * - operationalContract: minimal essentials injected when a custom systemPrompt is used
  */
 
 import { describe, expect, it } from 'vitest';
@@ -15,93 +20,159 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
     maxWorkers: 5,
   };
 
-  it('should include the goal in the prompt', () => {
-    const prompt = buildOrchestratorPrompt(defaultParams);
-    expect(prompt).toContain('Build a complete authentication system');
+  it('should return { systemPrompt, userPrompt } object', () => {
+    const result = buildOrchestratorPrompt(defaultParams);
+    expect(result).toHaveProperty('systemPrompt');
+    expect(result).toHaveProperty('userPrompt');
+    expect(typeof result.systemPrompt).toBe('string');
+    expect(typeof result.userPrompt).toBe('string');
   });
 
-  it('should include the state file path', () => {
-    const prompt = buildOrchestratorPrompt(defaultParams);
-    expect(prompt).toContain('/home/user/.autobeat/orchestrator-state/state-123.json');
+  it('should include the goal in userPrompt', () => {
+    const { userPrompt } = buildOrchestratorPrompt(defaultParams);
+    expect(userPrompt).toContain('Build a complete authentication system');
   });
 
-  it('should include the working directory', () => {
-    const prompt = buildOrchestratorPrompt(defaultParams);
-    expect(prompt).toContain('/workspace/my-project');
+  it('should not include the goal in systemPrompt', () => {
+    const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
+    expect(systemPrompt).not.toContain('Build a complete authentication system');
   });
 
-  it('should include beat CLI commands', () => {
-    const prompt = buildOrchestratorPrompt(defaultParams);
-    expect(prompt).toContain('beat run');
-    expect(prompt).toContain('beat status');
-    expect(prompt).toContain('beat logs');
-    expect(prompt).toContain('beat cancel');
+  it('should include the state file path in systemPrompt', () => {
+    const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
+    expect(systemPrompt).toContain('/home/user/.autobeat/orchestrator-state/state-123.json');
   });
 
-  it('should include maxWorkers constraint', () => {
-    const prompt = buildOrchestratorPrompt({ ...defaultParams, maxWorkers: 10 });
-    expect(prompt).toContain('Max concurrent workers: 10');
+  it('should include the working directory in systemPrompt', () => {
+    const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
+    expect(systemPrompt).toContain('/workspace/my-project');
   });
 
-  it('should include maxDepth constraint', () => {
-    const prompt = buildOrchestratorPrompt({ ...defaultParams, maxDepth: 7 });
-    expect(prompt).toContain('Max delegation depth: 7');
+  it('should include beat CLI commands in systemPrompt', () => {
+    const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
+    expect(systemPrompt).toContain('beat run');
+    expect(systemPrompt).toContain('beat status');
+    expect(systemPrompt).toContain('beat logs');
+    expect(systemPrompt).toContain('beat cancel');
   });
 
-  it('should include decision protocol', () => {
-    const prompt = buildOrchestratorPrompt(defaultParams);
-    expect(prompt).toContain('DECISION PROTOCOL');
-    expect(prompt).toContain('PLANNING');
-    expect(prompt).toContain('EXECUTING');
-    expect(prompt).toContain('MONITORING');
-    expect(prompt).toContain('VALIDATION');
-    expect(prompt).toContain('COMPLETION');
+  it('should include maxWorkers constraint in systemPrompt', () => {
+    const { systemPrompt } = buildOrchestratorPrompt({ ...defaultParams, maxWorkers: 10 });
+    expect(systemPrompt).toContain('Max concurrent workers: 10');
   });
 
-  it('should include resilience instructions', () => {
-    const prompt = buildOrchestratorPrompt(defaultParams);
-    expect(prompt).toContain('RESILIENCE');
-    expect(prompt).toContain('state file is missing');
-    expect(prompt).toContain('status: "failed"');
+  it('should include maxDepth constraint in systemPrompt', () => {
+    const { systemPrompt } = buildOrchestratorPrompt({ ...defaultParams, maxDepth: 7 });
+    expect(systemPrompt).toContain('Max delegation depth: 7');
   });
 
-  it('should include conflict avoidance', () => {
-    const prompt = buildOrchestratorPrompt(defaultParams);
-    expect(prompt).toContain('CONFLICT AVOIDANCE');
-    expect(prompt).toContain('integration validation task');
+  it('should include decision protocol in systemPrompt', () => {
+    const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
+    expect(systemPrompt).toContain('DECISION PROTOCOL');
+    expect(systemPrompt).toContain('PLANNING');
+    expect(systemPrompt).toContain('EXECUTING');
+    expect(systemPrompt).toContain('MONITORING');
+    expect(systemPrompt).toContain('VALIDATION');
+    expect(systemPrompt).toContain('COMPLETION');
+  });
+
+  it('should include resilience instructions in systemPrompt', () => {
+    const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
+    expect(systemPrompt).toContain('RESILIENCE');
+    expect(systemPrompt).toContain('state file is missing');
+    expect(systemPrompt).toContain('status: "failed"');
+  });
+
+  it('should include conflict avoidance in systemPrompt', () => {
+    const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
+    expect(systemPrompt).toContain('CONFLICT AVOIDANCE');
+    expect(systemPrompt).toContain('integration validation task');
   });
 
   describe('agent and model passthrough', () => {
-    it('does not add --agent flag when agent is not provided', () => {
-      const prompt = buildOrchestratorPrompt(defaultParams);
+    it('should not add --agent flag when agent is not provided', () => {
+      const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
       // Default params have no agent — delegation examples should be plain "beat run"
-      expect(prompt).toContain('beat run "<prompt>"');
-      expect(prompt).not.toContain('--agent');
+      expect(systemPrompt).toContain('beat run "<prompt>"');
+      expect(systemPrompt).not.toContain('--agent');
     });
 
-    it('does not add --model flag when model is not provided', () => {
-      const prompt = buildOrchestratorPrompt(defaultParams);
-      expect(prompt).not.toContain('--model');
+    it('should not add --model flag when model is not provided', () => {
+      const { systemPrompt } = buildOrchestratorPrompt(defaultParams);
+      expect(systemPrompt).not.toContain('--model');
     });
 
-    it('threads --agent flag into worker delegation example when agent is set', () => {
-      const prompt = buildOrchestratorPrompt({ ...defaultParams, agent: 'codex' });
-      expect(prompt).toContain('beat run --agent codex "<prompt>"');
+    it('should thread --agent flag into worker delegation example when agent is set', () => {
+      const { systemPrompt } = buildOrchestratorPrompt({ ...defaultParams, agent: 'codex' });
+      expect(systemPrompt).toContain('beat run --agent codex "<prompt>"');
     });
 
-    it('threads --model flag into worker delegation example when model is set', () => {
-      const prompt = buildOrchestratorPrompt({ ...defaultParams, model: 'claude-opus-4-5' });
-      expect(prompt).toContain('beat run --model claude-opus-4-5 "<prompt>"');
+    it('should thread --model flag into worker delegation example when model is set', () => {
+      const { systemPrompt } = buildOrchestratorPrompt({ ...defaultParams, model: 'claude-opus-4-5' });
+      expect(systemPrompt).toContain('beat run --model claude-opus-4-5 "<prompt>"');
     });
 
-    it('threads both --agent and --model flags when both are set', () => {
-      const prompt = buildOrchestratorPrompt({ ...defaultParams, agent: 'gemini', model: 'gemini-2.5-pro' });
-      expect(prompt).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
+    it('should thread both --agent and --model flags when both are set', () => {
+      const { systemPrompt } = buildOrchestratorPrompt({
+        ...defaultParams,
+        agent: 'gemini',
+        model: 'gemini-2.5-pro',
+      });
+      expect(systemPrompt).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
     });
 
-    it('threads flags into loop delegation examples too', () => {
-      const prompt = buildOrchestratorPrompt({ ...defaultParams, agent: 'claude', model: 'claude-opus-4-5' });
-      expect(prompt).toContain('beat loop --agent claude --model claude-opus-4-5 "<prompt>" --until');
+    it('should thread flags into loop delegation examples too', () => {
+      const { systemPrompt } = buildOrchestratorPrompt({
+        ...defaultParams,
+        agent: 'claude',
+        model: 'claude-opus-4-5',
+      });
+      expect(systemPrompt).toContain('beat loop --agent claude --model claude-opus-4-5 "<prompt>" --until');
+    });
+  });
+
+  describe('operationalContract', () => {
+    it('should contain state file path', () => {
+      const { operationalContract } = buildOrchestratorPrompt(defaultParams);
+      expect(operationalContract).toContain(defaultParams.stateFilePath);
+    });
+
+    it('should contain completion signal', () => {
+      const { operationalContract } = buildOrchestratorPrompt(defaultParams);
+      expect(operationalContract).toContain('status: "complete"');
+    });
+
+    it('should contain working directory and beat CLI commands', () => {
+      const { operationalContract } = buildOrchestratorPrompt(defaultParams);
+      expect(operationalContract).toContain(defaultParams.workingDirectory);
+      expect(operationalContract).toContain('beat run');
+      expect(operationalContract).toContain('beat status');
+      expect(operationalContract).toContain('beat logs');
+      expect(operationalContract).toContain('beat cancel');
+    });
+
+    it('should thread --agent and --model flags into delegation command', () => {
+      const { operationalContract } = buildOrchestratorPrompt({
+        ...defaultParams,
+        agent: 'gemini',
+        model: 'gemini-2.5-pro',
+      });
+      expect(operationalContract).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
+    });
+
+    it('should contain failure signal', () => {
+      const { operationalContract } = buildOrchestratorPrompt(defaultParams);
+      expect(operationalContract).toContain('status: "failed"');
+    });
+
+    it('should contain constraints', () => {
+      const { operationalContract } = buildOrchestratorPrompt({
+        ...defaultParams,
+        maxWorkers: 12,
+        maxDepth: 4,
+      });
+      expect(operationalContract).toContain('Max concurrent workers: 12');
+      expect(operationalContract).toContain('Max delegation depth: 4');
     });
   });
 });

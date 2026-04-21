@@ -92,6 +92,9 @@ const TaskRequestSchema = z.object({
   // with loop.taskTemplate. Schedules rarely carry this today, but the field must survive
   // serialization for parity across the three taskTemplate sinks (tasks, loops, schedules).
   orchestratorId: z.string().optional(),
+  // System prompt override: must survive DB round-trip so scheduled triggers inject the
+  // correct prompt into each task agent. Omitted here = silent data loss on every trigger.
+  systemPrompt: z.string().optional(),
 });
 
 /**
@@ -139,6 +142,9 @@ const LoopConfigSchema = z.object({
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
   model: z.string().optional(),
   gitBranch: z.string().optional(),
+  // System prompt override: must survive DB round-trip so scheduled loop triggers inject
+  // the correct prompt. The satisfies guard does not catch missing optional fields.
+  systemPrompt: z.string().optional(),
 }) satisfies z.ZodType<LoopCreateRequest>;
 
 /**

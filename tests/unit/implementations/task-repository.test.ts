@@ -370,6 +370,62 @@ describe('SQLiteTaskRepository', () => {
     });
   });
 
+  describe('systemPrompt field persistence', () => {
+    it('should save and retrieve task with systemPrompt', async () => {
+      const task = createTestTask({
+        id: 'task-with-systemprompt',
+        systemPrompt: 'Always respond in JSON',
+      });
+      await repo.save(task);
+
+      const result = await repo.findById(TaskId('task-with-systemprompt'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).not.toBeNull();
+      expect(result.value!.systemPrompt).toBe('Always respond in JSON');
+    });
+
+    it('should save and retrieve task without systemPrompt as undefined', async () => {
+      const task = createTestTask({
+        id: 'task-no-systemprompt',
+      });
+      await repo.save(task);
+
+      const result = await repo.findById(TaskId('task-no-systemprompt'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).not.toBeNull();
+      expect(result.value!.systemPrompt).toBeUndefined();
+    });
+
+    it('should update systemPrompt via update()', async () => {
+      const task = createTestTask({ id: 'task-update-systemprompt' });
+      await repo.save(task);
+
+      const updateResult = await repo.update(TaskId('task-update-systemprompt'), {
+        systemPrompt: 'Be concise',
+      });
+      expect(updateResult.ok).toBe(true);
+
+      const result = await repo.findById(TaskId('task-update-systemprompt'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value!.systemPrompt).toBe('Be concise');
+    });
+
+    it('should return systemPrompt in findAll results', async () => {
+      const task = createTestTask({ id: 'findall-systemprompt-task', systemPrompt: 'Use markdown' });
+      await repo.save(task);
+
+      const result = await repo.findAll();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const found = result.value.find((t) => t.id === 'findall-systemprompt-task');
+      expect(found).toBeDefined();
+      expect(found!.systemPrompt).toBe('Use markdown');
+    });
+  });
+
   describe('countByStatus()', () => {
     it('returns an empty record when no tasks exist', async () => {
       const result = await repo.countByStatus();

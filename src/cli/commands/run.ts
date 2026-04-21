@@ -134,6 +134,7 @@ export async function runTask(
     maxOutputBuffer?: number;
     agent?: string;
     model?: string;
+    systemPrompt?: string;
   },
 ): Promise<void> {
   let container: Container | undefined;
@@ -169,6 +170,11 @@ export async function runTask(
       if (options.workingDirectory) params.push(`Dir: ${options.workingDirectory}`);
       if (options.agent) params.push(`Agent: ${options.agent}`);
       if (options.model) params.push(`Model: ${options.model}`);
+      if (options.systemPrompt) {
+        const preview =
+          options.systemPrompt.length > 40 ? `${options.systemPrompt.substring(0, 40)}...` : options.systemPrompt;
+        params.push(`SystemPrompt: ${preview}`);
+      }
       if (options.dependsOn && options.dependsOn.length > 0) params.push(`Deps: ${options.dependsOn.join(', ')}`);
       if (options.continueFrom) params.push(`Continue from: ${options.continueFrom}`);
       if (options.timeout) params.push(`Timeout: ${ui.formatMs(options.timeout)}`);
@@ -210,6 +216,7 @@ export async function runTask(
       continueFrom: options?.continueFrom ? TaskId(options.continueFrom) : undefined,
       agent: options?.agent as AgentProvider | undefined,
       model: options?.model,
+      systemPrompt: options?.systemPrompt,
       orchestratorId,
     };
 

@@ -1,10 +1,14 @@
 /**
- * CLI commands: beat agents list | check | config
+ * CLI commands: beat agents list | check | config | refresh-base-prompt
  *
  * ARCHITECTURE: Uses static AGENT_PROVIDERS for listing,
  * checkAgentAuth() for auth status, and agent config storage for key management.
  */
 
+import { spawnSync } from 'child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import os from 'os';
+import path from 'path';
 import {
   AGENT_AUTH,
   AGENT_DESCRIPTIONS,
@@ -199,5 +203,100 @@ export async function agentsConfigReset(agent: string | undefined): Promise<void
   }
 
   ui.success(`${agent} config cleared`);
+  process.exit(0);
+}
+
+/**
+ * beat agents refresh-base-prompt [agent]
+ *
+ * DESIGN: Certain agents (currently Gemini) replace rather than append the system prompt
+ * via GEMINI_SYSTEM_MD. To simulate "append" behaviour we cache the agent's native base
+ * prompt and prepend it to any per-task systemPrompt at runtime. This command seeds or
+ * refreshes that cache by running the agent CLI with GEMINI_WRITE_SYSTEM_MD set so it
+ * writes its native prompt to a known path, then records the export timestamp in a
+ * companion .meta.json file for staleness tracking.
+ *
+ * Only Gemini requires this currently. Other agents (Claude, Codex) support native
+ * append semantics and do not need a cached base prompt.
+ */
+export async function refreshBasePrompt(agent?: string): Promise<void> {
+  // Default to gemini; other agents don't need a base-prompt cache
+  const targetAgent = agent ?? 'gemini';
+
+  if (!isAgentProvider(targetAgent)) {
+    ui.error(`Unknown agent: "${targetAgent}". Available agents: ${AGENT_PROVIDERS.join(', ')}`);
+    process.exit(1);
+  }
+
+  if (targetAgent !== 'gemini') {
+    ui.info(
+      `${targetAgent} uses native system-prompt append — no base-prompt cache needed. Only gemini requires refresh-base-prompt.`,
+    );
+    process.exit(0);
+  }
+
+  const cacheDir = path.join(os.homedir(), '.autobeat', 'system-prompts');
+  const baseCachePath = path.join(cacheDir, 'gemini-base.md');
+  const metaPath = path.join(cacheDir, 'gemini-base.meta.json');
+
+  mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
+
+  ui.step(`Exporting Gemini base system prompt...`);
+  ui.info(`Target: ${baseCachePath}`);
+
+  // Spawn gemini with GEMINI_WRITE_SYSTEM_MD to trigger native prompt export.
+  // The `-p ""` (empty prompt) or `--prompt ""` plus immediate exit minimises actual work.
+  // We use spawnSync so we can inspect the exit code and verify the file was written.
+  const result = spawnSync('gemini', ['--yolo', '--prompt', ''], {
+    env: {
+      ...process.env,
+      GEMINI_WRITE_SYSTEM_MD: baseCachePath,
+      // Disable sandbox so Docker/Podman is not required
+      GEMINI_SANDBOX: 'false',
+    },
+    timeout: 30_000,
+    // Suppress the agent's own stdout/stderr during export — we only care about the file
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+
+  if (result.error) {
+    ui.error(`Failed to spawn gemini CLI: ${result.error.message}`);
+    ui.info(
+      'Ensure the gemini CLI is installed and in your PATH (npm install -g @google/generative-ai-cli or similar).',
+    );
+    process.exit(1);
+  }
+
+  // Verify the file was actually written — the env var may be silently ignored by some
+  // gemini CLI versions
+  if (!existsSync(baseCachePath)) {
+    const stderrOutput = result.stderr ? result.stderr.toString().trim() : '';
+
+    ui.error(
+      'gemini CLI exited but gemini-base.md was not written. Your Gemini CLI version may not support GEMINI_WRITE_SYSTEM_MD.',
+    );
+    if (stderrOutput) {
+      ui.info(`gemini stderr: ${stderrOutput.slice(0, 400)}`);
+    }
+    ui.info('Manual workaround: copy the gemini system prompt text into ~/.autobeat/system-prompts/gemini-base.md');
+    process.exit(1);
+  }
+
+  // Read the exported content for display purposes
+  const exportedContent = readFileSync(baseCachePath, 'utf8');
+
+  // Write companion metadata so gemini-adapter.ts can check staleness
+  const meta = {
+    exportedAt: new Date().toISOString(),
+    exportedAtMs: Date.now(),
+    source: 'refresh-base-prompt',
+    geminiCliExit: result.status ?? 0,
+  };
+  writeFileSync(metaPath, JSON.stringify(meta, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+
+  ui.success(`Base prompt exported: ${baseCachePath}`);
+  ui.info(`Size: ${exportedContent.length} chars`);
+  ui.info(`Metadata: ${metaPath}`);
+  ui.info('The gemini-base.md cache is now used for GEMINI_SYSTEM_MD injection when systemPrompt is set on a task.');
   process.exit(0);
 }

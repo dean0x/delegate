@@ -398,6 +398,7 @@ export class ScheduleHandler extends BaseEventHandler {
           workingDirectory: step.workingDirectory ?? defaults.workingDirectory,
           agent: step.agent ?? defaults.agent,
           model: step.model ?? defaults.model,
+          systemPrompt: defaults.systemPrompt,
           dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
         }),
       );

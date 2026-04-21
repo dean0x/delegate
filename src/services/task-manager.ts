@@ -275,6 +275,7 @@ export class TaskManagerService implements TaskManager {
     // Create the retry request with all the original task's configuration.
     // orchestratorId is inherited so retry tasks roll up into the same cost
     // accounting as the original task (A2 fix — consistent with resume() below).
+    // systemPrompt is inherited so retried tasks still use the same prompt override.
     const retryRequest: TaskRequest = {
       prompt: originalTask.prompt,
       priority: originalTask.priority,
@@ -287,6 +288,7 @@ export class TaskManagerService implements TaskManager {
       agent: originalTask.agent,
       model: originalTask.model,
       orchestratorId: originalTask.orchestratorId,
+      systemPrompt: originalTask.systemPrompt,
     };
 
     // Create the new retry task
@@ -384,6 +386,7 @@ export class TaskManagerService implements TaskManager {
     // Create new task with enriched prompt and same configuration.
     // orchestratorId is inherited so resume tasks roll up into the same cost
     // accounting as the original task (A2 fix — consistent with retry() above).
+    // systemPrompt is inherited so resumed tasks still use the same prompt override.
     const resumeRequest: TaskRequest = {
       prompt: enrichedPrompt,
       priority: originalTask.priority,
@@ -396,6 +399,7 @@ export class TaskManagerService implements TaskManager {
       agent: originalTask.agent,
       model: originalTask.model,
       orchestratorId: originalTask.orchestratorId,
+      systemPrompt: originalTask.systemPrompt,
     };
 
     const newTask = createTask(resumeRequest);
