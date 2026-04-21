@@ -192,29 +192,12 @@ describe('scaffoldCustomOrchestrator', () => {
     expect(result1.value.exitConditionScript).not.toBe(result2.value.exitConditionScript);
   });
 
-  it('returns error Result when state dir cannot be created', () => {
-    // Point to a path where we cannot write (root-owned path)
-    // We do this by mocking writeStateFile to throw
-    const originalWriteStateFile = vi.fn().mockImplementation(() => {
-      throw new Error('EACCES: permission denied');
-    });
-
-    vi.doMock('../../../src/core/orchestrator-state.js', async (importOriginal) => {
-      const original = await importOriginal<typeof import('../../../src/core/orchestrator-state.js')>();
-      return {
-        ...original,
-        getStateDir: () => TEST_STATE_DIR,
-        writeStateFile: originalWriteStateFile,
-      };
-    });
-
-    // Re-import with the mock applied — in unit tests we test the error path
-    // by verifying the Result type contract is honored
-    // The main contract: any thrown error is caught and returned as err(Error)
-    // We verify this by calling with a normal invocation and checking result.ok
+  it('returns a Result object (never throws)', () => {
+    // The function contract: any internal error must be caught and returned as err(Error).
+    // We verify this by calling with valid input — the Result type is always returned.
+    // Testing the error branch via module mocking is avoided here because vitest's
+    // isolate:false config causes doMock() to pollute the module cache across files.
     const result = scaffoldCustomOrchestrator({ goal: 'Test', workingDirectory: '/workspace' });
-    // Should be ok since the mock module swap isn't applied to this import
-    // What we're really testing: the function doesn't throw — it returns Result
     expect(typeof result).toBe('object');
     expect('ok' in result).toBe(true);
   });
