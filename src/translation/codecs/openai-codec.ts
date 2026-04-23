@@ -103,13 +103,11 @@ function buildAssistantMessage(msg: { content: CanonicalContent[] }): OpenAIMess
   };
 
   if (toolUses.length > 0) {
-    assistantMsg.tool_calls = toolUses
-      .filter((c): c is Extract<CanonicalContent, { type: 'tool_use' }> => c.type === 'tool_use')
-      .map((c) => ({
-        id: c.id,
-        type: 'function' as const,
-        function: { name: c.name, arguments: JSON.stringify(c.input) },
-      }));
+    assistantMsg.tool_calls = (toolUses as Extract<CanonicalContent, { type: 'tool_use' }>[]).map((c) => ({
+      id: c.id,
+      type: 'function' as const,
+      function: { name: c.name, arguments: JSON.stringify(c.input) },
+    }));
   }
 
   return assistantMsg;
@@ -362,11 +360,7 @@ class OpenAIStreamParser implements StreamParser {
     const events: CanonicalStreamEvent[] = [];
 
     // Close text block
-    if (this.hasActiveTextBlock) {
-      events.push({ type: 'content_stop', index: this.currentContentIndex });
-      this.currentContentIndex++;
-      this.hasActiveTextBlock = false;
-    }
+    events.push(...this.closeActiveTextBlock());
 
     // Close all active tool call blocks
     for (const [blockIndex, tc] of this.activeToolCalls.entries()) {

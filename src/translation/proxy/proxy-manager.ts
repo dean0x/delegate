@@ -44,9 +44,6 @@ export interface ProxyConfig {
   readonly targetModel: string;
 }
 
-/** Supported translation targets */
-const SUPPORTED_TRANSLATE_TARGETS = ['openai'] as const;
-
 /**
  * Load proxy configuration from AgentConfig when `translate` is set.
  *
@@ -58,7 +55,7 @@ const SUPPORTED_TRANSLATE_TARGETS = ['openai'] as const;
  *   beat agents config set claude apiKey nvapi-...
  *   beat agents config set claude model moonshotai/kimi-k2-thinking
  *
- * Returns null when: translate is not set, unsupported target, or missing required fields.
+ * Returns null when: translate is not set or required fields (baseUrl, apiKey, model) are missing.
  *
  * @param provider - Agent provider key (currently only 'claude' is supported)
  */
@@ -68,11 +65,6 @@ export function loadProxyConfig(provider: AgentProvider): ProxyConfig | null {
 
   const agentConfig: AgentConfig = loadAgentConfig(provider);
   if (!agentConfig.translate) return null;
-
-  // Validate translate target
-  if (!SUPPORTED_TRANSLATE_TARGETS.includes(agentConfig.translate as (typeof SUPPORTED_TRANSLATE_TARGETS)[number])) {
-    return null;
-  }
 
   // translate requires baseUrl, apiKey, and model
   if (!agentConfig.baseUrl || !agentConfig.apiKey || !agentConfig.model) return null;
