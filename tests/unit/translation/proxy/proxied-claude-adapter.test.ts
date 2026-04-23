@@ -67,10 +67,7 @@ describe('ProxiedClaudeAdapter', () => {
     const adapter = new TestableProxiedClaudeAdapter(testConfig, 9876);
     const env = adapter.testResolveBaseUrl({});
     expect(Object.keys(env)).toHaveLength(2);
-    expect(Object.keys(env).sort()).toEqual([
-      'ANTHROPIC_BASE_URL',
-      'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
-    ]);
+    expect(Object.keys(env).sort()).toEqual(['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS']);
   });
 
   it('uses the exact port passed to constructor', () => {

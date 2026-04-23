@@ -98,7 +98,7 @@ export async function agentsConfigSet(
   value: string | undefined,
 ): Promise<void> {
   if (!agent || !key || !value) {
-    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model> <value>');
+    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model|translate> <value>');
     process.exit(1);
   }
 
@@ -107,8 +107,8 @@ export async function agentsConfigSet(
     process.exit(1);
   }
 
-  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model') {
-    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model`);
+  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model' && key !== 'translate') {
+    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model, translate`);
     process.exit(1);
   }
 
@@ -169,6 +169,9 @@ export async function agentsConfigShow(agent?: string): Promise<void> {
     }
     if (config.model) {
       parts.push(`model: ${config.model}`);
+    }
+    if (config.translate) {
+      parts.push(`translate: ${config.translate}`);
     }
 
     if (parts.length > 0) {

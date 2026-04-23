@@ -353,7 +353,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   container.registerSingleton('taskQueue', () => new PriorityTaskQueue());
 
   // ============================================================================
-  // Translation proxy — optional, activated by agents.claude.proxy in config.json
+  // Translation proxy — optional, activated by agents.claude.translate in config.json
   //
   // ARCHITECTURE: If proxy config exists, start a local TranslationProxy that
   // routes Anthropic Messages API requests to an OpenAI-compatible backend.

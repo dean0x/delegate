@@ -1,15 +1,16 @@
 /**
  * Tests for bootstrap integration with translation proxy.
  *
- * Verifies that when proxy config is present in the config file,
- * bootstrap creates a ProxyManager and registers ProxiedClaudeAdapter.
+ * Verifies that loadProxyConfig reads translate + baseUrl/apiKey/model from
+ * AgentConfig to derive proxy configuration. The `translate` field is the gate:
+ * when set to a supported target (e.g. 'openai'), the existing baseUrl, apiKey,
+ * and model fields become the target backend configuration.
  */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { _testSetConfigDir } from '../../../../src/core/configuration.js';
-// We test loadProxyConfig in isolation — no real bootstrap to avoid SQLite deps
 import { loadProxyConfig } from '../../../../src/translation/proxy/proxy-manager.js';
 
 describe('loadProxyConfig', () => {
@@ -37,103 +38,97 @@ describe('loadProxyConfig', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null when agents.claude section is missing', async () => {
-    await writeFile(join(tempDir, 'config.json'), JSON.stringify({ agents: { codex: { apiKey: 'key' } } }));
-    const result = loadProxyConfig('claude');
-    expect(result).toBeNull();
-  });
-
-  it('returns null when agents.claude.proxy section is missing', async () => {
-    await writeFile(join(tempDir, 'config.json'), JSON.stringify({ agents: { claude: { apiKey: 'key' } } }));
-    const result = loadProxyConfig('claude');
-    expect(result).toBeNull();
-  });
-
-  it('returns null when proxy config is incomplete (missing targetApiKey)', async () => {
+  it('returns null when translate is not set', async () => {
     await writeFile(
       join(tempDir, 'config.json'),
       JSON.stringify({
-        agents: {
-          claude: {
-            proxy: {
-              targetBaseUrl: 'https://api.openai.com',
-              targetModel: 'gpt-4o',
-              // missing targetApiKey
-            },
-          },
-        },
+        agents: { claude: { apiKey: 'key', baseUrl: 'https://api.example.com', model: 'gpt-4o' } },
       }),
     );
     const result = loadProxyConfig('claude');
     expect(result).toBeNull();
   });
 
-  it('returns ProxyConfig when all required fields are present', async () => {
+  it('returns null when translate is set but baseUrl is missing', async () => {
+    await writeFile(
+      join(tempDir, 'config.json'),
+      JSON.stringify({
+        agents: { claude: { translate: 'openai', apiKey: 'sk-test', model: 'gpt-4o' } },
+      }),
+    );
+    const result = loadProxyConfig('claude');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when translate is set but apiKey is missing', async () => {
+    await writeFile(
+      join(tempDir, 'config.json'),
+      JSON.stringify({
+        agents: { claude: { translate: 'openai', baseUrl: 'https://api.example.com', model: 'gpt-4o' } },
+      }),
+    );
+    const result = loadProxyConfig('claude');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when translate is set but model is missing', async () => {
+    await writeFile(
+      join(tempDir, 'config.json'),
+      JSON.stringify({
+        agents: { claude: { translate: 'openai', baseUrl: 'https://api.example.com', apiKey: 'sk-test' } },
+      }),
+    );
+    const result = loadProxyConfig('claude');
+    expect(result).toBeNull();
+  });
+
+  it('returns ProxyConfig when translate + all required fields are present', async () => {
     await writeFile(
       join(tempDir, 'config.json'),
       JSON.stringify({
         agents: {
           claude: {
-            proxy: {
-              targetBaseUrl: 'https://api.openai.com',
-              targetApiKey: 'sk-test-key',
-              targetModel: 'gpt-4o',
-            },
+            translate: 'openai',
+            baseUrl: 'https://integrate.api.nvidia.com/v1',
+            apiKey: 'nvapi-test-key',
+            model: 'moonshotai/kimi-k2-thinking',
           },
         },
       }),
     );
     const result = loadProxyConfig('claude');
     expect(result).not.toBeNull();
-    expect(result?.targetBaseUrl).toBe('https://api.openai.com');
-    expect(result?.targetApiKey).toBe('sk-test-key');
-    expect(result?.targetModel).toBe('gpt-4o');
+    expect(result?.targetBaseUrl).toBe('https://integrate.api.nvidia.com/v1');
+    expect(result?.targetApiKey).toBe('nvapi-test-key');
+    expect(result?.targetModel).toBe('moonshotai/kimi-k2-thinking');
   });
 
-  it('returns null for unknown provider even if config exists', async () => {
+  it('returns null for unsupported translate target', async () => {
     await writeFile(
       join(tempDir, 'config.json'),
       JSON.stringify({
         agents: {
           claude: {
-            proxy: {
-              targetBaseUrl: 'https://api.openai.com',
-              targetApiKey: 'sk-test-key',
-              targetModel: 'gpt-4o',
-            },
-          },
-        },
-      }),
-    );
-    // Codex doesn't support proxy
-    const result = loadProxyConfig('codex');
-    expect(result).toBeNull();
-  });
-
-  it('ignores non-string proxy field values', async () => {
-    await writeFile(
-      join(tempDir, 'config.json'),
-      JSON.stringify({
-        agents: {
-          claude: {
-            proxy: {
-              targetBaseUrl: 42, // invalid type
-              targetApiKey: 'sk-test-key',
-              targetModel: 'gpt-4o',
-            },
+            translate: 'gemini-native',
+            baseUrl: 'https://api.example.com',
+            apiKey: 'key',
+            model: 'model',
           },
         },
       }),
     );
     const result = loadProxyConfig('claude');
-    expect(result).toBeNull(); // targetBaseUrl is non-string → missing → null
+    expect(result).toBeNull();
+  });
+
+  it('returns null for non-claude providers', async () => {
+    const result = loadProxyConfig('codex');
+    expect(result).toBeNull();
   });
 });
 
 describe('ProxyManager integration with ProxiedClaudeAdapter', () => {
   it('ProxiedClaudeAdapter sets proxyPort from ProxyManager', async () => {
-    // This is a design verification: ProxiedClaudeAdapter accepts the port
-    // returned by ProxyManager.start() as a constructor argument.
     const { ProxiedClaudeAdapter } = await import('../../../../src/translation/proxy/proxied-claude-adapter.js');
     const config = {
       maxOutputBuffer: 10485760,
@@ -156,6 +151,5 @@ describe('ProxyManager integration with ProxiedClaudeAdapter', () => {
     };
     const adapter = new ProxiedClaudeAdapter(config, 8765);
     expect(adapter.provider).toBe('claude');
-    // Adapter is created without error — port is captured
   });
 });

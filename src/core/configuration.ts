@@ -231,6 +231,7 @@ export interface AgentConfig {
   readonly apiKey?: string;
   readonly baseUrl?: string;
   readonly model?: string;
+  readonly translate?: string;
 }
 
 /**
@@ -247,6 +248,7 @@ export function loadAgentConfig(provider: AgentProvider): AgentConfig {
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : undefined,
     baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : undefined,
     model: typeof record.model === 'string' ? record.model : undefined,
+    translate: typeof record.translate === 'string' ? record.translate : undefined,
   };
 }
 
@@ -259,7 +261,7 @@ export function loadAgentConfig(provider: AgentProvider): AgentConfig {
  */
 export function saveAgentConfig(
   provider: AgentProvider,
-  key: 'apiKey' | 'baseUrl' | 'model',
+  key: 'apiKey' | 'baseUrl' | 'model' | 'translate',
   value: string,
 ): ConfigWriteResult {
   const existing = loadConfigFile();

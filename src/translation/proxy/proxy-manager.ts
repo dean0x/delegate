@@ -11,15 +11,17 @@
  * 3. Pass proxyUrl to ProxiedClaudeAdapter via ANTHROPIC_BASE_URL
  * 4. Call stop() on shutdown
  *
- * Configuration: Reads from agents.<provider>.proxy section in config.json.
- * If not present, loadProxyConfig() returns null and no proxy is created.
+ * Configuration: When an agent has `translate` set (e.g. 'openai'), the existing
+ * `baseUrl`, `apiKey`, and `model` fields become the target backend config.
+ * loadProxyConfig() returns null when translate is not set.
  *
  * DECISION: One ProxyManager per agent provider. Currently only 'claude' is
  * supported (Anthropic Messages API ↔ OpenAI Chat Completions). Codex/Gemini
  * use their own API formats and do not need translation.
  */
 
-import { loadConfigFile } from '../../core/configuration.js';
+import type { AgentProvider } from '../../core/agents.js';
+import { type AgentConfig, loadAgentConfig } from '../../core/configuration.js';
 import type { Logger } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
 import { AnthropicCodec } from '../codecs/anthropic-codec.js';
@@ -31,41 +33,55 @@ import { TranslationProxy } from './translation-proxy.js';
 
 /**
  * Target backend configuration for the translation proxy.
- * Loaded from agents.<provider>.proxy section in config.json.
+ * Derived from AgentConfig fields when `translate` is set.
  */
 export interface ProxyConfig {
-  /** Base URL of the OpenAI-compatible backend, e.g. "https://api.openai.com" */
+  /** Base URL of the OpenAI-compatible backend, e.g. "https://integrate.api.nvidia.com/v1" */
   readonly targetBaseUrl: string;
   /** API key for the target backend */
   readonly targetApiKey: string;
-  /** Model to use on the target backend, e.g. "gpt-4o" */
+  /** Model to use on the target backend, e.g. "moonshotai/kimi-k2-thinking" */
   readonly targetModel: string;
 }
 
+/** Supported translation targets */
+const SUPPORTED_TRANSLATE_TARGETS = ['openai'] as const;
+
 /**
- * Load proxy configuration from agents.<provider>.proxy in config.json.
+ * Load proxy configuration from AgentConfig when `translate` is set.
  *
- * ARCHITECTURE: Delegates to loadConfigFile() (same loader used by AgentConfig)
- * to avoid a separate config read. Returns null if no proxy section exists —
- * callers use this as the gate to decide whether to create a ProxyManager.
+ * ARCHITECTURE: When an agent has `translate: 'openai'`, the existing `baseUrl`,
+ * `apiKey`, and `model` fields become the target backend config. This means users
+ * configure the translation proxy with the same commands they'd use for any agent:
+ *   beat agents config set claude translate openai
+ *   beat agents config set claude baseUrl https://integrate.api.nvidia.com/v1
+ *   beat agents config set claude apiKey nvapi-...
+ *   beat agents config set claude model moonshotai/kimi-k2-thinking
  *
- * @param provider - Agent provider key (currently only 'claude' is used)
+ * Returns null when: translate is not set, unsupported target, or missing required fields.
+ *
+ * @param provider - Agent provider key (currently only 'claude' is supported)
  */
-export function loadProxyConfig(provider: string): ProxyConfig | null {
-  const file = loadConfigFile();
-  const agents = file.agents;
-  if (!agents || typeof agents !== 'object' || Array.isArray(agents)) return null;
-  const section = (agents as Record<string, unknown>)[provider];
-  if (!section || typeof section !== 'object' || Array.isArray(section)) return null;
-  const record = section as Record<string, unknown>;
-  const proxy = record.proxy;
-  if (!proxy || typeof proxy !== 'object' || Array.isArray(proxy)) return null;
-  const p = proxy as Record<string, unknown>;
-  const targetBaseUrl = typeof p.targetBaseUrl === 'string' ? p.targetBaseUrl : undefined;
-  const targetApiKey = typeof p.targetApiKey === 'string' ? p.targetApiKey : undefined;
-  const targetModel = typeof p.targetModel === 'string' ? p.targetModel : undefined;
-  if (!targetBaseUrl || !targetApiKey || !targetModel) return null;
-  return { targetBaseUrl, targetApiKey, targetModel };
+export function loadProxyConfig(provider: AgentProvider): ProxyConfig | null {
+  // Only claude supports translation (Anthropic → OpenAI)
+  if (provider !== 'claude') return null;
+
+  const agentConfig: AgentConfig = loadAgentConfig(provider);
+  if (!agentConfig.translate) return null;
+
+  // Validate translate target
+  if (!SUPPORTED_TRANSLATE_TARGETS.includes(agentConfig.translate as (typeof SUPPORTED_TRANSLATE_TARGETS)[number])) {
+    return null;
+  }
+
+  // translate requires baseUrl, apiKey, and model
+  if (!agentConfig.baseUrl || !agentConfig.apiKey || !agentConfig.model) return null;
+
+  return {
+    targetBaseUrl: agentConfig.baseUrl,
+    targetApiKey: agentConfig.apiKey,
+    targetModel: agentConfig.model,
+  };
 }
 
 /**

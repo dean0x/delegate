@@ -347,6 +347,12 @@ const ConfigureAgentSchema = z.object({
   apiKey: z.string().min(1).optional().describe('API key to store (set action)'),
   baseUrl: z.string().url().optional().describe('Base URL override (set action, e.g. https://proxy.example.com/v1)'),
   model: modelSchema.optional().describe('Default model override for this agent (set action)'),
+  translate: z
+    .string()
+    .optional()
+    .describe(
+      'API translation target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
+    ),
 });
 
 // Loop-related Zod schemas (v0.7.0 Task/Pipeline Loops)
@@ -1639,6 +1645,11 @@ export class MCPAdapter {
                     description: 'Default model for this agent (set action, overridden by per-task model)',
                     minLength: 1,
                     maxLength: 200,
+                  },
+                  translate: {
+                    type: 'string',
+                    description:
+                      'API translation target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
                   },
                 },
                 required: ['agent'],
@@ -2962,6 +2973,7 @@ export class MCPAdapter {
         ...(authStatus.hint && { hint: authStatus.hint }),
         ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
         ...(agentConfig.model && { model: agentConfig.model }),
+        ...(agentConfig.translate && { translate: agentConfig.translate }),
         ...(claudeBaseUrlWarning && { warning: claudeBaseUrlWarning }),
       };
     });
@@ -3323,7 +3335,7 @@ export class MCPAdapter {
       };
     }
 
-    const { agent, action, apiKey, baseUrl, model } = parseResult.data;
+    const { agent, action, apiKey, baseUrl, model, translate } = parseResult.data;
 
     switch (action) {
       case 'check': {
@@ -3347,6 +3359,7 @@ export class MCPAdapter {
           ...(agentConfig.apiKey && { storedKey: maskApiKey(agentConfig.apiKey) }),
           ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
           ...(agentConfig.model && { model: agentConfig.model }),
+          ...(agentConfig.translate && { translate: agentConfig.translate }),
           ...(checkWarning && { warning: checkWarning }),
         };
 
@@ -3361,13 +3374,16 @@ export class MCPAdapter {
       }
 
       case 'set': {
-        if (!apiKey && !baseUrl && !model) {
+        if (!apiKey && !baseUrl && !model && translate === undefined) {
           return {
             content: [
               {
                 type: 'text',
                 text: JSON.stringify(
-                  { success: false, error: 'At least one of apiKey, baseUrl, or model is required for set action' },
+                  {
+                    success: false,
+                    error: 'At least one of apiKey, baseUrl, model, or translate is required for set action',
+                  },
                   null,
                   2,
                 ),
@@ -3380,7 +3396,12 @@ export class MCPAdapter {
         // Perform all writes up-front to avoid partial-write: collect each
         // result before returning so that a late failure reports which fields
         // were already saved and which failed.
-        type WriteAttempt = { key: 'apiKey' | 'baseUrl' | 'model'; label: string; ok: boolean; error?: string };
+        type WriteAttempt = {
+          key: 'apiKey' | 'baseUrl' | 'model' | 'translate';
+          label: string;
+          ok: boolean;
+          error?: string;
+        };
         const attempts: WriteAttempt[] = [];
 
         if (apiKey) {
@@ -3408,6 +3429,16 @@ export class MCPAdapter {
           attempts.push({
             key: 'model',
             label: `model set to ${model}`,
+            ok: result.ok,
+            error: result.ok ? undefined : result.error,
+          });
+        }
+
+        if (translate !== undefined) {
+          const result = saveAgentConfig(agent, 'translate', translate);
+          attempts.push({
+            key: 'translate',
+            label: translate === '' ? 'translate cleared' : `translate set to ${translate}`,
             ok: result.ok,
             error: result.ok ? undefined : result.error,
           });
