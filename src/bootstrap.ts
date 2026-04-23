@@ -119,6 +119,10 @@ import { ScheduleExecutor } from './services/schedule-executor.js';
 import { ScheduleManagerService } from './services/schedule-manager.js';
 import { TaskManagerService } from './services/task-manager.js';
 
+// Translation proxy
+import { ProxiedClaudeAdapter } from './translation/proxy/proxied-claude-adapter.js';
+import { loadProxyConfig, ProxyManager } from './translation/proxy/proxy-manager.js';
+
 /**
  * Helper for dependency injection in factory functions
  *
@@ -348,9 +352,45 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // Register core services
   container.registerSingleton('taskQueue', () => new PriorityTaskQueue());
 
+  // ============================================================================
+  // Translation proxy — optional, activated by agents.claude.proxy in config.json
+  //
+  // ARCHITECTURE: If proxy config exists, start a local TranslationProxy that
+  // routes Anthropic Messages API requests to an OpenAI-compatible backend.
+  // The proxy URL is captured here (before agentRegistry is registered) so the
+  // agentRegistry factory can use ProxiedClaudeAdapter with the correct port.
+  //
+  // DECISION: Proxy startup is eagerly awaited at bootstrap time (not lazily).
+  // Rationale: The port must be known before the agentRegistry factory runs,
+  // and factory functions are synchronous. Eager start ensures consistency.
+  //
+  // Failure handling: A proxy start failure is non-fatal — bootstrap falls back
+  // to the standard ClaudeAdapter (direct Anthropic API). This keeps the server
+  // operational even if the target backend is temporarily unreachable.
+  // ============================================================================
+  let proxyPort: number | undefined;
+
+  if (!options.processSpawner) {
+    const proxyConfig = loadProxyConfig('claude');
+    if (proxyConfig !== null) {
+      const proxyManager = new ProxyManager(proxyConfig, logger.child({ module: 'ProxyManager' }));
+      const proxyResult = await proxyManager.start();
+      if (proxyResult.ok) {
+        proxyPort = proxyResult.value.port;
+        container.registerValue('proxyManager', proxyManager);
+        logger.info('Translation proxy active', { port: proxyPort, targetBaseUrl: proxyConfig.targetBaseUrl });
+      } else {
+        logger.warn('Translation proxy failed to start — falling back to direct Anthropic API', {
+          error: proxyResult.error.message,
+        });
+      }
+    }
+  }
+
   // Register AgentRegistry for multi-agent support (v0.5.0)
   // ARCHITECTURE: If a custom ProcessSpawner is injected (tests), wrap it in a
   // compatibility adapter. Otherwise, register all 4 agent adapters.
+  // If a translation proxy is active (proxyPort set), use ProxiedClaudeAdapter.
   container.registerSingleton('agentRegistry', () => {
     if (options.processSpawner) {
       logger.info('Using ProcessSpawnerAdapter for injected ProcessSpawner');
@@ -361,7 +401,11 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     const configResult = container.get<Configuration>('config');
     if (!configResult.ok) throw new Error('Config required for AgentRegistry');
     const cfg = configResult.value;
-    const adapters = [new ClaudeAdapter(cfg), new CodexAdapter(cfg), new GeminiAdapter(cfg)];
+
+    // Use ProxiedClaudeAdapter if translation proxy is active
+    const claudeAdapter = proxyPort !== undefined ? new ProxiedClaudeAdapter(cfg, proxyPort) : new ClaudeAdapter(cfg);
+
+    const adapters = [claudeAdapter, new CodexAdapter(cfg), new GeminiAdapter(cfg)];
     return new InMemoryAgentRegistry(adapters);
   });
 
