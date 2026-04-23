@@ -1,18 +1,14 @@
 /**
  * Tests for ProxiedClaudeAdapter — Claude adapter that routes through translation proxy
  */
+import type { ChildProcess } from 'child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Configuration } from '../../../../src/core/configuration.js';
 import { ProxiedClaudeAdapter } from '../../../../src/translation/proxy/proxied-claude-adapter.js';
 
 // Mock child_process.spawn so no real processes are spawned
 vi.mock('child_process', () => ({
-  spawn: vi.fn().mockReturnValue({
-    pid: 12345,
-    stdout: { on: vi.fn() },
-    stderr: { on: vi.fn() },
-    on: vi.fn(),
-  }),
+  spawn: vi.fn(),
   spawnSync: vi.fn(),
   ChildProcess: vi.fn(),
 }));
@@ -25,6 +21,23 @@ vi.mock('../../../../src/core/agents.js', async (importOriginal) => {
     isCommandInPath: vi.fn().mockReturnValue(true),
   };
 });
+
+// Static imports AFTER vi.mock() calls — ensures the mocked versions are used
+import { spawn } from 'child_process';
+import { isCommandInPath } from '../../../../src/core/agents.js';
+
+const mockSpawn = vi.mocked(spawn);
+const mockIsCommandInPath = vi.mocked(isCommandInPath);
+
+function makeChildProcess(): ChildProcess {
+  return {
+    pid: 12345,
+    stdout: { on: vi.fn() },
+    stderr: { on: vi.fn() },
+    on: vi.fn(),
+    kill: vi.fn(),
+  } as unknown as ChildProcess;
+}
 
 const testConfig: Configuration = {
   maxOutputBuffer: 10485760,
@@ -47,17 +60,9 @@ const testConfig: Configuration = {
 };
 
 describe('ProxiedClaudeAdapter', () => {
-  let mockSpawn: ReturnType<typeof vi.fn>;
-
-  beforeEach(async () => {
-    const { spawn } = await import('child_process');
-    mockSpawn = vi.mocked(spawn);
-    mockSpawn.mockReturnValue({
-      pid: 12345,
-      stdout: { on: vi.fn() },
-      stderr: { on: vi.fn() },
-      on: vi.fn(),
-    });
+  beforeEach(() => {
+    mockSpawn.mockReturnValue(makeChildProcess());
+    mockIsCommandInPath.mockReturnValue(true);
   });
 
   afterEach(() => {
