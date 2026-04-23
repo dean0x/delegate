@@ -61,7 +61,7 @@ function serializeContentForOpenAI(content: CanonicalContent[]): Array<Record<st
 
 interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content?: unknown;
+  content?: string | Array<Record<string, unknown>> | null;
   tool_calls?: Array<{
     id: string;
     type: 'function';

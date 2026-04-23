@@ -30,14 +30,12 @@ function hashPrefix(request: CanonicalRequest): string {
   // Messages change every request; system prompts are the stable prefix
   // that providers typically cache. Hashing messages would cause every
   // request to be a "miss" even when the system prompt is identical.
-  if (request.system) {
+  if (request.system && request.system.length > 0) {
     for (const block of request.system) {
       parts.push(block.text);
     }
-  }
-
-  // If no system prompt, hash the first few messages as a fallback prefix
-  if (!request.system || request.system.length === 0) {
+  } else {
+    // If no system prompt, hash the first few messages as a fallback prefix
     const messagesToHash = request.messages.slice(0, PREFIX_MESSAGES_TO_HASH);
     for (const msg of messagesToHash) {
       parts.push(msg.role);

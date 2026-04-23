@@ -14,7 +14,6 @@ import type {
   CanonicalMessage,
   CanonicalRequest,
   CanonicalResponse,
-  CanonicalStopReason,
   CanonicalStreamEvent,
   CanonicalSystemBlock,
   CanonicalToolChoice,
@@ -186,12 +185,6 @@ function serializeContentBlock(content: CanonicalContent): Record<string, unknow
   return { type: 'text', text: '' };
 }
 
-function serializeStopReason(stopReason: CanonicalStopReason): string | null {
-  if (stopReason === null) return null;
-  // Already in Anthropic format
-  return stopReason;
-}
-
 function serializeUsage(usage: CanonicalUsage): Record<string, unknown> {
   const result: Record<string, unknown> = {
     input_tokens: usage.inputTokens,
@@ -211,14 +204,9 @@ function serializeUsage(usage: CanonicalUsage): Record<string, unknown> {
 // ==========================================
 
 class AnthropicStreamSerializer implements StreamSerializer {
-  private messageId = '';
-  private messageModel = '';
-
   serialize(event: CanonicalStreamEvent): string[] {
     switch (event.type) {
       case 'message_start': {
-        this.messageId = event.id;
-        this.messageModel = event.model;
         const data = {
           type: 'message_start',
           message: {
@@ -299,7 +287,7 @@ class AnthropicStreamSerializer implements StreamSerializer {
         const deltaData = {
           type: 'message_delta',
           delta: {
-            stop_reason: serializeStopReason(event.stopReason),
+            stop_reason: event.stopReason,
             stop_sequence: null,
           },
           usage: event.usage ? { output_tokens: event.usage.outputTokens } : { output_tokens: 0 },
@@ -433,7 +421,7 @@ export class AnthropicCodec implements FormatCodec {
       role: 'assistant',
       content,
       model: canonical.model,
-      stop_reason: serializeStopReason(canonical.stopReason),
+      stop_reason: canonical.stopReason,
       stop_sequence: null,
       usage: serializeUsage(canonical.usage),
     });

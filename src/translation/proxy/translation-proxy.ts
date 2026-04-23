@@ -326,9 +326,9 @@ export class TranslationProxy {
     const isStreaming = processedRequest.stream;
 
     if (isStreaming) {
-      await this.handleStreamingRequest(req, res, targetUrl, outboundHeaders, targetBody, processedRequest);
+      await this.handleStreamingRequest(req, res, targetUrl, outboundHeaders, targetBody);
     } else {
-      await this.handleNonStreamingRequest(req, res, targetUrl, outboundHeaders, targetBody, processedRequest);
+      await this.handleNonStreamingRequest(req, res, targetUrl, outboundHeaders, targetBody);
     }
   }
 
@@ -338,7 +338,6 @@ export class TranslationProxy {
     targetUrl: URL,
     outboundHeaders: Record<string, string>,
     targetBody: string,
-    processedRequest: ReturnType<typeof runRequestMiddleware>,
   ): Promise<void> {
     const abort = new AbortController();
     const connectTimeout = setTimeout(() => abort.abort(), CONNECT_TIMEOUT_MS);
@@ -363,7 +362,6 @@ export class TranslationProxy {
           clearTimeout(connectTimeout);
 
           const statusCode = backendRes.statusCode ?? 500;
-          const contentType = backendRes.headers['content-type'] ?? '';
 
           if (statusCode >= 400) {
             const errChunks: Buffer[] = [];
@@ -446,7 +444,6 @@ export class TranslationProxy {
     targetUrl: URL,
     outboundHeaders: Record<string, string>,
     targetBody: string,
-    processedRequest: ReturnType<typeof runRequestMiddleware>,
   ): Promise<void> {
     const abort = new AbortController();
     const connectTimeout = setTimeout(() => abort.abort(), CONNECT_TIMEOUT_MS);
