@@ -44,6 +44,11 @@ export function runResponseMiddleware(
 /**
  * Run stream event through middleware pipeline in REVERSE order.
  * Returns null if any middleware drops the event.
+ *
+ * REFERENCE IMPLEMENTATION: Used in tests to verify middleware behaviour in
+ * isolation. Production streaming uses StreamTranslator.applyMiddleware, which
+ * pre-computes the reversed array once at construction to avoid repeated
+ * allocations across thousands of SSE chunks.
  */
 export function runStreamEventMiddleware(
   middlewares: readonly TranslationMiddleware[],
