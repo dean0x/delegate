@@ -152,6 +152,15 @@ function buildOpenAIMessages(canonical: CanonicalRequest): OpenAIMessage[] {
 // parseResponse helpers
 // ==========================================
 
+/** Parse tool call arguments JSON; returns empty object on malformed input. */
+function parseToolArguments(args: string): Record<string, unknown> {
+  try {
+    return JSON.parse(args) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
 function mapFinishReason(finishReason: string | null): CanonicalStopReason {
   if (!finishReason) return null;
   switch (finishReason) {
@@ -537,13 +546,7 @@ export class OpenAICodec implements FormatCodec {
     if (toolCalls) {
       for (const tc of toolCalls) {
         const func = tc['function'] as Record<string, unknown>;
-        let input: Record<string, unknown> = {};
-        try {
-          input = JSON.parse(func['arguments'] as string) as Record<string, unknown>;
-        } catch {
-          // Malformed JSON → empty input
-          input = {};
-        }
+        const input = parseToolArguments(func['arguments'] as string);
         content.push({
           type: 'tool_use',
           id: tc['id'] as string,

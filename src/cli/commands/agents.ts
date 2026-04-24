@@ -23,12 +23,8 @@ import {
   resetAgentConfig,
   saveAgentConfig,
   TRANSLATE_TARGETS,
-  type TranslateTarget,
 } from '../../core/configuration.js';
 import * as ui from '../ui.js';
-
-/** Derived from the canonical TRANSLATE_TARGETS tuple — no manual sync required. */
-const SUPPORTED_TRANSLATE_TARGETS: readonly TranslateTarget[] = TRANSLATE_TARGETS;
 
 export async function listAgents(): Promise<void> {
   const config = loadConfiguration();
@@ -132,8 +128,8 @@ export async function agentsConfigSet(
 
   // Validate translate is a supported target (empty string clears)
   if (key === 'translate' && value !== '') {
-    if (!(SUPPORTED_TRANSLATE_TARGETS as readonly string[]).includes(value)) {
-      ui.error(`Unsupported translate target: "${value}". Supported values: ${SUPPORTED_TRANSLATE_TARGETS.join(', ')}`);
+    if (!(TRANSLATE_TARGETS as readonly string[]).includes(value)) {
+      ui.error(`Unsupported translate target: "${value}". Supported values: ${TRANSLATE_TARGETS.join(', ')}`);
       process.exit(1);
     }
   }
