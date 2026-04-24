@@ -104,6 +104,9 @@ describe('loadProxyConfig', () => {
   });
 
   it('returns null for unsupported translate target', async () => {
+    // Validation of the translate value happens in loadAgentConfig (configuration.ts):
+    // unknown targets are silently dropped (translate becomes undefined), so
+    // loadProxyConfig returns null at the `!agentConfig.translate` guard.
     await writeFile(
       join(tempDir, 'config.json'),
       JSON.stringify({
