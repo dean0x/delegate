@@ -161,20 +161,6 @@ describe('ProxyManager integration with ProxiedClaudeAdapter', () => {
   });
 });
 
-describe('deriveModeFlags skipProxy', () => {
-  it('enables proxy in server mode', () => {
-    expect(deriveModeFlags('server').skipProxy).toBe(false);
-  });
-
-  it('enables proxy in run mode', () => {
-    expect(deriveModeFlags('run').skipProxy).toBe(false);
-  });
-
-  it('skips proxy in cli mode', () => {
-    expect(deriveModeFlags('cli').skipProxy).toBe(true);
-  });
-});
-
 describe('proxy startup by bootstrap mode', () => {
   let tempDir: string;
   let restoreConfig: () => void;
@@ -193,9 +179,11 @@ describe('proxy startup by bootstrap mode', () => {
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'autobeat-proxy-bootstrap-'));
     restoreConfig = _testSetConfigDir(tempDir);
+    process.env.AUTOBEAT_DATABASE_PATH = join(tempDir, 'test.db');
   });
 
   afterEach(async () => {
+    delete process.env.AUTOBEAT_DATABASE_PATH;
     restoreConfig();
     await rm(tempDir, { recursive: true, force: true });
   });

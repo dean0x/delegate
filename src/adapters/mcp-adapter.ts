@@ -356,7 +356,7 @@ const ConfigureAgentSchema = z.object({
   translate: z
     // TRANSLATE_TARGETS is the canonical list; '' is the "clear" sentinel accepted only at
     // save boundaries (CLI, MCP) — it is never persisted to stored config.
-    .enum([...TRANSLATE_TARGETS, ''] as [string, ...string[]])
+    .enum([...TRANSLATE_TARGETS, ''] as const satisfies readonly [string, ...string[]])
     .optional()
     .describe(
       'API translation target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
