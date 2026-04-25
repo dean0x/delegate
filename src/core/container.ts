@@ -207,7 +207,7 @@ export class Container {
       }
     }
 
-    // DECISION (DD3): Stop translation proxy before killing workers — lets in-flight
+    // DECISION: Stop translation proxy before killing workers — lets in-flight
     // requests through the proxy complete. Added here (not in individual CLI commands)
     // for DRY: run.ts, orchestrate.ts, and any future callers all go through dispose().
     // ProxyManager.stop() is idempotent — safe if already stopped by index.ts shutdown.

@@ -64,7 +64,7 @@ export function deriveModeFlags(mode: BootstrapMode): ModeFlags {
     skipResourceMonitoring: false,
     skipScheduleExecutor: mode === 'cli' || mode === 'run',
     skipRecovery: mode === 'cli',
-    // DECISION (DD1): Proxy starts in any mode that spawns workers ('server', 'run').
+    // DECISION: Proxy starts in any mode that spawns workers ('server', 'run').
     // Skipped in 'cli' mode (management commands that never spawn workers).
     // The processSpawner guard is separate — checked at the call site because
     // it's an options check, not a mode-derived flag.
@@ -375,11 +375,11 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // Rationale: The port must be known before the agentRegistry factory runs,
   // and factory functions are synchronous. Eager start ensures consistency.
   //
-  // DECISION (DD1): Proxy starts in server and run modes (both spawn workers).
+  // DECISION: Proxy starts in server and run modes (both spawn workers).
   // Skipped in cli mode (management commands that never spawn workers) and
   // when a processSpawner is injected (tests with mock spawners).
   //
-  // DECISION (DD2): Proxy failure is fatal when config exists. The user
+  // DECISION: Proxy failure is fatal when config exists. The user
   // explicitly configured translate — falling back to direct Anthropic API
   // would fail (wrong key/model) and produce confusing downstream errors.
   // Error message includes remediation steps for working without the proxy.
@@ -397,9 +397,11 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
         logger.info('Translation proxy active', { port: proxyPort, targetBaseUrl: proxyConfig.targetBaseUrl });
       } else {
         return err(
-          new Error(
+          new AutobeatError(
+            ErrorCode.CONFIGURATION_ERROR,
             `Translation proxy failed to start: ${proxyResult.error.message}. ` +
               'To work without the proxy, run: beat agents config set claude translate ""',
+            { error: proxyResult.error.message },
           ),
         );
       }
