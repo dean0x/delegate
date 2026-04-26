@@ -205,6 +205,7 @@ interface ActiveToolCall {
 class OpenAIStreamParser implements StreamParser {
   private hasEmittedMessageStart = false;
   private hasActiveTextBlock = false;
+  private hasActiveThinkingBlock = false;
   private currentContentIndex = 0;
   private activeToolCalls = new Map<number, ActiveToolCall>();
   private savedId = '';
@@ -252,15 +253,32 @@ class OpenAIStreamParser implements StreamParser {
       this.savedId = id;
       this.savedModel = model;
 
-      if (delta['role'] !== undefined || delta['content'] !== undefined || delta['tool_calls'] !== undefined) {
+      if (
+        delta['role'] !== undefined ||
+        delta['content'] !== undefined ||
+        delta['reasoning_content'] !== undefined ||
+        delta['tool_calls'] !== undefined
+      ) {
         events.push({ type: 'message_start', id, model });
         this.hasEmittedMessageStart = true;
       }
     }
 
+    // Reasoning/thinking content delta (reasoning models like Kimi K2)
+    const reasoningContent = delta['reasoning_content'] as string | null | undefined;
+    if (reasoningContent !== null && reasoningContent !== undefined && reasoningContent !== '') {
+      events.push(...this.closeActiveToolCall());
+      if (!this.hasActiveThinkingBlock) {
+        events.push({ type: 'thinking_start', index: this.currentContentIndex });
+        this.hasActiveThinkingBlock = true;
+      }
+      events.push({ type: 'thinking_delta', index: this.currentContentIndex, thinking: reasoningContent });
+    }
+
     // Text content delta
     const content = delta['content'] as string | null | undefined;
     if (content !== null && content !== undefined && content !== '') {
+      events.push(...this.closeActiveThinkingBlock());
       events.push(...this.closeActiveToolCall());
       if (!this.hasActiveTextBlock) {
         events.push({ type: 'content_start', index: this.currentContentIndex, contentType: 'text' });
@@ -269,15 +287,10 @@ class OpenAIStreamParser implements StreamParser {
       events.push({ type: 'content_delta', index: this.currentContentIndex, text: content });
     }
 
-    // Reasoning/thinking content delta (for models like Kimi K2 that stream reasoning)
-    const reasoningContent = delta['reasoning_content'] as string | null | undefined;
-    if (reasoningContent !== null && reasoningContent !== undefined && reasoningContent !== '') {
-      events.push({ type: 'thinking_delta', thinking: reasoningContent });
-    }
-
     // Tool calls delta
     const toolCalls = delta['tool_calls'] as Array<Record<string, unknown>> | undefined;
     if (toolCalls) {
+      events.push(...this.closeActiveThinkingBlock());
       events.push(...this.closeActiveTextBlock());
       events.push(...this.processToolCallDeltas(toolCalls));
     }
@@ -296,6 +309,15 @@ class OpenAIStreamParser implements StreamParser {
     const events: CanonicalStreamEvent[] = [{ type: 'content_stop', index: this.currentContentIndex }];
     this.currentContentIndex++;
     this.hasActiveTextBlock = false;
+    return events;
+  }
+
+  /** Closes the active thinking block if one is open, advancing the content index. */
+  private closeActiveThinkingBlock(): CanonicalStreamEvent[] {
+    if (!this.hasActiveThinkingBlock) return [];
+    const events: CanonicalStreamEvent[] = [{ type: 'thinking_stop', index: this.currentContentIndex }];
+    this.currentContentIndex++;
+    this.hasActiveThinkingBlock = false;
     return events;
   }
 
@@ -423,6 +445,9 @@ class OpenAIStreamParser implements StreamParser {
   private handleFinishReason(finishReason: string, chunk: Record<string, unknown>): CanonicalStreamEvent[] {
     const events: CanonicalStreamEvent[] = [];
 
+    // Close thinking block
+    events.push(...this.closeActiveThinkingBlock());
+
     // Close text block
     events.push(...this.closeActiveTextBlock());
 
@@ -455,7 +480,10 @@ class OpenAIStreamParser implements StreamParser {
   }
 
   flush(): CanonicalStreamEvent[] {
-    return [];
+    const events: CanonicalStreamEvent[] = [];
+    events.push(...this.closeActiveThinkingBlock());
+    events.push(...this.closeActiveTextBlock());
+    return events;
   }
 }
 

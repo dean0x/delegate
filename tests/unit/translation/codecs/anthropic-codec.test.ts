@@ -508,11 +508,42 @@ describe('AnthropicCodec', () => {
       expect(joined).toContain('input_json_delta');
     });
 
+    it('serializes thinking_start event', () => {
+      const serializer = codec.createStreamSerializer();
+      const lines = serializer.serialize({ type: 'thinking_start', index: 0 });
+      const joined = lines.join('\n');
+      expect(joined).toContain('event: content_block_start');
+      expect(joined).toContain('thinking');
+      const data = JSON.parse(lines[1].replace('data: ', '')) as {
+        index: number;
+        content_block: { type: string };
+      };
+      expect(data.index).toBe(0);
+      expect(data.content_block.type).toBe('thinking');
+    });
+
     it('serializes thinking_delta event', () => {
       const serializer = codec.createStreamSerializer();
-      const lines = serializer.serialize({ type: 'thinking_delta', thinking: 'thinking...' });
+      const lines = serializer.serialize({ type: 'thinking_delta', index: 0, thinking: 'thinking...' });
       const joined = lines.join('\n');
       expect(joined).toContain('thinking_delta');
+      expect(joined).toContain('index');
+    });
+
+    it('serializes thinking_stop event', () => {
+      const serializer = codec.createStreamSerializer();
+      const lines = serializer.serialize({ type: 'thinking_stop', index: 0 });
+      const joined = lines.join('\n');
+      expect(joined).toContain('event: content_block_stop');
+      const data = JSON.parse(lines[1].replace('data: ', '')) as { index: number };
+      expect(data.index).toBe(0);
+    });
+
+    it('serializes thinking_delta with non-zero index', () => {
+      const serializer = codec.createStreamSerializer();
+      const lines = serializer.serialize({ type: 'thinking_delta', index: 2, thinking: 'hmm' });
+      const data = JSON.parse(lines[1].replace('data: ', '')) as { index: number };
+      expect(data.index).toBe(2);
     });
   });
 });

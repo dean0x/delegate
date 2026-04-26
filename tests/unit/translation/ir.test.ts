@@ -14,6 +14,8 @@ import type {
   CanonicalToolChoice,
   CanonicalToolDefinition,
   CanonicalUsage,
+  ThinkingStartEvent,
+  ThinkingStopEvent,
 } from '../../../src/translation/ir.js';
 
 describe('Canonical IR types', () => {
@@ -137,13 +139,22 @@ describe('Canonical IR types', () => {
       { type: 'tool_call_start', index: 1, id: 'tc_1', name: 'tool' },
       { type: 'tool_call_delta', index: 1, arguments: '{"key":' },
       { type: 'tool_call_stop', index: 1, arguments: '{"key":"val"}' },
-      { type: 'thinking_delta', thinking: 'thinking...' },
+      { type: 'thinking_start', index: 0 },
+      { type: 'thinking_delta', index: 0, thinking: 'thinking...' },
+      { type: 'thinking_stop', index: 0 },
       { type: 'usage', usage: { inputTokens: 10, outputTokens: 5 } },
       { type: 'message_stop', stopReason: 'end_turn' },
     ];
-    expect(events).toHaveLength(10);
+    expect(events).toHaveLength(12);
     expect(events[0].type).toBe('message_start');
-    expect(events[9].type).toBe('message_stop');
+    expect(events[11].type).toBe('message_stop');
+  });
+
+  it('ThinkingStartEvent and ThinkingStopEvent have index field', () => {
+    const start: ThinkingStartEvent = { type: 'thinking_start', index: 0 };
+    const stop: ThinkingStopEvent = { type: 'thinking_stop', index: 0 };
+    expect(start.index).toBe(0);
+    expect(stop.index).toBe(0);
   });
 
   it('CanonicalUsage has optional cache and reasoning token fields', () => {

@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { OpenAICodec } from '../../../../src/translation/codecs/openai-codec.js';
-import type { CanonicalRequest, ToolCallStopEvent } from '../../../../src/translation/ir.js';
+import type { CanonicalRequest, CanonicalStreamEvent, ToolCallStopEvent } from '../../../../src/translation/ir.js';
 
 describe('OpenAICodec', () => {
   const codec = new OpenAICodec();
@@ -987,9 +987,203 @@ describe('OpenAICodec', () => {
       expect(stopEvent?.arguments).toBe('{"partial":"value"}');
     });
 
-    it('flush returns empty array', () => {
+    it('flush returns empty array when no open blocks', () => {
       const parser = codec.createStreamParser();
       expect(parser.flush()).toEqual([]);
+    });
+
+    describe('thinking block lifecycle', () => {
+      it('emits thinking_start before first thinking_delta', () => {
+        const parser = codec.createStreamParser();
+        const events = parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { reasoning_content: 'let me think' }, finish_reason: null }],
+        });
+        const types = events.map((e) => e.type);
+        expect(types).toContain('message_start');
+        expect(types).toContain('thinking_start');
+        expect(types).toContain('thinking_delta');
+        const startIdx = types.indexOf('thinking_start');
+        const deltaIdx = types.indexOf('thinking_delta');
+        expect(startIdx).toBeLessThan(deltaIdx);
+        const thinkingStart = events.find((e) => e.type === 'thinking_start');
+        if (thinkingStart?.type === 'thinking_start') {
+          expect(thinkingStart.index).toBe(0);
+        }
+      });
+
+      it('does not repeat thinking_start on subsequent deltas', () => {
+        const parser = codec.createStreamParser();
+        parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { reasoning_content: 'first' }, finish_reason: null }],
+        });
+        const events = parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { reasoning_content: 'second' }, finish_reason: null }],
+        });
+        expect(events.filter((e) => e.type === 'thinking_start')).toHaveLength(0);
+        expect(events.filter((e) => e.type === 'thinking_delta')).toHaveLength(1);
+      });
+
+      it('emits thinking_stop when text content begins', () => {
+        const parser = codec.createStreamParser();
+        parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { reasoning_content: 'thinking...' }, finish_reason: null }],
+        });
+        const events = parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { content: 'answer' }, finish_reason: null }],
+        });
+        const types = events.map((e) => e.type);
+        expect(types).toContain('thinking_stop');
+        expect(types).toContain('content_start');
+        const stopIdx = types.indexOf('thinking_stop');
+        const contentStartIdx = types.indexOf('content_start');
+        expect(stopIdx).toBeLessThan(contentStartIdx);
+      });
+
+      it('emits thinking_stop on finish_reason with no text', () => {
+        const parser = codec.createStreamParser();
+        parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { reasoning_content: 'thinking...' }, finish_reason: null }],
+        });
+        const events = parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        });
+        const types = events.map((e) => e.type);
+        expect(types).toContain('thinking_stop');
+        expect(types).toContain('message_stop');
+        const stopIdx = types.indexOf('thinking_stop');
+        const msgStopIdx = types.indexOf('message_stop');
+        expect(stopIdx).toBeLessThan(msgStopIdx);
+      });
+
+      it('thinking index 0, text index 1 in mixed response', () => {
+        const parser = codec.createStreamParser();
+        parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { reasoning_content: 'think' }, finish_reason: null }],
+        });
+        const textEvents = parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { content: 'answer' }, finish_reason: null }],
+        });
+        parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        });
+        const thinkingStop = textEvents.find((e) => e.type === 'thinking_stop');
+        const contentStart = textEvents.find((e) => e.type === 'content_start');
+        if (thinkingStop?.type === 'thinking_stop') expect(thinkingStop.index).toBe(0);
+        if (contentStart?.type === 'content_start') expect(contentStart.index).toBe(1);
+      });
+
+      it('thinking + text + tool_call gets sequential indices', () => {
+        const parser = codec.createStreamParser();
+        // reasoning
+        parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { reasoning_content: 'think' }, finish_reason: null }],
+        });
+        // text
+        parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { content: 'answer' }, finish_reason: null }],
+        });
+        // tool call
+        const toolEvents = parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'tool', arguments: '{}' } }],
+              },
+              finish_reason: null,
+            },
+          ],
+        });
+        const toolStart = toolEvents.find((e) => e.type === 'tool_call_start');
+        if (toolStart?.type === 'tool_call_start') expect(toolStart.index).toBe(2);
+      });
+
+      it('flush closes open thinking block', () => {
+        const parser = codec.createStreamParser();
+        parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { reasoning_content: 'thinking...' }, finish_reason: null }],
+        });
+        const events = parser.flush();
+        expect(events.some((e) => e.type === 'thinking_stop')).toBe(true);
+        const stop = events.find((e) => e.type === 'thinking_stop');
+        if (stop?.type === 'thinking_stop') expect(stop.index).toBe(0);
+      });
+
+      it('no thinking events for non-reasoning model', () => {
+        const parser = codec.createStreamParser();
+        parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'gpt-4o',
+          choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
+        });
+        parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'gpt-4o',
+          choices: [{ index: 0, delta: { content: 'hello' }, finish_reason: null }],
+        });
+        const events: CanonicalStreamEvent[] = parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'gpt-4o',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        });
+        expect(events.filter((e) => e.type === 'thinking_start')).toHaveLength(0);
+        expect(events.filter((e) => e.type === 'thinking_delta')).toHaveLength(0);
+        expect(events.filter((e) => e.type === 'thinking_stop')).toHaveLength(0);
+      });
+
+      it('message_start emits when first chunk has only reasoning_content', () => {
+        const parser = codec.createStreamParser();
+        const events = parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { reasoning_content: 'let me think' }, finish_reason: null }],
+        });
+        expect(events.some((e) => e.type === 'message_start')).toBe(true);
+        const msgStart = events.findIndex((e) => e.type === 'message_start');
+        const thinkStart = events.findIndex((e) => e.type === 'thinking_start');
+        expect(msgStart).toBeLessThan(thinkStart);
+      });
+
+      it('correct ordering when single chunk has reasoning + content', () => {
+        const parser = codec.createStreamParser();
+        const events = parser.processChunk({
+          id: 'chatcmpl-1',
+          model: 'kimi-k2',
+          choices: [{ index: 0, delta: { reasoning_content: 'think', content: 'answer' }, finish_reason: null }],
+        });
+        const types = events.map((e) => e.type);
+        const thinkingDeltaIdx = types.indexOf('thinking_delta');
+        const contentDeltaIdx = types.indexOf('content_delta');
+        expect(thinkingDeltaIdx).toBeLessThan(contentDeltaIdx);
+      });
     });
   });
 });

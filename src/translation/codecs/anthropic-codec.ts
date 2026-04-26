@@ -272,13 +272,27 @@ class AnthropicStreamSerializer implements StreamSerializer {
         return [`event: content_block_stop`, `data: ${JSON.stringify(data)}`, ``];
       }
 
+      case 'thinking_start': {
+        const data = {
+          type: 'content_block_start',
+          index: event.index,
+          content_block: { type: 'thinking', thinking: '' },
+        };
+        return [`event: content_block_start`, `data: ${JSON.stringify(data)}`, ``];
+      }
+
       case 'thinking_delta': {
         const data = {
           type: 'content_block_delta',
-          index: 0,
+          index: event.index,
           delta: { type: 'thinking_delta', thinking: event.thinking },
         };
         return [`event: content_block_delta`, `data: ${JSON.stringify(data)}`, ``];
+      }
+
+      case 'thinking_stop': {
+        const data = { type: 'content_block_stop', index: event.index };
+        return [`event: content_block_stop`, `data: ${JSON.stringify(data)}`, ``];
       }
 
       case 'message_stop': {

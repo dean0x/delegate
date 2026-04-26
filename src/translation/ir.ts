@@ -210,9 +210,20 @@ export type ToolCallStopEvent = {
   readonly arguments: string;
 };
 
+export type ThinkingStartEvent = {
+  readonly type: 'thinking_start';
+  readonly index: number;
+};
+
 export type ThinkingDeltaEvent = {
   readonly type: 'thinking_delta';
+  readonly index: number;
   readonly thinking: string;
+};
+
+export type ThinkingStopEvent = {
+  readonly type: 'thinking_stop';
+  readonly index: number;
 };
 
 export type UsageEvent = {
@@ -232,5 +243,7 @@ export type CanonicalStreamEvent =
   | ToolCallStartEvent
   | ToolCallDeltaEvent
   | ToolCallStopEvent
+  | ThinkingStartEvent
   | ThinkingDeltaEvent
+  | ThinkingStopEvent
   | UsageEvent;
