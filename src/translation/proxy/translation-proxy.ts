@@ -386,7 +386,7 @@ export class TranslationProxy {
     }
 
     const targetBody = JSON.stringify(serializeResult.value);
-    const targetUrl = new URL('/v1/chat/completions', this.config.targetBaseUrl);
+    const targetUrl = new URL(this.config.targetBaseUrl.replace(/\/$/, '') + '/chat/completions');
 
     // Build outbound headers (strip anthropic-specific, set auth)
     const outboundHeaders = stripAnthropicHeaders(req.headers);

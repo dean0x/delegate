@@ -47,7 +47,7 @@ async function readBody(req: http.IncomingMessage): Promise<string> {
 
 function makeProxy(targetPort: number, logger: Logger) {
   return new TranslationProxy({
-    targetBaseUrl: `http://127.0.0.1:${targetPort}`,
+    targetBaseUrl: `http://127.0.0.1:${targetPort}/v1`,
     targetApiKey: 'test-api-key-12345',
     targetModel: 'gpt-4o',
     sourceCodec: new AnthropicCodec(),
@@ -1067,5 +1067,66 @@ describe('TranslationProxy', () => {
       expect(body.role).toBe('assistant');
       expect(body.content[0].text).toBe('Fallback response.');
     });
+  });
+
+  it('preserves path prefix in targetBaseUrl', async () => {
+    let capturedUrl = '';
+    const { server, port } = await makeBackend((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          id: 'chatcmpl-1',
+          model: 'gpt-4o',
+          choices: [{ message: { role: 'assistant', content: 'hi' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+        }),
+      );
+    });
+    backendServers.push(server);
+
+    const proxy = new TranslationProxy({
+      targetBaseUrl: `http://127.0.0.1:${port}/custom/prefix/v1`,
+      targetApiKey: 'test-key',
+      targetModel: 'gpt-4o',
+      sourceCodec: new AnthropicCodec(),
+      targetCodec: new OpenAICodec(),
+      middlewareFactory: () => [],
+      logger: makeLogger(),
+    });
+    proxies.push(proxy);
+    const startResult = await proxy.start();
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+
+    const body = JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const proxyPort = startResult.value.port;
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port: proxyPort,
+          path: '/v1/messages',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body).toString(),
+            'x-api-key': 'test',
+          },
+        },
+        (res) => {
+          res.resume();
+          res.on('end', resolve);
+        },
+      );
+      req.on('error', reject);
+      req.end(body);
+    });
+
+    expect(capturedUrl).toBe('/custom/prefix/v1/chat/completions');
   });
 });
