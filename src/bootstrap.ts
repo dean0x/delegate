@@ -253,11 +253,26 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // All logs go to stderr to keep stdout clean for MCP protocol
   logger.info('Bootstrapping Autobeat', { config });
 
-  // Register database with structured logging
-  container.registerSingleton('database', () => {
+  // Register database with structured logging — eagerly verify the native module loads
+  try {
     const dbLogger = logger.child({ module: 'database' });
-    return new Database(undefined, dbLogger);
-  });
+    const db = new Database(undefined, dbLogger);
+    container.registerValue('database', db);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('NODE_MODULE_VERSION')) {
+      return err(
+        new AutobeatError(
+          ErrorCode.SYSTEM_ERROR,
+          `better-sqlite3 was compiled for a different Node.js version.\n\n` +
+            `  Current Node:  ${process.version}\n` +
+            `  Fix:           npm rebuild better-sqlite3 -g\n` +
+            `                 (or reinstall: npm install -g autobeat)\n`,
+        ),
+      );
+    }
+    throw error;
+  }
 
   // Register repositories
   container.registerSingleton('taskRepository', () => {

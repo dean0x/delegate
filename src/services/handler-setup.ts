@@ -101,10 +101,13 @@ function getDependency<T>(container: Container, key: string): Result<T> {
   const result = container.get(key);
   if (!result.ok) {
     return err(
-      new AutobeatError(ErrorCode.DEPENDENCY_INJECTION_FAILED, `Handler setup requires '${key}' service`, {
-        service: key,
-        error: result.error.message,
-      }),
+      new AutobeatError(
+        ErrorCode.DEPENDENCY_INJECTION_FAILED,
+        `Handler setup requires '${key}' service: ${result.error.message}`,
+        {
+          service: key,
+        },
+      ),
     );
   }
   return ok(result.value as T);
