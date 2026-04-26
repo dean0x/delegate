@@ -47,8 +47,8 @@ import { Logger, LoopService, OrchestrationService, ScheduleService, TaskManager
 import { scaffoldCustomOrchestrator } from '../core/orchestrator-scaffold.js';
 import { match } from '../core/result.js';
 import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
-import { probeUrl } from '../utils/url-probe.js';
 import type { UrlProbeResult } from '../utils/url-probe.js';
+import { probeUrl } from '../utils/url-probe.js';
 import { validatePath } from '../utils/validation.js';
 import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 
@@ -3509,8 +3509,7 @@ export class MCPAdapter {
         }
 
         // Probe connectivity when a baseUrl-related field was changed and baseUrl is available
-        const integrationFieldChanged =
-          baseUrl !== undefined || apiKey !== undefined || translate !== undefined;
+        const integrationFieldChanged = baseUrl !== undefined || apiKey !== undefined || translate !== undefined;
         if (integrationFieldChanged && effectiveBaseUrl) {
           const probeResult = await probeUrl(effectiveBaseUrl, {
             apiKey: effectiveApiKey,

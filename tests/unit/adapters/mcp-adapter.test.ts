@@ -57,8 +57,8 @@ import type {
 } from '../../../src/core/interfaces';
 import type { Result } from '../../../src/core/result';
 import { err, ok } from '../../../src/core/result';
-import { createTestConfiguration, TaskFactory } from '../../fixtures/factories';
 import { probeUrl } from '../../../src/utils/url-probe.js';
+import { createTestConfiguration, TaskFactory } from '../../fixtures/factories';
 
 // vi.mock is hoisted by Vitest — must be declared at module top level.
 // Mocking probeUrl prevents real HTTP requests during ConfigureAgent tests.

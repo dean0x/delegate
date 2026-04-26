@@ -118,11 +118,7 @@ function httpRequest(
 // Message builders
 // ---------------------------------------------------------------------------
 
-function messageForError(
-  error: NodeJS.ErrnoException,
-  url: URL,
-  timeoutMs: number,
-): string {
+function messageForError(error: NodeJS.ErrnoException, url: URL, timeoutMs: number): string {
   const code = error.code ?? '';
   const urlStr = url.href;
 
@@ -154,11 +150,14 @@ function messageForError(
   return error.message;
 }
 
-function messageForStatus(statusCode: number, headers: http.IncomingHttpHeaders, url: URL, isDeepProbe: boolean): string {
+function messageForStatus(
+  statusCode: number,
+  headers: http.IncomingHttpHeaders,
+  url: URL,
+  isDeepProbe: boolean,
+): string {
   if (statusCode >= 200 && statusCode < 300) {
-    return isDeepProbe
-      ? 'API endpoint is reachable and authenticated'
-      : 'URL is reachable';
+    return isDeepProbe ? 'API endpoint is reachable and authenticated' : 'URL is reachable';
   }
   if (statusCode === 301 || statusCode === 302) {
     const location = headers['location'] ?? '(unknown)';
@@ -210,10 +209,7 @@ function severityForStatus(statusCode: number, isDeepProbe: boolean): 'ok' | 'wa
  * Returns err() only when `baseUrl` cannot be parsed as a URL.
  * All network-level failures are represented as UrlProbeResult with severity='error'.
  */
-export async function probeUrl(
-  baseUrl: string,
-  options: UrlProbeOptions = {},
-): Promise<Result<UrlProbeResult>> {
+export async function probeUrl(baseUrl: string, options: UrlProbeOptions = {}): Promise<Result<UrlProbeResult>> {
   const { timeoutMs = 5000, apiKey, requestFn } = options;
 
   // 1. Parse — fail fast for malformed URLs
@@ -244,13 +240,7 @@ export async function probeUrl(
     // Append /models to pathname (preserves hostname, port, protocol)
     modelsUrl.pathname = modelsUrl.pathname.replace(/\/?$/, '') + '/models';
 
-    const deepResult = await httpRequest(
-      'GET',
-      modelsUrl,
-      { Authorization: `Bearer ${apiKey}` },
-      timeoutMs,
-      requestFn,
-    );
+    const deepResult = await httpRequest('GET', modelsUrl, { Authorization: `Bearer ${apiKey}` }, timeoutMs, requestFn);
 
     if ('error' in deepResult) {
       // Deep probe failure — fall through to base probe result
