@@ -83,6 +83,9 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
           />
         );
       }
+      case 'pipelines':
+        // Pipeline detail view is Phase C — not yet implemented
+        return <NotFound entityType={entityType} entityId={entityId} />;
     }
   },
 );

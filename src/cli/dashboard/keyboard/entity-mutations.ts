@@ -5,8 +5,8 @@
  * across activity focus, main panel, and workspace cancel/delete blocks.
  */
 
-import type { LoopId, OrchestratorId, ScheduleId, TaskId } from '../../../core/domain.js';
-import { LoopStatus, OrchestratorStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
+import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
+import { LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
 import type { DashboardMutationContext } from '../types.js';
 import { TERMINAL_STATUSES } from './constants.js';
 
@@ -14,7 +14,7 @@ import { TERMINAL_STATUSES } from './constants.js';
  * The entity kind routing key — mirrors ActivityEntry['kind'] but is also used
  * for panel-focused cancel/delete where the kind is derived from PanelId.
  */
-export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule';
+export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline';
 
 /**
  * Dispatches cancel to the appropriate service based on entity kind.
@@ -63,6 +63,10 @@ export async function cancelEntity(
           refreshNow();
         }
         break;
+      case 'pipeline':
+        // Pipeline cancel is driven by cancelling its current step task (cascade).
+        // Direct pipeline cancel not yet supported — silently no-op.
+        break;
     }
   } catch {
     // Best-effort: service errors are logged internally by each service.
@@ -107,6 +111,12 @@ export async function deleteEntity(
       case 'schedule':
         if (TERMINAL_STATUSES.schedules.includes(entityStatus as ScheduleStatus)) {
           await mutations.scheduleRepo.delete(entityId as ScheduleId);
+          refreshNow();
+        }
+        break;
+      case 'pipeline':
+        if (TERMINAL_STATUSES.pipelines.includes(entityStatus as PipelineStatus) && mutations.pipelineRepo) {
+          await mutations.pipelineRepo.delete(entityId as PipelineId);
           refreshNow();
         }
         break;

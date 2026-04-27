@@ -43,9 +43,9 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
   // Tab — cycle focus forward
   if (key.tab && !key.shift) {
     setNav((prev) => {
-      // Activity → panel (loops)
+      // Activity → first panel in order (wraps around)
       if (prev.activityFocused) {
-        return { ...prev, activityFocused: false, focusedPanel: 'loops' };
+        return { ...prev, activityFocused: false, focusedPanel: PANEL_ORDER[0] };
       }
       const currentIdx = PANEL_ORDER.indexOf(prev.focusedPanel);
       const nextIdx = currentIdx + 1;

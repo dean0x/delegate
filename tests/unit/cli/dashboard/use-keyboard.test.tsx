@@ -136,19 +136,21 @@ function makeDashboardData(overrides: Partial<DashboardData> = {}): DashboardDat
     loops: [],
     schedules: [],
     orchestrations: [],
+    pipelines: [],
     taskCounts: { total: 0, byStatus: {} },
     loopCounts: { total: 0, byStatus: {} },
     scheduleCounts: { total: 0, byStatus: {} },
     orchestrationCounts: { total: 0, byStatus: {} },
+    pipelineCounts: { total: 0, byStatus: {} },
     ...overrides,
   };
 }
 
 const INITIAL_NAV: NavState = {
   focusedPanel: 'loops',
-  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
-  filters: { loops: null, tasks: null, schedules: null, orchestrations: null },
-  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
+  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
+  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
+  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   activityFocused: false,
   activitySelectedIndex: 0,
   orchestrationChildSelectedTaskId: null,
@@ -244,38 +246,48 @@ async function press(stdin: { write: (s: string) => void }, key: string): Promis
 // ============================================================================
 
 describe('useKeyboard — Tab panel cycling', () => {
-  it('Tab moves focus forward from loops → tasks', async () => {
+  it('Tab moves focus forward from loops → schedules', async () => {
     const { lastFrame, stdin } = render(<KeyboardWrapper />);
     expect(lastFrame()).toContain('panel:loops');
     await press(stdin, '\t');
-    expect(lastFrame()).toContain('panel:tasks');
+    expect(lastFrame()).toContain('panel:schedules');
   });
 
-  it('Tab cycles all the way around: loops → tasks → schedules → orchestrations → activity → loops', async () => {
+  it('Tab cycles all the way around: loops → schedules → orchestrations → pipelines → activity → tasks → loops', async () => {
+    // INITIAL_NAV starts at loops. PANEL_ORDER is tasks/loops/schedules/orchestrations/pipelines.
+    // From loops (index 1): Tab → schedules(2) → orchestrations(3) → pipelines(4) → activity → tasks(0) → loops(1)
     const { lastFrame, stdin } = render(<KeyboardWrapper />);
-    await press(stdin, '\t'); // → tasks
     await press(stdin, '\t'); // → schedules
     await press(stdin, '\t'); // → orchestrations
-    await press(stdin, '\t'); // → activity (new stop)
+    await press(stdin, '\t'); // → pipelines
+    await press(stdin, '\t'); // → activity (end of list)
     expect(lastFrame()).toContain('activity-focused:true');
-    await press(stdin, '\t'); // → loops (wrap)
-    expect(lastFrame()).toContain('panel:loops');
+    await press(stdin, '\t'); // → tasks (wrap)
+    expect(lastFrame()).toContain('panel:tasks');
     expect(lastFrame()).toContain('activity-focused:false');
   });
 
-  it('Shift+Tab cycles backward from loops → activity focus', async () => {
+  it('Shift+Tab cycles backward from loops → tasks', async () => {
     const { lastFrame, stdin } = render(<KeyboardWrapper />);
     expect(lastFrame()).toContain('panel:loops');
-    // Shift+Tab is ESC[Z in VT100
+    // Shift+Tab is ESC[Z in VT100 — from loops (index 1) → tasks (index 0)
+    await press(stdin, '\x1B[Z');
+    expect(lastFrame()).toContain('panel:tasks');
+  });
+
+  it('Shift+Tab from tasks → activity focus', async () => {
+    // tasks is the first panel (index 0) — Shift+Tab wraps to activity
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialNav={{ ...INITIAL_NAV, focusedPanel: 'tasks' }} />);
+    expect(lastFrame()).toContain('panel:tasks');
     await press(stdin, '\x1B[Z');
     expect(lastFrame()).toContain('activity-focused:true');
   });
 
-  it('Shift+Tab from activity focus → orchestrations panel', async () => {
+  it('Shift+Tab from activity focus → pipelines panel (last panel)', async () => {
     const { lastFrame, stdin } = render(<KeyboardWrapper initialNav={{ ...INITIAL_NAV, activityFocused: true }} />);
     expect(lastFrame()).toContain('activity-focused:true');
     await press(stdin, '\x1B[Z');
-    expect(lastFrame()).toContain('panel:orchestrations');
+    expect(lastFrame()).toContain('panel:pipelines');
     expect(lastFrame()).toContain('activity-focused:false');
   });
 });
@@ -285,10 +297,16 @@ describe('useKeyboard — Tab panel cycling', () => {
 // ============================================================================
 
 describe('useKeyboard — panel jump keys', () => {
-  it('pressing "2" jumps to tasks panel', async () => {
+  it('pressing "1" jumps to tasks panel', async () => {
+    const { lastFrame, stdin } = render(<KeyboardWrapper />);
+    await press(stdin, '1');
+    expect(lastFrame()).toContain('panel:tasks');
+  });
+
+  it('pressing "2" jumps to loops panel', async () => {
     const { lastFrame, stdin } = render(<KeyboardWrapper />);
     await press(stdin, '2');
-    expect(lastFrame()).toContain('panel:tasks');
+    expect(lastFrame()).toContain('panel:loops');
   });
 
   it('pressing "3" jumps to schedules panel', async () => {
@@ -303,10 +321,10 @@ describe('useKeyboard — panel jump keys', () => {
     expect(lastFrame()).toContain('panel:orchestrations');
   });
 
-  it('pressing "1" jumps to loops panel', async () => {
-    const { lastFrame, stdin } = render(<KeyboardWrapper initialNav={{ ...INITIAL_NAV, focusedPanel: 'tasks' }} />);
-    await press(stdin, '1');
-    expect(lastFrame()).toContain('panel:loops');
+  it('pressing "5" jumps to pipelines panel', async () => {
+    const { lastFrame, stdin } = render(<KeyboardWrapper />);
+    await press(stdin, '5');
+    expect(lastFrame()).toContain('panel:pipelines');
   });
 });
 

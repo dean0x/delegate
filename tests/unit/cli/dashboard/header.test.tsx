@@ -19,10 +19,12 @@ function makeData(overrides: Partial<DashboardData> = {}): DashboardData {
     loops: [],
     schedules: [],
     orchestrations: [],
+    pipelines: [],
     taskCounts: { total: 0, byStatus: {} },
     loopCounts: { total: 0, byStatus: {} },
     scheduleCounts: { total: 0, byStatus: {} },
     orchestrationCounts: { total: 0, byStatus: {} },
+    pipelineCounts: { total: 0, byStatus: {} },
     ...overrides,
   };
 }

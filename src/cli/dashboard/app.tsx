@@ -50,12 +50,12 @@ interface AppProps {
   readonly outputRepository?: OutputRepository;
 }
 
-/** Initial navigation state — focus on loops panel, no selection, no filters */
+/** Initial navigation state — focus on tasks panel (most common starting point), no selection, no filters */
 const INITIAL_NAV: NavState = {
-  focusedPanel: 'loops',
-  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
-  filters: { loops: null, tasks: null, schedules: null, orchestrations: null },
-  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
+  focusedPanel: 'tasks',
+  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
+  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
+  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   activityFocused: false,
   activitySelectedIndex: 0,
   orchestrationChildSelectedTaskId: null,

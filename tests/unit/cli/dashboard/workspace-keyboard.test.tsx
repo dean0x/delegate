@@ -37,19 +37,25 @@ function makeWorkspaceDashboardData(overrides: Partial<DashboardData> = {}): Das
     loops: [],
     schedules: [],
     orchestrations: [],
+    pipelines: [],
     taskCounts: { total: 0, byStatus: {} },
     loopCounts: { total: 0, byStatus: {} },
     scheduleCounts: { total: 0, byStatus: {} },
     orchestrationCounts: { total: 0, byStatus: {} },
+    pipelineCounts: { total: 0, byStatus: {} },
     ...overrides,
   };
 }
 
 const INITIAL_NAV: NavState = {
-  focusedPanel: 'loops',
-  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
-  filters: { loops: null, tasks: null, schedules: null, orchestrations: null },
-  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
+  focusedPanel: 'tasks',
+  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
+  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
+  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
+  activityFocused: false,
+  activitySelectedIndex: 0,
+  orchestrationChildSelectedTaskId: null,
+  orchestrationChildPage: 0,
 };
 
 // ============================================================================

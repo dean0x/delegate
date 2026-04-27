@@ -116,7 +116,14 @@ export async function fetchAllData(
   childPage = 0,
   livenessCache?: Map<string, LivenessCacheEntry>,
 ): Promise<Result<DashboardData, string>> {
-  const { taskRepository, loopRepository, scheduleRepository, orchestrationRepository, workerRepository } = ctx;
+  const {
+    taskRepository,
+    loopRepository,
+    scheduleRepository,
+    orchestrationRepository,
+    workerRepository,
+    pipelineRepository,
+  } = ctx;
 
   // Parallel fetch: entity lists + status counts
   const rawResults = await Promise.all([
@@ -124,10 +131,12 @@ export async function fetchAllData(
     loopRepository.findAll(FETCH_LIMIT),
     scheduleRepository.findAll(FETCH_LIMIT),
     orchestrationRepository.findAll(FETCH_LIMIT),
+    pipelineRepository.findAll(FETCH_LIMIT),
     taskRepository.countByStatus(),
     loopRepository.countByStatus(),
     scheduleRepository.countByStatus(),
     orchestrationRepository.countByStatus(),
+    pipelineRepository.countByStatus(),
   ]);
 
   // Unwrap all results — any failure returns a labeled error string
@@ -137,10 +146,12 @@ export async function fetchAllData(
       'Loops',
       'Schedules',
       'Orchestrations',
+      'Pipelines',
       'Task counts',
       'Loop counts',
       'Schedule counts',
       'Orchestration counts',
+      'Pipeline counts',
     ],
     rawResults,
   );
@@ -152,10 +163,32 @@ export async function fetchAllData(
   type ScheduleList = Awaited<ReturnType<typeof scheduleRepository.findAll>> extends Result<infer V, Error> ? V : never;
   type OrchList =
     Awaited<ReturnType<typeof orchestrationRepository.findAll>> extends Result<infer V, Error> ? V : never;
+  type PipelineList = Awaited<ReturnType<typeof pipelineRepository.findAll>> extends Result<infer V, Error> ? V : never;
   type StatusMap = Record<string, number>;
 
-  const [tasks, loops, schedules, orchestrations, taskCounts, loopCounts, scheduleCounts, orchestrationCounts] =
-    unwrapped.value as [TaskList, LoopList, ScheduleList, OrchList, StatusMap, StatusMap, StatusMap, StatusMap];
+  const [
+    tasks,
+    loops,
+    schedules,
+    orchestrations,
+    pipelines,
+    taskCounts,
+    loopCounts,
+    scheduleCounts,
+    orchestrationCounts,
+    pipelineCounts,
+  ] = unwrapped.value as [
+    TaskList,
+    LoopList,
+    ScheduleList,
+    OrchList,
+    PipelineList,
+    StatusMap,
+    StatusMap,
+    StatusMap,
+    StatusMap,
+    StatusMap,
+  ];
 
   // Fetch detail extras if in detail view (best-effort — errors yield undefined)
   const detailExtra: DetailExtra = viewState.kind === 'detail' ? await fetchDetailExtra(ctx, viewState, childPage) : {};
@@ -223,10 +256,12 @@ export async function fetchAllData(
     loops,
     schedules,
     orchestrations,
+    pipelines,
     taskCounts: buildEntityCounts(taskCounts),
     loopCounts: buildEntityCounts(loopCounts),
     scheduleCounts: buildEntityCounts(scheduleCounts),
     orchestrationCounts: buildEntityCounts(orchestrationCounts),
+    pipelineCounts: buildEntityCounts(pipelineCounts),
     orchestrationLiveness,
     ...detailExtra,
     ...metricsExtras,

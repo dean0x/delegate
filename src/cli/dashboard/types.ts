@@ -12,6 +12,7 @@ import type {
   Orchestration,
   OrchestratorChild,
   OrchestratorId,
+  Pipeline,
   Schedule,
   ScheduleId,
   Task,
@@ -23,6 +24,7 @@ import type {
   LoopService,
   OrchestrationRepository,
   OrchestrationService,
+  PipelineRepository,
   ScheduleExecution,
   ScheduleRepository,
   ScheduleService,
@@ -46,9 +48,11 @@ export interface DashboardMutationContext {
   readonly loopRepo: LoopRepository;
   readonly taskRepo: TaskRepository;
   readonly scheduleRepo: ScheduleRepository;
+  /** Pipeline repository for delete operations (cancel is driven via task cancellation cascade) */
+  readonly pipelineRepo?: PipelineRepository;
 }
 
-export type PanelId = 'loops' | 'tasks' | 'schedules' | 'orchestrations';
+export type PanelId = 'tasks' | 'loops' | 'schedules' | 'orchestrations' | 'pipelines';
 
 /**
  * Return target for task detail view.
@@ -185,16 +189,21 @@ export interface EntityCounts {
  * - topOrchestrationsByCost: top-N orchestrations by total cost in 24h window
  * - throughputStats: task/loop throughput over a 1-hour window
  * - activityFeed: merged time-sorted activity across all entity kinds
+ *
+ * Phase B (Dashboard Visibility Overhaul): pipelines and pipelineCounts added
+ * to support the entity browser panel with full pipeline visibility.
  */
 export interface DashboardData {
   readonly tasks: readonly Task[];
   readonly loops: readonly Loop[];
   readonly schedules: readonly Schedule[];
   readonly orchestrations: readonly Orchestration[];
+  readonly pipelines: readonly Pipeline[];
   readonly taskCounts: EntityCounts;
   readonly loopCounts: EntityCounts;
   readonly scheduleCounts: EntityCounts;
   readonly orchestrationCounts: EntityCounts;
+  readonly pipelineCounts: EntityCounts;
   readonly iterations?: readonly LoopIteration[];
   readonly executions?: readonly ScheduleExecution[];
   /** Liveness state per orchestration ID — only populated for RUNNING orchestrations */

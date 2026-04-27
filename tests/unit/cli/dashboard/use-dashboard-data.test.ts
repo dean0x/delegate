@@ -91,11 +91,14 @@ function makeCtx(overrides: Partial<ReadOnlyContext> = {}): ReadOnlyContext {
     ),
   };
 
+  const pipelineRepo = makeMockRepo();
+
   return {
     taskRepository: taskRepo as unknown as ReadOnlyContext['taskRepository'],
     loopRepository: loopRepo as unknown as ReadOnlyContext['loopRepository'],
     scheduleRepository: scheduleRepo as unknown as ReadOnlyContext['scheduleRepository'],
     orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
+    pipelineRepository: pipelineRepo as unknown as ReadOnlyContext['pipelineRepository'],
     outputRepository: {} as ReadOnlyContext['outputRepository'],
     usageRepository: usageRepo as unknown as ReadOnlyContext['usageRepository'],
     workerRepository: {
@@ -147,8 +150,10 @@ describe('fetchAllData', () => {
     expect(result.value.loops).toEqual([]);
     expect(result.value.schedules).toEqual([]);
     expect(result.value.orchestrations).toEqual([]);
+    expect(result.value.pipelines).toEqual([]);
     expect(result.value.taskCounts.total).toBe(0);
     expect(result.value.loopCounts.total).toBe(0);
+    expect(result.value.pipelineCounts.total).toBe(0);
   });
 
   it('calls findAll(FETCH_LIMIT) on all repositories', async () => {
@@ -159,6 +164,7 @@ describe('fetchAllData', () => {
     expect(ctx.loopRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
     expect(ctx.scheduleRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
     expect(ctx.orchestrationRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
+    expect(ctx.pipelineRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
   });
 
   it('calls countByStatus on all repositories', async () => {
@@ -169,6 +175,7 @@ describe('fetchAllData', () => {
     expect(ctx.loopRepository.countByStatus).toHaveBeenCalled();
     expect(ctx.scheduleRepository.countByStatus).toHaveBeenCalled();
     expect(ctx.orchestrationRepository.countByStatus).toHaveBeenCalled();
+    expect(ctx.pipelineRepository.countByStatus).toHaveBeenCalled();
   });
 
   it('returns error when task findAll fails', async () => {
