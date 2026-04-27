@@ -194,6 +194,45 @@ describe('buildHealthSummary (via Header)', () => {
     expect(frame).not.toContain('queue');
     expect(frame).not.toContain('fail');
   });
+
+  it('includes running pipelines in the running count (Phase B)', () => {
+    const frame = renderSummary(
+      makeData({
+        pipelineCounts: { total: 2, byStatus: { running: 2 } },
+      }),
+    );
+    expect(frame).toContain('●2 run');
+  });
+
+  it('includes pending pipelines in the queued count (Phase B)', () => {
+    const frame = renderSummary(
+      makeData({
+        pipelineCounts: { total: 1, byStatus: { pending: 1 } },
+      }),
+    );
+    expect(frame).toContain('○1 queue');
+  });
+
+  it('includes failed and cancelled pipelines in the failed count (Phase B)', () => {
+    const frame = renderSummary(
+      makeData({
+        pipelineCounts: { total: 3, byStatus: { failed: 2, cancelled: 1 } },
+      }),
+    );
+    expect(frame).toContain('✗3 fail');
+  });
+
+  it('aggregates pipelines with other entity types in health summary', () => {
+    const frame = renderSummary(
+      makeData({
+        taskCounts: { total: 1, byStatus: { running: 1 } },
+        pipelineCounts: { total: 2, byStatus: { running: 1, failed: 1 } },
+      }),
+    );
+    // 1 task running + 1 pipeline running = 2 total running
+    expect(frame).toContain('●2 run');
+    expect(frame).toContain('✗1 fail');
+  });
 });
 
 // ============================================================================

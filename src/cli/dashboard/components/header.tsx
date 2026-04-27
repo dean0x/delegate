@@ -21,7 +21,12 @@ interface HeaderProps {
 
 /**
  * Build a global health summary string from all entity counts.
- * Shows running, queued, and failed totals across all entity types.
+ * Shows running, queued, and failed totals across all entity types
+ * including pipelines (Phase B).
+ *
+ * Running: tasks, loops, active schedules, orchestrations (running+planning), pipelines
+ * Queued:  queued tasks, paused loops, paused schedules, pending pipelines
+ * Failed:  failed/cancelled tasks/loops/orchestrations/pipelines, cancelled schedules
  */
 function buildHealthSummary(data: DashboardData): string {
   const running =
@@ -29,18 +34,22 @@ function buildHealthSummary(data: DashboardData): string {
     (data.loopCounts.byStatus['running'] ?? 0) +
     (data.scheduleCounts.byStatus['active'] ?? 0) +
     (data.orchestrationCounts.byStatus['running'] ?? 0) +
-    (data.orchestrationCounts.byStatus['planning'] ?? 0);
+    (data.orchestrationCounts.byStatus['planning'] ?? 0) +
+    (data.pipelineCounts.byStatus['running'] ?? 0);
 
   const queued =
     (data.taskCounts.byStatus['queued'] ?? 0) +
     (data.loopCounts.byStatus['paused'] ?? 0) +
-    (data.scheduleCounts.byStatus['paused'] ?? 0);
+    (data.scheduleCounts.byStatus['paused'] ?? 0) +
+    (data.pipelineCounts.byStatus['pending'] ?? 0);
 
   const failed =
     (data.taskCounts.byStatus['failed'] ?? 0) +
     (data.loopCounts.byStatus['failed'] ?? 0) +
     (data.scheduleCounts.byStatus['cancelled'] ?? 0) +
-    (data.orchestrationCounts.byStatus['failed'] ?? 0);
+    (data.orchestrationCounts.byStatus['failed'] ?? 0) +
+    (data.pipelineCounts.byStatus['failed'] ?? 0) +
+    (data.pipelineCounts.byStatus['cancelled'] ?? 0);
 
   const parts: string[] = [];
   if (running > 0) parts.push(`●${running} run`);
