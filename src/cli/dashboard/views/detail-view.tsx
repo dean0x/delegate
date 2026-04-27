@@ -9,6 +9,7 @@ import React from 'react';
 import type { DashboardData, PanelId } from '../types.js';
 import { LoopDetail } from './loop-detail.js';
 import { OrchestrationDetail } from './orchestration-detail.js';
+import { PipelineDetail } from './pipeline-detail.js';
 import { ScheduleDetail } from './schedule-detail.js';
 import { TaskDetail } from './task-detail.js';
 
@@ -83,9 +84,17 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
           />
         );
       }
-      case 'pipelines':
-        // Pipeline detail view is Phase C — not yet implemented
-        return <NotFound entityType={entityType} entityId={entityId} />;
+      case 'pipelines': {
+        const pipeline = data?.pipelines?.find((p) => p.id === entityId);
+        if (pipeline === undefined) return <NotFound entityType={entityType} entityId={entityId} />;
+        // Resolve step tasks from the pipeline's stepTaskIds
+        const stepTasks = pipeline.stepTaskIds.map((taskId) =>
+          taskId !== null ? (data?.tasks?.find((t) => t.id === taskId) ?? null) : null,
+        );
+        return (
+          <PipelineDetail pipeline={pipeline} stepTasks={stepTasks} scrollOffset={scrollOffset} animFrame={animFrame} />
+        );
+      }
     }
   },
 );

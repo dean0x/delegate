@@ -32,6 +32,7 @@ import {
   LoopStatus,
   LoopStrategy,
   OrchestratorStatus,
+  PipelineStatus,
   ScheduleStatus,
   ScheduleType,
   TaskStatus,
@@ -847,5 +848,187 @@ describe('OrchestrationDetail — Phase C progress indicators', () => {
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Progress');
     expect(frame).toContain('42');
+  });
+});
+
+// ============================================================================
+// Step 9: ProgressBar component
+// ============================================================================
+
+import { ProgressBar } from '../../../../src/cli/dashboard/components/progress-bar.js';
+import { PipelineDetail } from '../../../../src/cli/dashboard/views/pipeline-detail.js';
+
+describe('ProgressBar', () => {
+  it('renders nothing when steps is empty', () => {
+    const { lastFrame } = render(<ProgressBar steps={[]} width={40} />);
+    expect(lastFrame() ?? '').toBe('');
+  });
+
+  it('shows completed count and total', () => {
+    const steps = [
+      { status: 'completed' as const },
+      { status: 'completed' as const },
+      { status: 'running' as const },
+      { status: 'pending' as const },
+      { status: 'pending' as const },
+    ];
+    const { lastFrame } = render(<ProgressBar steps={steps} width={40} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('2/5');
+    expect(frame).toContain('running');
+  });
+
+  it('shows failed count when any step has failed status', () => {
+    const steps = [{ status: 'completed' as const }, { status: 'failed' as const }, { status: 'pending' as const }];
+    const { lastFrame } = render(<ProgressBar steps={steps} width={30} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('failed');
+    expect(frame).toContain('1/3');
+  });
+
+  it('shows all completed when all steps complete', () => {
+    const steps = [{ status: 'completed' as const }, { status: 'completed' as const }];
+    const { lastFrame } = render(<ProgressBar steps={steps} width={20} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('2/2');
+  });
+
+  it('renders block characters', () => {
+    const steps = [{ status: 'completed' as const }, { status: 'running' as const }, { status: 'pending' as const }];
+    const { lastFrame } = render(<ProgressBar steps={steps} width={30} />);
+    const frame = lastFrame() ?? '';
+    // Should contain at least one block character
+    expect(frame).toMatch(/[█▓▒░]/);
+  });
+});
+
+// ============================================================================
+// Step 9: PipelineDetail view
+// ============================================================================
+
+function makePipeline(overrides: Partial<Pipeline> = {}): Pipeline {
+  return {
+    id: 'pipeline-test-001' as PipelineId,
+    steps: [
+      { index: 0, prompt: 'Setup database migrations' },
+      { index: 1, prompt: 'Generate API endpoints' },
+      { index: 2, prompt: 'Write integration tests' },
+    ],
+    stepTaskIds: [null, null, null],
+    status: PipelineStatus.PENDING as unknown as Pipeline['status'],
+    priority: 'normal' as Pipeline['priority'],
+    createdAt: Date.now() - 120_000,
+    updatedAt: Date.now() - 60_000,
+    ...overrides,
+  } as unknown as Pipeline;
+}
+
+describe('PipelineDetail', () => {
+  it('shows pipeline ID', () => {
+    const pipeline = makePipeline();
+    const { lastFrame } = render(
+      <PipelineDetail pipeline={pipeline} stepTasks={[null, null, null]} scrollOffset={0} animFrame={0} />,
+    );
+    expect(lastFrame()).toContain('pipeline-test-001');
+  });
+
+  it('shows Pipeline Detail header', () => {
+    const pipeline = makePipeline();
+    const { lastFrame } = render(
+      <PipelineDetail pipeline={pipeline} stepTasks={[null, null, null]} scrollOffset={0} animFrame={0} />,
+    );
+    expect(lastFrame()).toContain('Pipeline Detail');
+  });
+
+  it('shows stages section with step count', () => {
+    const pipeline = makePipeline();
+    const { lastFrame } = render(
+      <PipelineDetail pipeline={pipeline} stepTasks={[null, null, null]} scrollOffset={0} animFrame={0} />,
+    );
+    expect(lastFrame()).toContain('Stages');
+    expect(lastFrame()).toContain('3 total');
+  });
+
+  it('shows progress bar with step statuses', () => {
+    const pipeline = makePipeline({
+      steps: [
+        { index: 0, prompt: 'Step 1' },
+        { index: 1, prompt: 'Step 2' },
+      ],
+      stepTaskIds: ['task-done' as TaskId, null],
+    });
+    const doneTask = makeTask({ id: 'task-done' as Task['id'], status: TaskStatus.COMPLETED });
+    const { lastFrame } = render(
+      <PipelineDetail pipeline={pipeline} stepTasks={[doneTask, null]} scrollOffset={0} animFrame={0} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('1/2');
+  });
+
+  it('shows step prompts in stage list', () => {
+    const pipeline = makePipeline();
+    const { lastFrame } = render(
+      <PipelineDetail pipeline={pipeline} stepTasks={[null, null, null]} scrollOffset={0} animFrame={0} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Setup database');
+  });
+
+  it('shows schedule source when pipeline has scheduleId', () => {
+    const pipeline = makePipeline({ scheduleId: 'schedule-parent-123' as Pipeline['scheduleId'] });
+    const { lastFrame } = render(
+      <PipelineDetail pipeline={pipeline} stepTasks={[null, null, null]} scrollOffset={0} animFrame={0} />,
+    );
+    expect(lastFrame()).toContain('schedule-parent-123');
+  });
+
+  it('shows loop source when pipeline has loopId', () => {
+    const pipeline = makePipeline({ loopId: 'loop-parent-456' as Pipeline['loopId'] });
+    const { lastFrame } = render(
+      <PipelineDetail pipeline={pipeline} stepTasks={[null, null, null]} scrollOffset={0} animFrame={0} />,
+    );
+    expect(lastFrame()).toContain('loop-parent-456');
+  });
+});
+
+// ============================================================================
+// Step 9: DetailView dispatcher — pipelines route
+// ============================================================================
+
+describe('DetailView — pipeline dispatch', () => {
+  it('shows NotFound when pipeline entity is not in data', () => {
+    const data = makeDashboardData({ pipelines: [] });
+    const { lastFrame } = render(
+      <DetailView entityType="pipelines" entityId="pipeline-missing" data={data} scrollOffset={0} animFrame={0} />,
+    );
+    expect(lastFrame()).toContain('Entity not found');
+  });
+
+  it('dispatches to PipelineDetail for pipelines entityType', () => {
+    const pipeline = makePipeline();
+    const data = makeDashboardData({ pipelines: [pipeline as unknown as Pipeline] });
+    const { lastFrame } = render(
+      <DetailView entityType="pipelines" entityId={pipeline.id} data={data} scrollOffset={0} animFrame={0} />,
+    );
+    expect(lastFrame()).toContain('Pipeline Detail');
+  });
+
+  it('resolves step tasks from data.tasks by stepTaskIds', () => {
+    const task = makeTask({ id: 'task-step-001' as Task['id'], status: TaskStatus.COMPLETED });
+    const pipeline = makePipeline({
+      steps: [{ index: 0, prompt: 'Step with task' }],
+      stepTaskIds: [task.id],
+    });
+    const data = makeDashboardData({
+      pipelines: [pipeline as unknown as Pipeline],
+      tasks: [task],
+    });
+    const { lastFrame } = render(
+      <DetailView entityType="pipelines" entityId={pipeline.id} data={data} scrollOffset={0} animFrame={0} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Pipeline Detail');
+    // Should show 1/1 steps completed in progress bar
+    expect(frame).toContain('1/1');
   });
 });
