@@ -23,19 +23,26 @@ function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+/** Format token counts as compact K/M suffixes */
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
 export const CostTile: React.FC<CostTileProps> = React.memo(({ costRollup24h, top }) => {
   const { totalCostUsd, inputTokens, outputTokens, cacheReadInputTokens } = costRollup24h;
   const cacheSavings = cacheReadInputTokens;
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" paddingX={1}>
       <Text bold>Cost (24h)</Text>
       <Text>
         <Text bold>{formatCost(totalCostUsd)}</Text>
       </Text>
-      <Text>In: {inputTokens} tokens</Text>
-      <Text>Out: {outputTokens} tokens</Text>
-      {cacheSavings > 0 && <Text>Cache: {cacheSavings} saved</Text>}
+      <Text>In {formatTokens(inputTokens)} tok</Text>
+      <Text>Out {formatTokens(outputTokens)} tok</Text>
+      {cacheSavings > 0 && <Text>Cache {formatTokens(cacheSavings)} saved</Text>}
       {top.length > 0 && (
         <Box flexDirection="column">
           <Text dimColor>Top:</Text>

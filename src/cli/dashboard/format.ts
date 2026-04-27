@@ -73,6 +73,7 @@ const STATUS_ICONS: Record<string, string> = {
   running: '●',
   active: '●',
   planning: '○',
+  pending: '○',
   queued: '○',
   completed: '✓',
   failed: '✗',

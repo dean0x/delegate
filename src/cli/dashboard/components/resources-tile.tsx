@@ -38,7 +38,7 @@ function formatBytes(bytes: number): string {
 export const ResourcesTile: React.FC<ResourcesTileProps> = React.memo(({ resources, error: _error }) => {
   if (resources === null) {
     return (
-      <Box flexDirection="column" paddingX={1}>
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
         <Text bold>Resources</Text>
         <Text>CPU —</Text>
         <Text>Mem —</Text>
@@ -52,7 +52,7 @@ export const ResourcesTile: React.FC<ResourcesTileProps> = React.memo(({ resourc
   const memUsedPercent = totalMemory > 0 ? ((totalMemory - availableMemory) / totalMemory) * 100 : 0;
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" paddingX={1}>
       <Text bold>Resources</Text>
       <Box>
         <Text>CPU </Text>

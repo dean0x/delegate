@@ -5,7 +5,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { dashboardReducer, type DashboardAction, type DashboardState } from '../../../../src/cli/dashboard/nav-reducer.js';
+import {
+  type DashboardAction,
+  type DashboardState,
+  dashboardReducer,
+} from '../../../../src/cli/dashboard/nav-reducer.js';
 import type { NavState, ViewState } from '../../../../src/cli/dashboard/types.js';
 import { createInitialWorkspaceNavState } from '../../../../src/cli/dashboard/workspace-types.js';
 

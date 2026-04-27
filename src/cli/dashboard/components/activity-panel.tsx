@@ -28,38 +28,38 @@ function formatTime(epochMs: number): string {
   return `${h}:${m}`;
 }
 
+/**
+ * Fixed column widths for activity feed alignment.
+ * All rows use identical padding so columns align perfectly.
+ */
+const COL_KIND_W = 5; // 'task '|'loop '|'orch '|'sched'
+const COL_ID_W = 8; // shortId output (~8 chars)
+const COL_STATUS_W = 11; // 'completed  '|'running    '|'failed     '
+
 function kindLabel(kind: ActivityEntry['kind']): string {
   switch (kind) {
     case 'task':
-      return 'task ';
+      return 'task'.padEnd(COL_KIND_W);
     case 'loop':
-      return 'loop ';
+      return 'loop'.padEnd(COL_KIND_W);
     case 'orchestration':
-      return 'orch ';
+      return 'orch'.padEnd(COL_KIND_W);
     case 'schedule':
-      return 'sched';
+      return 'sched'.padEnd(COL_KIND_W);
   }
 }
 
 function renderActivityRow(entry: ActivityEntry, _index: number, isSelected: boolean): React.ReactNode {
   const timeStr = formatTime(entry.timestamp);
   const kind = kindLabel(entry.kind);
-  const id = shortId(entry.entityId);
-  const status = entry.status.slice(0, 12).padEnd(12);
+  const id = shortId(entry.entityId).padEnd(COL_ID_W);
+  const status = entry.status.slice(0, COL_STATUS_W).padEnd(COL_STATUS_W);
   const action = entry.action;
 
   return (
     <Box key={entry.entityId}>
       <Text bold={isSelected} inverse={isSelected}>
-        {timeStr}
-        {'  '}
-        {kind}
-        {'  '}
-        {id}
-        {'  '}
-        {status}
-        {'  '}
-        {action}
+        {timeStr} {kind} {id} {status} {action}
       </Text>
     </Box>
   );

@@ -49,12 +49,22 @@ describe('CostTile', () => {
   });
 
   describe('token display', () => {
-    it('shows input token count', () => {
+    it('shows input token count formatted as K for thousands', () => {
       const { lastFrame } = render(<CostTile costRollup24h={makeUsage({ inputTokens: 2500 })} top={[]} />);
-      expect(lastFrame()).toContain('2500');
+      expect(lastFrame()).toContain('2.5K');
     });
 
-    it('shows output token count', () => {
+    it('shows input token count as raw number under 1000', () => {
+      const { lastFrame } = render(<CostTile costRollup24h={makeUsage({ inputTokens: 500 })} top={[]} />);
+      expect(lastFrame()).toContain('500');
+    });
+
+    it('shows output token count formatted as K for thousands', () => {
+      const { lastFrame } = render(<CostTile costRollup24h={makeUsage({ outputTokens: 1500 })} top={[]} />);
+      expect(lastFrame()).toContain('1.5K');
+    });
+
+    it('shows output token count as raw number under 1000', () => {
       const { lastFrame } = render(<CostTile costRollup24h={makeUsage({ outputTokens: 750 })} top={[]} />);
       expect(lastFrame()).toContain('750');
     });
