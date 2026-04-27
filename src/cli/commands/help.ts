@@ -1,6 +1,5 @@
-import { readFileSync } from 'fs';
-import path from 'path';
 import pc from 'picocolors';
+import { VERSION } from '../../generated/version.js';
 import { stdout } from '../ui.js';
 
 // Help writes to stdout (Unix convention), so styling must check stdout TTY — not stderr
@@ -8,11 +7,8 @@ const isStdoutTTY = process.stdout.isTTY === true;
 const bold = (s: string): string => (isStdoutTTY ? pc.bold(s) : s);
 const cyan = (s: string): string => (isStdoutTTY ? pc.cyan(s) : s);
 
-export function showHelp(dirname: string): void {
-  const pkg = JSON.parse(readFileSync(path.join(dirname, '..', 'package.json'), 'utf-8'));
-  const v = pkg.version ?? '0.0.0';
-
-  stdout(`${bold(`Autobeat v${v}`)} ${cyan('Task Delegation MCP Server')}
+export function showHelp(): void {
+  stdout(`${bold(`Autobeat v${VERSION}`)} ${cyan('Task Delegation MCP Server')}
 
 ${bold('Usage:')}
   beat <command> [options...]

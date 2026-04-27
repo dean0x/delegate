@@ -163,11 +163,13 @@ export class Container {
    * Shutdown order is critical to prevent resource leaks and event storms:
    * 1. Emit `ShutdownInitiated` event
    * 2. **Stop ResourceMonitor FIRST** - prevents continuous polling/events during shutdown
-   * 3. Kill all workers (emit `WorkersTerminating`, then `killAll()`)
-   * 4. Close database (emit `DatabaseClosing`, then `close()`)
-   * 5. Emit `ShutdownComplete` event
-   * 6. Dispose EventBus (clears cleanup timers)
-   * 7. Clear all service registrations
+   * 3. Stop ScheduleExecutor - prevents timer firing against closed resources
+   * 4. Stop translation proxy - lets in-flight requests complete before workers die
+   * 5. Kill all workers (emit `WorkersTerminating`, then `killAll()`)
+   * 6. Close database (emit `DatabaseClosing`, then `close()`)
+   * 7. Emit `ShutdownComplete` event
+   * 8. Dispose EventBus (clears cleanup timers)
+   * 9. Clear all service registrations
    *
    * @example
    * ```typescript
@@ -202,6 +204,18 @@ export class Container {
       const scheduleExecutor = scheduleExecutorResult.value as DisposableService;
       if (scheduleExecutor.stop) {
         scheduleExecutor.stop();
+      }
+    }
+
+    // DECISION: Stop translation proxy before killing workers — lets in-flight
+    // requests through the proxy complete. Added here (not in individual CLI commands)
+    // for DRY: run.ts, orchestrate.ts, and any future callers all go through dispose().
+    // ProxyManager.stop() is idempotent — safe if already stopped by index.ts shutdown.
+    const proxyManagerResult = this.get('proxyManager');
+    if (proxyManagerResult.ok) {
+      const proxyManager = proxyManagerResult.value as DisposableService;
+      if (proxyManager.stop) {
+        await proxyManager.stop();
       }
     }
 

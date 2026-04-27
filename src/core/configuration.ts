@@ -227,10 +227,24 @@ export function resetConfigValue(key: string): ConfigWriteResult {
 // Per-Agent Config Storage (agents.<provider>.apiKey in config.json)
 // ============================================================================
 
+/**
+ * Supported API translation targets as a const tuple.
+ * Single source of truth — derive TranslateTarget and all runtime arrays from this.
+ * Empty string is the "clear" sentinel accepted at save boundaries (CLI, MCP); it is
+ * NOT included here because stored config never holds an empty string.
+ */
+export const TRANSLATE_TARGETS = ['openai'] as const satisfies readonly string[];
+
+/**
+ * Union type derived from TRANSLATE_TARGETS — no manual sync required.
+ */
+export type TranslateTarget = (typeof TRANSLATE_TARGETS)[number];
+
 export interface AgentConfig {
   readonly apiKey?: string;
   readonly baseUrl?: string;
   readonly model?: string;
+  readonly translate?: TranslateTarget;
 }
 
 /**
@@ -247,6 +261,13 @@ export function loadAgentConfig(provider: AgentProvider): AgentConfig {
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : undefined,
     baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : undefined,
     model: typeof record.model === 'string' ? record.model : undefined,
+    // DECISION: Intentional early narrowing — only accept known TranslateTarget values.
+    // Unknown stored values (e.g. from a downgraded install) are silently dropped here
+    // rather than propagating an invalid string downstream. Low practical risk: only
+    // 'openai' has ever been functional.
+    translate: (TRANSLATE_TARGETS as readonly string[]).includes(record.translate as string)
+      ? (record.translate as TranslateTarget)
+      : undefined,
   };
 }
 
@@ -259,7 +280,7 @@ export function loadAgentConfig(provider: AgentProvider): AgentConfig {
  */
 export function saveAgentConfig(
   provider: AgentProvider,
-  key: 'apiKey' | 'baseUrl' | 'model',
+  key: 'apiKey' | 'baseUrl' | 'model' | 'translate',
   value: string,
 ): ConfigWriteResult {
   const existing = loadConfigFile();

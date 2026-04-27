@@ -5,11 +5,12 @@
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import pkg from '../package.json' with { type: 'json' };
 import { MCPAdapter } from './adapters/mcp-adapter.js';
 import { bootstrap } from './bootstrap.js';
 import { Container } from './core/container.js';
 import { Logger, WorkerPool } from './core/interfaces.js';
+import { VERSION } from './generated/version.js';
+import { ProxyManager } from './translation/proxy/proxy-manager.js';
 
 // Handle errors gracefully
 process.on('uncaughtException', (error) => {
@@ -52,7 +53,7 @@ async function main() {
     const mcpAdapter = mcpAdapterResult.value;
 
     // All logs go to stderr to keep stdout clean for MCP protocol
-    logger.info(`Starting Autobeat MCP Server v${pkg.version}`);
+    logger.info(`Starting Autobeat MCP Server v${VERSION}`);
 
     // Create and start MCP server
     const transport = new StdioServerTransport();
@@ -70,6 +71,13 @@ async function main() {
       if (scheduleExecutorResult?.ok) {
         const executor = scheduleExecutorResult.value as { stop(): unknown };
         executor.stop();
+      }
+
+      // Stop translation proxy before killing workers
+      const proxyManagerResult = container?.get('proxyManager');
+      if (proxyManagerResult?.ok) {
+        const proxyManager = proxyManagerResult.value as ProxyManager;
+        await proxyManager.stop();
       }
 
       // Kill all workers

@@ -3,7 +3,6 @@
 // Set process title for easy identification in ps/pgrep/pkill
 process.title = 'beat-cli';
 
-import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -31,6 +30,7 @@ import { handleScheduleCommand } from './cli/commands/schedule.js';
 import { getTaskStatus } from './cli/commands/status.js';
 import * as ui from './cli/ui.js';
 import { AGENT_PROVIDERS, isAgentProvider } from './core/agents.js';
+import { VERSION } from './generated/version.js';
 import { validateBufferSize, validatePath, validateTimeout } from './utils/validation.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -42,9 +42,8 @@ const mainCommand = args[0];
 const subCommand = args[1];
 
 // Early --help/-h interception for subcommands
-const subArgs = args.slice(1);
-if (mainCommand && (subArgs.includes('--help') || subArgs.includes('-h'))) {
-  showHelp(__dirname);
+if (mainCommand && (args.slice(1).includes('--help') || args.slice(1).includes('-h'))) {
+  showHelp();
   process.exit(0);
 }
 
@@ -348,12 +347,11 @@ if (mainCommand === 'mcp') {
   const { startDashboard } = await import('./cli/dashboard/index.js');
   await startDashboard();
 } else if (mainCommand === 'help' || mainCommand === '--help' || mainCommand === '-h' || !mainCommand) {
-  showHelp(__dirname);
+  showHelp();
 } else if (mainCommand === '--version' || mainCommand === '-v') {
-  const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
-  ui.stdout(pkg.version);
+  ui.stdout(VERSION);
 } else {
   ui.error(`Unknown command: ${mainCommand}`);
-  showHelp(__dirname);
+  showHelp();
   process.exit(1);
 }

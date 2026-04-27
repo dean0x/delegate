@@ -5,7 +5,6 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { z } from 'zod';
-import pkg from '../../package.json' with { type: 'json' };
 import {
   AGENT_DESCRIPTIONS,
   AGENT_PROVIDERS,
@@ -15,7 +14,13 @@ import {
   checkAgentAuth,
   maskApiKey,
 } from '../core/agents.js';
-import { type Configuration, loadAgentConfig, resetAgentConfig, saveAgentConfig } from '../core/configuration.js';
+import {
+  type Configuration,
+  loadAgentConfig,
+  resetAgentConfig,
+  saveAgentConfig,
+  TRANSLATE_TARGETS,
+} from '../core/configuration.js';
 import {
   EvalMode,
   LoopCreateRequest,
@@ -40,7 +45,9 @@ import {
 import { Logger, LoopService, OrchestrationService, ScheduleService, TaskManager } from '../core/interfaces.js';
 import { scaffoldCustomOrchestrator } from '../core/orchestrator-scaffold.js';
 import { match } from '../core/result.js';
+import { VERSION } from '../generated/version.js';
 import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
+import { probeUrl, type UrlProbeResult } from '../utils/url-probe.js';
 import { validatePath } from '../utils/validation.js';
 import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 
@@ -347,6 +354,14 @@ const ConfigureAgentSchema = z.object({
   apiKey: z.string().min(1).optional().describe('API key to store (set action)'),
   baseUrl: z.string().url().optional().describe('Base URL override (set action, e.g. https://proxy.example.com/v1)'),
   model: modelSchema.optional().describe('Default model override for this agent (set action)'),
+  translate: z
+    // TRANSLATE_TARGETS is the canonical list; '' is the "clear" sentinel accepted only at
+    // save boundaries (CLI, MCP) — it is never persisted to stored config.
+    .enum([...TRANSLATE_TARGETS, ''] as const satisfies readonly [string, ...string[]])
+    .optional()
+    .describe(
+      'API translation target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
+    ),
 });
 
 // Loop-related Zod schemas (v0.7.0 Task/Pipeline Loops)
@@ -538,7 +553,7 @@ export class MCPAdapter {
     this.server = new Server(
       {
         name: 'autobeat',
-        version: pkg.version,
+        version: VERSION,
       },
       {
         capabilities: {
@@ -622,7 +637,7 @@ export class MCPAdapter {
       case 'InitCustomOrchestrator':
         return this.handleInitCustomOrchestrator(args);
       case 'ConfigureAgent':
-        return this.handleConfigureAgent(args);
+        return await this.handleConfigureAgent(args);
       default:
         return {
           content: [
@@ -1639,6 +1654,11 @@ export class MCPAdapter {
                     description: 'Default model for this agent (set action, overridden by per-task model)',
                     minLength: 1,
                     maxLength: 200,
+                  },
+                  translate: {
+                    type: 'string',
+                    description:
+                      'API translation target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
                   },
                 },
                 required: ['agent'],
@@ -2962,6 +2982,7 @@ export class MCPAdapter {
         ...(authStatus.hint && { hint: authStatus.hint }),
         ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
         ...(agentConfig.model && { model: agentConfig.model }),
+        ...(agentConfig.translate && { translate: agentConfig.translate }),
         ...(claudeBaseUrlWarning && { warning: claudeBaseUrlWarning }),
       };
     });
@@ -3302,7 +3323,7 @@ export class MCPAdapter {
    * Handle ConfigureAgent tool call
    * Actions: check auth status, set API key, reset stored key
    */
-  private handleConfigureAgent(args: unknown): MCPToolResponse {
+  private async handleConfigureAgent(args: unknown): Promise<MCPToolResponse> {
     const parseResult = ConfigureAgentSchema.safeParse(args);
     if (!parseResult.success) {
       return {
@@ -3323,31 +3344,39 @@ export class MCPAdapter {
       };
     }
 
-    const { agent, action, apiKey, baseUrl, model } = parseResult.data;
+    const { agent, action, apiKey, baseUrl, model, translate } = parseResult.data;
 
     switch (action) {
       case 'check': {
         const agentConfig = loadAgentConfig(agent);
         const status = checkAgentAuth(agent, agentConfig.apiKey);
 
-        interface CheckPayload {
-          success: boolean;
-          ready: boolean;
-          method: string;
-          hint?: string;
-          storedKey?: string;
-          baseUrl?: string;
-          model?: string;
-          warning?: string;
+        // Probe connectivity when a baseUrl is configured
+        let connectivity: UrlProbeResult | undefined;
+        if (agentConfig.baseUrl) {
+          const probeResult = await probeUrl(agentConfig.baseUrl, {
+            apiKey: agentConfig.apiKey,
+            timeoutMs: 5000,
+          });
+          // DESIGN: On check, include full probe diagnostics in the response payload (even
+          // on non-ok severity) so the user can inspect connectivity details. Probe network
+          // errors (probeResult.ok === false) are silently skipped — unavailable network
+          // should not block the auth status report.
+          if (probeResult.ok) {
+            connectivity = probeResult.value;
+          }
         }
+
         const checkWarning = this.getClaudeBaseUrlWarning(agent, agentConfig.baseUrl, agentConfig.apiKey);
-        const checkPayload: CheckPayload = {
+        const checkPayload = {
           success: true,
           ...status,
           ...(agentConfig.apiKey && { storedKey: maskApiKey(agentConfig.apiKey) }),
           ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
           ...(agentConfig.model && { model: agentConfig.model }),
+          ...(agentConfig.translate && { translate: agentConfig.translate }),
           ...(checkWarning && { warning: checkWarning }),
+          ...(connectivity !== undefined && { connectivity }),
         };
 
         return {
@@ -3361,13 +3390,16 @@ export class MCPAdapter {
       }
 
       case 'set': {
-        if (!apiKey && !baseUrl && !model) {
+        if (!apiKey && !baseUrl && !model && translate === undefined) {
           return {
             content: [
               {
                 type: 'text',
                 text: JSON.stringify(
-                  { success: false, error: 'At least one of apiKey, baseUrl, or model is required for set action' },
+                  {
+                    success: false,
+                    error: 'At least one of apiKey, baseUrl, model, or translate is required for set action',
+                  },
                   null,
                   2,
                 ),
@@ -3380,7 +3412,12 @@ export class MCPAdapter {
         // Perform all writes up-front to avoid partial-write: collect each
         // result before returning so that a late failure reports which fields
         // were already saved and which failed.
-        type WriteAttempt = { key: 'apiKey' | 'baseUrl' | 'model'; label: string; ok: boolean; error?: string };
+        type WriteAttempt = {
+          key: 'apiKey' | 'baseUrl' | 'model' | 'translate';
+          label: string;
+          ok: boolean;
+          error?: string;
+        };
         const attempts: WriteAttempt[] = [];
 
         if (apiKey) {
@@ -3413,6 +3450,16 @@ export class MCPAdapter {
           });
         }
 
+        if (translate !== undefined) {
+          const result = saveAgentConfig(agent, 'translate', translate);
+          attempts.push({
+            key: 'translate',
+            label: translate === '' ? 'translate cleared' : `translate set to ${translate}`,
+            ok: result.ok,
+            error: result.ok ? undefined : result.error,
+          });
+        }
+
         const failed = attempts.filter((a) => !a.ok);
         if (failed.length > 0) {
           const saved = attempts.filter((a) => a.ok).map((a) => a.key);
@@ -3435,28 +3482,52 @@ export class MCPAdapter {
           };
         }
 
-        // Compute Claude baseUrl warning using effective values after writes
+        // Compute warnings using effective values after writes
         const currentConfig = loadAgentConfig(agent);
         const effectiveBaseUrl = baseUrl !== undefined ? baseUrl : currentConfig.baseUrl;
         const effectiveApiKey = apiKey ?? currentConfig.apiKey;
-        const setWarning = this.getClaudeBaseUrlWarning(agent, effectiveBaseUrl, effectiveApiKey);
+        const effectiveTranslate = translate !== undefined ? translate : currentConfig.translate;
 
-        interface SetPayload {
-          success: boolean;
-          message: string;
-          warning?: string;
+        const warnings: string[] = [];
+        const baseUrlWarning = this.getClaudeBaseUrlWarning(agent, effectiveBaseUrl, effectiveApiKey);
+        if (baseUrlWarning) warnings.push(baseUrlWarning);
+
+        // Warn when translate is set but required fields are missing
+        if (effectiveTranslate) {
+          if (!effectiveBaseUrl) warnings.push('translate requires baseUrl to be set');
+          if (!effectiveApiKey) warnings.push('translate requires apiKey to be set');
+          if (!currentConfig.model && !attempts.some((a) => a.key === 'model'))
+            warnings.push('translate requires model to be set');
         }
-        const responsePayload: SetPayload = {
-          success: true,
-          message: `${agent}: ${attempts.map((a) => a.label).join(', ')}`,
-          ...(setWarning && { warning: setWarning }),
-        };
+
+        // Probe connectivity when a baseUrl-related field was changed and baseUrl is available.
+        // DESIGN: On set, the save already succeeded so we only surface non-ok probe results
+        // as a warning (not a diagnostic payload) — probe network errors are silently ignored
+        // because the write succeeded regardless of transient connectivity. This differs from
+        // the check action, which includes full probe diagnostics for user inspection.
+        if ((baseUrl !== undefined || apiKey !== undefined || translate !== undefined) && effectiveBaseUrl) {
+          const probeResult = await probeUrl(effectiveBaseUrl, {
+            apiKey: effectiveApiKey,
+            timeoutMs: 5000,
+          });
+          if (probeResult.ok && probeResult.value.severity !== 'ok') {
+            warnings.push(probeResult.value.message);
+          }
+        }
 
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(responsePayload, null, 2),
+              text: JSON.stringify(
+                {
+                  success: true,
+                  message: `${agent}: ${attempts.map((a) => a.label).join(', ')}`,
+                  ...(warnings.length > 0 && { warning: warnings.join('. ') }),
+                },
+                null,
+                2,
+              ),
             },
           ],
         };

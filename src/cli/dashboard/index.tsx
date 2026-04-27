@@ -9,9 +9,6 @@
  * acceptable because the dashboard is launched interactively.
  */
 
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import ansiEscapes from 'ansi-escapes';
 import { render } from 'ink';
 import React from 'react';
@@ -30,6 +27,7 @@ import type {
   UsageRepository,
   WorkerRepository,
 } from '../../core/interfaces.js';
+import { VERSION } from '../../generated/version.js';
 import { DEFAULT_DASHBOARD_LOG_PATH, type DisposableLogger, FileLogger } from '../../implementations/file-logger.js';
 import { LogLevel } from '../../implementations/logger.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
@@ -56,17 +54,6 @@ export async function startDashboard(): Promise<void> {
   if (cols < MIN_COLS || rows < MIN_ROWS) {
     process.stderr.write(`Error: Terminal too small (need ${MIN_COLS}×${MIN_ROWS}, have ${cols}×${rows})\n`);
     process.exit(1);
-  }
-
-  // Read version from package.json — graceful fallback if missing or malformed
-  const dirname = path.dirname(fileURLToPath(import.meta.url));
-  let version = '0.0.0';
-  try {
-    const raw = readFileSync(path.join(dirname, '..', '..', '..', 'package.json'), 'utf-8');
-    const pkg = JSON.parse(raw) as { version?: string };
-    version = pkg.version ?? '0.0.0';
-  } catch {
-    // Fallback — dashboard still works without version display
   }
 
   // Swap the default stderr-based ConsoleLogger for a file-backed logger so
@@ -201,7 +188,7 @@ export async function startDashboard(): Promise<void> {
   const instance = render(
     <App
       ctx={ctx}
-      version={version}
+      version={VERSION}
       mutations={mutations}
       resourceMonitor={resourceMonitor}
       outputRepository={outputRepository.value}

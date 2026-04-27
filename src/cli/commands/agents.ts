@@ -17,7 +17,14 @@ import {
   isAgentProvider,
   maskApiKey,
 } from '../../core/agents.js';
-import { loadAgentConfig, loadConfiguration, resetAgentConfig, saveAgentConfig } from '../../core/configuration.js';
+import {
+  loadAgentConfig,
+  loadConfiguration,
+  resetAgentConfig,
+  saveAgentConfig,
+  TRANSLATE_TARGETS,
+} from '../../core/configuration.js';
+import { probeUrl } from '../../utils/url-probe.js';
 import * as ui from '../ui.js';
 
 export async function listAgents(): Promise<void> {
@@ -98,7 +105,7 @@ export async function agentsConfigSet(
   value: string | undefined,
 ): Promise<void> {
   if (!agent || !key || !value) {
-    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model> <value>');
+    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model|translate> <value>');
     process.exit(1);
   }
 
@@ -107,8 +114,8 @@ export async function agentsConfigSet(
     process.exit(1);
   }
 
-  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model') {
-    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model`);
+  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model' && key !== 'translate') {
+    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model, translate`);
     process.exit(1);
   }
 
@@ -118,6 +125,14 @@ export async function agentsConfigSet(
       'API keys passed as CLI arguments may be stored in shell history. Consider using an environment variable instead.',
       'Warning',
     );
+  }
+
+  // Validate translate is a supported target (empty string clears)
+  if (key === 'translate' && value !== '') {
+    if (!(TRANSLATE_TARGETS as readonly string[]).includes(value)) {
+      ui.error(`Unsupported translate target: "${value}". Supported values: ${TRANSLATE_TARGETS.join(', ')}`);
+      process.exit(1);
+    }
   }
 
   // Validate baseUrl is a well-formed absolute URL before saving
@@ -141,6 +156,36 @@ export async function agentsConfigSet(
   } else {
     ui.success(`${agent}.${key} saved: ${value}`);
   }
+
+  // Probe connectivity when a URL/auth/translate field is changed and non-empty
+  if ((key === 'baseUrl' || key === 'apiKey' || key === 'translate') && value !== '') {
+    const config = loadAgentConfig(agent);
+    const effectiveBaseUrl = key === 'baseUrl' ? value : config.baseUrl;
+    if (effectiveBaseUrl) {
+      const effectiveApiKey = key === 'apiKey' ? value : config.apiKey;
+      const probeResult = await probeUrl(effectiveBaseUrl, {
+        apiKey: effectiveApiKey,
+        timeoutMs: 5000,
+      });
+      if (probeResult.ok) {
+        const probe = probeResult.value;
+        if (probe.severity === 'ok') {
+          ui.success(`Connectivity check passed (${probe.durationMs}ms)`);
+        } else {
+          ui.note(probe.message, 'Connectivity');
+        }
+      }
+    }
+  }
+
+  // Warn when translate is set but required fields are missing
+  if (key === 'translate' && value !== '') {
+    const config = loadAgentConfig(agent);
+    if (!config.baseUrl) ui.note('translate requires baseUrl to be set', 'Warning');
+    if (!config.apiKey) ui.note('translate requires apiKey to be set', 'Warning');
+    if (!config.model) ui.note('translate requires model to be set', 'Warning');
+  }
+
   process.exit(0);
 }
 
@@ -169,6 +214,9 @@ export async function agentsConfigShow(agent?: string): Promise<void> {
     }
     if (config.model) {
       parts.push(`model: ${config.model}`);
+    }
+    if (config.translate) {
+      parts.push(`translate: ${config.translate}`);
     }
 
     if (parts.length > 0) {

@@ -57,12 +57,26 @@ import type {
 } from '../../../src/core/interfaces';
 import type { Result } from '../../../src/core/result';
 import { err, ok } from '../../../src/core/result';
+import { probeUrl } from '../../../src/utils/url-probe.js';
 import { createTestConfiguration, TaskFactory } from '../../fixtures/factories';
+
+// vi.mock is hoisted by Vitest — must be declared at module top level.
+// Mocking probeUrl prevents real HTTP requests during ConfigureAgent tests.
+vi.mock('../../../src/utils/url-probe.js', () => ({
+  probeUrl: vi.fn(),
+}));
 
 // Test constants
 const VALID_PROMPT = 'analyze the codebase';
 const VALID_TASK_ID = 'task-abc123';
 const testConfig = createTestConfiguration();
+
+// Global default: probe returns ok so all non-probe tests are unaffected
+beforeEach(() => {
+  vi.mocked(probeUrl).mockResolvedValue(
+    ok({ reachable: true, statusCode: 200, message: 'URL is reachable', severity: 'ok', durationMs: 5 }),
+  );
+});
 
 /**
  * Mock TaskManager for MCP adapter testing
@@ -3289,6 +3303,180 @@ describe('includeSystemPrompt flag via callTool()', () => {
       const response = JSON.parse(result.content[0].text);
       expect(response.success).toBe(true);
       expect(response.loop.systemPrompt).toBeUndefined();
+    });
+  });
+});
+
+// ============================================================================
+// ConfigureAgent — URL probe integration tests
+// Uses vi.mock (declared at module top) to control probeUrl return values.
+// ============================================================================
+
+describe('ConfigureAgent — URL probe integration', () => {
+  let testDir: string;
+  let restoreConfig: () => void;
+
+  function makeProbeAdapter() {
+    return new MCPAdapter({
+      taskManager: new MockTaskManager(),
+      logger: new MockLogger(),
+      scheduleService: stubScheduleService,
+      loopService: stubLoopService,
+      agentRegistry: undefined,
+      config: testConfig,
+    });
+  }
+
+  beforeEach(() => {
+    testDir = path.join(tmpdir(), `autobeat-probe-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    restoreConfig = _testSetConfigDir(testDir);
+    // Default: probe returns ok (reachable) — no probe warning
+    vi.mocked(probeUrl).mockResolvedValue(
+      ok({ reachable: true, statusCode: 200, message: 'URL is reachable', severity: 'ok', durationMs: 5 }),
+    );
+  });
+
+  afterEach(() => {
+    restoreConfig();
+    rmSync(testDir, { recursive: true, force: true });
+    vi.mocked(probeUrl).mockReset();
+  });
+
+  describe('set action — probe integration', () => {
+    it('includes probe warning in response when baseUrl is unreachable', async () => {
+      vi.mocked(probeUrl).mockResolvedValue(
+        ok({
+          reachable: false,
+          message: 'Connection refused at http://unreachable.invalid/v1. Is the server running?',
+          severity: 'error',
+          durationMs: 10,
+        }),
+      );
+
+      const adapter = makeProbeAdapter();
+      const result = await adapter.callTool('ConfigureAgent', {
+        agent: 'codex',
+        action: 'set',
+        baseUrl: 'http://unreachable.invalid/v1',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.warning).toContain('Connection refused');
+    });
+
+    it('triggers probe when only apiKey is set and baseUrl is already stored', async () => {
+      saveAgentConfig('codex', 'baseUrl', 'http://stored-url.example.com/v1');
+
+      vi.mocked(probeUrl).mockResolvedValue(
+        ok({
+          reachable: false,
+          message: 'API key was rejected by stored-url.example.com.',
+          severity: 'error',
+          durationMs: 15,
+        }),
+      );
+
+      const adapter = makeProbeAdapter();
+      const result = await adapter.callTool('ConfigureAgent', {
+        agent: 'codex',
+        action: 'set',
+        apiKey: 'invalid-key',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      // Probe was called with stored baseUrl
+      expect(vi.mocked(probeUrl)).toHaveBeenCalledWith('http://stored-url.example.com/v1', expect.any(Object));
+      expect(response.warning).toContain('rejected');
+    });
+
+    it('does NOT trigger probe when only model is changed', async () => {
+      const adapter = makeProbeAdapter();
+      await adapter.callTool('ConfigureAgent', {
+        agent: 'codex',
+        action: 'set',
+        model: 'gpt-4o',
+      });
+
+      expect(vi.mocked(probeUrl)).not.toHaveBeenCalled();
+    });
+
+    it('succeeds when probe returns err (malformed URL in stored config)', async () => {
+      vi.mocked(probeUrl).mockResolvedValue(err(new Error('Invalid URL: "not-a-url"')));
+
+      const adapter = makeProbeAdapter();
+      // Setting baseUrl triggers probe — probe err should not propagate as tool error
+      const result = await adapter.callTool('ConfigureAgent', {
+        agent: 'codex',
+        action: 'set',
+        baseUrl: 'http://some-url.example.com/v1',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+    });
+
+    it('succeeds with no warning when probe returns ok severity', async () => {
+      // probeUrl already mocked to return ok in beforeEach
+      const adapter = makeProbeAdapter();
+      const result = await adapter.callTool('ConfigureAgent', {
+        agent: 'codex',
+        action: 'set',
+        baseUrl: 'http://reachable.example.com/v1',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.warning).toBeUndefined();
+    });
+  });
+
+  describe('check action — connectivity field', () => {
+    it('includes connectivity in response when baseUrl is stored', async () => {
+      saveAgentConfig('codex', 'baseUrl', 'http://stored-url.example.com/v1');
+
+      vi.mocked(probeUrl).mockResolvedValue(
+        ok({
+          reachable: true,
+          statusCode: 200,
+          message: 'URL is reachable',
+          severity: 'ok',
+          durationMs: 12,
+        }),
+      );
+
+      const adapter = makeProbeAdapter();
+      const result = await adapter.callTool('ConfigureAgent', {
+        agent: 'codex',
+        action: 'check',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.connectivity).toBeDefined();
+      expect(response.connectivity.severity).toBe('ok');
+      expect(response.connectivity.reachable).toBe(true);
+    });
+
+    it('omits connectivity when no baseUrl is stored', async () => {
+      const adapter = makeProbeAdapter();
+      const result = await adapter.callTool('ConfigureAgent', {
+        agent: 'codex',
+        action: 'check',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.connectivity).toBeUndefined();
+      expect(vi.mocked(probeUrl)).not.toHaveBeenCalled();
     });
   });
 });

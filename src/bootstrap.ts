@@ -49,6 +49,7 @@ export interface ModeFlags {
   skipResourceMonitoring: boolean;
   skipScheduleExecutor: boolean;
   skipRecovery: boolean;
+  skipProxy: boolean;
 }
 
 /**
@@ -63,6 +64,11 @@ export function deriveModeFlags(mode: BootstrapMode): ModeFlags {
     skipResourceMonitoring: false,
     skipScheduleExecutor: mode === 'cli' || mode === 'run',
     skipRecovery: mode === 'cli',
+    // DECISION: Proxy starts in any mode that spawns workers ('server', 'run').
+    // Skipped in 'cli' mode (management commands that never spawn workers).
+    // The processSpawner guard is separate — checked at the call site because
+    // it's an options check, not a mode-derived flag.
+    skipProxy: mode === 'cli',
   };
 }
 
@@ -119,6 +125,10 @@ import { ScheduleExecutor } from './services/schedule-executor.js';
 import { ScheduleManagerService } from './services/schedule-manager.js';
 import { TaskManagerService } from './services/task-manager.js';
 
+// Translation proxy
+import { ProxiedClaudeAdapter } from './translation/proxy/proxied-claude-adapter.js';
+import { loadProxyConfig, ProxyManager } from './translation/proxy/proxy-manager.js';
+
 /**
  * Helper for dependency injection in factory functions
  *
@@ -161,7 +171,7 @@ const getFromContainerSafe = <T>(container: Container, key: string): Result<T> =
  */
 export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<Container>> {
   const mode = options.mode ?? 'server';
-  const { skipResourceMonitoring, skipScheduleExecutor, skipRecovery } = deriveModeFlags(mode);
+  const { skipResourceMonitoring, skipScheduleExecutor, skipRecovery, skipProxy } = deriveModeFlags(mode);
 
   const container = new Container();
   const config = loadConfiguration();
@@ -182,8 +192,8 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // If the caller provided a Logger instance (e.g. FileLogger from the dashboard),
   // use it directly. Otherwise construct the default logger based on NODE_ENV.
   if (options.logger) {
-    const providedLogger = options.logger;
-    container.registerSingleton('logger', () => providedLogger);
+    const injectedLogger = options.logger;
+    container.registerSingleton('logger', () => injectedLogger);
   } else {
     container.registerSingleton('logger', () => {
       if (process.env.NODE_ENV === 'production') {
@@ -194,25 +204,25 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   }
 
   // Validate configuration against system (component-level validation)
-  const bootstrapLoggerResult = getFromContainerSafe<Logger>(container, 'logger');
-  if (!bootstrapLoggerResult.ok) {
-    return bootstrapLoggerResult;
+  const loggerResult = getFromContainerSafe<Logger>(container, 'logger');
+  if (!loggerResult.ok) {
+    return loggerResult;
   }
-  const bootstrapLogger = bootstrapLoggerResult.value;
+  const logger = loggerResult.value;
 
-  const validationWarnings = validateConfiguration(config, bootstrapLogger);
+  const validationWarnings = validateConfiguration(config, logger);
 
   // Log summary if warnings exist
   if (validationWarnings.length > 0) {
     const warningCount = validationWarnings.filter((w) => w.severity === 'warning').length;
     const infoCount = validationWarnings.filter((w) => w.severity === 'info').length;
-    bootstrapLogger.warn('Configuration validation complete', {
+    logger.warn('Configuration validation complete', {
       warnings: warningCount,
       info: infoCount,
       total: validationWarnings.length,
     });
   } else {
-    bootstrapLogger.debug('Configuration validation passed - no warnings');
+    logger.debug('Configuration validation passed - no warnings');
   }
 
   // Register EventBus as singleton - ALL components must use this shared instance
@@ -229,25 +239,37 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     return new InMemoryEventBus(cfg, (loggerResult.value as Logger).child({ module: 'SharedEventBus' }));
   });
 
-  // Get logger for bootstrap
-  const loggerResult = container.get<Logger>('logger');
-  if (!loggerResult.ok) {
-    return err(
-      new AutobeatError(ErrorCode.DEPENDENCY_INJECTION_FAILED, 'Failed to create logger', {
-        error: loggerResult.error.message,
-      }),
-    );
-  }
-  const logger = loggerResult.value;
-
   // All logs go to stderr to keep stdout clean for MCP protocol
   logger.info('Bootstrapping Autobeat', { config });
 
-  // Register database with structured logging
-  container.registerSingleton('database', () => {
+  // DECISION: Database is registered via registerValue (eager instantiation) rather than
+  // registerSingleton (lazy). Eager instantiation is intentional: it forces better-sqlite3's
+  // native module to load at bootstrap time so ABI mismatches (NODE_MODULE_VERSION errors)
+  // surface immediately with a clear remediation message. With lazy registration the error
+  // would only appear on first database access, deep inside request handling, with no context.
+  try {
     const dbLogger = logger.child({ module: 'database' });
-    return new Database(undefined, dbLogger);
-  });
+    const db = new Database(undefined, dbLogger);
+    container.registerValue('database', db);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('NODE_MODULE_VERSION')) {
+      return err(
+        new AutobeatError(
+          ErrorCode.SYSTEM_ERROR,
+          `better-sqlite3 was compiled for a different Node.js version.\n\n` +
+            `  Current Node:  ${process.version}\n` +
+            `  Fix:           npm rebuild better-sqlite3 -g\n` +
+            `                 (or reinstall: npm install -g autobeat)\n`,
+        ),
+      );
+    }
+    return err(
+      new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Failed to initialise database', {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
 
   // Register repositories
   container.registerSingleton('taskRepository', () => {
@@ -348,9 +370,61 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // Register core services
   container.registerSingleton('taskQueue', () => new PriorityTaskQueue());
 
+  // ============================================================================
+  // Translation proxy — optional, activated by agents.claude.translate config
+  //
+  // ARCHITECTURE: If proxy config exists, start a local TranslationProxy that
+  // routes Anthropic Messages API requests to an OpenAI-compatible backend.
+  // The proxy URL is captured here (before agentRegistry is registered) so the
+  // agentRegistry factory can use ProxiedClaudeAdapter with the correct port.
+  //
+  // TEMPORAL DEPENDENCY: proxyPort is captured in the enclosing scope and read
+  // inside the agentRegistry factory closure (registered below). This means proxy
+  // startup MUST complete before agentRegistry is registered — the current code
+  // ordering enforces this. Do NOT move agentRegistry registration above this block.
+  //
+  // DECISION: Proxy startup is eagerly awaited at bootstrap time (not lazily).
+  // Rationale: The port must be known before the agentRegistry factory runs,
+  // and factory functions are synchronous. Eager start ensures consistency.
+  //
+  // DECISION: Proxy starts in server and run modes (both spawn workers).
+  // Skipped in cli mode (management commands that never spawn workers) and
+  // when a processSpawner is injected (tests with mock spawners).
+  //
+  // DECISION: Proxy failure is fatal when config exists. The user
+  // explicitly configured translate — falling back to direct Anthropic API
+  // would fail (wrong key/model) and produce confusing downstream errors.
+  // Error message includes remediation steps for working without the proxy.
+  // ============================================================================
+  let proxyPort: number | undefined;
+
+  if (!options.processSpawner && !skipProxy) {
+    const proxyConfig = loadProxyConfig('claude');
+    if (proxyConfig !== null) {
+      const proxyManager = new ProxyManager(proxyConfig, logger.child({ module: 'ProxyManager' }));
+      const proxyResult = await proxyManager.start();
+      if (proxyResult.ok) {
+        proxyPort = proxyResult.value.port;
+        container.registerValue('proxyManager', proxyManager);
+        // Only non-secret fields logged here — proxyConfig.targetApiKey is intentionally omitted.
+        logger.info('Translation proxy active', { port: proxyPort, targetBaseUrl: proxyConfig.targetBaseUrl });
+      } else {
+        return err(
+          new AutobeatError(
+            ErrorCode.CONFIGURATION_ERROR,
+            `Translation proxy failed to start: ${proxyResult.error.message}. ` +
+              'To work without the proxy, run: beat agents config set claude translate ""',
+            { error: proxyResult.error.message },
+          ),
+        );
+      }
+    }
+  }
+
   // Register AgentRegistry for multi-agent support (v0.5.0)
   // ARCHITECTURE: If a custom ProcessSpawner is injected (tests), wrap it in a
   // compatibility adapter. Otherwise, register all 4 agent adapters.
+  // If a translation proxy is active (proxyPort set), use ProxiedClaudeAdapter.
   container.registerSingleton('agentRegistry', () => {
     if (options.processSpawner) {
       logger.info('Using ProcessSpawnerAdapter for injected ProcessSpawner');
@@ -361,7 +435,11 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     const configResult = container.get<Configuration>('config');
     if (!configResult.ok) throw new Error('Config required for AgentRegistry');
     const cfg = configResult.value;
-    const adapters = [new ClaudeAdapter(cfg), new CodexAdapter(cfg), new GeminiAdapter(cfg)];
+
+    // Use ProxiedClaudeAdapter if translation proxy is active
+    const claudeAdapter = proxyPort !== undefined ? new ProxiedClaudeAdapter(cfg, proxyPort) : new ClaudeAdapter(cfg);
+
+    const adapters = [claudeAdapter, new CodexAdapter(cfg), new GeminiAdapter(cfg)];
     return new InMemoryAgentRegistry(adapters);
   });
 
