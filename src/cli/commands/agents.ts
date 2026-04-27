@@ -24,6 +24,7 @@ import {
   saveAgentConfig,
   TRANSLATE_TARGETS,
 } from '../../core/configuration.js';
+import { probeUrl } from '../../utils/url-probe.js';
 import * as ui from '../ui.js';
 
 export async function listAgents(): Promise<void> {
@@ -161,8 +162,6 @@ export async function agentsConfigSet(
     const config = loadAgentConfig(agent);
     const effectiveBaseUrl = key === 'baseUrl' ? value : config.baseUrl;
     if (effectiveBaseUrl) {
-      // Dynamic import avoids loading network code for non-probe paths (e.g. model set)
-      const { probeUrl } = await import('../../utils/url-probe.js');
       const effectiveApiKey = key === 'apiKey' ? value : config.apiKey;
       const probeResult = await probeUrl(effectiveBaseUrl, {
         apiKey: effectiveApiKey,

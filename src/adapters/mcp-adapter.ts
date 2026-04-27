@@ -3358,12 +3358,17 @@ export class MCPAdapter {
             apiKey: agentConfig.apiKey,
             timeoutMs: 5000,
           });
+          // DESIGN: On check, include full probe diagnostics in the response payload (even
+          // on non-ok severity) so the user can inspect connectivity details. Probe network
+          // errors (probeResult.ok === false) are silently skipped — unavailable network
+          // should not block the auth status report.
           if (probeResult.ok) {
             connectivity = probeResult.value;
           }
         }
 
-        interface CheckPayload {
+        const checkWarning = this.getClaudeBaseUrlWarning(agent, agentConfig.baseUrl, agentConfig.apiKey);
+        const checkPayload: {
           success: boolean;
           ready: boolean;
           method: string;
@@ -3373,9 +3378,7 @@ export class MCPAdapter {
           model?: string;
           warning?: string;
           connectivity?: UrlProbeResult;
-        }
-        const checkWarning = this.getClaudeBaseUrlWarning(agent, agentConfig.baseUrl, agentConfig.apiKey);
-        const checkPayload: CheckPayload = {
+        } = {
           success: true,
           ...status,
           ...(agentConfig.apiKey && { storedKey: maskApiKey(agentConfig.apiKey) }),
@@ -3507,7 +3510,11 @@ export class MCPAdapter {
             warnings.push('translate requires model to be set');
         }
 
-        // Probe connectivity when a baseUrl-related field was changed and baseUrl is available
+        // Probe connectivity when a baseUrl-related field was changed and baseUrl is available.
+        // DESIGN: On set, the save already succeeded so we only surface non-ok probe results
+        // as a warning (not a diagnostic payload) — probe network errors are silently ignored
+        // because the write succeeded regardless of transient connectivity. This differs from
+        // the check action, which includes full probe diagnostics for user inspection.
         if ((baseUrl !== undefined || apiKey !== undefined || translate !== undefined) && effectiveBaseUrl) {
           const probeResult = await probeUrl(effectiveBaseUrl, {
             apiKey: effectiveApiKey,
