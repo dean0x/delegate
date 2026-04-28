@@ -73,8 +73,8 @@ describe('statusColor', () => {
     expect(statusColor('running')).toBe('cyan');
   });
 
-  it('maps active to cyan', () => {
-    expect(statusColor('active')).toBe('cyan');
+  it('maps active to green', () => {
+    expect(statusColor('active')).toBe('green');
   });
 
   it('maps planning to cyan', () => {

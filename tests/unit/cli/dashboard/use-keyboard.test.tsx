@@ -793,8 +793,10 @@ describe('useKeyboard — global v/m/w no interference in main', () => {
     expect(lastFrame()).toContain('view:main');
   });
 
-  it('"w" from main transitions to workspace', async () => {
-    const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} />);
+  it('"w" from main transitions to workspace when orchestrations exist', async () => {
+    const orch = makeOrchestration('orch-1');
+    const data = makeDashboardData({ orchestrations: [orch] });
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} initialData={data} />);
     await press(stdin, 'w');
     expect(lastFrame()).toContain('view:workspace');
   });
@@ -965,7 +967,8 @@ describe('useKeyboard — m/w global keys from detail view (D1)', () => {
 
   it('"w" from detail view dispatches setView({ kind: "workspace" })', async () => {
     const loop = makeLoop('loop-1');
-    const data = makeDashboardData({ loops: [loop] });
+    const orch = makeOrchestration('orch-1');
+    const data = makeDashboardData({ loops: [loop], orchestrations: [orch] });
     const { lastFrame, stdin } = render(<KeyboardWrapper initialData={data} />);
     await press(stdin, '\r'); // enter detail
     expect(lastFrame()).toContain('view:detail');
