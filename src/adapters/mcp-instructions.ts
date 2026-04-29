@@ -78,12 +78,15 @@ InitCustomOrchestrator gives you the building blocks to create your own.
 - TaskLogs with taskId → read stdout/stderr from a task
 - LoopStatus with loopId, includeHistory: true → see iteration progress and scores
 - OrchestratorStatus with orchestratorId → see plan steps and progress
+- PipelineStatus with pipelineId → check overall pipeline status and per-step task IDs
+- ListPipelines → list pipelines with optional status filter (pending/running/completed/failed/cancelled)
 
 ### React to results
 - TaskLogs to read output, then decide next steps
 - ResumeTask to continue from where a failed task left off (with checkpoint context)
 - RetryTask to re-run a task from scratch
 - CancelTask / CancelLoop / CancelOrchestrator to stop work that's going wrong
+- CancelPipeline to transition a pipeline entity to cancelled status
 
 ## Agent & Model Configuration
 

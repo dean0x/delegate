@@ -3,7 +3,6 @@
  * All functions are side-effect-free and suitable for use in any handler module.
  */
 
-import type { ActivityEntry } from '../../../core/domain.js';
 import type { DashboardData, NavState, PanelId } from '../types.js';
 import type { EntityKind } from './entity-mutations.js';
 import type { Identifiable } from './types.js';
@@ -30,6 +29,8 @@ export function getPanelItems(panelId: PanelId, data: DashboardData): readonly I
       return toIdentifiables(data.schedules);
     case 'orchestrations':
       return toIdentifiables(data.orchestrations);
+    case 'pipelines':
+      return toIdentifiables(data.pipelines ?? []);
   }
 }
 
@@ -63,25 +64,6 @@ export function resolveChildIndex(selectedTaskId: string | null, children: reado
 }
 
 /**
- * Map an ActivityEntry kind to the detail entityType used by openDetail.
- * Kept as a pure function so tests can assert on dispatched entityType.
- */
-export function activityKindToEntityType(
-  kind: ActivityEntry['kind'],
-): 'tasks' | 'loops' | 'orchestrations' | 'schedules' {
-  switch (kind) {
-    case 'task':
-      return 'tasks';
-    case 'loop':
-      return 'loops';
-    case 'orchestration':
-      return 'orchestrations';
-    case 'schedule':
-      return 'schedules';
-  }
-}
-
-/**
  * Map a PanelId to its corresponding EntityKind.
  * Used by cancel/delete handlers to route to the correct service.
  */
@@ -95,6 +77,8 @@ export function panelToEntityKind(panelId: PanelId): EntityKind {
       return 'task';
     case 'schedules':
       return 'schedule';
+    case 'pipelines':
+      return 'pipeline';
   }
 }
 

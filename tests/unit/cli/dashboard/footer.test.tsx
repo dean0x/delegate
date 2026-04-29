@@ -1,9 +1,8 @@
 /**
  * Footer component — context-sensitive keyboard help bar assertions.
  *
- * v1.3.0 (Phase F update): MAIN_HELP was updated to reflect the new metrics-view
- * key model. The old "1-4 jump" and "Tab cycle" hints are gone; the new hints
- * clearly describe the activity-focus Tab behaviour.
+ * Phase B update: Hint strings are now sourced from keyboard/hints.ts.
+ * Main view hint now includes "1-5: panel" for the five-panel jump keys.
  */
 
 import { render } from 'ink-testing-library';
@@ -23,9 +22,14 @@ describe('Footer', () => {
       expect(lastFrame()).not.toContain('Tab cycle');
     });
 
-    it('contains "Tab: activity" hint describing the new focus toggle', () => {
+    it('contains "Tab: panel" hint describing panel cycling', () => {
       const { lastFrame } = render(<Footer viewKind="main" />);
-      expect(lastFrame()).toContain('Tab: activity');
+      expect(lastFrame()).toContain('Tab: panel');
+    });
+
+    it('contains "1-5: panel" hint for five-panel jump keys', () => {
+      const { lastFrame } = render(<Footer viewKind="main" />);
+      expect(lastFrame()).toContain('1-5: panel');
     });
 
     it('contains "↑↓: select" hint', () => {
@@ -44,8 +48,10 @@ describe('Footer', () => {
     });
 
     it('contains "q quit" hint', () => {
+      // The full hint string can wrap at terminal boundary; normalise whitespace before asserting
       const { lastFrame } = render(<Footer viewKind="main" />);
-      expect(lastFrame()).toContain('q quit');
+      const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
+      expect(frame).toContain('q quit');
     });
   });
 

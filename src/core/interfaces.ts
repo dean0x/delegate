@@ -17,8 +17,11 @@ import {
   OrchestratorCreateRequest,
   OrchestratorId,
   OrchestratorStatus,
+  Pipeline,
   PipelineCreateRequest,
+  PipelineId,
   PipelineResult,
+  PipelineStatus,
   ResumeTaskRequest,
   Schedule,
   ScheduleCreateRequest,
@@ -920,6 +923,31 @@ export interface UsageRepository {
     sinceMs: number,
     limit: number,
   ): Promise<Result<readonly { orchestrationId: OrchestratorId; totalCost: number }[]>>;
+}
+
+/**
+ * Repository interface for Pipeline entities.
+ * ARCHITECTURE: Pure Result pattern, no exceptions.
+ * Pattern: Repository pattern — one row per pipeline, step_task_ids serialized as JSON.
+ */
+export interface PipelineRepository {
+  save(pipeline: Pipeline): Promise<Result<void>>;
+  update(pipeline: Pipeline): Promise<Result<void>>;
+  findById(id: PipelineId): Promise<Result<Pipeline | null>>;
+  findAll(limit?: number): Promise<Result<readonly Pipeline[]>>;
+  findByStatus(status: PipelineStatus, limit?: number): Promise<Result<readonly Pipeline[]>>;
+  findByScheduleId(scheduleId: ScheduleId): Promise<Result<readonly Pipeline[]>>;
+  findByLoopId(loopId: LoopId): Promise<Result<readonly Pipeline[]>>;
+  delete(id: PipelineId): Promise<Result<void>>;
+  countByStatus(): Promise<Result<Record<string, number>>>;
+  findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Pipeline[]>>;
+  /** Find all active (pending/running) pipelines that contain the given task ID in their stepTaskIds. */
+  findActiveByTaskId(taskId: TaskId): Promise<Result<readonly Pipeline[]>>;
+  /**
+   * Find all active (pending/running) pipelines that contain the given schedule ID in a step definition.
+   * Used by PipelineHandler to populate stepTaskIds when a scheduled step's task is first delegated.
+   */
+  findActiveByStepScheduleId(scheduleId: ScheduleId): Promise<Result<readonly Pipeline[]>>;
 }
 
 // Re-export for convenience (consumers can import from interfaces instead of domain)

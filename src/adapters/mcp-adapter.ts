@@ -30,6 +30,8 @@ import {
   OrchestratorId,
   OrchestratorStatus,
   PipelineCreateRequest,
+  PipelineId,
+  PipelineStatus,
   Priority,
   ResumeTaskRequest,
   ScheduleCreateRequest,
@@ -42,7 +44,14 @@ import {
   TaskId,
   TaskRequest,
 } from '../core/domain.js';
-import { Logger, LoopService, OrchestrationService, ScheduleService, TaskManager } from '../core/interfaces.js';
+import {
+  Logger,
+  LoopService,
+  OrchestrationService,
+  PipelineRepository,
+  ScheduleService,
+  TaskManager,
+} from '../core/interfaces.js';
 import { scaffoldCustomOrchestrator } from '../core/orchestrator-scaffold.js';
 import { match } from '../core/result.js';
 import { VERSION } from '../generated/version.js';
@@ -329,6 +338,21 @@ const CancelOrchestratorSchema = z.object({
   reason: z.string().optional().describe('Reason for cancellation'),
 });
 
+const PipelineStatusSchema = z.object({
+  pipelineId: z.string().describe('Pipeline entity ID (pipeline-xxxx)'),
+});
+
+const ListPipelinesSchema = z.object({
+  status: z.enum(['pending', 'running', 'completed', 'failed', 'cancelled']).optional().describe('Filter by status'),
+  limit: z.number().min(1).max(100).optional().default(50),
+});
+
+const CancelPipelineSchema = z.object({
+  pipelineId: z.string().describe('Pipeline entity ID to cancel'),
+  reason: z.string().optional().describe('Reason for cancellation'),
+  cancelTasks: z.boolean().optional().default(true).describe('Also cancel in-flight step tasks'),
+});
+
 /**
  * DECISION: Single tool returns everything needed for a custom orchestrator
  * (state file + exit script + instruction snippets). Not split into separate
@@ -529,6 +553,7 @@ export interface MCPAdapterDeps {
   readonly agentRegistry: AgentRegistry | undefined;
   readonly config: Configuration;
   readonly orchestrationService?: OrchestrationService;
+  readonly pipelineRepository?: PipelineRepository;
 }
 
 export class MCPAdapter {
@@ -541,6 +566,7 @@ export class MCPAdapter {
   private readonly agentRegistry: AgentRegistry | undefined;
   private readonly config: Configuration;
   private readonly orchestrationService?: OrchestrationService;
+  private readonly pipelineRepository?: PipelineRepository;
 
   constructor(deps: MCPAdapterDeps) {
     this.taskManager = deps.taskManager;
@@ -550,6 +576,7 @@ export class MCPAdapter {
     this.agentRegistry = deps.agentRegistry;
     this.config = deps.config;
     this.orchestrationService = deps.orchestrationService;
+    this.pipelineRepository = deps.pipelineRepository;
     this.server = new Server(
       {
         name: 'autobeat',
@@ -636,6 +663,12 @@ export class MCPAdapter {
         return await this.handleCancelOrchestrator(args);
       case 'InitCustomOrchestrator':
         return this.handleInitCustomOrchestrator(args);
+      case 'PipelineStatus':
+        return await this.handlePipelineStatus(args);
+      case 'ListPipelines':
+        return await this.handleListPipelines(args);
+      case 'CancelPipeline':
+        return await this.handleCancelPipeline(args);
       case 'ConfigureAgent':
         return await this.handleConfigureAgent(args);
       default:
@@ -1625,6 +1658,65 @@ export class MCPAdapter {
               },
             },
             {
+              name: 'PipelineStatus',
+              description: 'Get the current status and step details of a pipeline entity by its pipeline ID.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  pipelineId: {
+                    type: 'string',
+                    description: 'Pipeline entity ID (pipeline-xxxx)',
+                  },
+                },
+                required: ['pipelineId'],
+              },
+            },
+            {
+              name: 'ListPipelines',
+              description:
+                'List pipeline entities with optional status filter. Returns pipelines ordered by creation time descending.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  status: {
+                    type: 'string',
+                    enum: ['pending', 'running', 'completed', 'failed', 'cancelled'],
+                    description: 'Filter by pipeline status',
+                  },
+                  limit: {
+                    type: 'number',
+                    description: 'Maximum results (default: 50)',
+                    minimum: 1,
+                    maximum: 100,
+                  },
+                },
+              },
+            },
+            {
+              name: 'CancelPipeline',
+              description:
+                'Cancel an active pipeline entity. The pipeline status transitions to cancelled. By default, also cancels any in-flight step tasks.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  pipelineId: {
+                    type: 'string',
+                    description: 'Pipeline entity ID to cancel',
+                  },
+                  reason: {
+                    type: 'string',
+                    description: 'Reason for cancellation',
+                  },
+                  cancelTasks: {
+                    type: 'boolean',
+                    description: 'Also cancel in-flight step tasks (default: true)',
+                    default: true,
+                  },
+                },
+                required: ['pipelineId'],
+              },
+            },
+            {
               name: 'ConfigureAgent',
               description:
                 'Check auth status, store API key/baseUrl/model, or reset stored config for an agent. Note: to clear individual fields (baseUrl, model), use action=reset (clears all) or the CLI `beat agents config set <agent> <field> ""`. The MCP set action requires non-empty values.',
@@ -2434,6 +2526,7 @@ export class MCPAdapter {
             text: JSON.stringify(
               {
                 success: true,
+                pipelineEntityId: pipeline.pipelineEntityId,
                 pipelineId: pipeline.pipelineId,
                 stepCount: pipeline.steps.length,
                 steps: pipeline.steps.map((s) => ({
@@ -3551,5 +3644,240 @@ export class MCPAdapter {
         };
       }
     }
+  }
+
+  /**
+   * Handle PipelineStatus tool call — retrieve a pipeline entity by ID.
+   * Resolves each step's taskId to include task status and duration in the response.
+   */
+  private async handlePipelineStatus(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = PipelineStatusSchema.safeParse(args);
+    if (!parseResult.success) {
+      return { content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }], isError: true };
+    }
+
+    if (!this.pipelineRepository) {
+      return { content: [{ type: 'text', text: 'Pipeline repository not available' }], isError: true };
+    }
+
+    const { pipelineId } = parseResult.data;
+    const result = await this.pipelineRepository.findById(PipelineId(pipelineId));
+
+    if (!result.ok) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }, null, 2) }],
+        isError: true,
+      };
+    }
+
+    const pipeline = result.value;
+    if (!pipeline) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ found: false, pipelineId }, null, 2) }],
+      };
+    }
+
+    // Resolve each step's taskId to include task status and duration
+    const steps = await Promise.all(
+      pipeline.steps.map(async (s, i) => {
+        const taskId = pipeline.stepTaskIds[i] ?? null;
+        const base = { index: s.index, prompt: truncatePrompt(s.prompt, 80), taskId };
+        if (taskId === null) return { ...base, taskStatus: null, taskDuration: null, agent: null };
+
+        const taskResult = await this.taskManager.getStatus(taskId);
+        if (!taskResult.ok) return { ...base, taskStatus: null, taskDuration: null, agent: null };
+        const taskValue = taskResult.value;
+        // getStatus with a single TaskId returns a single Task; guard against unexpected array
+        if (!('id' in taskValue)) return { ...base, taskStatus: null, taskDuration: null, agent: null };
+
+        const task: Task = taskValue;
+        const duration = task.completedAt != null ? task.completedAt - task.createdAt : Date.now() - task.createdAt;
+        return {
+          ...base,
+          taskStatus: task.status,
+          taskDuration: duration,
+          agent: task.agent ?? null,
+        };
+      }),
+    );
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              pipelineId: pipeline.id,
+              status: pipeline.status,
+              stepCount: pipeline.steps.length,
+              steps,
+              priority: pipeline.priority ?? null,
+              createdAt: new Date(pipeline.createdAt).toISOString(),
+              updatedAt: new Date(pipeline.updatedAt).toISOString(),
+              completedAt: pipeline.completedAt ? new Date(pipeline.completedAt).toISOString() : null,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
+
+  /**
+   * Handle ListPipelines tool call — list pipeline entities with optional status filter
+   */
+  private async handleListPipelines(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = ListPipelinesSchema.safeParse(args);
+    if (!parseResult.success) {
+      return { content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }], isError: true };
+    }
+
+    if (!this.pipelineRepository) {
+      return { content: [{ type: 'text', text: 'Pipeline repository not available' }], isError: true };
+    }
+
+    const { status, limit } = parseResult.data;
+    const result = status
+      ? await this.pipelineRepository.findByStatus(status as PipelineStatus, limit)
+      : await this.pipelineRepository.findAll(limit);
+
+    return match(result, {
+      ok: (pipelines) => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                count: pipelines.length,
+                pipelines: pipelines.map((p) => ({
+                  pipelineId: p.id,
+                  status: p.status,
+                  stepCount: p.steps.length,
+                  priority: p.priority ?? null,
+                  createdAt: new Date(p.createdAt).toISOString(),
+                  updatedAt: new Date(p.updatedAt).toISOString(),
+                })),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle CancelPipeline tool call — transition a pipeline entity to CANCELLED status
+   */
+  private async handleCancelPipeline(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = CancelPipelineSchema.safeParse(args);
+    if (!parseResult.success) {
+      return { content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }], isError: true };
+    }
+
+    if (!this.pipelineRepository) {
+      return { content: [{ type: 'text', text: 'Pipeline repository not available' }], isError: true };
+    }
+
+    const { pipelineId, reason, cancelTasks } = parseResult.data;
+    const findResult = await this.pipelineRepository.findById(PipelineId(pipelineId));
+    if (!findResult.ok) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: findResult.error.message }, null, 2) }],
+        isError: true,
+      };
+    }
+
+    const pipeline = findResult.value;
+    if (!pipeline) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ success: false, error: `Pipeline not found: ${pipelineId}` }, null, 2),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    if (
+      pipeline.status === PipelineStatus.COMPLETED ||
+      pipeline.status === PipelineStatus.FAILED ||
+      pipeline.status === PipelineStatus.CANCELLED
+    ) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              { success: false, error: `Pipeline is already in terminal state: ${pipeline.status}` },
+              null,
+              2,
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const now = Date.now();
+    const updateResult = await this.pipelineRepository.update({
+      ...pipeline,
+      status: PipelineStatus.CANCELLED,
+      updatedAt: now,
+      completedAt: now,
+    });
+
+    if (!updateResult.ok) {
+      return {
+        content: [
+          { type: 'text', text: JSON.stringify({ success: false, error: updateResult.error.message }, null, 2) },
+        ],
+        isError: true,
+      };
+    }
+
+    this.logger.info('Pipeline cancelled via MCP', { pipelineId, reason, cancelTasks });
+
+    // Optionally cancel in-flight step tasks
+    if (cancelTasks) {
+      const activeTaskIds = pipeline.stepTaskIds.filter((id): id is TaskId => id !== null);
+      for (const taskId of activeTaskIds) {
+        const cancelResult = await this.taskManager.cancel(taskId, `Pipeline ${pipelineId} cancelled`);
+        if (!cancelResult.ok) {
+          this.logger.warn('Failed to cancel pipeline step task', {
+            taskId,
+            pipelineId,
+            error: cancelResult.error.message,
+          });
+        }
+      }
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              pipelineId,
+              status: PipelineStatus.CANCELLED,
+              reason: reason ?? null,
+              cancelTasksRequested: cancelTasks,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
   }
 }

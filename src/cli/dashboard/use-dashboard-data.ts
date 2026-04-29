@@ -7,6 +7,12 @@
  *  - useDashboardData: React hook for polling (used by App)
  *  - fetchAllData: Pure async function (exported for testing)
  *  - buildEntityCounts: Pure function (exported for testing)
+ *  - POLL_INTERVAL_BY_VIEW: Per-view poll cadence (exported for testing)
+ *
+ * Per-view poll cadence (Phase B):
+ *  - main:      1 000 ms — summary metrics update once per second
+ *  - workspace:   750 ms — live task output needs snappier refresh
+ *  - detail:    2 000 ms — single-entity view; slower cadence reduces DB pressure
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -41,6 +47,19 @@ export interface OrchestratorPageState {
  * When the true total exceeds this limit, the UI shows a truncation notice.
  */
 export const FETCH_LIMIT = 50;
+
+/**
+ * Per-view poll interval in milliseconds.
+ * DECISION (Phase B): Different views have different freshness requirements.
+ *  - main: 1 000 ms — summary metrics; one-second granularity is sufficient
+ *  - workspace: 750 ms — live task output benefits from snappier refresh
+ *  - detail: 2 000 ms — single-entity view; slower cadence reduces DB pressure
+ */
+export const POLL_INTERVAL_BY_VIEW: Readonly<Record<'main' | 'workspace' | 'detail', number>> = {
+  main: 1_000,
+  workspace: 750,
+  detail: 2_000,
+};
 
 /**
  * Check if a process is alive by sending signal 0 (existence check, no signal sent).
@@ -116,7 +135,14 @@ export async function fetchAllData(
   childPage = 0,
   livenessCache?: Map<string, LivenessCacheEntry>,
 ): Promise<Result<DashboardData, string>> {
-  const { taskRepository, loopRepository, scheduleRepository, orchestrationRepository, workerRepository } = ctx;
+  const {
+    taskRepository,
+    loopRepository,
+    scheduleRepository,
+    orchestrationRepository,
+    workerRepository,
+    pipelineRepository,
+  } = ctx;
 
   // Parallel fetch: entity lists + status counts
   const rawResults = await Promise.all([
@@ -124,10 +150,12 @@ export async function fetchAllData(
     loopRepository.findAll(FETCH_LIMIT),
     scheduleRepository.findAll(FETCH_LIMIT),
     orchestrationRepository.findAll(FETCH_LIMIT),
+    pipelineRepository.findAll(FETCH_LIMIT),
     taskRepository.countByStatus(),
     loopRepository.countByStatus(),
     scheduleRepository.countByStatus(),
     orchestrationRepository.countByStatus(),
+    pipelineRepository.countByStatus(),
   ]);
 
   // Unwrap all results — any failure returns a labeled error string
@@ -137,10 +165,12 @@ export async function fetchAllData(
       'Loops',
       'Schedules',
       'Orchestrations',
+      'Pipelines',
       'Task counts',
       'Loop counts',
       'Schedule counts',
       'Orchestration counts',
+      'Pipeline counts',
     ],
     rawResults,
   );
@@ -152,10 +182,32 @@ export async function fetchAllData(
   type ScheduleList = Awaited<ReturnType<typeof scheduleRepository.findAll>> extends Result<infer V, Error> ? V : never;
   type OrchList =
     Awaited<ReturnType<typeof orchestrationRepository.findAll>> extends Result<infer V, Error> ? V : never;
+  type PipelineList = Awaited<ReturnType<typeof pipelineRepository.findAll>> extends Result<infer V, Error> ? V : never;
   type StatusMap = Record<string, number>;
 
-  const [tasks, loops, schedules, orchestrations, taskCounts, loopCounts, scheduleCounts, orchestrationCounts] =
-    unwrapped.value as [TaskList, LoopList, ScheduleList, OrchList, StatusMap, StatusMap, StatusMap, StatusMap];
+  const [
+    tasks,
+    loops,
+    schedules,
+    orchestrations,
+    pipelines,
+    taskCounts,
+    loopCounts,
+    scheduleCounts,
+    orchestrationCounts,
+    pipelineCounts,
+  ] = unwrapped.value as [
+    TaskList,
+    LoopList,
+    ScheduleList,
+    OrchList,
+    PipelineList,
+    StatusMap,
+    StatusMap,
+    StatusMap,
+    StatusMap,
+    StatusMap,
+  ];
 
   // Fetch detail extras if in detail view (best-effort — errors yield undefined)
   const detailExtra: DetailExtra = viewState.kind === 'detail' ? await fetchDetailExtra(ctx, viewState, childPage) : {};
@@ -223,10 +275,12 @@ export async function fetchAllData(
     loops,
     schedules,
     orchestrations,
+    pipelines,
     taskCounts: buildEntityCounts(taskCounts),
     loopCounts: buildEntityCounts(loopCounts),
     scheduleCounts: buildEntityCounts(scheduleCounts),
     orchestrationCounts: buildEntityCounts(orchestrationCounts),
+    pipelineCounts: buildEntityCounts(pipelineCounts),
     orchestrationLiveness,
     ...detailExtra,
     ...metricsExtras,
@@ -254,6 +308,7 @@ async function fetchMetricsExtras(
     recentLoopsResult,
     recentOrchsResult,
     recentSchedsResult,
+    recentPipelinesResult,
   ] = await Promise.all([
     ctx.usageRepository.sumGlobal(since24h),
     ctx.usageRepository.topOrchestrationsByCost(since24h, 3),
@@ -262,6 +317,7 @@ async function fetchMetricsExtras(
     ctx.loopRepository.findUpdatedSince(since1h, 50),
     ctx.orchestrationRepository.findUpdatedSince(since1h, 50),
     ctx.scheduleRepository.findUpdatedSince(since1h, 50),
+    ctx.pipelineRepository.findUpdatedSince(since1h, 50),
   ]);
 
   const activityFeed = buildActivityFeed({
@@ -269,6 +325,7 @@ async function fetchMetricsExtras(
     loops: recentLoopsResult.ok ? recentLoopsResult.value : [],
     orchestrations: recentOrchsResult.ok ? recentOrchsResult.value : [],
     schedules: recentSchedsResult.ok ? recentSchedsResult.value : [],
+    pipelines: recentPipelinesResult.ok ? recentPipelinesResult.value : [],
     limit: 50,
   });
 
@@ -403,7 +460,7 @@ async function fetchDetailExtra(
 // ============================================================================
 
 /**
- * Custom hook that polls all repositories every 1s.
+ * Custom hook that polls all repositories on a per-view cadence.
  *
  * Stale-on-error semantics: if a poll fails, we keep the last successful
  * data and set an error message instead of clearing data.
@@ -414,6 +471,10 @@ async function fetchDetailExtra(
  * The `viewStateRef` captures the latest viewState without being a dep of
  * doFetch — this keeps the polling interval stable across navigations.
  * The `childPageRef` captures the latest orchestrationChildPage in the same way.
+ *
+ * Phase B (per-view cadence): The poll interval is derived from POLL_INTERVAL_BY_VIEW
+ * keyed on viewState.kind. When the view changes, the effect re-runs and sets up a
+ * new interval with the appropriate cadence (750ms workspace, 1s main, 2s detail).
  */
 export function useDashboardData(
   ctx: ReadOnlyContext,
@@ -470,25 +531,27 @@ export function useDashboardData(
     }
   }, [ctx]);
 
+  // Per-view poll cadence — derived from POLL_INTERVAL_BY_VIEW keyed on view kind.
+  // When the view kind changes the effect re-runs and restarts with the new interval.
+  // orchestrationChildPage is included so PgUp/PgDn in orchestration detail
+  // produces an immediate fetch with the new page without waiting for the next tick.
+  const pollInterval = POLL_INTERVAL_BY_VIEW[viewState.kind];
+
   useEffect(() => {
     closing.current = false;
 
-    // Initial fetch immediately on mount. Also re-runs when orchestrationChildPage
-    // changes so PgUp/PgDn in orchestration detail produces an immediate fetch
-    // with the new page (otherwise the ref-read pattern would lag by one poll
-    // tick because setNav schedules the re-render asynchronously).
+    // Initial fetch immediately on mount or cadence change.
     void doFetch();
 
-    // Poll every 1 second
     const intervalId = setInterval(() => {
       void doFetch();
-    }, 1_000);
+    }, pollInterval);
 
     return () => {
       closing.current = true;
       clearInterval(intervalId);
     };
-  }, [doFetch, orchestrationChildPage]);
+  }, [doFetch, orchestrationChildPage, pollInterval]);
 
   const refreshNow = useCallback(() => {
     void doFetch();

@@ -18,6 +18,7 @@ import {
   OrchestrationService,
   OutputCapture,
   OutputRepository,
+  PipelineRepository,
   ProcessSpawner,
   ResourceMonitor,
   ScheduleRepository,
@@ -108,6 +109,7 @@ import { SQLiteLoopRepository } from './implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from './implementations/orchestration-repository.js';
 import { BufferedOutputCapture } from './implementations/output-capture.js';
 import { SQLiteOutputRepository } from './implementations/output-repository.js';
+import { SQLitePipelineRepository } from './implementations/pipeline-repository.js';
 import { ProcessSpawnerAdapter } from './implementations/process-spawner-adapter.js';
 import { SystemResourceMonitor } from './implementations/resource-monitor.js';
 import { SQLiteScheduleRepository } from './implementations/schedule-repository.js';
@@ -335,6 +337,13 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     return new SQLiteUsageRepository(dbResult.value);
   });
 
+  // Register PipelineRepository for first-class pipeline entity tracking (Phase A)
+  container.registerSingleton('pipelineRepository', () => {
+    const dbResult = container.get<Database>('database');
+    if (!dbResult.ok) throw new Error('Failed to get database for PipelineRepository');
+    return new SQLitePipelineRepository(dbResult.value);
+  });
+
   // Register ScheduleService for schedule management (v0.4.0)
   container.registerSingleton('scheduleService', () => {
     return new ScheduleManagerService(
@@ -342,6 +351,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       getFromContainer<Logger>(container, 'logger').child({ module: 'ScheduleManager' }),
       getFromContainer<ScheduleRepository>(container, 'scheduleRepository'),
       config,
+      getFromContainer<PipelineRepository>(container, 'pipelineRepository'),
     );
   });
 
@@ -569,6 +579,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       agentRegistry: getFromContainer<AgentRegistry>(container, 'agentRegistry'),
       config,
       orchestrationService: getFromContainer<OrchestrationService>(container, 'orchestrationService'),
+      pipelineRepository: getFromContainer<PipelineRepository>(container, 'pipelineRepository'),
     });
   });
 

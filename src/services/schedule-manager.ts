@@ -8,6 +8,7 @@
 import { resolveDefaultAgent } from '../core/agents.js';
 import { Configuration } from '../core/configuration.js';
 import {
+  createPipeline,
   createSchedule,
   EvalMode,
   PipelineCreateRequest,
@@ -25,7 +26,13 @@ import {
 } from '../core/domain.js';
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
-import { Logger, ScheduleExecution, ScheduleRepository, ScheduleService } from '../core/interfaces.js';
+import {
+  Logger,
+  PipelineRepository,
+  ScheduleExecution,
+  ScheduleRepository,
+  ScheduleService,
+} from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { getNextRunTime, isValidTimezone, validateCronExpression } from '../utils/cron.js';
 import { toMissedRunPolicy, truncatePrompt } from '../utils/format.js';
@@ -37,6 +44,7 @@ export class ScheduleManagerService implements ScheduleService {
     private readonly logger: Logger,
     private readonly scheduleRepository: ScheduleRepository,
     private readonly config: Configuration,
+    private readonly pipelineRepository?: PipelineRepository,
   ) {
     this.logger.debug('ScheduleManagerService initialized');
   }
@@ -389,7 +397,52 @@ export class ScheduleManagerService implements ScheduleService {
       });
     }
 
+    // Persist Pipeline entity for first-class tracking (Phase A)
+    // DECISION: Pipeline entity created after all schedule steps succeed; stepTaskIds start as null (tasks not yet dispatched).
+    // scheduleId per step is stored so PipelineHandler can correlate TaskDelegated events → tasks → pipeline.
+    const pipelineEntity = createPipeline({
+      steps: steps.map((s, i) => ({
+        index: i,
+        prompt: s.prompt,
+        priority: s.priority ?? request.priority,
+        workingDirectory: s.workingDirectory ?? request.workingDirectory,
+        agent: s.agent ?? request.agent,
+        model: s.model ?? request.model,
+        systemPrompt: s.systemPrompt ?? request.systemPrompt,
+        scheduleId: createdSteps[i].scheduleId,
+      })),
+      priority: request.priority,
+      workingDirectory: request.workingDirectory,
+      agent: request.agent,
+      model: request.model,
+      systemPrompt: request.systemPrompt,
+    });
+
+    if (this.pipelineRepository) {
+      const saveResult = await this.pipelineRepository.save(pipelineEntity);
+      if (!saveResult.ok) {
+        // Non-fatal: log and continue — schedules were created successfully
+        this.logger.warn('Failed to persist Pipeline entity', {
+          pipelineEntityId: pipelineEntity.id,
+          error: saveResult.error.message,
+        });
+      } else {
+        // Emit PipelineCreated so subscribers can track pipeline lifecycle
+        const emitResult = await this.eventBus.emit('PipelineCreated', {
+          pipelineId: pipelineEntity.id,
+          steps: steps.length,
+        });
+        if (!emitResult.ok) {
+          this.logger.warn('Failed to emit PipelineCreated event', {
+            pipelineEntityId: pipelineEntity.id,
+            error: emitResult.error.message,
+          });
+        }
+      }
+    }
+
     return ok({
+      pipelineEntityId: pipelineEntity.id,
       pipelineId: createdSteps[0].scheduleId,
       steps: createdSteps,
     });

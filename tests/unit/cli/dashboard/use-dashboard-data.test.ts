@@ -7,7 +7,12 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { ViewState } from '../../../../src/cli/dashboard/types.js';
-import { buildEntityCounts, FETCH_LIMIT, fetchAllData } from '../../../../src/cli/dashboard/use-dashboard-data.js';
+import {
+  buildEntityCounts,
+  FETCH_LIMIT,
+  fetchAllData,
+  POLL_INTERVAL_BY_VIEW,
+} from '../../../../src/cli/dashboard/use-dashboard-data.js';
 import type { ReadOnlyContext } from '../../../../src/cli/read-only-context.js';
 import { err, ok } from '../../../../src/core/result.js';
 
@@ -91,11 +96,17 @@ function makeCtx(overrides: Partial<ReadOnlyContext> = {}): ReadOnlyContext {
     ),
   };
 
+  const pipelineRepo = {
+    ...makeMockRepo(),
+    findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+  };
+
   return {
     taskRepository: taskRepo as unknown as ReadOnlyContext['taskRepository'],
     loopRepository: loopRepo as unknown as ReadOnlyContext['loopRepository'],
     scheduleRepository: scheduleRepo as unknown as ReadOnlyContext['scheduleRepository'],
     orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
+    pipelineRepository: pipelineRepo as unknown as ReadOnlyContext['pipelineRepository'],
     outputRepository: {} as ReadOnlyContext['outputRepository'],
     usageRepository: usageRepo as unknown as ReadOnlyContext['usageRepository'],
     workerRepository: {
@@ -107,6 +118,26 @@ function makeCtx(overrides: Partial<ReadOnlyContext> = {}): ReadOnlyContext {
 }
 
 const MAIN_VIEW: ViewState = { kind: 'main' };
+
+// ============================================================================
+// POLL_INTERVAL_BY_VIEW — per-view cadence
+// ============================================================================
+
+describe('POLL_INTERVAL_BY_VIEW', () => {
+  it('main view polls at 1 000 ms', () => {
+    expect(POLL_INTERVAL_BY_VIEW.main).toBe(1_000);
+  });
+
+  it('workspace view polls at 750 ms (faster than main for live output)', () => {
+    expect(POLL_INTERVAL_BY_VIEW.workspace).toBe(750);
+    expect(POLL_INTERVAL_BY_VIEW.workspace).toBeLessThan(POLL_INTERVAL_BY_VIEW.main);
+  });
+
+  it('detail view polls at 2 000 ms (slower to reduce DB pressure)', () => {
+    expect(POLL_INTERVAL_BY_VIEW.detail).toBe(2_000);
+    expect(POLL_INTERVAL_BY_VIEW.detail).toBeGreaterThan(POLL_INTERVAL_BY_VIEW.main);
+  });
+});
 
 // ============================================================================
 // buildEntityCounts
@@ -147,8 +178,10 @@ describe('fetchAllData', () => {
     expect(result.value.loops).toEqual([]);
     expect(result.value.schedules).toEqual([]);
     expect(result.value.orchestrations).toEqual([]);
+    expect(result.value.pipelines).toEqual([]);
     expect(result.value.taskCounts.total).toBe(0);
     expect(result.value.loopCounts.total).toBe(0);
+    expect(result.value.pipelineCounts.total).toBe(0);
   });
 
   it('calls findAll(FETCH_LIMIT) on all repositories', async () => {
@@ -159,6 +192,7 @@ describe('fetchAllData', () => {
     expect(ctx.loopRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
     expect(ctx.scheduleRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
     expect(ctx.orchestrationRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
+    expect(ctx.pipelineRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
   });
 
   it('calls countByStatus on all repositories', async () => {
@@ -169,6 +203,7 @@ describe('fetchAllData', () => {
     expect(ctx.loopRepository.countByStatus).toHaveBeenCalled();
     expect(ctx.scheduleRepository.countByStatus).toHaveBeenCalled();
     expect(ctx.orchestrationRepository.countByStatus).toHaveBeenCalled();
+    expect(ctx.pipelineRepository.countByStatus).toHaveBeenCalled();
   });
 
   it('returns error when task findAll fails', async () => {

@@ -15,6 +15,7 @@
 
 import { useInput } from 'ink';
 import { useRef } from 'react';
+import { OrchestratorStatus } from '../../core/domain.js';
 import { DETAIL_SCROLL_MAX_DEFAULT } from './keyboard/constants.js';
 import { handleDetailKeys } from './keyboard/handle-detail-keys.js';
 import { handleMainKeys } from './keyboard/handle-main-keys.js';
@@ -30,7 +31,7 @@ export type { UseKeyboardParams } from './keyboard/types.js';
  * Global keys (handled before view dispatch):
  *  - q: quit
  *  - r: refresh
- *  - v: toggle between main/workspace (ignored when in detail — user must Esc first)
+ *  - v: toggle main/workspace; in orchestration detail, scopes workspace to that orchestration
  *  - m: jump to main (works from any view)
  *  - w: jump to workspace (works from any view)
  */
@@ -63,13 +64,24 @@ export function useKeyboard({
       return;
     }
 
-    // v — toggle between main and workspace (ignored in detail view)
-    if (input === 'v' && view.kind !== 'detail') {
+    // v — toggle between main and workspace.
+    // Special case: when in orchestration detail, v toggles to workspace scoped to that
+    // orchestration (grid mode). When already in workspace, v returns to main.
+    // Ignored in non-orchestration detail views — user must Esc first.
+    if (input === 'v') {
+      if (view.kind === 'detail' && view.entityType === 'orchestrations') {
+        setView({ kind: 'workspace', orchestrationId: view.entityId });
+        return;
+      }
       if (view.kind === 'workspace') {
         setView({ kind: 'main' });
-      } else {
-        setView({ kind: 'workspace' });
+        return;
       }
+      if (view.kind === 'main') {
+        setView({ kind: 'workspace' });
+        return;
+      }
+      // Other detail views: ignore v (user must Esc first)
       return;
     }
 
@@ -79,9 +91,27 @@ export function useKeyboard({
       return;
     }
 
-    // w — jump to workspace from any view (including detail — acts like Esc→w)
+    // w — jump to workspace from any view.
+    // DECISION: Navigate to workspace only when orchestrations exist. If a running
+    // orchestration exists, scope the workspace to it. If none are running, navigate
+    // to the most recently created orchestration's detail view in list mode.
+    // If no orchestrations exist at all, w is a no-op.
     if (input === 'w') {
-      setView({ kind: 'workspace' });
+      const orchestrations = dataRef.current?.orchestrations;
+      if (!orchestrations || orchestrations.length === 0) {
+        // No orchestrations — nothing to show in workspace; ignore.
+        return;
+      }
+      const running = orchestrations.find((o) => o.status === OrchestratorStatus.RUNNING);
+      if (running) {
+        setView({ kind: 'workspace', orchestrationId: running.id });
+      } else {
+        // No running orchestration — fall back to most recent (first in list, newest first)
+        const mostRecent = orchestrations[0];
+        if (mostRecent) {
+          setView({ kind: 'workspace', orchestrationId: mostRecent.id });
+        }
+      }
       return;
     }
 

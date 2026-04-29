@@ -26,6 +26,7 @@ import { Database } from '../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../src/implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from '../../src/implementations/orchestration-repository.js';
 import { SQLiteOutputRepository } from '../../src/implementations/output-repository.js';
+import { SQLitePipelineRepository } from '../../src/implementations/pipeline-repository.js';
 import { SQLiteScheduleRepository } from '../../src/implementations/schedule-repository.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { SQLiteUsageRepository } from '../../src/implementations/usage-repository.js';
@@ -54,6 +55,7 @@ describe('Integration: orchestration workspace data pipeline', () => {
     const workerRepo = new SQLiteWorkerRepository(db);
     const outputRepo = new SQLiteOutputRepository(config, db);
     usageRepo = new SQLiteUsageRepository(db);
+    const pipelineRepo = new SQLitePipelineRepository(db);
 
     ctx = {
       taskRepository: taskRepo,
@@ -63,6 +65,7 @@ describe('Integration: orchestration workspace data pipeline', () => {
       workerRepository: workerRepo,
       outputRepository: outputRepo,
       usageRepository: usageRepo,
+      pipelineRepository: pipelineRepo,
       close: () => db.close(),
     };
   });

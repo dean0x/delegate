@@ -26,6 +26,8 @@ import type { DashboardData, NavState, ViewState } from '../../../../src/cli/das
 import { useKeyboard } from '../../../../src/cli/dashboard/use-keyboard.js';
 import type { WorkspaceNavState } from '../../../../src/cli/dashboard/workspace-types.js';
 import { createInitialWorkspaceNavState } from '../../../../src/cli/dashboard/workspace-types.js';
+import type { Orchestration, TaskId } from '../../../../src/core/domain.js';
+import { OrchestratorStatus } from '../../../../src/core/domain.js';
 
 // ============================================================================
 // Fixtures
@@ -37,19 +39,39 @@ function makeWorkspaceDashboardData(overrides: Partial<DashboardData> = {}): Das
     loops: [],
     schedules: [],
     orchestrations: [],
+    pipelines: [],
     taskCounts: { total: 0, byStatus: {} },
     loopCounts: { total: 0, byStatus: {} },
     scheduleCounts: { total: 0, byStatus: {} },
     orchestrationCounts: { total: 0, byStatus: {} },
+    pipelineCounts: { total: 0, byStatus: {} },
     ...overrides,
   };
 }
 
+function makeOrchestration(id: string, status: OrchestratorStatus = OrchestratorStatus.RUNNING): Orchestration {
+  return {
+    id: id as Orchestration['id'],
+    goal: `Goal for ${id}`,
+    status,
+    agent: 'claude',
+    stateFilePath: '/tmp/state.json',
+    workingDirectory: '/tmp',
+    maxDepth: 3,
+    maxWorkers: 2,
+    maxIterations: 10,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  } as Orchestration;
+}
+
 const INITIAL_NAV: NavState = {
-  focusedPanel: 'loops',
-  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
-  filters: { loops: null, tasks: null, schedules: null, orchestrations: null },
-  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
+  focusedPanel: 'tasks',
+  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
+  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
+  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
+  orchestrationChildSelectedTaskId: null,
+  orchestrationChildPage: 0,
 };
 
 // ============================================================================
@@ -125,7 +147,7 @@ describe('useKeyboard — global v/m/w view-switch keys', () => {
         initialView={{
           kind: 'detail',
           entityType: 'tasks',
-          entityId: 'task-1' as never,
+          entityId: 'task-1' as TaskId,
           returnTo: 'main',
         }}
       />,
@@ -148,8 +170,11 @@ describe('useKeyboard — global v/m/w view-switch keys', () => {
     expect(lastFrame()).toContain('view:main');
   });
 
-  it('"w" from main jumps to workspace', async () => {
-    const { lastFrame, stdin } = render(<WorkspaceWrapper initialView={{ kind: 'main' }} />);
+  it('"w" from main jumps to workspace when orchestrations exist', async () => {
+    const data = makeWorkspaceDashboardData({
+      orchestrations: [makeOrchestration('orch-1')],
+    });
+    const { lastFrame, stdin } = render(<WorkspaceWrapper initialView={{ kind: 'main' }} initialData={data} />);
     await press(stdin, 'w');
     expect(lastFrame()).toContain('view:workspace');
   });

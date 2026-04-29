@@ -2,6 +2,9 @@
  * ScheduleDetail — full-screen schedule detail view
  * ARCHITECTURE: Pure view component — all data passed as props
  * Pattern: Functional core, no side effects
+ *
+ * Phase C additions:
+ *  - Pipeline Steps section: numbered step definitions when schedule.pipelineSteps present
  */
 
 import { Box, Text } from 'ink';
@@ -88,6 +91,21 @@ export const ScheduleDetail: React.FC<ScheduleDetailProps> = React.memo(
         <Field label="Created">{relativeTime(schedule.createdAt)}</Field>
         <Field label="Updated">{relativeTime(schedule.updatedAt)}</Field>
 
+        {/* Pipeline Steps section — only shown when schedule triggers a pipeline */}
+        {schedule.pipelineSteps !== undefined && schedule.pipelineSteps.length > 0 && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold dimColor>
+              Pipeline Steps
+            </Text>
+            {schedule.pipelineSteps.map((step, idx) => (
+              <Box key={idx} flexDirection="row" paddingLeft={2}>
+                <Text dimColor>{`${idx + 1}. `}</Text>
+                <Text>{truncateCell(step.prompt, 60)}</Text>
+              </Box>
+            ))}
+          </Box>
+        )}
+
         {/* Execution history */}
         <Box marginTop={1} marginBottom={0}>
           <Text bold>Execution History</Text>
@@ -101,6 +119,14 @@ export const ScheduleDetail: React.FC<ScheduleDetailProps> = React.memo(
           </Text>
         </Box>
 
+        {/* TODO: Execution row selection — selectedIndex is fixed at -1 (no keyboard selection).
+             To enable Enter-to-drill-through on execution rows, this would require:
+             1. Adding executionSelectedIndex to NavState in types.ts
+             2. Updating handleDetailKeys (keyboard/handle-detail-keys.ts) to handle ↑/↓/Enter for schedules,
+                mirroring the orchestration drill-through pattern (D3 detail Enter → task detail)
+             3. Wiring Enter on a selected execution row to push a task-detail or loop-detail view using
+                exec.taskId or exec.loopId
+             This is deferred as a future enhancement — requires changes across 3+ files. */}
         {executions === undefined || executions.length === 0 ? (
           <Text dimColor>No executions yet</Text>
         ) : (

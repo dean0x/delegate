@@ -53,6 +53,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
 
@@ -69,14 +70,16 @@ describe('buildActivityFeed', () => {
           { id: 'orch-c', status: 'running', updatedAt: T4, goal: 'Goal', agent: 'claude', createdAt: now - 10000 },
         ],
         schedules: [{ id: 'sched-d', status: 'active', updatedAt: T3, scheduleType: 'cron', createdAt: now - 10000 }],
+        pipelines: [{ id: 'pipe-e', status: 'completed', updatedAt: T5, createdAt: now - 10000 }],
         limit: 100,
       });
 
-      expect(feed).toHaveLength(4);
+      expect(feed).toHaveLength(5);
       expect(feed[0].entityId).toBe('loop-b'); // T1 — most recent
       expect(feed[1].entityId).toBe('task-a'); // T2
       expect(feed[2].entityId).toBe('sched-d'); // T3
-      expect(feed[3].entityId).toBe('orch-c'); // T4 — oldest
+      expect(feed[3].entityId).toBe('orch-c'); // T4
+      expect(feed[4].entityId).toBe('pipe-e'); // T5 — oldest
     });
 
     it('returns empty array when all inputs are empty', () => {
@@ -85,6 +88,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed).toHaveLength(0);
@@ -105,6 +109,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 3,
       });
 
@@ -121,6 +126,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 50,
       });
       expect(feed).toHaveLength(1);
@@ -134,6 +140,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('completed');
@@ -145,6 +152,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('failed');
@@ -156,6 +164,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('running');
@@ -167,6 +176,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('queued');
@@ -178,6 +188,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('cancelled');
@@ -189,6 +200,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].kind).toBe('task');
@@ -202,6 +214,7 @@ describe('buildActivityFeed', () => {
         loops: [{ ...loopBase, id: 'loop-1', status: 'running', currentIteration: 3, updatedAt: T1 }],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('iteration 3');
@@ -213,6 +226,7 @@ describe('buildActivityFeed', () => {
         loops: [{ ...loopBase, id: 'loop-1', status: 'running', updatedAt: T1 }],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('running');
@@ -224,6 +238,7 @@ describe('buildActivityFeed', () => {
         loops: [{ ...loopBase, id: 'loop-1', status: 'completed', updatedAt: T1 }],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('completed');
@@ -235,6 +250,7 @@ describe('buildActivityFeed', () => {
         loops: [{ ...loopBase, id: 'loop-1', status: 'paused', updatedAt: T1 }],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('paused');
@@ -246,6 +262,7 @@ describe('buildActivityFeed', () => {
         loops: [{ ...loopBase, id: 'loop-1', status: 'running', currentIteration: 1, updatedAt: T1 }],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].kind).toBe('loop');
@@ -261,6 +278,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [{ ...orchBase, id: 'orch-1', status: 'running', updatedAt: T1 }],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('planning');
@@ -272,6 +290,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [{ ...orchBase, id: 'orch-1', status: 'completed', updatedAt: T1 }],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('completed');
@@ -283,6 +302,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [{ ...orchBase, id: 'orch-1', status: 'failed', updatedAt: T1 }],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('failed');
@@ -294,6 +314,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [{ ...orchBase, id: 'orch-1', status: 'cancelled', updatedAt: T1 }],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('cancelled');
@@ -305,6 +326,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [{ ...orchBase, id: 'orch-1', status: 'running', updatedAt: T1 }],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].kind).toBe('orchestration');
@@ -320,6 +342,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [{ ...schedBase, id: 'sched-1', status: 'active', updatedAt: T1 }],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('active');
@@ -331,6 +354,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [{ ...schedBase, id: 'sched-1', status: 'completed', updatedAt: T1 }],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('completed');
@@ -342,6 +366,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [{ ...schedBase, id: 'sched-1', status: 'active', updatedAt: T1 }],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].kind).toBe('schedule');
@@ -355,6 +380,7 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
 
@@ -373,9 +399,84 @@ describe('buildActivityFeed', () => {
         loops: [],
         orchestrations: [],
         schedules: [],
+        pipelines: [],
         limit: 100,
       });
       expect(feed[0].timestamp).toBe(T1);
+    });
+  });
+
+  describe('pipeline verb mapping', () => {
+    it('maps pipeline status "running" to action "started"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [{ id: 'pipe-1', status: 'running', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('started');
+    });
+
+    it('maps pipeline status "completed" to action "completed"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [{ id: 'pipe-1', status: 'completed', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('completed');
+    });
+
+    it('maps pipeline status "failed" without failedStep to action "failed"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [{ id: 'pipe-1', status: 'failed', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('failed');
+    });
+
+    it('maps pipeline status "failed" with failedStep to "failed step N"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [{ id: 'pipe-1', status: 'failed', failedStep: 2, updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('failed step 2');
+    });
+
+    it('maps pipeline status "cancelled" to action "cancelled"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [{ id: 'pipe-1', status: 'cancelled', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('cancelled');
+    });
+
+    it('maps pipeline kind correctly', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [{ id: 'pipe-1', status: 'running', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].kind).toBe('pipeline');
     });
   });
 });
