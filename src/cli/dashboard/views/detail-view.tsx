@@ -6,13 +6,40 @@
 
 import { Box, Text } from 'ink';
 import React from 'react';
-import type { TaskId } from '../../../core/domain.js';
+import type { Task, TaskId } from '../../../core/domain.js';
 import type { DashboardData, PanelId } from '../types.js';
 import { LoopDetail } from './loop-detail.js';
 import { OrchestrationDetail } from './orchestration-detail.js';
 import { PipelineDetail } from './pipeline-detail.js';
 import { ScheduleDetail } from './schedule-detail.js';
 import { TaskDetail } from './task-detail.js';
+
+interface TaskDependencyInfo {
+  readonly dependencies: Array<{ taskId: string; status: string }> | undefined;
+  readonly dependents: Array<{ taskId: string; status: string }> | undefined;
+}
+
+/**
+ * Resolve dependency and dependent refs for a task detail view.
+ * Dependencies: tasks this task depends on (depId → status lookup).
+ * Dependents: sibling tasks whose dependsOn list includes this task's ID.
+ */
+function resolveTaskDependencyInfo(task: Task, taskId: string, allTasks: readonly Task[] | undefined): TaskDependencyInfo {
+  const dependencies =
+    task.dependsOn !== undefined && task.dependsOn.length > 0
+      ? task.dependsOn.map((depId) => {
+          const depTask = allTasks?.find((t) => t.id === depId);
+          return { taskId: depId, status: depTask?.status ?? 'unknown' };
+        })
+      : undefined;
+
+  const rawDependents = allTasks
+    ?.filter((t) => t.dependsOn?.includes(taskId as TaskId))
+    .map((t) => ({ taskId: t.id, status: t.status }));
+  const dependents = rawDependents && rawDependents.length > 0 ? rawDependents : undefined;
+
+  return { dependencies, dependents };
+}
 
 interface DetailViewProps {
   readonly entityType: PanelId;
@@ -56,28 +83,12 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
       case 'tasks': {
         const task = data?.tasks.find((t) => t.id === entityId);
         if (task === undefined) return <NotFound entityType={entityType} entityId={entityId} />;
-        // Resolve dependency refs from sibling tasks in data — match taskId to status
-        const dependencies =
-          task.dependsOn !== undefined && task.dependsOn.length > 0
-            ? task.dependsOn.map((depId) => {
-                const depTask = data?.tasks.find((t) => t.id === depId);
-                return { taskId: depId, status: depTask?.status ?? 'unknown' };
-              })
-            : undefined;
-        // Resolve dependent refs — tasks whose dependsOn list includes this task's ID
-        const dependents = data?.tasks
-          .filter((t) => t.dependsOn?.includes(entityId as TaskId))
-          .map((t) => ({ taskId: t.id, status: t.status }));
+        const { dependencies, dependents } = resolveTaskDependencyInfo(task, entityId, data?.tasks);
         // TODO(Phase C): usage data requires a dedicated TaskUsage lookup by taskId —
         // DashboardData does not carry per-task usage; fetch from UsageRepository when
         // detail-view extras are extended (similar to orchestrationCostAggregate pattern).
         return (
-          <TaskDetail
-            task={task}
-            animFrame={animFrame}
-            dependencies={dependencies}
-            dependents={dependents && dependents.length > 0 ? dependents : undefined}
-          />
+          <TaskDetail task={task} animFrame={animFrame} dependencies={dependencies} dependents={dependents} />
         );
       }
       case 'schedules': {

@@ -26,6 +26,8 @@ import type { DashboardData, NavState, ViewState } from '../../../../src/cli/das
 import { useKeyboard } from '../../../../src/cli/dashboard/use-keyboard.js';
 import type { WorkspaceNavState } from '../../../../src/cli/dashboard/workspace-types.js';
 import { createInitialWorkspaceNavState } from '../../../../src/cli/dashboard/workspace-types.js';
+import type { Orchestration, TaskId } from '../../../../src/core/domain.js';
+import { OrchestratorStatus } from '../../../../src/core/domain.js';
 
 // ============================================================================
 // Fixtures
@@ -45,6 +47,22 @@ function makeWorkspaceDashboardData(overrides: Partial<DashboardData> = {}): Das
     pipelineCounts: { total: 0, byStatus: {} },
     ...overrides,
   };
+}
+
+function makeOrchestration(id: string, status: OrchestratorStatus = OrchestratorStatus.RUNNING): Orchestration {
+  return {
+    id: id as Orchestration['id'],
+    goal: `Goal for ${id}`,
+    status,
+    agent: 'claude',
+    stateFilePath: '/tmp/state.json',
+    workingDirectory: '/tmp',
+    maxDepth: 3,
+    maxWorkers: 2,
+    maxIterations: 10,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  } as Orchestration;
 }
 
 const INITIAL_NAV: NavState = {
@@ -129,7 +147,7 @@ describe('useKeyboard — global v/m/w view-switch keys', () => {
         initialView={{
           kind: 'detail',
           entityType: 'tasks',
-          entityId: 'task-1' as never,
+          entityId: 'task-1' as TaskId,
           returnTo: 'main',
         }}
       />,
@@ -154,20 +172,7 @@ describe('useKeyboard — global v/m/w view-switch keys', () => {
 
   it('"w" from main jumps to workspace when orchestrations exist', async () => {
     const data = makeWorkspaceDashboardData({
-      orchestrations: [
-        {
-          id: 'orch-1',
-          goal: 'test',
-          status: 'running',
-          agent: 'claude',
-          stateFilePath: '/tmp/s',
-          workingDirectory: '/tmp',
-          maxDepth: 3,
-          maxWorkers: 2,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        } as never,
-      ],
+      orchestrations: [makeOrchestration('orch-1')],
     });
     const { lastFrame, stdin } = render(<WorkspaceWrapper initialView={{ kind: 'main' }} initialData={data} />);
     await press(stdin, 'w');

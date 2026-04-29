@@ -787,6 +787,33 @@ describe('useKeyboard — global v/m/w no interference in main', () => {
     await press(stdin, 'w');
     expect(lastFrame()).toContain('view:workspace');
   });
+
+  it('"w" from main with empty orchestrations is a no-op (stays on main)', async () => {
+    const data = makeDashboardData({ orchestrations: [] });
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} initialData={data} />);
+    await press(stdin, 'w');
+    expect(lastFrame()).toContain('view:main');
+  });
+
+  it('"v" from orchestration detail transitions to scoped workspace', async () => {
+    const orch = makeOrchestration('orch-detail-1');
+    const data = makeDashboardData({ orchestrations: [orch] });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper
+        initialData={data}
+        initialView={{
+          kind: 'detail',
+          entityType: 'orchestrations',
+          entityId: 'orch-detail-1' as OrchestratorId,
+          returnTo: 'main',
+        }}
+      />,
+    );
+    expect(lastFrame()).toContain('view:detail');
+    expect(lastFrame()).toContain('detail-type:orchestrations');
+    await press(stdin, 'v');
+    expect(lastFrame()).toContain('view:workspace');
+  });
 });
 
 // ============================================================================
