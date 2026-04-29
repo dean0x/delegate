@@ -118,32 +118,6 @@ export type ViewState =
     };
 
 /**
- * Helper to open a detail view with an explicit returnTo destination.
- * Defaults to 'main' so callers that don't have a workspace context still work.
- */
-export function openDetail(entityType: 'loops', entityId: LoopId, returnTo?: 'main' | 'workspace'): ViewState;
-export function openDetail(entityType: 'tasks', entityId: TaskId, returnTo?: DetailReturnTarget): ViewState;
-export function openDetail(entityType: 'schedules', entityId: ScheduleId, returnTo?: 'main' | 'workspace'): ViewState;
-export function openDetail(
-  entityType: 'orchestrations',
-  entityId: OrchestratorId,
-  returnTo?: 'main' | 'workspace',
-): ViewState;
-export function openDetail(entityType: 'pipelines', entityId: PipelineId, returnTo?: 'main' | 'workspace'): ViewState;
-export function openDetail(
-  entityType: 'loops' | 'tasks' | 'schedules' | 'orchestrations' | 'pipelines',
-  entityId: LoopId | TaskId | ScheduleId | OrchestratorId | PipelineId,
-  returnTo: DetailReturnTarget = 'main',
-): ViewState {
-  return {
-    kind: 'detail',
-    entityType,
-    entityId,
-    returnTo,
-  } as ViewState;
-}
-
-/**
  * Navigation state for the main panel grid
  *
  * v1.3.0 (D3 drill-through): orchestrationChildSelectedTaskId and
