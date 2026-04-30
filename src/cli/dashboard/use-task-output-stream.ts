@@ -400,6 +400,12 @@ export function useTaskOutputStream(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskIdsKey]);
 
+  // Convenience accessor: returns the current stream state for a task, or the
+  // initial state if no entry exists yet. Centralises the fallback pattern that
+  // previously appeared 5× in doPoll, each time with a slightly different spread.
+  const getPrev = (id: TaskId): OutputStreamState =>
+    streamsRef.current.get(id) ?? INITIAL_STREAM_STATE;
+
   // doPoll reads taskIds/taskStatuses via refs — stable identity across renders.
   const doPoll = useCallback(async (): Promise<void> => {
     if (fetchingRef.current || !enabled) return;
@@ -416,7 +422,7 @@ export function useTaskOutputStream(
       const fetches: Array<Promise<void>> = [];
 
       for (const taskId of currentTaskIds) {
-        const prev = streamsRef.current.get(taskId) ?? { ...INITIAL_STREAM_STATE };
+        const prev = getPrev(taskId);
         const rawStatus = currentTaskStatuses.get(taskId) ?? 'pending';
         const status = classifyStatus(rawStatus);
 
@@ -435,9 +441,8 @@ export function useTaskOutputStream(
             if (probeHit) {
               // Probe confirmed no new output — apply status/timestamp update only
               if (!closingRef.current) {
-                const prevState = streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE;
                 streamsRef.current.set(taskId, {
-                  ...prevState,
+                  ...getPrev(taskId),
                   taskStatus: status,
                   lastFetchedAt: new Date(),
                 });
@@ -451,21 +456,20 @@ export function useTaskOutputStream(
 
             if (!result.ok) {
               const errorState: OutputStreamState = {
-                ...(streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE),
+                ...getPrev(taskId),
                 error: result.error.message,
               };
               streamsRef.current.set(taskId, errorState);
               return;
             }
 
-            const prevState = streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE;
-            streamsRef.current.set(taskId, buildStreamState(prevState, result.value, status));
+            streamsRef.current.set(taskId, buildStreamState(getPrev(taskId), result.value, status));
 
             if (status === 'terminal') terminalFetchedRef.current.add(taskId);
           } catch (e) {
             if (!closingRef.current) {
               const errorState: OutputStreamState = {
-                ...(streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE),
+                ...getPrev(taskId),
                 error: e instanceof Error ? e.message : String(e),
               };
               streamsRef.current.set(taskId, errorState);
