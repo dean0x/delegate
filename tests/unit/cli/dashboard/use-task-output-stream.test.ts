@@ -418,26 +418,26 @@ describe('codePointSlice', () => {
 });
 
 // ============================================================================
-// Size probe in doPoll — getSize guards full get() call (T17–T20)
+// Size probe in doPoll — getSize guards full get() call (T17–T19)
 // ============================================================================
+
+const STREAM_INITIAL: OutputStreamState = {
+  lines: [],
+  totalBytes: 0,
+  totalChars: 0,
+  lastFetchedAt: null,
+  error: null,
+  droppedLines: 0,
+  taskStatus: 'running',
+};
 
 describe('size probe behavior', () => {
   // These tests verify the size-probe optimization via buildStreamState behavior
   // (the probe path is tested indirectly through the hook's behavior contracts)
 
   it('size unchanged, prev has lines → skips full data via totalBytes guard (T17)', () => {
-    // If totalBytes == prevTotalBytes and lines.length > 0 → buildStreamState skips update
-    const EMPTY_INITIAL: OutputStreamState = {
-      lines: [],
-      totalBytes: 0,
-      totalChars: 0,
-      lastFetchedAt: null,
-      error: null,
-      droppedLines: 0,
-      taskStatus: 'running',
-    };
     const output = makeTaskOutput(['hello\n']);
-    const state1 = buildStreamState(EMPTY_INITIAL, output, 'running');
+    const state1 = buildStreamState(STREAM_INITIAL, output, 'running');
     expect(state1.lines).toEqual(['hello']);
 
     // Same output (same totalSize) — buildStreamState returns status/timestamp update only
@@ -447,63 +447,20 @@ describe('size probe behavior', () => {
   });
 
   it('size changed → full fetch produces updated lines (T18)', () => {
-    const EMPTY_INITIAL: OutputStreamState = {
-      lines: [],
-      totalBytes: 0,
-      totalChars: 0,
-      lastFetchedAt: null,
-      error: null,
-      droppedLines: 0,
-      taskStatus: 'running',
-    };
     const output1 = makeTaskOutput(['hello\n']);
-    const state1 = buildStreamState(EMPTY_INITIAL, output1, 'running');
+    const state1 = buildStreamState(STREAM_INITIAL, output1, 'running');
 
     const output2 = makeTaskOutput(['hello\nworld\n']);
     const state2 = buildStreamState(state1, output2, 'running');
     expect(state2.lines).toContain('world');
   });
 
-  it('first fetch always goes through (lines guard — T19)', () => {
-    // With empty lines (initial state), even equal totalBytes → do full parse
-    const EMPTY_INITIAL: OutputStreamState = {
-      lines: [],
-      totalBytes: 0,
-      totalChars: 0,
-      lastFetchedAt: null,
-      error: null,
-      droppedLines: 0,
-      taskStatus: 'running',
-    };
+  it('first fetch always goes through when lines is empty (T19)', () => {
     // totalSize matches prev.totalBytes (both 0) BUT prev.lines is empty
     // → buildStreamState must not skip (lines guard in size-skip condition)
     const output = makeTaskOutput(['']);
-    const state = buildStreamState(EMPTY_INITIAL, output, 'running');
-    // Empty stdout → no lines, but no crash / incorrect skip
+    const state = buildStreamState(STREAM_INITIAL, output, 'running');
     expect(state.lines).toEqual([]);
     expect(state.taskStatus).toBe('running');
-  });
-
-  it('getSize error falls through to get() — repo mock test (T20)', async () => {
-    // When getSize returns an error, the hook should call get() anyway.
-    // We verify this through the mock: if getSize is absent/erroring the existing
-    // get() path must still run (graceful degradation).
-    const { err: resultErr } = await import('../../../../src/core/result.js');
-    const mockGet = vi.fn().mockResolvedValue(ok(null));
-    const mockGetSize = vi.fn().mockResolvedValue(resultErr(new Error('probe failed')));
-    const outputRepo: OutputRepository = {
-      get: mockGet,
-      getSize: mockGetSize,
-      save: vi.fn().mockResolvedValue(ok(undefined)),
-      append: vi.fn().mockResolvedValue(ok(undefined)),
-      delete: vi.fn().mockResolvedValue(ok(undefined)),
-    };
-    // Directly assert that both functions are callable as expected by the interface
-    const sizeResult = await outputRepo.getSize(makeTaskId('t1'));
-    expect(sizeResult.ok).toBe(false);
-    // After an error, callers must fall through to get()
-    const getResult = await outputRepo.get(makeTaskId('t1'));
-    expect(getResult.ok).toBe(true);
-    expect(mockGet).toHaveBeenCalled();
   });
 });

@@ -108,7 +108,7 @@ export function mergeOutputLines(content: string): string[] {
  */
 export function codePointLength(str: string): number {
   let n = 0;
-  for (const _ch of str) n++; // _ch prefix satisfies no-unused-vars convention
+  for (const _ of str) n++;
   return n;
 }
 
@@ -122,6 +122,7 @@ export function codePointLength(str: string): number {
  * that grew linearly with task output size on every poll tick.
  */
 export function codePointSlice(str: string, start: number): string {
+  if (start === 0) return str;
   let cpIdx = 0;
   let cuIdx = 0;
   for (const ch of str) {
@@ -390,25 +391,21 @@ export function useTaskOutputStream(
 
         const fetchTask = async (): Promise<void> => {
           try {
-            // Size probe: cheap SELECT of total_size avoids loading the full blob when output
-            // has not changed. Per-panel savings: O(N·T) → O(1·T) for unchanged output.
-            // Falls through to full get() on error (graceful degradation) or on first fetch
-            // (prev.lines.length === 0 guard ensures the initial read always happens).
+            // Size probe: cheap SELECT of total_size — skips full blob load when unchanged.
+            // Falls through to get() on error (graceful degradation) or when lines is empty
+            // (prev.lines.length === 0 ensures the initial read always runs).
             const sizeResult = await outputRepo.getSize(taskId);
             if (sizeResult.ok && sizeResult.value === prev.totalBytes && prev.lines.length > 0) {
-              // Output unchanged — update status and timestamp without re-fetching the blob
               const prevState = streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE;
-              const nextStatus = status === 'terminal' ? 'terminal' : classifyStatus(rawStatus);
               streamsRef.current.set(taskId, {
                 ...prevState,
-                taskStatus: nextStatus,
+                taskStatus: status,
                 lastFetchedAt: new Date(),
               });
-              if (status === 'terminal') {
-                terminalFetchedRef.current.add(taskId);
-              }
+              if (status === 'terminal') terminalFetchedRef.current.add(taskId);
               return;
             }
+
             const result = await outputRepo.get(taskId);
             if (closingRef.current) return;
 
@@ -421,15 +418,10 @@ export function useTaskOutputStream(
               return;
             }
 
-            const nextStatus = status === 'terminal' ? 'terminal' : classifyStatus(rawStatus);
             const prevState = streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE;
-            const nextState = buildStreamState(prevState, result.value, nextStatus);
-            streamsRef.current.set(taskId, nextState);
+            streamsRef.current.set(taskId, buildStreamState(prevState, result.value, status));
 
-            // Mark terminal task as final-fetched
-            if (status === 'terminal') {
-              terminalFetchedRef.current.add(taskId);
-            }
+            if (status === 'terminal') terminalFetchedRef.current.add(taskId);
           } catch (e) {
             if (!closingRef.current) {
               const errorState: OutputStreamState = {
