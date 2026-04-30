@@ -211,8 +211,6 @@ export function buildStreamState(
   // multi-byte sequence the way a raw byte-offset slice would.
   let newContent: string;
   if (prevTotalChars > 0 && prevTotalChars < fullChars) {
-    // codePointSlice uses for-of iteration — yields one step per code point,
-    // never splits surrogate pairs (no U+FFFD corruption for emoji/CJK).
     newContent = codePointSlice(fullContent, prevTotalChars);
   } else if (prevTotalChars === 0) {
     newContent = fullContent;

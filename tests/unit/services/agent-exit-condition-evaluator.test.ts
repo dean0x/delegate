@@ -39,10 +39,10 @@ function createOutputRepo(lines: string[]): OutputRepository {
   return {
     get: vi.fn().mockResolvedValue(
       ok({
+        taskId: 'stub-task' as TaskId,
         stdout: lines,
         stderr: [],
-        truncated: false,
-        byteSize: lines.join('\n').length,
+        totalSize: Buffer.byteLength(lines.join('\n'), 'utf-8'),
       }),
     ),
     save: vi.fn().mockResolvedValue(ok(undefined)),
