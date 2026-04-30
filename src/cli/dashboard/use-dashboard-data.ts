@@ -7,7 +7,10 @@
  *  - useDashboardData: React hook for polling (used by App)
  *  - fetchAllData: Pure async function (exported for testing)
  *  - buildEntityCounts: Pure function (exported for testing)
+ *  - computeOrchestrationLiveness: Pure async function (exported for testing)
  *  - POLL_INTERVAL_BY_VIEW: Per-view poll cadence (exported for testing)
+ *  - LIVENESS_CACHE_TTL_MS: TTL constant (exported for testing)
+ *  - LivenessCacheEntry: Interface (exported for testing)
  *
  * Per-view poll cadence (Phase B):
  *  - main:      1 000 ms — summary metrics update once per second
@@ -82,12 +85,12 @@ function isProcessAlive(pid: number): boolean {
  * Per-orchestration liveness cache entry.
  * TTL: 4 seconds — processes don't die faster than the dashboard can react.
  */
-interface LivenessCacheEntry {
+export interface LivenessCacheEntry {
   readonly result: Liveness;
   readonly timestamp: number;
 }
 
-const LIVENESS_CACHE_TTL_MS = 4_000;
+export const LIVENESS_CACHE_TTL_MS = 4_000;
 
 /**
  * Unwrap an array of Results from a settled Promise.all call.
@@ -118,6 +121,66 @@ function unwrapAll(
 export function buildEntityCounts(byStatus: Record<string, number>): EntityCounts {
   const total = Object.values(byStatus).reduce((sum, n) => sum + n, 0);
   return { total, byStatus };
+}
+
+/**
+ * Compute liveness for all orchestrations that require it, with TTL caching.
+ *
+ * Extracted from fetchAllData to enable independent unit testing.
+ *
+ * DECISION: Liveness is computed for:
+ *  - RUNNING orchestrations: checked via checkOrchestrationLiveness + process signal
+ *  - PLANNING without loopId: orphan indicator → 'unknown' immediately (no DB queries)
+ *  All other statuses (COMPLETED, FAILED, CANCELLED, PLANNING+loopId) are excluded.
+ *
+ * Cache semantics:
+ *  1. Stale entries (older than LIVENESS_CACHE_TTL_MS) are swept first to prevent
+ *     unbounded Map growth for terminated orchestrations.
+ *  2. Cache-hit entries within TTL are returned without hitting the DB.
+ *  3. On checkOrchestrationLiveness throw, the result degrades to 'unknown' (no crash).
+ */
+export async function computeOrchestrationLiveness(
+  orchestrations: readonly import('../../core/domain.js').Orchestration[],
+  cache: Map<string, LivenessCacheEntry>,
+  deps: import('../../services/orchestration-liveness.js').LivenessDeps,
+): Promise<Record<string, Liveness>> {
+  const now = Date.now();
+
+  // Sweep stale entries to prevent unbounded Map growth
+  const cutoff = now - LIVENESS_CACHE_TTL_MS;
+  for (const [id, entry] of cache) {
+    if (entry.timestamp < cutoff) cache.delete(id);
+  }
+
+  const entries = await Promise.all(
+    orchestrations.map(async (orch) => {
+      if (orch.status === OrchestratorStatus.RUNNING) {
+        // Check TTL cache first
+        const cached = cache.get(orch.id);
+        if (cached && now - cached.timestamp < LIVENESS_CACHE_TTL_MS) {
+          return [orch.id, cached.result] as const;
+        }
+        try {
+          const result = await checkOrchestrationLiveness(orch, deps);
+          cache.set(orch.id, { result, timestamp: now });
+          return [orch.id, result] as const;
+        } catch {
+          return [orch.id, 'unknown' as Liveness] as const;
+        }
+      }
+      if (orch.status === OrchestratorStatus.PLANNING && !orch.loopId) {
+        // PLANNING with no loopId — orphan indicator
+        return [orch.id, 'unknown' as Liveness] as const;
+      }
+      return null;
+    }),
+  );
+
+  const result: Record<string, Liveness> = {};
+  for (const entry of entries) {
+    if (entry) result[entry[0]] = entry[1];
+  }
+  return result;
 }
 
 /**
@@ -215,52 +278,14 @@ export async function fetchAllData(
   // Compute liveness for RUNNING orchestrations — parallel with TTL cache.
   // Processes don't die faster than the dashboard reacts, so a 4-second cache
   // avoids up to 150 sequential SQLite hits/s (50 orchestrations × 3 sub-queries).
-  const now = Date.now();
   const cache = livenessCache ?? new Map<string, LivenessCacheEntry>();
-
-  // Sweep stale entries from the liveness cache to prevent unbounded growth.
-  // Orchestrations that have terminated will no longer appear in the findAll results
-  // but their cache entries would otherwise accumulate forever (memory leak).
-  const cutoff = now - LIVENESS_CACHE_TTL_MS;
-  for (const [id, entry] of cache) {
-    if (entry.timestamp < cutoff) cache.delete(id);
-  }
-
   const livenessDeps = {
     loopRepo: loopRepository,
     taskRepo: taskRepository,
     workerRepo: workerRepository,
     isProcessAlive,
   };
-
-  const livenessEntries = await Promise.all(
-    orchestrations.map(async (orch) => {
-      if (orch.status === OrchestratorStatus.RUNNING) {
-        // Check TTL cache first
-        const cached = cache.get(orch.id);
-        if (cached && now - cached.timestamp < LIVENESS_CACHE_TTL_MS) {
-          return [orch.id, cached.result] as const;
-        }
-        try {
-          const result = await checkOrchestrationLiveness(orch, livenessDeps);
-          cache.set(orch.id, { result, timestamp: now });
-          return [orch.id, result] as const;
-        } catch {
-          return [orch.id, 'unknown' as Liveness] as const;
-        }
-      }
-      if (orch.status === OrchestratorStatus.PLANNING && !orch.loopId) {
-        // PLANNING with no loopId — orphan indicator
-        return [orch.id, 'unknown' as Liveness] as const;
-      }
-      return null;
-    }),
-  );
-
-  const orchestrationLiveness: Record<string, Liveness> = {};
-  for (const entry of livenessEntries) {
-    if (entry) orchestrationLiveness[entry[0]] = entry[1];
-  }
+  const orchestrationLiveness = await computeOrchestrationLiveness(orchestrations, cache, livenessDeps);
 
   // Main-view metrics extras — fetched in parallel when viewing the metrics dashboard
   let metricsExtras: Pick<
