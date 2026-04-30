@@ -54,6 +54,7 @@ import {
   buildStreamState,
   codePointLength,
   codePointSlice,
+  computeDelta,
   mergeOutputLines,
   stripAnsi,
   trySizeProbe,
@@ -510,5 +511,109 @@ describe('trySizeProbe', () => {
 
     // Assert: probe confirms no new output — full fetch can be skipped
     expect(result).toBe(true);
+  });
+});
+
+// ============================================================================
+// computeDelta — per-chunk incremental delta extraction
+// ============================================================================
+
+describe('computeDelta', () => {
+  it('empty chunks, prevTotalChars=0 → fullChars=0, newContent empty', () => {
+    const { fullChars, newContent } = computeDelta([], 0);
+    expect(fullChars).toBe(0);
+    expect(newContent).toBe('');
+  });
+
+  it('single ASCII chunk, first fetch (prevTotalChars=0) → full content returned', () => {
+    const { fullChars, newContent } = computeDelta(['hello\nworld\n'], 0);
+    expect(fullChars).toBe(12);
+    expect(newContent).toBe('hello\nworld\n');
+  });
+
+  it('multiple chunks, prevTotalChars at chunk boundary → only later chunks returned', () => {
+    // 'aaa' is 3 chars, 'bbb' is 3 chars; prevTotalChars=3 skips first chunk
+    const { fullChars, newContent } = computeDelta(['aaa', 'bbb'], 3);
+    expect(fullChars).toBe(6);
+    expect(newContent).toBe('bbb');
+  });
+
+  it('prevTotalChars mid-chunk → returns suffix of the boundary chunk', () => {
+    // 'abcdef' is 6 chars; prevTotalChars=3 → returns chars[3..] = 'def'
+    const { fullChars, newContent } = computeDelta(['abcdef'], 3);
+    expect(fullChars).toBe(6);
+    expect(newContent).toBe('def');
+  });
+
+  it('prevTotalChars === fullChars (no new data) → empty newContent', () => {
+    const { fullChars, newContent } = computeDelta(['abc'], 3);
+    expect(fullChars).toBe(3);
+    expect(newContent).toBe('');
+  });
+
+  it('prevTotalChars > fullChars (defensive: regression) → empty newContent, no crash', () => {
+    // prevTotalChars=5 > fullChars=2 — should not throw or produce garbage
+    const { fullChars, newContent } = computeDelta(['ab'], 5);
+    expect(fullChars).toBe(2);
+    expect(newContent).toBe('');
+  });
+
+  it('emoji at chunk boundary → correct code-point slice, no U+FFFD', () => {
+    // 'A🎉' — A=1 char, 🎉=1 code point (4 UTF-16 bytes);  prevTotalChars=1
+    const { fullChars, newContent } = computeDelta(['A🎉'], 1);
+    expect(fullChars).toBe(2);
+    expect(newContent).toBe('🎉');
+    expect(newContent).not.toContain('�');
+  });
+
+  it('CJK across chunks → correct code-point counting and slicing', () => {
+    // '日本' = 2 CJK chars, '語' = 1 CJK char; prevTotalChars=2
+    const { fullChars, newContent } = computeDelta(['日本', '語'], 2);
+    expect(fullChars).toBe(3);
+    expect(newContent).toBe('語');
+  });
+
+  it('mixed ASCII + multi-byte → correct slice across chunk boundary', () => {
+    // 'hello\n' = 6 chars, 'café\n' = 5 chars (c,a,f,é,\n); prevTotalChars=6
+    const { fullChars, newContent } = computeDelta(['hello\n', 'café\n'], 6);
+    expect(fullChars).toBe(11);
+    expect(newContent).toBe('café\n');
+  });
+
+  it('many chunks, prevTotalChars near end → only last segment returned', () => {
+    // 10 chunks of 100 ASCII chars each = 1000 total; prevTotalChars=950
+    const chunks = Array.from({ length: 10 }, () => 'x'.repeat(100));
+    const { fullChars, newContent } = computeDelta(chunks, 950);
+    expect(fullChars).toBe(1000);
+    expect(newContent).toBe('x'.repeat(50));
+  });
+
+  it('empty string chunks interspersed → skipped cleanly, correct result', () => {
+    // '', 'abc', '', 'def' — total 6 chars; prevTotalChars=3 → returns 'def'
+    const { fullChars, newContent } = computeDelta(['', 'abc', '', 'def'], 3);
+    expect(fullChars).toBe(6);
+    expect(newContent).toBe('def');
+  });
+});
+
+// ============================================================================
+// buildStreamState — multi-chunk stdout regression test
+// ============================================================================
+
+describe('buildStreamState multi-chunk regression', () => {
+  const EMPTY_INITIAL: OutputStreamState = {
+    lines: [],
+    totalBytes: 0,
+    totalChars: 0,
+    lastFetchedAt: null,
+    error: null,
+    droppedLines: 0,
+    taskStatus: 'pending',
+  };
+
+  it('processes multi-chunk stdout correctly', () => {
+    const output = makeTaskOutput(['chunk1\n', 'chunk2\n']);
+    const state = buildStreamState(EMPTY_INITIAL, output, 'running');
+    expect(state.lines).toEqual(['chunk1', 'chunk2']);
   });
 });

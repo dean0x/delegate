@@ -12,6 +12,7 @@
  *  - MAX_LINES_PER_STREAM: Constant (exported for testing)
  *  - codePointLength: Pure function (exported for testing)
  *  - codePointSlice: Pure function (exported for testing)
+ *  - computeDelta: Pure function (exported for testing)
  *  - trySizeProbe: Async probe function (exported for testing)
  */
 
@@ -146,6 +147,70 @@ export function codePointSlice(str: string, start: number): string {
 }
 
 /**
+ * Compute the incremental delta from a set of output chunks, given the previously
+ * processed character count.
+ *
+ * Algorithm:
+ * 1. Pass 1 — count code points per chunk via codePointLength (ASCII fast-path is
+ *    O(1) per pure-ASCII chunk), accumulate into fullChars.
+ * 2. If prevTotalChars >= fullChars → no new data; return { fullChars, newContent: '' }.
+ * 3. If prevTotalChars === 0 → first fetch; join all chunks (nothing to skip).
+ * 4. Pass 2 — walk chunks with a running code-point accumulator; find the boundary
+ *    chunk where accumulated + chunkLen > prevTotalChars, then codePointSlice the
+ *    boundary chunk and join only the remaining chunks.
+ *
+ * PERFORMANCE: Avoids the O(N) `stdout.join('')` allocation on every change tick by
+ * working per-chunk and only joining the new suffix. The ASCII fast-path in
+ * codePointLength makes Pass 1 nearly free for typical CLI/build output.
+ *
+ * CORRECTNESS: codePointSlice is used at the boundary so multi-byte characters
+ * (emoji, CJK) are never split, preventing U+FFFD replacement characters.
+ */
+export function computeDelta(
+  chunks: readonly string[],
+  prevTotalChars: number,
+): { fullChars: number; newContent: string } {
+  // Pass 1: count total code points across all chunks
+  let fullChars = 0;
+  for (const chunk of chunks) {
+    fullChars += codePointLength(chunk);
+  }
+
+  // No new content (includes the prevTotalChars > fullChars defensive case)
+  if (prevTotalChars >= fullChars) {
+    return { fullChars, newContent: '' };
+  }
+
+  // First fetch — return all chunks joined (nothing to skip)
+  if (prevTotalChars === 0) {
+    return { fullChars, newContent: chunks.join('') };
+  }
+
+  // Pass 2: walk chunks to find the boundary where prevTotalChars falls
+  let accumulated = 0;
+  const result: string[] = [];
+  let boundaryFound = false;
+
+  for (const chunk of chunks) {
+    const chunkLen = codePointLength(chunk);
+
+    if (boundaryFound) {
+      // All chunks after the boundary are included in full
+      result.push(chunk);
+    } else if (accumulated + chunkLen > prevTotalChars) {
+      // This chunk contains the boundary — slice from the remaining offset
+      const offsetInChunk = prevTotalChars - accumulated;
+      result.push(codePointSlice(chunk, offsetInChunk));
+      boundaryFound = true;
+    }
+    // accumulated + chunkLen <= prevTotalChars → entire chunk already seen, skip
+    accumulated += chunkLen;
+  }
+
+  return { fullChars, newContent: result.join('') };
+}
+
+/**
  * Determine whether a task should be polled on the given tick number.
  * - running: every tick
  * - pending/queued: every SLOW_POLL_INTERVAL ticks
@@ -198,29 +263,19 @@ export function buildStreamState(
     };
   }
 
-  // Reconstruct full stdout content (all chunks concatenated)
-  const fullContent = output.stdout.join('');
-  const fullChars = codePointLength(fullContent);
-
+  // Compute delta: extract only the code points beyond what we've already processed.
+  // computeDelta works per-chunk, avoiding the O(N) stdout.join('') allocation on
+  // every change tick. It also uses codePointSlice at chunk boundaries, which is
+  // UTF-8-safe and prevents U+FFFD corruption for multi-byte characters (emoji, CJK).
+  //
   // prevTotalChars defaults to 0 if the caller constructed the state literal
   // without the totalChars field (backward-compatible — treats as fresh start).
   const prevTotalChars = prev.totalChars ?? 0;
+  const { fullChars, newContent } = computeDelta(output.stdout, prevTotalChars);
 
-  // Delta: extract only the characters (code points) beyond what we've already processed.
-  // Using character-index slicing is UTF-8-safe: it never splits a surrogate pair or
-  // multi-byte sequence the way a raw byte-offset slice would.
-  let newContent: string;
-  if (prevTotalChars > 0 && prevTotalChars < fullChars) {
-    newContent = codePointSlice(fullContent, prevTotalChars);
-  } else if (prevTotalChars === 0) {
-    newContent = fullContent;
-  } else {
-    // No new characters
-    return {
-      ...prev,
-      taskStatus: nextStatus,
-      lastFetchedAt: new Date(),
-    };
+  if (newContent === '') {
+    // No new characters — update metadata only
+    return { ...prev, totalBytes: newTotalBytes, totalChars: fullChars, taskStatus: nextStatus, lastFetchedAt: new Date() };
   }
 
   // Strip ANSI and split into lines
