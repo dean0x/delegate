@@ -12,6 +12,7 @@
  *  - MAX_LINES_PER_STREAM: Constant (exported for testing)
  *  - codePointLength: Pure function (exported for testing)
  *  - codePointSlice: Pure function (exported for testing)
+ *  - trySizeProbe: Async probe function (exported for testing)
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -260,6 +261,36 @@ export function buildStreamState(
 }
 
 // ============================================================================
+// Size probe (exported for unit testing)
+// ============================================================================
+
+/**
+ * Cheap size-probe: queries `outputRepo.getSize()` to determine whether the
+ * remote output has changed since the last fetch.
+ *
+ * Returns `true` when the probe confirms output is unchanged (full fetch can be
+ * skipped). Returns `false` in ALL other cases — getSize error, size changed,
+ * or prev.lines is empty (initial fetch must always proceed).
+ *
+ * DECISION: Side effects on probe-hit (updating streamsRef, marking terminal)
+ * are intentionally left to the caller so this function stays pure and
+ * independently testable.
+ */
+export async function trySizeProbe(
+  outputRepo: OutputRepository,
+  taskId: TaskId,
+  prev: OutputStreamState,
+  closing: boolean,
+): Promise<boolean> {
+  if (closing) return true; // closing — treat as "skip fetch"
+  const sizeResult = await outputRepo.getSize(taskId);
+  if (sizeResult.ok && sizeResult.value === prev.totalBytes && prev.lines.length > 0) {
+    return true;
+  }
+  return false;
+}
+
+// ============================================================================
 // React hook
 // ============================================================================
 
@@ -400,34 +431,22 @@ export function useTaskOutputStream(
           continue;
         }
 
-        /**
-         * Size probe: cheap SELECT of total_size — skips full blob load when
-         * output is unchanged. Returns true when the probe hit (full fetch not
-         * needed), false when the full get() should still run.
-         *
-         * Falls through (returns false) on getSize error for graceful
-         * degradation. Also falls through when lines is empty so the initial
-         * read always executes.
-         */
-        const trySizeProbe = async (): Promise<boolean> => {
-          const sizeResult = await outputRepo.getSize(taskId);
-          if (closingRef.current) return true; // closing — treat as "skip fetch"
-          if (sizeResult.ok && sizeResult.value === prev.totalBytes && prev.lines.length > 0) {
-            const prevState = streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE;
-            streamsRef.current.set(taskId, {
-              ...prevState,
-              taskStatus: status,
-              lastFetchedAt: new Date(),
-            });
-            if (status === 'terminal') terminalFetchedRef.current.add(taskId);
-            return true;
-          }
-          return false;
-        };
-
         const fetchTask = async (): Promise<void> => {
           try {
-            if (await trySizeProbe()) return;
+            const probeHit = await trySizeProbe(outputRepo, taskId, prev, closingRef.current);
+            if (probeHit) {
+              // Probe confirmed no new output — apply status/timestamp update only
+              if (!closingRef.current) {
+                const prevState = streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE;
+                streamsRef.current.set(taskId, {
+                  ...prevState,
+                  taskStatus: status,
+                  lastFetchedAt: new Date(),
+                });
+                if (status === 'terminal') terminalFetchedRef.current.add(taskId);
+              }
+              return;
+            }
 
             const result = await outputRepo.get(taskId);
             if (closingRef.current) return;

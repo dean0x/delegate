@@ -56,6 +56,7 @@ import {
   codePointSlice,
   mergeOutputLines,
   stripAnsi,
+  trySizeProbe,
 } from '../../../../src/cli/dashboard/use-task-output-stream.js';
 
 describe('stripAnsi', () => {
@@ -418,10 +419,10 @@ describe('codePointSlice', () => {
 });
 
 // ============================================================================
-// Size probe in doPoll — getSize guards full get() call (T17–T19)
+// buildStreamState totalBytes guard (T17–T19)
 // ============================================================================
 
-const STREAM_INITIAL: OutputStreamState = {
+const INITIAL_STREAM_STATE: OutputStreamState = {
   lines: [],
   totalBytes: 0,
   totalChars: 0,
@@ -431,13 +432,13 @@ const STREAM_INITIAL: OutputStreamState = {
   taskStatus: 'running',
 };
 
-describe('size probe behavior', () => {
-  // These tests verify the size-probe optimization via buildStreamState behavior
-  // (the probe path is tested indirectly through the hook's behavior contracts)
+describe('buildStreamState totalBytes guard', () => {
+  // T17–T19: These tests verify the in-function size guard inside buildStreamState.
+  // The guard skips re-parsing when totalSize is unchanged and lines are populated.
 
   it('size unchanged, prev has lines → skips full data via totalBytes guard (T17)', () => {
     const output = makeTaskOutput(['hello\n']);
-    const state1 = buildStreamState(STREAM_INITIAL, output, 'running');
+    const state1 = buildStreamState(INITIAL_STREAM_STATE, output, 'running');
     expect(state1.lines).toEqual(['hello']);
 
     // Same output (same totalSize) — buildStreamState returns status/timestamp update only
@@ -448,7 +449,7 @@ describe('size probe behavior', () => {
 
   it('size changed → full fetch produces updated lines (T18)', () => {
     const output1 = makeTaskOutput(['hello\n']);
-    const state1 = buildStreamState(STREAM_INITIAL, output1, 'running');
+    const state1 = buildStreamState(INITIAL_STREAM_STATE, output1, 'running');
 
     const output2 = makeTaskOutput(['hello\nworld\n']);
     const state2 = buildStreamState(state1, output2, 'running');
@@ -459,42 +460,55 @@ describe('size probe behavior', () => {
     // totalSize matches prev.totalBytes (both 0) BUT prev.lines is empty
     // → buildStreamState must not skip (lines guard in size-skip condition)
     const output = makeTaskOutput(['']);
-    const state = buildStreamState(STREAM_INITIAL, output, 'running');
+    const state = buildStreamState(INITIAL_STREAM_STATE, output, 'running');
     expect(state.lines).toEqual([]);
     expect(state.taskStatus).toBe('running');
   });
+});
 
-  it('getSize error → full get() still called (graceful degradation) (T20)', async () => {
+// ============================================================================
+// trySizeProbe — actual probe function (T20–T21)
+// ============================================================================
+
+describe('trySizeProbe', () => {
+  it('getSize error → returns false (full get() should proceed) (T20)', async () => {
     // Arrange: prev state with totalBytes > 0 and lines populated — conditions that
-    // would normally trigger the size-skip if getSize returned the same byte count.
+    // would normally trigger a probe-hit if getSize returned the same byte count.
     const taskId = makeTaskId('task-t20');
-    const prevState: OutputStreamState = {
-      ...STREAM_INITIAL,
+    const prev: OutputStreamState = {
+      ...INITIAL_STREAM_STATE,
       lines: ['existing line'],
       totalBytes: 12,
       totalChars: 12,
     };
-    const output = makeTaskOutput(['existing line\n', 'new line\n']);
     const repo = makeOutputRepo({
-      // getSize fails — probe returns an error
       getSize: vi.fn().mockResolvedValue(err(new Error('db read error'))),
-      // get() returns valid data
-      get: vi.fn().mockResolvedValue(ok(output)),
     });
 
-    // Act: simulate the fetchTask control flow from doPoll:
-    //   sizeResult.ok is false → skip condition is false → get() must be called
-    const sizeResult = await repo.getSize(taskId);
-    let nextState = prevState;
-    if (!(sizeResult.ok && sizeResult.value === prevState.totalBytes && prevState.lines.length > 0)) {
-      const result = await repo.get(taskId);
-      if (result.ok) {
-        nextState = buildStreamState(prevState, result.value, 'running');
-      }
-    }
+    // Act: call the actual exported trySizeProbe function
+    const result = await trySizeProbe(repo, taskId, prev, false);
 
-    // Assert: get() was called and produced updated state despite getSize failure
-    expect(repo.get).toHaveBeenCalledWith(taskId);
-    expect(nextState.lines).toContain('new line');
+    // Assert: probe returns false — getSize failure must not block the full fetch
+    expect(result).toBe(false);
+  });
+
+  it('getSize returns matching size with populated lines → returns true (probe hit) (T21)', async () => {
+    // Arrange: prev state where totalBytes matches what getSize reports
+    const taskId = makeTaskId('task-t21');
+    const prev: OutputStreamState = {
+      ...INITIAL_STREAM_STATE,
+      lines: ['some line'],
+      totalBytes: 42,
+      totalChars: 42,
+    };
+    const repo = makeOutputRepo({
+      getSize: vi.fn().mockResolvedValue(ok(42)), // matches prev.totalBytes
+    });
+
+    // Act
+    const result = await trySizeProbe(repo, taskId, prev, false);
+
+    // Assert: probe confirms no new output — full fetch can be skipped
+    expect(result).toBe(true);
   });
 });
