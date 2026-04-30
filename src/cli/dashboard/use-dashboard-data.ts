@@ -217,6 +217,15 @@ export async function fetchAllData(
   // avoids up to 150 sequential SQLite hits/s (50 orchestrations × 3 sub-queries).
   const now = Date.now();
   const cache = livenessCache ?? new Map<string, LivenessCacheEntry>();
+
+  // Sweep stale entries from the liveness cache to prevent unbounded growth.
+  // Orchestrations that have terminated will no longer appear in the findAll results
+  // but their cache entries would otherwise accumulate forever (memory leak).
+  const cutoff = now - LIVENESS_CACHE_TTL_MS;
+  for (const [id, entry] of cache) {
+    if (entry.timestamp < cutoff) cache.delete(id);
+  }
+
   const livenessDeps = {
     loopRepo: loopRepository,
     taskRepo: taskRepository,

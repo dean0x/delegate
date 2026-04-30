@@ -492,4 +492,53 @@ describe('fetchAllData — orchestration liveness caching', () => {
     // Cache should be empty — no liveness computed for completed orch
     expect(cache.size).toBe(0);
   });
+
+  // ---- Liveness cache sweep tests (T21, T22) ----
+
+  it('stale cache entries older than TTL are swept before computing liveness (T21)', async () => {
+    const { OrchestratorStatus: Status } = await import('../../../../src/core/domain.js');
+    // No running orchestrations — so cache sweep logic runs without liveness side effects
+    const orchestrationRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+      getOrchestratorChildren: vi.fn().mockResolvedValue(ok([])),
+      countOrchestratorChildren: vi.fn().mockResolvedValue(ok(0)),
+    };
+    const ctx = makeCtx({
+      orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
+    });
+
+    // Inject a stale entry (timestamp far in the past, well beyond 4s TTL)
+    const staleTimestamp = Date.now() - 10_000; // 10 seconds ago
+    const cache = new Map([['stale-orch', { result: 'live' as const, timestamp: staleTimestamp }]]);
+
+    await fetchAllData(ctx, MAIN_VIEW, 0, cache);
+
+    // After fetchAllData with the sweep, stale entry should be removed
+    expect(cache.has('stale-orch')).toBe(false);
+  });
+
+  it('fresh cache entries within TTL are retained during sweep (T22)', async () => {
+    const orchestrationRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+      getOrchestratorChildren: vi.fn().mockResolvedValue(ok([])),
+      countOrchestratorChildren: vi.fn().mockResolvedValue(ok(0)),
+    };
+    const ctx = makeCtx({
+      orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
+    });
+
+    // Fresh entry (just added)
+    const freshTimestamp = Date.now() - 1_000; // 1 second ago, well within 4s TTL
+    const cache = new Map([['fresh-orch', { result: 'live' as const, timestamp: freshTimestamp }]]);
+
+    await fetchAllData(ctx, MAIN_VIEW, 0, cache);
+
+    // Fresh entry should still be in the cache
+    expect(cache.has('fresh-orch')).toBe(true);
+    expect(cache.get('fresh-orch')?.result).toBe('live');
+  });
 });

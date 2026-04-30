@@ -127,4 +127,5 @@ export const createMockOutputRepository = (): OutputRepository => ({
   append: vi.fn().mockResolvedValue(ok(undefined)),
   get: vi.fn().mockResolvedValue(ok(null)),
   delete: vi.fn().mockResolvedValue(ok(undefined)),
+  getSize: vi.fn().mockResolvedValue(ok(0)),
 });

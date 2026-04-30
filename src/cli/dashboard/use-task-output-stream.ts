@@ -97,6 +97,42 @@ export function mergeOutputLines(content: string): string[] {
 }
 
 /**
+ * Count Unicode code points in a string using the for-of iterator.
+ * Correct for multi-byte characters (emoji, CJK) that are represented as
+ * surrogate pairs in JavaScript's UTF-16 encoding: spread/for-of yields one
+ * iteration per code point, not per UTF-16 code unit.
+ *
+ * ARCHITECTURE: Replaces `[...str].length` spread — avoids allocating a full
+ * array of characters on every poll tick, eliminating the O(N) memory spike
+ * that caused dashboard OOM crashes with large task outputs.
+ */
+export function codePointLength(str: string): number {
+  let n = 0;
+  for (const _ch of str) n++; // _ch prefix satisfies no-unused-vars convention
+  return n;
+}
+
+/**
+ * Return the substring of `str` starting at the given Unicode code-point index.
+ * Safe for multi-byte characters: the for-of iterator yields one step per code
+ * point, so the returned slice never cuts inside a surrogate pair.
+ *
+ * ARCHITECTURE: Replaces `[...str].slice(start).join('')` spread — avoids
+ * allocating a full code-point array, eliminating the OOM-inducing allocation
+ * that grew linearly with task output size on every poll tick.
+ */
+export function codePointSlice(str: string, start: number): string {
+  let cpIdx = 0;
+  let cuIdx = 0;
+  for (const ch of str) {
+    if (cpIdx === start) return str.substring(cuIdx);
+    cuIdx += ch.length;
+    cpIdx++;
+  }
+  return '';
+}
+
+/**
  * Determine whether a task should be polled on the given tick number.
  * - running: every tick
  * - pending/queued: every SLOW_POLL_INTERVAL ticks
@@ -151,7 +187,7 @@ export function buildStreamState(
 
   // Reconstruct full stdout content (all chunks concatenated)
   const fullContent = output.stdout.join('');
-  const fullChars = [...fullContent].length; // spread to count Unicode code points
+  const fullChars = codePointLength(fullContent);
 
   // prevTotalChars defaults to 0 if the caller constructed the state literal
   // without the totalChars field (backward-compatible — treats as fresh start).
@@ -162,9 +198,9 @@ export function buildStreamState(
   // multi-byte sequence the way a raw byte-offset slice would.
   let newContent: string;
   if (prevTotalChars > 0 && prevTotalChars < fullChars) {
-    // String.prototype.slice uses UTF-16 code-unit indices; spreading and slicing
-    // handles multi-byte characters correctly across all BMP + astral-plane chars.
-    newContent = [...fullContent].slice(prevTotalChars).join('');
+    // codePointSlice uses for-of iteration — yields one step per code point,
+    // never splits surrogate pairs (no U+FFFD corruption for emoji/CJK).
+    newContent = codePointSlice(fullContent, prevTotalChars);
   } else if (prevTotalChars === 0) {
     newContent = fullContent;
   } else {
@@ -354,13 +390,25 @@ export function useTaskOutputStream(
 
         const fetchTask = async (): Promise<void> => {
           try {
-            // TODO(perf): OutputRepository.get() returns the entire stdout blob on every poll.
-            // Per-panel this is O(N·T) — N bytes × T ticks. The correct fix is to add
-            // OutputRepository.getSize(taskId): Promise<Result<number, Error>> for a cheap
-            // probe, and OutputRepository.getSince(taskId, byteOffset): Promise<Result<TaskOutput, Error>>
-            // for true incremental reads. Implement in src/implementations/output-repository.ts
-            // and src/core/interfaces.ts, then read taskIdsRef.current[taskId].totalBytes here
-            // to skip the full fetch when size is unchanged.
+            // Size probe: cheap SELECT of total_size avoids loading the full blob when output
+            // has not changed. Per-panel savings: O(N·T) → O(1·T) for unchanged output.
+            // Falls through to full get() on error (graceful degradation) or on first fetch
+            // (prev.lines.length === 0 guard ensures the initial read always happens).
+            const sizeResult = await outputRepo.getSize(taskId);
+            if (sizeResult.ok && sizeResult.value === prev.totalBytes && prev.lines.length > 0) {
+              // Output unchanged — update status and timestamp without re-fetching the blob
+              const prevState = streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE;
+              const nextStatus = status === 'terminal' ? 'terminal' : classifyStatus(rawStatus);
+              streamsRef.current.set(taskId, {
+                ...prevState,
+                taskStatus: nextStatus,
+                lastFetchedAt: new Date(),
+              });
+              if (status === 'terminal') {
+                terminalFetchedRef.current.add(taskId);
+              }
+              return;
+            }
             const result = await outputRepo.get(taskId);
             if (closingRef.current) return;
 

@@ -549,6 +549,14 @@ export interface OutputRepository {
    * Remove stored output for a task
    */
   delete(taskId: TaskId): Promise<Result<void>>;
+
+  /**
+   * Return the total_size byte-count for a task without loading the full output blob.
+   * Returns 0 when no record exists.
+   * ARCHITECTURE: Cheap probe used by the dashboard output-stream hook to skip full
+   * get() calls when output has not changed — avoids O(N·T) blob reads per panel.
+   */
+  getSize(taskId: TaskId): Promise<Result<number>>;
 }
 
 /**

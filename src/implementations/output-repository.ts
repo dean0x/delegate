@@ -17,6 +17,7 @@ export class SQLiteOutputRepository implements OutputRepository {
   private readonly db: SQLite.Database;
   private readonly saveStmt: SQLite.Statement;
   private readonly getStmt: SQLite.Statement;
+  private readonly getSizeStmt: SQLite.Statement;
   private readonly deleteStmt: SQLite.Statement;
   private readonly outputDir: string;
   private readonly fileStorageThreshold: number;
@@ -47,6 +48,10 @@ export class SQLiteOutputRepository implements OutputRepository {
 
     this.getStmt = this.db.prepare(`
       SELECT * FROM task_output WHERE task_id = ?
+    `);
+
+    this.getSizeStmt = this.db.prepare(`
+      SELECT total_size FROM task_output WHERE task_id = ?
     `);
 
     this.deleteStmt = this.db.prepare(`
@@ -125,6 +130,16 @@ export class SQLiteOutputRepository implements OutputRepository {
         };
       },
       (error) => new AutobeatError(ErrorCode.SYSTEM_ERROR, `Failed to get output: ${error}`, { taskId }),
+    );
+  }
+
+  async getSize(taskId: TaskId): Promise<Result<number>> {
+    return tryCatchAsync(
+      async () => {
+        const row = this.getSizeStmt.get(taskId) as { total_size: number } | undefined;
+        return row?.total_size ?? 0;
+      },
+      (error) => new AutobeatError(ErrorCode.SYSTEM_ERROR, `Failed to get output size: ${error}`, { taskId }),
     );
   }
 
