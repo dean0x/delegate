@@ -7,7 +7,7 @@
 
 import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
 import { LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
-import type { DashboardMutationContext } from '../types.js';
+import type { DashboardData, DashboardMutationContext } from '../types.js';
 import { TERMINAL_STATUSES } from './constants.js';
 
 /**
@@ -33,6 +33,7 @@ export async function cancelEntity(
   entityStatus: string,
   mutations: DashboardMutationContext,
   refreshNow: () => void,
+  data?: DashboardData | null,
 ): Promise<void> {
   const reason = 'User cancelled via dashboard';
   try {
@@ -63,10 +64,18 @@ export async function cancelEntity(
           refreshNow();
         }
         break;
-      case 'pipeline':
-        // Pipeline cancel is driven by cancelling its current step task (cascade).
-        // Direct pipeline cancel not yet supported — silently no-op.
+      case 'pipeline': {
+        if (TERMINAL_STATUSES.pipelines.includes(entityStatus as PipelineStatus)) break;
+        const pipeline = data?.pipelines.find((p) => p.id === entityId);
+        if (pipeline) {
+          for (const stepTaskId of pipeline.stepTaskIds) {
+            if (stepTaskId === null) continue;
+            await mutations.taskManager.cancel(stepTaskId, reason);
+          }
+          refreshNow();
+        }
         break;
+      }
     }
   } catch {
     // Best-effort: service errors are logged internally by each service.
