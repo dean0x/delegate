@@ -154,6 +154,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
     mutations,
     workspaceNav,
     setWorkspaceNav,
+    entityBrowserViewportHeight: Math.max(4, metricsLayout.bottomRowHeight - 4),
   });
 
   // View dispatcher

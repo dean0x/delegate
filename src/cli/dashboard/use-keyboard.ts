@@ -16,7 +16,7 @@
 import { useInput } from 'ink';
 import { useRef } from 'react';
 import { OrchestratorStatus } from '../../core/domain.js';
-import { DETAIL_SCROLL_MAX_DEFAULT } from './keyboard/constants.js';
+import { DETAIL_SCROLL_MAX_DEFAULT, ENTITY_BROWSER_VIEWPORT_HEIGHT } from './keyboard/constants.js';
 import { handleDetailKeys } from './keyboard/handle-detail-keys.js';
 import { handleMainKeys } from './keyboard/handle-main-keys.js';
 import { handleWorkspaceKeys } from './keyboard/handle-workspace-keys.js';
@@ -47,11 +47,26 @@ export function useKeyboard({
   mutations,
   workspaceNav,
   setWorkspaceNav,
+  entityBrowserViewportHeight,
 }: UseKeyboardParams): void {
   // Keep a ref to the latest data so setNav functional updaters always see
   // current data, not stale closure data from the render that registered useInput.
   const dataRef = useRef(data);
   dataRef.current = data;
+
+  const navigateToWorkspace = (orchestrationId?: import('../../core/domain.js').OrchestratorId) => {
+    if (orchestrationId && setWorkspaceNav && dataRef.current?.orchestrations) {
+      const idx = dataRef.current.orchestrations.findIndex((o) => o.id === orchestrationId);
+      if (idx >= 0) {
+        setWorkspaceNav((prev) => ({
+          ...prev,
+          committedOrchestratorIndex: idx,
+          selectedOrchestratorIndex: idx,
+        }));
+      }
+    }
+    setView({ kind: 'workspace', orchestrationId });
+  };
 
   useInput((input, key) => {
     // Global keys — handled before view dispatch
@@ -70,7 +85,7 @@ export function useKeyboard({
     // Ignored in non-orchestration detail views — user must Esc first.
     if (input === 'v') {
       if (view.kind === 'detail' && view.entityType === 'orchestrations') {
-        setView({ kind: 'workspace', orchestrationId: view.entityId });
+        navigateToWorkspace(view.entityId);
         return;
       }
       if (view.kind === 'workspace') {
@@ -78,7 +93,7 @@ export function useKeyboard({
         return;
       }
       if (view.kind === 'main') {
-        setView({ kind: 'workspace' });
+        navigateToWorkspace();
         return;
       }
       // Other detail views: ignore v (user must Esc first)
@@ -99,17 +114,15 @@ export function useKeyboard({
     if (input === 'w') {
       const orchestrations = dataRef.current?.orchestrations;
       if (!orchestrations || orchestrations.length === 0) {
-        // No orchestrations — nothing to show in workspace; ignore.
         return;
       }
       const running = orchestrations.find((o) => o.status === OrchestratorStatus.RUNNING);
       if (running) {
-        setView({ kind: 'workspace', orchestrationId: running.id });
+        navigateToWorkspace(running.id);
       } else {
-        // No running orchestration — fall back to most recent (first in list, newest first)
         const mostRecent = orchestrations[0];
         if (mostRecent) {
-          setView({ kind: 'workspace', orchestrationId: mostRecent.id });
+          navigateToWorkspace(mostRecent.id);
         }
       }
       return;
@@ -127,6 +140,7 @@ export function useKeyboard({
       refreshNow,
       workspaceNav,
       setWorkspaceNav,
+      entityBrowserViewportHeight: entityBrowserViewportHeight ?? ENTITY_BROWSER_VIEWPORT_HEIGHT,
     };
 
     if (view.kind === 'detail') {

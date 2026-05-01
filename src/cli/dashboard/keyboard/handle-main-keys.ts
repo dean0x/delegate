@@ -10,7 +10,7 @@
  */
 
 import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
-import { ENTITY_BROWSER_VIEWPORT_HEIGHT, FILTER_CYCLES, PANEL_JUMP_KEYS, PANEL_ORDER } from './constants.js';
+import { FILTER_CYCLES, PANEL_JUMP_KEYS, PANEL_ORDER } from './constants.js';
 import { cancelEntity, deleteEntity } from './entity-mutations.js';
 import { clamp, filteredLength, getFocusedPanelItem, getPanelItems, panelToEntityKind } from './helpers.js';
 import type { InkKey, KeyHandlerParams } from './types.js';
@@ -73,10 +73,13 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
       const maxIndex = Math.max(0, length - 1);
       const current = prev.selectedIndices[panel];
       const next = clamp(current + 1, 0, maxIndex);
-      // Scroll down if selection exceeds viewport
+      // Effective viewport must match EntityBrowserPanel's effectiveHeight:
+      // viewportHeight - 2 (tab bar + scroll indicator) - filterRowHeight
+      const filterActive = prev.filters[panel] !== null;
+      const effectiveViewport = Math.max(1, params.entityBrowserViewportHeight - 2 - (filterActive ? 1 : 0));
       const scrollOffset =
-        next >= prev.scrollOffsets[panel] + ENTITY_BROWSER_VIEWPORT_HEIGHT
-          ? next - ENTITY_BROWSER_VIEWPORT_HEIGHT + 1
+        next >= prev.scrollOffsets[panel] + effectiveViewport
+          ? next - effectiveViewport + 1
           : prev.scrollOffsets[panel];
       return {
         ...prev,
@@ -140,7 +143,14 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
   if (input === 'c' && params.mutations) {
     const item = getFocusedPanelItem(nav, params.dataRef.current);
     if (item) {
-      void cancelEntity(panelToEntityKind(nav.focusedPanel), item.id, item.status, params.mutations, params.refreshNow);
+      void cancelEntity(
+        panelToEntityKind(nav.focusedPanel),
+        item.id,
+        item.status,
+        params.mutations,
+        params.refreshNow,
+        params.dataRef.current,
+      );
     }
     return true;
   }

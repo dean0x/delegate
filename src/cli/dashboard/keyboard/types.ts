@@ -53,6 +53,7 @@ export interface UseKeyboardParams {
    */
   readonly workspaceNav?: WorkspaceNavState;
   readonly setWorkspaceNav?: React.Dispatch<React.SetStateAction<WorkspaceNavState>>;
+  readonly entityBrowserViewportHeight?: number;
 }
 
 /**
@@ -72,6 +73,7 @@ export interface KeyHandlerParams {
   readonly refreshNow: () => void;
   readonly workspaceNav?: WorkspaceNavState;
   readonly setWorkspaceNav?: React.Dispatch<React.SetStateAction<WorkspaceNavState>>;
+  readonly entityBrowserViewportHeight: number;
 }
 
 /** Ink key descriptor extracted from the useInput callback signature */
