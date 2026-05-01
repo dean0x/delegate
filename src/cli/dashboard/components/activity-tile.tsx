@@ -25,7 +25,7 @@ const COL_TIME_W = 6;
 const COL_KIND_W = 14;
 
 export const ActivityTile: React.FC<ActivityTileProps> = React.memo(({ activityFeed, maxEntries = 5 }) => {
-  const entries = activityFeed.slice(-maxEntries).reverse();
+  const entries = activityFeed.slice(0, maxEntries).reverse();
 
   if (entries.length === 0) {
     return (
