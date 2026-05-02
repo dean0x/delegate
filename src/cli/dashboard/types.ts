@@ -12,6 +12,8 @@ import type {
   Orchestration,
   OrchestratorChild,
   OrchestratorId,
+  Pipeline,
+  PipelineId,
   Schedule,
   ScheduleId,
   Task,
@@ -23,6 +25,7 @@ import type {
   LoopService,
   OrchestrationRepository,
   OrchestrationService,
+  PipelineRepository,
   ScheduleExecution,
   ScheduleRepository,
   ScheduleService,
@@ -46,9 +49,11 @@ export interface DashboardMutationContext {
   readonly loopRepo: LoopRepository;
   readonly taskRepo: TaskRepository;
   readonly scheduleRepo: ScheduleRepository;
+  /** Pipeline repository for delete operations (cancel is driven via task cancellation cascade) */
+  readonly pipelineRepo?: PipelineRepository;
 }
 
-export type PanelId = 'loops' | 'tasks' | 'schedules' | 'orchestrations';
+export type PanelId = 'tasks' | 'loops' | 'schedules' | 'orchestrations' | 'pipelines';
 
 /**
  * Return target for task detail view.
@@ -104,56 +109,31 @@ export type ViewState =
       readonly entityType: 'orchestrations';
       readonly entityId: OrchestratorId;
       readonly returnTo: 'main' | 'workspace';
+    }
+  | {
+      readonly kind: 'detail';
+      readonly entityType: 'pipelines';
+      readonly entityId: PipelineId;
+      readonly returnTo: 'main' | 'workspace';
     };
 
 /**
- * Helper to open a detail view with an explicit returnTo destination.
- * Defaults to 'main' so callers that don't have a workspace context still work.
- */
-export function openDetail(entityType: 'loops', entityId: LoopId, returnTo?: 'main' | 'workspace'): ViewState;
-export function openDetail(entityType: 'tasks', entityId: TaskId, returnTo?: DetailReturnTarget): ViewState;
-export function openDetail(entityType: 'schedules', entityId: ScheduleId, returnTo?: 'main' | 'workspace'): ViewState;
-export function openDetail(
-  entityType: 'orchestrations',
-  entityId: OrchestratorId,
-  returnTo?: 'main' | 'workspace',
-): ViewState;
-export function openDetail(
-  entityType: 'loops' | 'tasks' | 'schedules' | 'orchestrations',
-  entityId: LoopId | TaskId | ScheduleId | OrchestratorId,
-  returnTo: DetailReturnTarget = 'main',
-): ViewState {
-  return {
-    kind: 'detail',
-    entityType,
-    entityId,
-    returnTo,
-  } as ViewState;
-}
-
-/**
  * Navigation state for the main panel grid
- *
- * v1.3.0 (Phase F): activityFocused and activitySelectedIndex added so the
- * activity feed in MetricsView participates in keyboard navigation.
- * Tab cycles: panel grid → activity → panel grid (wraps at 'orchestrations').
- * When activityFocused is true, ↑/↓ move activitySelectedIndex and Enter opens
- * the selected entry's detail view; Esc returns to panel focus.
  *
  * v1.3.0 (D3 drill-through): orchestrationChildSelectedTaskId and
  * orchestrationChildPage track which child row is highlighted when viewing
  * an orchestration detail, and which page of children is shown.
  * Selection is by taskId (stable across refetches).
+ *
+ * DECISION (Dashboard Layout Overhaul): activityFocused and activitySelectedIndex
+ * removed. The Activity feed is now a non-interactive tile in the top row —
+ * Tab cycles only among entity browser panels.
  */
 export interface NavState {
   readonly focusedPanel: PanelId;
   readonly selectedIndices: Record<PanelId, number>;
   readonly filters: Record<PanelId, string | null>;
   readonly scrollOffsets: Record<PanelId, number>;
-  /** Whether the Activity panel in MetricsView currently has keyboard focus */
-  readonly activityFocused: boolean;
-  /** Which row in the activity feed is currently selected (0-based) */
-  readonly activitySelectedIndex: number;
   /** TaskId of the currently highlighted child row in orchestration detail (null = first row) */
   readonly orchestrationChildSelectedTaskId: string | null;
   /** 0-based page number within the orchestration detail children list */
@@ -185,16 +165,21 @@ export interface EntityCounts {
  * - topOrchestrationsByCost: top-N orchestrations by total cost in 24h window
  * - throughputStats: task/loop throughput over a 1-hour window
  * - activityFeed: merged time-sorted activity across all entity kinds
+ *
+ * Phase B (Dashboard Visibility Overhaul): pipelines and pipelineCounts added
+ * to support the entity browser panel with full pipeline visibility.
  */
 export interface DashboardData {
   readonly tasks: readonly Task[];
   readonly loops: readonly Loop[];
   readonly schedules: readonly Schedule[];
   readonly orchestrations: readonly Orchestration[];
+  readonly pipelines: readonly Pipeline[];
   readonly taskCounts: EntityCounts;
   readonly loopCounts: EntityCounts;
   readonly scheduleCounts: EntityCounts;
   readonly orchestrationCounts: EntityCounts;
+  readonly pipelineCounts: EntityCounts;
   readonly iterations?: readonly LoopIteration[];
   readonly executions?: readonly ScheduleExecution[];
   /** Liveness state per orchestration ID — only populated for RUNNING orchestrations */
@@ -219,6 +204,8 @@ export interface DashboardData {
     readonly avgDurationMs: number;
   };
   readonly activityFeed?: readonly ActivityEntry[];
+  /** Step tasks fetched by ID for pipeline detail (bypasses FETCH_LIMIT) */
+  readonly pipelineStepTasks?: readonly (Task | null)[];
 
   // Workspace view data (v1.3.0 Phase D)
   readonly workspaceData?: {
@@ -243,4 +230,6 @@ export interface DetailExtra {
   readonly orchestrationCostAggregate?: TaskUsage;
   /** Total count of children for pagination (D3 drill-through) */
   readonly orchestrationChildrenTotal?: number;
+  /** Step tasks fetched by ID for pipeline detail (bypasses FETCH_LIMIT) */
+  readonly pipelineStepTasks?: readonly (Task | null)[];
 }

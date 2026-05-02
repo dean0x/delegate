@@ -19,6 +19,7 @@ import type {
   OrchestrationRepository,
   OrchestrationService,
   OutputRepository,
+  PipelineRepository,
   ResourceMonitor,
   ScheduleRepository,
   ScheduleService,
@@ -82,6 +83,7 @@ export async function startDashboard(): Promise<void> {
   const workerRepository = container.get<WorkerRepository>('workerRepository');
   const outputRepository = container.get<OutputRepository>('outputRepository');
   const usageRepository = container.get<UsageRepository>('usageRepository');
+  const pipelineRepository = container.get<PipelineRepository>('pipelineRepository');
 
   if (
     !taskRepository.ok ||
@@ -90,7 +92,8 @@ export async function startDashboard(): Promise<void> {
     !orchestrationRepository.ok ||
     !workerRepository.ok ||
     !outputRepository.ok ||
-    !usageRepository.ok
+    !usageRepository.ok ||
+    !pipelineRepository.ok
   ) {
     process.stderr.write('Error: Failed to resolve repositories from container\n');
     process.exit(1);
@@ -106,6 +109,7 @@ export async function startDashboard(): Promise<void> {
     workerRepository: workerRepository.value,
     outputRepository: outputRepository.value,
     usageRepository: usageRepository.value,
+    pipelineRepository: pipelineRepository.value,
     close: () => {
       /* handled by container.dispose() in cleanup() */
     },

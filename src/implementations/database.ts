@@ -949,6 +949,44 @@ export class Database implements TransactionRunner {
           db.exec(`ALTER TABLE tasks ADD COLUMN system_prompt TEXT`);
         },
       },
+      {
+        version: 24,
+        // DECISION: Pipelines are first-class entities (not just schedule chains) so the
+        // dashboard can track multi-step task chains as a unit. steps and step_task_ids
+        // are JSON blobs — avoids a join table and matches the pattern used by loop
+        // task_template and pipeline_steps columns.
+        description: 'Add pipelines table for first-class pipeline entities',
+        up: (db) => {
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS pipelines (
+              id TEXT PRIMARY KEY,
+              steps TEXT NOT NULL,
+              step_task_ids TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+              schedule_id TEXT REFERENCES schedules(id) ON DELETE SET NULL,
+              loop_id TEXT REFERENCES loops(id) ON DELETE SET NULL,
+              loop_iteration INTEGER,
+              orchestrator_id TEXT REFERENCES orchestrations(id) ON DELETE SET NULL,
+              priority TEXT,
+              working_directory TEXT,
+              agent TEXT,
+              model TEXT,
+              system_prompt TEXT,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              completed_at INTEGER
+            )
+          `);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_pipelines_status ON pipelines(status)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_pipelines_schedule_id ON pipelines(schedule_id)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_pipelines_loop_id ON pipelines(loop_id)`);
+          db.exec(
+            `CREATE INDEX IF NOT EXISTS idx_pipelines_orchestrator_id ON pipelines(orchestrator_id) WHERE orchestrator_id IS NOT NULL`,
+          );
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_pipelines_updated_at ON pipelines(updated_at)`);
+        },
+      },
     ];
   }
 

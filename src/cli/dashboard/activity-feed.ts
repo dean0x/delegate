@@ -33,6 +33,16 @@ function scheduleAction(status: string): string {
   return status; // active, paused, completed, cancelled, expired
 }
 
+function pipelineAction(status: string, failedStep?: number): string {
+  if (status === 'failed' && failedStep !== undefined) {
+    return `failed step ${failedStep}`;
+  }
+  if (status === 'running') {
+    return 'started';
+  }
+  return status; // completed, cancelled, pending
+}
+
 // ============================================================================
 // buildActivityFeed
 // ============================================================================
@@ -66,24 +76,34 @@ interface ScheduleLike {
   readonly createdAt?: number;
 }
 
+interface PipelineLike {
+  readonly id: string;
+  readonly status: string;
+  readonly updatedAt?: number;
+  readonly createdAt?: number;
+  /** Index (0-based) of the step that failed, if any */
+  readonly failedStep?: number;
+}
+
 interface BuildActivityFeedArgs {
   readonly tasks: readonly TaskLike[];
   readonly loops: readonly LoopLike[];
   readonly orchestrations: readonly OrchestrationLike[];
   readonly schedules: readonly ScheduleLike[];
+  readonly pipelines: readonly PipelineLike[];
   readonly limit: number;
 }
 
 /**
  * Merge entity arrays into a time-sorted activity feed.
  *
- * - All four entity kinds are merged into a single array
+ * - All five entity kinds are merged into a single array
  * - Sorted descending by updatedAt (most recent first)
  * - Limited to `limit` entries after sort
  * - Action verbs are mapped per-kind based on status
  */
 export function buildActivityFeed(args: BuildActivityFeedArgs): readonly ActivityEntry[] {
-  const { tasks, loops, orchestrations, schedules, limit } = args;
+  const { tasks, loops, orchestrations, schedules, pipelines, limit } = args;
 
   const entries: ActivityEntry[] = [];
 
@@ -124,6 +144,16 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
       entityId: sched.id,
       status: sched.status,
       action: scheduleAction(sched.status),
+    });
+  }
+
+  for (const pipeline of pipelines) {
+    entries.push({
+      timestamp: pipeline.updatedAt ?? pipeline.createdAt ?? 0,
+      kind: 'pipeline',
+      entityId: pipeline.id,
+      status: pipeline.status,
+      action: pipelineAction(pipeline.status, pipeline.failedStep),
     });
   }
 

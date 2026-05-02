@@ -121,6 +121,63 @@ describe('SQLiteOutputRepository', () => {
     });
   });
 
+  describe('getSize', () => {
+    it('returns correct size for DB-stored output', async () => {
+      const output = {
+        taskId,
+        stdout: ['hello world'],
+        stderr: [],
+        totalSize: 11,
+      };
+      await repo.save(taskId, output);
+
+      const result = await repo.getSize(taskId);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBe(11);
+    });
+
+    it('returns 0 for non-existent task', async () => {
+      const result = await repo.getSize(TaskId('nonexistent'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBe(0);
+    });
+
+    it('returns correct size for file-backed output (above threshold)', async () => {
+      const largeData = 'x'.repeat(2048);
+      const output = {
+        taskId,
+        stdout: [largeData],
+        stderr: [],
+        totalSize: 2048,
+      };
+      await repo.save(taskId, output);
+
+      const result = await repo.getSize(taskId);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBe(2048);
+    });
+
+    it('returns updated size after append', async () => {
+      const output = {
+        taskId,
+        stdout: ['line1'],
+        stderr: [],
+        totalSize: 5,
+      };
+      await repo.save(taskId, output);
+      await repo.append(taskId, 'stdout', 'line2');
+
+      const result = await repo.getSize(taskId);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // 'line1' = 5 bytes, 'line2' = 5 bytes → totalSize = 10
+      expect(result.value).toBe(10);
+    });
+  });
+
   describe('delete', () => {
     it('should delete DB entry', async () => {
       const output = {

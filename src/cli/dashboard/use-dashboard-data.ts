@@ -7,10 +7,19 @@
  *  - useDashboardData: React hook for polling (used by App)
  *  - fetchAllData: Pure async function (exported for testing)
  *  - buildEntityCounts: Pure function (exported for testing)
+ *  - computeOrchestrationLiveness: Pure async function (exported for testing)
+ *  - POLL_INTERVAL_BY_VIEW: Per-view poll cadence (exported for testing)
+ *  - LIVENESS_CACHE_TTL_MS: TTL constant (exported for testing)
+ *  - LivenessCacheEntry: Interface (exported for testing)
+ *
+ * Per-view poll cadence (Phase B):
+ *  - main:      1 000 ms — summary metrics update once per second
+ *  - workspace:   750 ms — live task output needs snappier refresh
+ *  - detail:    2 000 ms — single-entity view; slower cadence reduces DB pressure
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { OrchestratorStatus, TaskId } from '../../core/domain.js';
+import { OrchestratorStatus, type Task, TaskId } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import { checkOrchestrationLiveness, type Liveness } from '../../services/orchestration-liveness.js';
@@ -43,6 +52,19 @@ export interface OrchestratorPageState {
 export const FETCH_LIMIT = 50;
 
 /**
+ * Per-view poll interval in milliseconds.
+ * DECISION (Phase B): Different views have different freshness requirements.
+ *  - main: 1 000 ms — summary metrics; one-second granularity is sufficient
+ *  - workspace: 750 ms — live task output benefits from snappier refresh
+ *  - detail: 2 000 ms — single-entity view; slower cadence reduces DB pressure
+ */
+export const POLL_INTERVAL_BY_VIEW: Readonly<Record<'main' | 'workspace' | 'detail', number>> = {
+  main: 1_000,
+  workspace: 750,
+  detail: 2_000,
+};
+
+/**
  * Check if a process is alive by sending signal 0 (existence check, no signal sent).
  * EPERM means the process exists but we lack permission — treated as alive.
  */
@@ -63,12 +85,12 @@ function isProcessAlive(pid: number): boolean {
  * Per-orchestration liveness cache entry.
  * TTL: 4 seconds — processes don't die faster than the dashboard can react.
  */
-interface LivenessCacheEntry {
+export interface LivenessCacheEntry {
   readonly result: Liveness;
   readonly timestamp: number;
 }
 
-const LIVENESS_CACHE_TTL_MS = 4_000;
+export const LIVENESS_CACHE_TTL_MS = 4_000;
 
 /**
  * Unwrap an array of Results from a settled Promise.all call.
@@ -102,77 +124,35 @@ export function buildEntityCounts(byStatus: Record<string, number>): EntityCount
 }
 
 /**
- * Fetch all dashboard data in parallel.
- * Returns a Result<DashboardData> — on any repository error, returns the error message.
- * For detail extras (iterations, executions), errors are handled gracefully (undefined).
- * @param ctx - Read-only repository context
- * @param viewState - Current view to fetch extras for
- * @param childPage - 0-based page number for orchestration detail children (default: 0)
- * @param livenessCache - Per-tick memoization map; callers pass a stable ref for caching
+ * Compute liveness for all orchestrations that require it, with TTL caching.
+ *
+ * Extracted from fetchAllData to enable independent unit testing.
+ *
+ * DECISION: Liveness is computed for:
+ *  - RUNNING orchestrations: checked via checkOrchestrationLiveness + process signal
+ *  - PLANNING without loopId: orphan indicator → 'unknown' immediately (no DB queries)
+ *  All other statuses (COMPLETED, FAILED, CANCELLED, PLANNING+loopId) are excluded.
+ *
+ * Cache semantics:
+ *  1. Stale entries (older than LIVENESS_CACHE_TTL_MS) are swept first to prevent
+ *     unbounded Map growth for terminated orchestrations.
+ *  2. Cache-hit entries within TTL are returned without hitting the DB.
+ *  3. On checkOrchestrationLiveness throw, the result degrades to 'unknown' (no crash).
  */
-export async function fetchAllData(
-  ctx: ReadOnlyContext,
-  viewState: ViewState,
-  childPage = 0,
-  livenessCache?: Map<string, LivenessCacheEntry>,
-): Promise<Result<DashboardData, string>> {
-  const { taskRepository, loopRepository, scheduleRepository, orchestrationRepository, workerRepository } = ctx;
-
-  // Parallel fetch: entity lists + status counts
-  const rawResults = await Promise.all([
-    taskRepository.findAll(FETCH_LIMIT),
-    loopRepository.findAll(FETCH_LIMIT),
-    scheduleRepository.findAll(FETCH_LIMIT),
-    orchestrationRepository.findAll(FETCH_LIMIT),
-    taskRepository.countByStatus(),
-    loopRepository.countByStatus(),
-    scheduleRepository.countByStatus(),
-    orchestrationRepository.countByStatus(),
-  ]);
-
-  // Unwrap all results — any failure returns a labeled error string
-  const unwrapped = unwrapAll(
-    [
-      'Tasks',
-      'Loops',
-      'Schedules',
-      'Orchestrations',
-      'Task counts',
-      'Loop counts',
-      'Schedule counts',
-      'Orchestration counts',
-    ],
-    rawResults,
-  );
-  if (!unwrapped.ok) return err(unwrapped.error);
-
-  // Cast from unknown[] — each position matches the Promise.all order above
-  type TaskList = Awaited<ReturnType<typeof taskRepository.findAll>> extends Result<infer V, Error> ? V : never;
-  type LoopList = Awaited<ReturnType<typeof loopRepository.findAll>> extends Result<infer V, Error> ? V : never;
-  type ScheduleList = Awaited<ReturnType<typeof scheduleRepository.findAll>> extends Result<infer V, Error> ? V : never;
-  type OrchList =
-    Awaited<ReturnType<typeof orchestrationRepository.findAll>> extends Result<infer V, Error> ? V : never;
-  type StatusMap = Record<string, number>;
-
-  const [tasks, loops, schedules, orchestrations, taskCounts, loopCounts, scheduleCounts, orchestrationCounts] =
-    unwrapped.value as [TaskList, LoopList, ScheduleList, OrchList, StatusMap, StatusMap, StatusMap, StatusMap];
-
-  // Fetch detail extras if in detail view (best-effort — errors yield undefined)
-  const detailExtra: DetailExtra = viewState.kind === 'detail' ? await fetchDetailExtra(ctx, viewState, childPage) : {};
-
-  // Compute liveness for RUNNING orchestrations — parallel with TTL cache.
-  // Processes don't die faster than the dashboard reacts, so a 4-second cache
-  // avoids up to 150 sequential SQLite hits/s (50 orchestrations × 3 sub-queries).
+export async function computeOrchestrationLiveness(
+  orchestrations: readonly import('../../core/domain.js').Orchestration[],
+  cache: Map<string, LivenessCacheEntry>,
+  deps: import('../../services/orchestration-liveness.js').LivenessDeps,
+): Promise<Record<string, Liveness>> {
   const now = Date.now();
-  const cache = livenessCache ?? new Map<string, LivenessCacheEntry>();
-  const livenessDeps = {
-    loopRepo: loopRepository,
-    taskRepo: taskRepository,
-    workerRepo: workerRepository,
-    isProcessAlive,
-  };
 
-  const livenessEntries = await Promise.all(
+  // Sweep stale entries to prevent unbounded Map growth
+  const cutoff = now - LIVENESS_CACHE_TTL_MS;
+  for (const [id, entry] of cache) {
+    if (entry.timestamp < cutoff) cache.delete(id);
+  }
+
+  const entries = await Promise.all(
     orchestrations.map(async (orch) => {
       if (orch.status === OrchestratorStatus.RUNNING) {
         // Check TTL cache first
@@ -181,7 +161,7 @@ export async function fetchAllData(
           return [orch.id, cached.result] as const;
         }
         try {
-          const result = await checkOrchestrationLiveness(orch, livenessDeps);
+          const result = await checkOrchestrationLiveness(orch, deps);
           cache.set(orch.id, { result, timestamp: now });
           return [orch.id, result] as const;
         } catch {
@@ -196,10 +176,116 @@ export async function fetchAllData(
     }),
   );
 
-  const orchestrationLiveness: Record<string, Liveness> = {};
-  for (const entry of livenessEntries) {
-    if (entry) orchestrationLiveness[entry[0]] = entry[1];
+  const result: Record<string, Liveness> = {};
+  for (const entry of entries) {
+    if (entry) result[entry[0]] = entry[1];
   }
+  return result;
+}
+
+/**
+ * Fetch all dashboard data in parallel.
+ * Returns a Result<DashboardData> — on any repository error, returns the error message.
+ * For detail extras (iterations, executions), errors are handled gracefully (undefined).
+ * @param ctx - Read-only repository context
+ * @param viewState - Current view to fetch extras for
+ * @param childPage - 0-based page number for orchestration detail children (default: 0)
+ * @param livenessCache - Per-tick memoization map; callers pass a stable ref for caching
+ */
+export async function fetchAllData(
+  ctx: ReadOnlyContext,
+  viewState: ViewState,
+  childPage = 0,
+  livenessCache?: Map<string, LivenessCacheEntry>,
+): Promise<Result<DashboardData, string>> {
+  const {
+    taskRepository,
+    loopRepository,
+    scheduleRepository,
+    orchestrationRepository,
+    workerRepository,
+    pipelineRepository,
+  } = ctx;
+
+  // Parallel fetch: entity lists + status counts
+  const rawResults = await Promise.all([
+    taskRepository.findAll(FETCH_LIMIT),
+    loopRepository.findAll(FETCH_LIMIT),
+    scheduleRepository.findAll(FETCH_LIMIT),
+    orchestrationRepository.findAll(FETCH_LIMIT),
+    pipelineRepository.findAll(FETCH_LIMIT),
+    taskRepository.countByStatus(),
+    loopRepository.countByStatus(),
+    scheduleRepository.countByStatus(),
+    orchestrationRepository.countByStatus(),
+    pipelineRepository.countByStatus(),
+  ]);
+
+  // Unwrap all results — any failure returns a labeled error string
+  const unwrapped = unwrapAll(
+    [
+      'Tasks',
+      'Loops',
+      'Schedules',
+      'Orchestrations',
+      'Pipelines',
+      'Task counts',
+      'Loop counts',
+      'Schedule counts',
+      'Orchestration counts',
+      'Pipeline counts',
+    ],
+    rawResults,
+  );
+  if (!unwrapped.ok) return err(unwrapped.error);
+
+  // Cast from unknown[] — each position matches the Promise.all order above
+  type TaskList = Awaited<ReturnType<typeof taskRepository.findAll>> extends Result<infer V, Error> ? V : never;
+  type LoopList = Awaited<ReturnType<typeof loopRepository.findAll>> extends Result<infer V, Error> ? V : never;
+  type ScheduleList = Awaited<ReturnType<typeof scheduleRepository.findAll>> extends Result<infer V, Error> ? V : never;
+  type OrchList =
+    Awaited<ReturnType<typeof orchestrationRepository.findAll>> extends Result<infer V, Error> ? V : never;
+  type PipelineList = Awaited<ReturnType<typeof pipelineRepository.findAll>> extends Result<infer V, Error> ? V : never;
+  type StatusMap = Record<string, number>;
+
+  const [
+    tasks,
+    loops,
+    schedules,
+    orchestrations,
+    pipelines,
+    taskCounts,
+    loopCounts,
+    scheduleCounts,
+    orchestrationCounts,
+    pipelineCounts,
+  ] = unwrapped.value as [
+    TaskList,
+    LoopList,
+    ScheduleList,
+    OrchList,
+    PipelineList,
+    StatusMap,
+    StatusMap,
+    StatusMap,
+    StatusMap,
+    StatusMap,
+  ];
+
+  // Fetch detail extras if in detail view (best-effort — errors yield undefined)
+  const detailExtra: DetailExtra = viewState.kind === 'detail' ? await fetchDetailExtra(ctx, viewState, childPage) : {};
+
+  // Compute liveness for RUNNING orchestrations — parallel with TTL cache.
+  // Processes don't die faster than the dashboard reacts, so a 4-second cache
+  // avoids up to 150 sequential SQLite hits/s (50 orchestrations × 3 sub-queries).
+  const cache = livenessCache ?? new Map<string, LivenessCacheEntry>();
+  const livenessDeps = {
+    loopRepo: loopRepository,
+    taskRepo: taskRepository,
+    workerRepo: workerRepository,
+    isProcessAlive,
+  };
+  const orchestrationLiveness = await computeOrchestrationLiveness(orchestrations, cache, livenessDeps);
 
   // Main-view metrics extras — fetched in parallel when viewing the metrics dashboard
   let metricsExtras: Pick<
@@ -223,10 +309,12 @@ export async function fetchAllData(
     loops,
     schedules,
     orchestrations,
+    pipelines,
     taskCounts: buildEntityCounts(taskCounts),
     loopCounts: buildEntityCounts(loopCounts),
     scheduleCounts: buildEntityCounts(scheduleCounts),
     orchestrationCounts: buildEntityCounts(orchestrationCounts),
+    pipelineCounts: buildEntityCounts(pipelineCounts),
     orchestrationLiveness,
     ...detailExtra,
     ...metricsExtras,
@@ -254,6 +342,7 @@ async function fetchMetricsExtras(
     recentLoopsResult,
     recentOrchsResult,
     recentSchedsResult,
+    recentPipelinesResult,
   ] = await Promise.all([
     ctx.usageRepository.sumGlobal(since24h),
     ctx.usageRepository.topOrchestrationsByCost(since24h, 3),
@@ -262,6 +351,7 @@ async function fetchMetricsExtras(
     ctx.loopRepository.findUpdatedSince(since1h, 50),
     ctx.orchestrationRepository.findUpdatedSince(since1h, 50),
     ctx.scheduleRepository.findUpdatedSince(since1h, 50),
+    ctx.pipelineRepository.findUpdatedSince(since1h, 50),
   ]);
 
   const activityFeed = buildActivityFeed({
@@ -269,6 +359,7 @@ async function fetchMetricsExtras(
     loops: recentLoopsResult.ok ? recentLoopsResult.value : [],
     orchestrations: recentOrchsResult.ok ? recentOrchsResult.value : [],
     schedules: recentSchedsResult.ok ? recentSchedsResult.value : [],
+    pipelines: recentPipelinesResult.ok ? recentPipelinesResult.value : [],
     limit: 50,
   });
 
@@ -376,6 +467,23 @@ async function fetchDetailExtra(
     return { executions: result.ok ? result.value : undefined };
   }
 
+  if (detail.entityType === 'pipelines') {
+    const pipeResult = await ctx.pipelineRepository.findById(detail.entityId);
+    if (!pipeResult.ok || !pipeResult.value) return {};
+    const pipeline = pipeResult.value;
+    const nonNullIds = pipeline.stepTaskIds.filter((id): id is TaskId => id !== null);
+    if (nonNullIds.length === 0) return {};
+    const taskResults = await Promise.all(nonNullIds.map((id) => ctx.taskRepository.findById(id)));
+    const taskMap = new Map<string, Task>();
+    for (let i = 0; i < nonNullIds.length; i++) {
+      const r = taskResults[i];
+      if (r.ok && r.value) taskMap.set(nonNullIds[i], r.value);
+    }
+    return {
+      pipelineStepTasks: pipeline.stepTaskIds.map((id) => (id !== null ? (taskMap.get(id) ?? null) : null)),
+    };
+  }
+
   if (detail.entityType === 'orchestrations') {
     // D3 drill-through: paginated fetch + count + cost aggregate in parallel
     const [childrenResult, countResult, costResult] = await Promise.all([
@@ -403,7 +511,7 @@ async function fetchDetailExtra(
 // ============================================================================
 
 /**
- * Custom hook that polls all repositories every 1s.
+ * Custom hook that polls all repositories on a per-view cadence.
  *
  * Stale-on-error semantics: if a poll fails, we keep the last successful
  * data and set an error message instead of clearing data.
@@ -414,6 +522,10 @@ async function fetchDetailExtra(
  * The `viewStateRef` captures the latest viewState without being a dep of
  * doFetch — this keeps the polling interval stable across navigations.
  * The `childPageRef` captures the latest orchestrationChildPage in the same way.
+ *
+ * Phase B (per-view cadence): The poll interval is derived from POLL_INTERVAL_BY_VIEW
+ * keyed on viewState.kind. When the view changes, the effect re-runs and sets up a
+ * new interval with the appropriate cadence (750ms workspace, 1s main, 2s detail).
  */
 export function useDashboardData(
   ctx: ReadOnlyContext,
@@ -470,25 +582,27 @@ export function useDashboardData(
     }
   }, [ctx]);
 
+  // Per-view poll cadence — derived from POLL_INTERVAL_BY_VIEW keyed on view kind.
+  // When the view kind changes the effect re-runs and restarts with the new interval.
+  // orchestrationChildPage is included so PgUp/PgDn in orchestration detail
+  // produces an immediate fetch with the new page without waiting for the next tick.
+  const pollInterval = POLL_INTERVAL_BY_VIEW[viewState.kind];
+
   useEffect(() => {
     closing.current = false;
 
-    // Initial fetch immediately on mount. Also re-runs when orchestrationChildPage
-    // changes so PgUp/PgDn in orchestration detail produces an immediate fetch
-    // with the new page (otherwise the ref-read pattern would lag by one poll
-    // tick because setNav schedules the re-render asynchronously).
+    // Initial fetch immediately on mount or cadence change.
     void doFetch();
 
-    // Poll every 1 second
     const intervalId = setInterval(() => {
       void doFetch();
-    }, 1_000);
+    }, pollInterval);
 
     return () => {
       closing.current = true;
       clearInterval(intervalId);
     };
-  }, [doFetch, orchestrationChildPage]);
+  }, [doFetch, orchestrationChildPage, pollInterval]);
 
   const refreshNow = useCallback(() => {
     void doFetch();

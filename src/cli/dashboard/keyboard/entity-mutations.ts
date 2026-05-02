@@ -5,16 +5,16 @@
  * across activity focus, main panel, and workspace cancel/delete blocks.
  */
 
-import type { LoopId, OrchestratorId, ScheduleId, TaskId } from '../../../core/domain.js';
-import { LoopStatus, OrchestratorStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
-import type { DashboardMutationContext } from '../types.js';
+import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
+import { LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
+import type { DashboardData, DashboardMutationContext } from '../types.js';
 import { TERMINAL_STATUSES } from './constants.js';
 
 /**
  * The entity kind routing key — mirrors ActivityEntry['kind'] but is also used
  * for panel-focused cancel/delete where the kind is derived from PanelId.
  */
-export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule';
+export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline';
 
 /**
  * Dispatches cancel to the appropriate service based on entity kind.
@@ -33,6 +33,7 @@ export async function cancelEntity(
   entityStatus: string,
   mutations: DashboardMutationContext,
   refreshNow: () => void,
+  data?: DashboardData | null,
 ): Promise<void> {
   const reason = 'User cancelled via dashboard';
   try {
@@ -63,6 +64,18 @@ export async function cancelEntity(
           refreshNow();
         }
         break;
+      case 'pipeline': {
+        if (TERMINAL_STATUSES.pipelines.includes(entityStatus as PipelineStatus)) break;
+        const pipeline = data?.pipelines.find((p) => p.id === entityId);
+        if (pipeline) {
+          for (const stepTaskId of pipeline.stepTaskIds) {
+            if (stepTaskId === null) continue;
+            await mutations.taskManager.cancel(stepTaskId, reason);
+          }
+          refreshNow();
+        }
+        break;
+      }
     }
   } catch {
     // Best-effort: service errors are logged internally by each service.
@@ -107,6 +120,12 @@ export async function deleteEntity(
       case 'schedule':
         if (TERMINAL_STATUSES.schedules.includes(entityStatus as ScheduleStatus)) {
           await mutations.scheduleRepo.delete(entityId as ScheduleId);
+          refreshNow();
+        }
+        break;
+      case 'pipeline':
+        if (TERMINAL_STATUSES.pipelines.includes(entityStatus as PipelineStatus) && mutations.pipelineRepo) {
+          await mutations.pipelineRepo.delete(entityId as PipelineId);
           refreshNow();
         }
         break;

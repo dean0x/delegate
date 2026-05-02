@@ -73,8 +73,8 @@ describe('statusColor', () => {
     expect(statusColor('running')).toBe('cyan');
   });
 
-  it('maps active to cyan', () => {
-    expect(statusColor('active')).toBe('cyan');
+  it('maps active to green', () => {
+    expect(statusColor('active')).toBe('green');
   });
 
   it('maps planning to cyan', () => {
@@ -131,16 +131,24 @@ describe('statusIcon', () => {
     expect(statusIcon('paused')).toBe('⏸');
   });
 
-  it('maps cancelled to ✗', () => {
-    expect(statusIcon('cancelled')).toBe('✗');
+  it('maps cancelled to ⊘', () => {
+    expect(statusIcon('cancelled')).toBe('⊘');
   });
 
   it('maps active to ●', () => {
     expect(statusIcon('active')).toBe('●');
   });
 
-  it('maps planning to ○', () => {
-    expect(statusIcon('planning')).toBe('○');
+  it('maps planning to ◎', () => {
+    expect(statusIcon('planning')).toBe('◎');
+  });
+
+  it('maps blocked to ⊖', () => {
+    expect(statusIcon('blocked')).toBe('⊖');
+  });
+
+  it('maps expired to ○', () => {
+    expect(statusIcon('expired')).toBe('○');
   });
 
   it('returns ○ for unknown status', () => {

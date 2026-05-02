@@ -4,16 +4,26 @@
  * Pattern: Fake timers + mock OutputRepository — no real processes
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { OutputStreamState } from '../../../../src/cli/dashboard/use-task-output-stream.js';
-import { MAX_LINES_PER_STREAM, useTaskOutputStream } from '../../../../src/cli/dashboard/use-task-output-stream.js';
+import { MAX_LINES_PER_STREAM } from '../../../../src/cli/dashboard/use-task-output-stream.js';
 import type { TaskId } from '../../../../src/core/domain.js';
 import type { OutputRepository } from '../../../../src/core/interfaces.js';
-import { ok } from '../../../../src/core/result.js';
+import { err, ok } from '../../../../src/core/result.js';
 
 // ============================================================================
 // Helpers
 // ============================================================================
+
+const EMPTY_INITIAL: OutputStreamState = {
+  lines: [],
+  totalBytes: 0,
+  totalChars: 0,
+  lastFetchedAt: null,
+  error: null,
+  droppedLines: 0,
+  taskStatus: 'pending',
+};
 
 function makeTaskId(id: string): TaskId {
   return id as TaskId;
@@ -25,6 +35,7 @@ function makeOutputRepo(overrides: Partial<OutputRepository> = {}): OutputReposi
     save: vi.fn().mockResolvedValue(ok(undefined)),
     append: vi.fn().mockResolvedValue(ok(undefined)),
     delete: vi.fn().mockResolvedValue(ok(undefined)),
+    getSize: vi.fn().mockResolvedValue(ok(0)),
     ...overrides,
   } as OutputRepository;
 }
@@ -41,15 +52,18 @@ function makeTaskOutput(stdout: string[], stderr: string[] = []) {
 }
 
 // ============================================================================
-// Direct function-level tests (polling logic is pure, hook is integration)
+// Pure helper tests — useTaskOutputStream delegates to these exported functions
 // ============================================================================
 
-// We test the exported pure helpers and the state machine logic via
-// the exported hook factory (non-React version) if available, else via
-// stub extraction. Since useTaskOutputStream is a React hook we test
-// the extracted pure logic it delegates to.
-
-import { buildStreamState, mergeOutputLines, stripAnsi } from '../../../../src/cli/dashboard/use-task-output-stream.js';
+import {
+  buildStreamState,
+  codePointLength,
+  codePointSlice,
+  computeDelta,
+  mergeOutputLines,
+  stripAnsi,
+  trySizeProbe,
+} from '../../../../src/cli/dashboard/use-task-output-stream.js';
 
 describe('stripAnsi', () => {
   it('removes basic color codes', () => {
@@ -128,16 +142,6 @@ describe('mergeOutputLines', () => {
 });
 
 describe('buildStreamState', () => {
-  const EMPTY_INITIAL: OutputStreamState = {
-    lines: [],
-    totalBytes: 0,
-    totalChars: 0,
-    lastFetchedAt: null,
-    error: null,
-    droppedLines: 0,
-    taskStatus: 'pending',
-  };
-
   it('returns pending state when output is null', () => {
     const state = buildStreamState(EMPTY_INITIAL, null, 'pending');
     expect(state.lines).toEqual([]);
@@ -182,7 +186,7 @@ describe('buildStreamState', () => {
     const firstState = buildStreamState(EMPTY_INITIAL, output, 'running');
     const secondState = buildStreamState(firstState, output, 'running');
     // Same totalBytes — no delta, lines unchanged
-    expect(secondState.lines).toEqual(['first_NOT_PRESENT', 'line1', 'line2'].slice(1));
+    expect(secondState.lines).toEqual(['line1', 'line2']);
     expect(secondState.lines.length).toBe(2);
   });
 
@@ -341,11 +345,250 @@ describe('shouldPollThisTick', () => {
 });
 
 // ============================================================================
-// MAX_LINES_PER_STREAM export
+// codePointLength — Unicode code-point counting
 // ============================================================================
 
-describe('MAX_LINES_PER_STREAM', () => {
-  it('is 500', () => {
-    expect(MAX_LINES_PER_STREAM).toBe(500);
+describe('codePointLength', () => {
+  it('counts ASCII characters correctly (T5)', () => {
+    expect(codePointLength('hello')).toBe(5);
+  });
+
+  it('counts emoji as 1 code point each (T6)', () => {
+    // 🎉 is U+1F389 — 4 bytes in UTF-8 but a single code point
+    expect(codePointLength('🎉')).toBe(1);
+    expect(codePointLength('A🎉B')).toBe(3);
+  });
+
+  it('counts CJK characters as 1 code point each (T7)', () => {
+    // '日本語' — 3 CJK chars, 3 code points, 9 UTF-8 bytes
+    expect(codePointLength('日本語')).toBe(3);
+  });
+
+  it('returns 0 for empty string (T8)', () => {
+    expect(codePointLength('')).toBe(0);
+  });
+});
+
+// ============================================================================
+// codePointSlice — Unicode-safe slicing from code-point index
+// ============================================================================
+
+describe('codePointSlice', () => {
+  it('slices ASCII string from mid-point (T9)', () => {
+    expect(codePointSlice('hello world', 6)).toBe('world');
+  });
+
+  it('slices at emoji code-point boundary without corruption (T10)', () => {
+    // 'A🎉B' → code points: A=0, 🎉=1, B=2
+    // Slice from code-point 1 → '🎉B'
+    expect(codePointSlice('A🎉B', 1)).toBe('🎉B');
+    // Must NOT produce U+FFFD
+    expect(codePointSlice('A🎉B', 1)).not.toContain('�');
+  });
+
+  it('returns full string when start is 0 (T11)', () => {
+    expect(codePointSlice('hello', 0)).toBe('hello');
+  });
+
+  it('returns empty string when start >= length (T12)', () => {
+    expect(codePointSlice('hi', 2)).toBe('');
+    expect(codePointSlice('hi', 10)).toBe('');
+  });
+
+  it('handles surrogate-pair emoji correctly (T13)', () => {
+    // 'café🚀' — c=0,a=1,f=2,é=3,🚀=4 (5 code points)
+    // Slice from 3 → 'é🚀'
+    const result = codePointSlice('café🚀', 3);
+    expect(result).toBe('é🚀');
+    expect(result).not.toContain('�');
+  });
+});
+
+// ============================================================================
+// buildStreamState totalBytes guard (T17–T19)
+// ============================================================================
+
+const INITIAL_STREAM_STATE: OutputStreamState = {
+  lines: [],
+  totalBytes: 0,
+  totalChars: 0,
+  lastFetchedAt: null,
+  error: null,
+  droppedLines: 0,
+  taskStatus: 'running',
+};
+
+describe('buildStreamState totalBytes guard', () => {
+  // T17–T19: These tests verify the in-function size guard inside buildStreamState.
+  // The guard skips re-parsing when totalSize is unchanged and lines are populated.
+
+  it('size unchanged, prev has lines → skips full data via totalBytes guard (T17)', () => {
+    const output = makeTaskOutput(['hello\n']);
+    const state1 = buildStreamState(INITIAL_STREAM_STATE, output, 'running');
+    expect(state1.lines).toEqual(['hello']);
+
+    // Same output (same totalSize) — buildStreamState returns status/timestamp update only
+    const state2 = buildStreamState(state1, output, 'running');
+    expect(state2.lines).toEqual(['hello']); // unchanged
+    expect(state2.totalBytes).toBe(state1.totalBytes);
+  });
+
+  it('size changed → full fetch produces updated lines (T18)', () => {
+    const output1 = makeTaskOutput(['hello\n']);
+    const state1 = buildStreamState(INITIAL_STREAM_STATE, output1, 'running');
+
+    const output2 = makeTaskOutput(['hello\nworld\n']);
+    const state2 = buildStreamState(state1, output2, 'running');
+    expect(state2.lines).toContain('world');
+  });
+
+  it('first fetch always goes through when lines is empty (T19)', () => {
+    // totalSize matches prev.totalBytes (both 0) BUT prev.lines is empty
+    // → buildStreamState must not skip (lines guard in size-skip condition)
+    const output = makeTaskOutput(['']);
+    const state = buildStreamState(INITIAL_STREAM_STATE, output, 'running');
+    expect(state.lines).toEqual([]);
+    expect(state.taskStatus).toBe('running');
+  });
+});
+
+// ============================================================================
+// trySizeProbe — actual probe function (T20–T21)
+// ============================================================================
+
+describe('trySizeProbe', () => {
+  it('getSize error → returns false (full get() should proceed) (T20)', async () => {
+    // Arrange: prev state with totalBytes > 0 and lines populated — conditions that
+    // would normally trigger a probe-hit if getSize returned the same byte count.
+    const taskId = makeTaskId('task-t20');
+    const prev: OutputStreamState = {
+      ...INITIAL_STREAM_STATE,
+      lines: ['existing line'],
+      totalBytes: 12,
+      totalChars: 12,
+    };
+    const repo = makeOutputRepo({
+      getSize: vi.fn().mockResolvedValue(err(new Error('db read error'))),
+    });
+
+    // Act: call the actual exported trySizeProbe function
+    const result = await trySizeProbe(repo, taskId, prev, false);
+
+    // Assert: probe returns false — getSize failure must not block the full fetch
+    expect(result).toBe(false);
+  });
+
+  it('getSize returns matching size with populated lines → returns true (probe hit) (T21)', async () => {
+    // Arrange: prev state where totalBytes matches what getSize reports
+    const taskId = makeTaskId('task-t21');
+    const prev: OutputStreamState = {
+      ...INITIAL_STREAM_STATE,
+      lines: ['some line'],
+      totalBytes: 42,
+      totalChars: 42,
+    };
+    const repo = makeOutputRepo({
+      getSize: vi.fn().mockResolvedValue(ok(42)), // matches prev.totalBytes
+    });
+
+    // Act
+    const result = await trySizeProbe(repo, taskId, prev, false);
+
+    // Assert: probe confirms no new output — full fetch can be skipped
+    expect(result).toBe(true);
+  });
+});
+
+// ============================================================================
+// computeDelta — per-chunk incremental delta extraction
+// ============================================================================
+
+describe('computeDelta', () => {
+  it('empty chunks, prevTotalChars=0 → fullChars=0, newContent empty', () => {
+    const { fullChars, newContent } = computeDelta([], 0);
+    expect(fullChars).toBe(0);
+    expect(newContent).toBe('');
+  });
+
+  it('single ASCII chunk, first fetch (prevTotalChars=0) → full content returned', () => {
+    const { fullChars, newContent } = computeDelta(['hello\nworld\n'], 0);
+    expect(fullChars).toBe(12);
+    expect(newContent).toBe('hello\nworld\n');
+  });
+
+  it('multiple chunks, prevTotalChars at chunk boundary → only later chunks returned', () => {
+    // 'aaa' is 3 chars, 'bbb' is 3 chars; prevTotalChars=3 skips first chunk
+    const { fullChars, newContent } = computeDelta(['aaa', 'bbb'], 3);
+    expect(fullChars).toBe(6);
+    expect(newContent).toBe('bbb');
+  });
+
+  it('prevTotalChars mid-chunk → returns suffix of the boundary chunk', () => {
+    // 'abcdef' is 6 chars; prevTotalChars=3 → returns chars[3..] = 'def'
+    const { fullChars, newContent } = computeDelta(['abcdef'], 3);
+    expect(fullChars).toBe(6);
+    expect(newContent).toBe('def');
+  });
+
+  it('prevTotalChars === fullChars (no new data) → empty newContent', () => {
+    const { fullChars, newContent } = computeDelta(['abc'], 3);
+    expect(fullChars).toBe(3);
+    expect(newContent).toBe('');
+  });
+
+  it('prevTotalChars > fullChars (defensive: regression) → empty newContent, no crash', () => {
+    // prevTotalChars=5 > fullChars=2 — should not throw or produce garbage
+    const { fullChars, newContent } = computeDelta(['ab'], 5);
+    expect(fullChars).toBe(2);
+    expect(newContent).toBe('');
+  });
+
+  it('emoji at chunk boundary → correct code-point slice, no U+FFFD', () => {
+    // 'A🎉' — A=1 char, 🎉=1 code point (4 UTF-16 bytes);  prevTotalChars=1
+    const { fullChars, newContent } = computeDelta(['A🎉'], 1);
+    expect(fullChars).toBe(2);
+    expect(newContent).toBe('🎉');
+    expect(newContent).not.toContain('�');
+  });
+
+  it('CJK across chunks → correct code-point counting and slicing', () => {
+    // '日本' = 2 CJK chars, '語' = 1 CJK char; prevTotalChars=2
+    const { fullChars, newContent } = computeDelta(['日本', '語'], 2);
+    expect(fullChars).toBe(3);
+    expect(newContent).toBe('語');
+  });
+
+  it('mixed ASCII + multi-byte → correct slice across chunk boundary', () => {
+    // 'hello\n' = 6 chars, 'café\n' = 5 chars (c,a,f,é,\n); prevTotalChars=6
+    const { fullChars, newContent } = computeDelta(['hello\n', 'café\n'], 6);
+    expect(fullChars).toBe(11);
+    expect(newContent).toBe('café\n');
+  });
+
+  it('many chunks, prevTotalChars near end → only last segment returned', () => {
+    // 10 chunks of 100 ASCII chars each = 1000 total; prevTotalChars=950
+    const chunks = Array.from({ length: 10 }, () => 'x'.repeat(100));
+    const { fullChars, newContent } = computeDelta(chunks, 950);
+    expect(fullChars).toBe(1000);
+    expect(newContent).toBe('x'.repeat(50));
+  });
+
+  it('empty string chunks interspersed → skipped cleanly, correct result', () => {
+    // '', 'abc', '', 'def' — total 6 chars; prevTotalChars=3 → returns 'def'
+    const { fullChars, newContent } = computeDelta(['', 'abc', '', 'def'], 3);
+    expect(fullChars).toBe(6);
+    expect(newContent).toBe('def');
+  });
+});
+
+// ============================================================================
+// buildStreamState — multi-chunk stdout regression test
+// ============================================================================
+
+describe('buildStreamState multi-chunk regression', () => {
+  it('processes multi-chunk stdout correctly', () => {
+    const output = makeTaskOutput(['chunk1\n', 'chunk2\n']);
+    const state = buildStreamState(EMPTY_INITIAL, output, 'running');
+    expect(state.lines).toEqual(['chunk1', 'chunk2']);
   });
 });

@@ -17,6 +17,7 @@ import {
   LoopService,
   OutputCapture,
   OutputRepository,
+  PipelineRepository,
   ResourceMonitor,
   ScheduleRepository,
   SyncLoopOperations,
@@ -41,6 +42,7 @@ import { DependencyHandler } from './handlers/dependency-handler.js';
 import { LoopHandler } from './handlers/loop-handler.js';
 import { OrchestrationHandler } from './handlers/orchestration-handler.js';
 import { PersistenceHandler } from './handlers/persistence-handler.js';
+import { PipelineHandler } from './handlers/pipeline-handler.js';
 import { QueueHandler } from './handlers/queue-handler.js';
 import { ScheduleHandler } from './handlers/schedule-handler.js';
 import { UsageCaptureHandler } from './handlers/usage-capture-handler.js';
@@ -71,6 +73,8 @@ export interface HandlerDependencies {
   readonly usageRepository?: UsageRepository;
   /** Optional — enables cancel cascade for attributed sub-tasks (v1.3.0) */
   readonly taskManager?: TaskManager;
+  /** Optional — enables pipeline lifecycle tracking (Phase A: Dashboard Visibility Overhaul) */
+  readonly pipelineRepository?: PipelineRepository;
 }
 
 /**
@@ -92,6 +96,8 @@ export interface HandlerSetupResult {
   readonly usageCaptureHandler?: UsageCaptureHandler;
   /** AttributedTaskCancellationHandler — cancel cascade on OrchestrationCancelled (v1.3.0) */
   readonly attributedTaskCancellationHandler?: AttributedTaskCancellationHandler;
+  /** PipelineHandler — pipeline lifecycle tracking (Phase A: Dashboard Visibility Overhaul) */
+  readonly pipelineHandler?: PipelineHandler;
 }
 
 /**
@@ -196,6 +202,10 @@ export function extractHandlerDependencies(container: Container): Result<Handler
   const taskManagerResult = getDependency<TaskManager>(container, 'taskManager');
   const taskManager = taskManagerResult.ok ? taskManagerResult.value : undefined;
 
+  // Optional: PipelineRepository for PipelineHandler (graceful if not registered)
+  const pipelineRepositoryResult = getDependency<PipelineRepository>(container, 'pipelineRepository');
+  const pipelineRepository = pipelineRepositoryResult.ok ? pipelineRepositoryResult.value : undefined;
+
   return ok({
     config: configResult.value,
     logger: loggerResult.value,
@@ -215,6 +225,7 @@ export function extractHandlerDependencies(container: Container): Result<Handler
     orchestrationRepository,
     usageRepository,
     taskManager,
+    pipelineRepository,
   });
 }
 
@@ -481,6 +492,27 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     }
   }
 
+  // 11. Pipeline Handler — pipeline lifecycle tracking (Phase A: Dashboard Visibility Overhaul)
+  // ARCHITECTURE: Optional — only created if pipelineRepository is registered.
+  // Best-effort: failures are logged but never block other handlers.
+  let pipelineHandler: PipelineHandler | undefined;
+  if (deps.pipelineRepository) {
+    const pipelineHandlerResult = await PipelineHandler.create({
+      pipelineRepository: deps.pipelineRepository,
+      taskRepository: deps.taskRepository,
+      eventBus,
+      logger: childLogger('PipelineHandler'),
+    });
+    if (!pipelineHandlerResult.ok) {
+      // Non-fatal: log warning but continue without pipeline lifecycle tracking
+      setupLogger.warn('Failed to create PipelineHandler', {
+        error: pipelineHandlerResult.error.message,
+      });
+    } else {
+      pipelineHandler = pipelineHandlerResult.value;
+    }
+  }
+
   setupLogger.info('Event handlers initialized successfully', {
     standardHandlers: standardHandlers.length,
     totalHandlers:
@@ -488,7 +520,8 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
       4 +
       (orchestrationHandler ? 1 : 0) +
       (usageCaptureHandler ? 1 : 0) +
-      (attributedTaskCancellationHandler ? 1 : 0),
+      (attributedTaskCancellationHandler ? 1 : 0) +
+      (pipelineHandler ? 1 : 0),
   });
 
   return ok({
@@ -500,5 +533,6 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     orchestrationHandler,
     usageCaptureHandler,
     attributedTaskCancellationHandler,
+    pipelineHandler,
   });
 }

@@ -12,6 +12,8 @@ import {
   MissedRunPolicy,
   Orchestration,
   OrchestratorId,
+  PipelineId,
+  PipelineStatus,
   Schedule,
   ScheduleId,
   Task,
@@ -263,6 +265,48 @@ export interface OrchestrationCancelledEvent extends BaseEvent {
 }
 
 /**
+ * Pipeline lifecycle events
+ * ARCHITECTURE: Part of first-class pipeline entity system (Phase A: Dashboard Visibility Overhaul)
+ * Pattern: Event-driven pipeline lifecycle tracking with step-level granularity
+ */
+export interface PipelineCreatedEvent extends BaseEvent {
+  type: 'PipelineCreated';
+  pipelineId: PipelineId;
+  steps: number;
+}
+
+export interface PipelineStatusChangedEvent extends BaseEvent {
+  type: 'PipelineStatusChanged';
+  pipelineId: PipelineId;
+  fromStatus: PipelineStatus;
+  toStatus: PipelineStatus;
+}
+
+export interface PipelineStepCompletedEvent extends BaseEvent {
+  type: 'PipelineStepCompleted';
+  pipelineId: PipelineId;
+  stepIndex: number;
+  taskId: TaskId;
+}
+
+export interface PipelineCompletedEvent extends BaseEvent {
+  type: 'PipelineCompleted';
+  pipelineId: PipelineId;
+}
+
+export interface PipelineFailedEvent extends BaseEvent {
+  type: 'PipelineFailed';
+  pipelineId: PipelineId;
+  failedStepIndex: number;
+  taskId: TaskId;
+}
+
+export interface PipelineCancelledEvent extends BaseEvent {
+  type: 'PipelineCancelled';
+  pipelineId: PipelineId;
+}
+
+/**
  * Union type of all events
  */
 export type AutobeatEvent =
@@ -307,7 +351,14 @@ export type AutobeatEvent =
   // Orchestration lifecycle events
   | OrchestrationCreatedEvent
   | OrchestrationCompletedEvent
-  | OrchestrationCancelledEvent;
+  | OrchestrationCancelledEvent
+  // Pipeline lifecycle events
+  | PipelineCreatedEvent
+  | PipelineStatusChangedEvent
+  | PipelineStepCompletedEvent
+  | PipelineCompletedEvent
+  | PipelineFailedEvent
+  | PipelineCancelledEvent;
 
 /**
  * Event handler function type

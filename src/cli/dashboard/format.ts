@@ -39,6 +39,16 @@ export function relativeTime(epochMs: number): string {
   return isFuture ? `in ${days}d` : `${days}d ago`;
 }
 
+/**
+ * Format an epoch ms timestamp as HH:MM for compact activity rows.
+ */
+export function formatActivityTime(epochMs: number): string {
+  const d = new Date(epochMs);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
+
 // ============================================================================
 // Status colors and icons
 // ============================================================================
@@ -50,9 +60,9 @@ export function relativeTime(epochMs: number): string {
 export function statusColor(status: string): string {
   switch (status) {
     case 'running':
-    case 'active':
     case 'planning':
       return 'cyan';
+    case 'active':
     case 'completed':
     case 'triggered':
       return 'green';
@@ -72,12 +82,15 @@ export function statusColor(status: string): string {
 const STATUS_ICONS: Record<string, string> = {
   running: '●',
   active: '●',
-  planning: '○',
+  planning: '◎',
+  pending: '○',
   queued: '○',
   completed: '✓',
   failed: '✗',
-  cancelled: '✗',
+  cancelled: '⊘',
   paused: '⏸',
+  blocked: '⊖', // gray — blocked by dependency
+  expired: '○', // gray — schedule expired
 };
 
 /**
@@ -235,6 +248,28 @@ export function truncationNotice(
   return filterStatus !== null
     ? `showing ${displayedCount} of ${totalCount} ${filterStatus}`
     : `showing ${displayedCount} of ${totalCount}`;
+}
+
+// ============================================================================
+// Cost and token formatting
+// ============================================================================
+
+/**
+ * Format a USD cost value as a compact dollar string.
+ * Examples: "$0.05", "$1.23"
+ */
+export function formatCost(usd: number): string {
+  return `$${usd.toFixed(2)}`;
+}
+
+/**
+ * Format a token count with K/M suffix for compact display.
+ * Examples: "500", "1.5K", "2.3M"
+ */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
 }
 
 // ============================================================================

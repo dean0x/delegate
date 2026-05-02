@@ -11,12 +11,14 @@ export type WorkerId = string & { readonly __brand: 'WorkerId' };
 export type ScheduleId = string & { readonly __brand: 'ScheduleId' };
 export type LoopId = string & { readonly __brand: 'LoopId' };
 export type OrchestratorId = string & { readonly __brand: 'OrchestratorId' };
+export type PipelineId = string & { readonly __brand: 'PipelineId' };
 
 export const TaskId = (id: string): TaskId => id as TaskId;
 export const WorkerId = (id: string): WorkerId => id as WorkerId;
 export const ScheduleId = (id: string): ScheduleId => id as ScheduleId;
 export const LoopId = (id: string): LoopId => id as LoopId;
 export const OrchestratorId = (id: string): OrchestratorId => id as OrchestratorId;
+export const PipelineId = (id: string): PipelineId => id as PipelineId;
 
 export enum Priority {
   P0 = 'P0', // Critical
@@ -504,7 +506,9 @@ export interface PipelineStep {
 }
 
 export interface PipelineResult {
-  readonly pipelineId: ScheduleId; // first schedule ID (stable reference)
+  /** Stable Pipeline entity ID (tracked in pipelines table) */
+  readonly pipelineEntityId: PipelineId;
+  readonly pipelineId: ScheduleId; // first schedule ID (stable reference, kept for backward compat)
   readonly steps: readonly PipelineStep[];
 }
 
@@ -892,8 +896,114 @@ export interface OrchestratorChild {
  */
 export interface ActivityEntry {
   readonly timestamp: number;
-  readonly kind: 'task' | 'loop' | 'orchestration' | 'schedule';
+  readonly kind: 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline';
   readonly entityId: string;
   readonly status: string;
   readonly action: string; // short verb: 'created', 'completed', 'failed', 'iteration 3'
 }
+
+// ============================================================================
+// Pipeline entity types (Phase A: Dashboard Visibility Overhaul)
+// ARCHITECTURE: Tracks first-class pipeline lifecycle across multi-step task chains.
+// Pattern: Immutable domain objects with factory function, following Loop/Schedule conventions.
+// ============================================================================
+
+/**
+ * Pipeline status values
+ * ARCHITECTURE: Tracks lifecycle of multi-step sequential task execution
+ */
+export enum PipelineStatus {
+  PENDING = 'pending',
+  RUNNING = 'running',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+  CANCELLED = 'cancelled',
+}
+
+/**
+ * A single step definition in a pipeline.
+ * ARCHITECTURE: Immutable snapshot of step config at pipeline creation time.
+ * scheduleId is set for immediate pipelines (createPipeline) so PipelineHandler
+ * can correlate TaskDelegated events back to the pipeline entity.
+ * It is absent for scheduled-pipeline triggers (tasks are created atomically and
+ * stepTaskIds are populated directly by the schedule-handler path).
+ */
+export interface PipelineStepDefinition {
+  readonly index: number;
+  readonly prompt: string;
+  readonly priority?: Priority;
+  readonly workingDirectory?: string;
+  readonly agent?: AgentProvider;
+  readonly model?: string;
+  readonly systemPrompt?: string;
+  /** Optional: schedule ID that will dispatch this step's task (immediate pipelines only). */
+  readonly scheduleId?: ScheduleId;
+}
+
+/**
+ * Pipeline entity — tracks a multi-step sequential task execution.
+ * ARCHITECTURE: All fields readonly for immutability.
+ * Pattern: Factory function createPipeline() for construction.
+ */
+export interface Pipeline {
+  readonly id: PipelineId;
+  readonly steps: readonly PipelineStepDefinition[];
+  readonly stepTaskIds: readonly (TaskId | null)[];
+  readonly status: PipelineStatus;
+  readonly scheduleId?: ScheduleId;
+  readonly loopId?: LoopId;
+  readonly loopIteration?: number;
+  readonly orchestratorId?: OrchestratorId;
+  readonly priority?: Priority;
+  readonly workingDirectory?: string;
+  readonly agent?: AgentProvider;
+  readonly model?: string;
+  readonly systemPrompt?: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly completedAt?: number;
+}
+
+/**
+ * Request type for creating a Pipeline entity
+ * ARCHITECTURE: Flat structure for service-layer consumption
+ */
+export interface PipelineEntityRequest {
+  readonly steps: readonly PipelineStepDefinition[];
+  readonly stepTaskIds?: readonly (TaskId | null)[];
+  readonly scheduleId?: ScheduleId;
+  readonly loopId?: LoopId;
+  readonly loopIteration?: number;
+  readonly orchestratorId?: OrchestratorId;
+  readonly priority?: Priority;
+  readonly workingDirectory?: string;
+  readonly agent?: AgentProvider;
+  readonly model?: string;
+  readonly systemPrompt?: string;
+}
+
+/**
+ * Create a new Pipeline entity.
+ * ARCHITECTURE: Factory function returns frozen immutable object.
+ * Pattern: Follows createLoop() / createSchedule() convention.
+ */
+export const createPipeline = (request: PipelineEntityRequest): Pipeline => {
+  const now = Date.now();
+  return Object.freeze({
+    id: PipelineId(`pipeline-${crypto.randomUUID()}`),
+    steps: request.steps,
+    stepTaskIds: request.stepTaskIds ?? request.steps.map(() => null),
+    status: PipelineStatus.PENDING,
+    scheduleId: request.scheduleId,
+    loopId: request.loopId,
+    loopIteration: request.loopIteration,
+    orchestratorId: request.orchestratorId,
+    priority: request.priority,
+    workingDirectory: request.workingDirectory,
+    agent: request.agent,
+    model: request.model,
+    systemPrompt: request.systemPrompt,
+    createdAt: now,
+    updatedAt: now,
+  });
+};

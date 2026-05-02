@@ -36,21 +36,22 @@ import type { TestEventBus } from './test-doubles.js';
 
 /**
  * Create a minimal OutputRepository stub that returns the provided lines as stdout.
- * byteSize is measured with '\n' as separator — matches actual line-separated output.
+ * totalSize is measured with '\n' as separator via Buffer.byteLength — matches actual output.
  */
 export function createOutputRepo(lines: string[]): OutputRepository {
   return {
     get: vi.fn().mockResolvedValue(
       ok({
+        taskId: 'stub-task' as TaskId,
         stdout: lines,
         stderr: [],
-        truncated: false,
-        byteSize: lines.join('\n').length,
+        totalSize: Buffer.byteLength(lines.join('\n'), 'utf-8'),
       }),
     ),
     save: vi.fn().mockResolvedValue(ok(undefined)),
     delete: vi.fn().mockResolvedValue(ok(undefined)),
     append: vi.fn().mockResolvedValue(ok(undefined)),
+    getSize: vi.fn().mockResolvedValue(ok(0)),
   } as unknown as OutputRepository;
 }
 

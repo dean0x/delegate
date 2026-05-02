@@ -246,7 +246,7 @@ describe('JudgeExitConditionEvaluator', () => {
       }),
       save: vi.fn().mockResolvedValue(ok(undefined)),
       delete: vi.fn().mockResolvedValue(ok(undefined)),
-      getByteSize: vi.fn().mockResolvedValue(ok(0)),
+      getSize: vi.fn().mockResolvedValue(ok(0)),
     } as unknown as OutputRepository;
     const loopRepo = createLoopRepo();
     const mockFs = createMockFs();

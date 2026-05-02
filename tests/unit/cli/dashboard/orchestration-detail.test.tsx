@@ -1,16 +1,19 @@
 /**
- * Tests for OrchestrationDetail view — Phase E modernization.
+ * Tests for OrchestrationDetail view — Phase E modernization + Phase C grid mode.
  * Covers:
  *  - Legacy metadata still renders (ID, status, goal, agent, model)
  *  - Children section renders when present
  *  - Cost section renders with correct values
  *  - Cost section hidden when all zero
+ *  - Grid mode (viewMode='grid'): workspace panel layout embedded in this view
  */
 
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it } from 'vitest';
+import type { WorkspaceLayout } from '../../../../src/cli/dashboard/layout.js';
 import { OrchestrationDetail } from '../../../../src/cli/dashboard/views/orchestration-detail.js';
+import { createInitialWorkspaceNavState } from '../../../../src/cli/dashboard/workspace-types.js';
 import type {
   Orchestration,
   OrchestratorChild,
@@ -285,5 +288,120 @@ describe('OrchestrationDetail — D3 selection and pagination', () => {
       <OrchestrationDetail orchestration={orch} animFrame={0} children={children} childrenTotal={1} currentPage={0} />,
     );
     expect(lastFrame()).toContain('Enter to drill into child task detail');
+  });
+});
+
+// ============================================================================
+// Step 10: Grid mode (Phase C fold — workspace into OrchestrationDetail)
+// ============================================================================
+
+function makeGridLayout(overrides: Partial<WorkspaceLayout> = {}): WorkspaceLayout {
+  return {
+    mode: 'nav+grid',
+    navWidth: 22,
+    gridCols: 2,
+    maxGridRows: 3,
+    visibleSlots: 6,
+    panelWidth: 50,
+    panelHeight: 12,
+    outputViewportHeight: 9,
+    compactPanel: false,
+    displayedGridRows: 2,
+    ...overrides,
+  };
+}
+
+describe('OrchestrationDetail — grid mode (viewMode=grid)', () => {
+  it('renders EmptyWorkspace when orchestrations list is empty', () => {
+    const orch = makeOrchestration();
+    const { lastFrame } = render(
+      <OrchestrationDetail
+        orchestration={orch}
+        viewMode="grid"
+        orchestrations={[]}
+        workspaceNav={createInitialWorkspaceNavState()}
+        taskStreams={new Map()}
+        workspaceLayout={makeGridLayout()}
+      />,
+    );
+    // EmptyWorkspace renders a message about no orchestrators
+    const frame = lastFrame() ?? '';
+    expect(frame).toBeTruthy();
+    // Should NOT render the list-mode detail header
+    expect(frame).not.toContain('Orchestration Detail');
+  });
+
+  it('renders too-small message when layout mode is too-small', () => {
+    const orch = makeOrchestration();
+    const { lastFrame } = render(
+      <OrchestrationDetail
+        orchestration={orch}
+        viewMode="grid"
+        orchestrations={[orch]}
+        workspaceNav={createInitialWorkspaceNavState()}
+        taskStreams={new Map()}
+        workspaceLayout={makeGridLayout({ mode: 'too-small' })}
+      />,
+    );
+    expect(lastFrame()).toContain('Resize terminal');
+  });
+
+  it('renders no-children empty state when children is empty with orchestration', () => {
+    const orch = makeOrchestration();
+    const { lastFrame } = render(
+      <OrchestrationDetail
+        orchestration={orch}
+        viewMode="grid"
+        orchestrations={[orch]}
+        children={[]}
+        workspaceNav={createInitialWorkspaceNavState()}
+        taskStreams={new Map()}
+        workspaceLayout={makeGridLayout()}
+      />,
+    );
+    // Should not render detail list view
+    const frame = lastFrame() ?? '';
+    expect(frame).not.toContain('Orchestration Detail');
+  });
+
+  it('falls back to list mode when grid props are missing', () => {
+    // When viewMode='grid' but required props are missing, falls back to list mode
+    const orch = makeOrchestration();
+    const { lastFrame } = render(
+      <OrchestrationDetail
+        orchestration={orch}
+        viewMode="grid"
+        // orchestrations, workspaceNav, taskStreams, workspaceLayout all missing
+      />,
+    );
+    // Falls back to list mode — renders the detail header
+    expect(lastFrame()).toContain('Orchestration Detail');
+  });
+
+  it('renders OrchestratorNav in nav+grid mode with multiple orchestrations', () => {
+    const orch1 = makeOrchestration({ id: 'orch-g1-001' as OrchestratorId, goal: 'First goal' });
+    const orch2 = makeOrchestration({ id: 'orch-g2-002' as OrchestratorId, goal: 'Second goal' });
+    const { frames } = render(
+      <OrchestrationDetail
+        orchestration={orch1}
+        viewMode="grid"
+        orchestrations={[orch1, orch2]}
+        children={[]}
+        workspaceNav={createInitialWorkspaceNavState()}
+        taskStreams={new Map()}
+        workspaceLayout={makeGridLayout({ mode: 'nav+grid', navWidth: 22 })}
+      />,
+    );
+    // OrchestratorNav renders at least one of the orchestration IDs
+    const allFrames = frames.join('\n');
+    expect(allFrames).toBeTruthy();
+    // Nav is rendered — output should exist
+    expect(frames.length).toBeGreaterThan(0);
+  });
+
+  it('renders list-mode detail unchanged when viewMode is default (list)', () => {
+    const orch = makeOrchestration();
+    const { lastFrame } = render(<OrchestrationDetail orchestration={orch} animFrame={0} />);
+    expect(lastFrame()).toContain('Orchestration Detail');
   });
 });

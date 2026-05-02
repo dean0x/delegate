@@ -19,10 +19,12 @@ function makeData(overrides: Partial<DashboardData> = {}): DashboardData {
     loops: [],
     schedules: [],
     orchestrations: [],
+    pipelines: [],
     taskCounts: { total: 0, byStatus: {} },
     loopCounts: { total: 0, byStatus: {} },
     scheduleCounts: { total: 0, byStatus: {} },
     orchestrationCounts: { total: 0, byStatus: {} },
+    pipelineCounts: { total: 0, byStatus: {} },
     ...overrides,
   };
 }
@@ -192,6 +194,45 @@ describe('buildHealthSummary (via Header)', () => {
     expect(frame).not.toContain('queue');
     expect(frame).not.toContain('fail');
   });
+
+  it('includes running pipelines in the running count (Phase B)', () => {
+    const frame = renderSummary(
+      makeData({
+        pipelineCounts: { total: 2, byStatus: { running: 2 } },
+      }),
+    );
+    expect(frame).toContain('●2 run');
+  });
+
+  it('includes pending pipelines in the queued count (Phase B)', () => {
+    const frame = renderSummary(
+      makeData({
+        pipelineCounts: { total: 1, byStatus: { pending: 1 } },
+      }),
+    );
+    expect(frame).toContain('○1 queue');
+  });
+
+  it('includes failed and cancelled pipelines in the failed count (Phase B)', () => {
+    const frame = renderSummary(
+      makeData({
+        pipelineCounts: { total: 3, byStatus: { failed: 2, cancelled: 1 } },
+      }),
+    );
+    expect(frame).toContain('✗3 fail');
+  });
+
+  it('aggregates pipelines with other entity types in health summary', () => {
+    const frame = renderSummary(
+      makeData({
+        taskCounts: { total: 1, byStatus: { running: 1 } },
+        pipelineCounts: { total: 2, byStatus: { running: 1, failed: 1 } },
+      }),
+    );
+    // 1 task running + 1 pipeline running = 2 total running
+    expect(frame).toContain('●2 run');
+    expect(frame).toContain('✗1 fail');
+  });
 });
 
 // ============================================================================
@@ -229,5 +270,129 @@ describe('Header — viewKind breadcrumb', () => {
   it('does not crash when viewKind is not provided (backward compat)', () => {
     const { lastFrame } = render(<Header version="1.0.0" data={null} refreshedAt={null} error={null} />);
     expect(lastFrame()).toContain('Autobeat v1.0.0');
+  });
+});
+
+// ============================================================================
+// Entity-specific breadcrumbs — Phase C
+// ============================================================================
+
+describe('Header — entity-specific breadcrumbs (Phase C)', () => {
+  const TASK_ID = 'task-a1b2c3d4ef12-xyz';
+  const LOOP_ID = 'loop-bb223344ccdd-uvw';
+  const SCHEDULE_ID = 'schedule-001122334455-pqr';
+  const ORCH_ID = 'orch-aabbccddeeff-stu';
+  const PIPELINE_ID = 'pipeline-00112233-abc';
+
+  it('shows Task breadcrumb with shortId when entityType=tasks', () => {
+    const { lastFrame } = render(
+      <Header
+        version="1.0.0"
+        data={null}
+        refreshedAt={null}
+        error={null}
+        viewKind="detail"
+        entityType="tasks"
+        entityId={TASK_ID}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('[D]');
+    expect(frame).toContain('Task');
+    expect(frame).toContain(TASK_ID.slice(0, 12));
+  });
+
+  it('shows Loop breadcrumb with shortId when entityType=loops', () => {
+    const { lastFrame } = render(
+      <Header
+        version="1.0.0"
+        data={null}
+        refreshedAt={null}
+        error={null}
+        viewKind="detail"
+        entityType="loops"
+        entityId={LOOP_ID}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Loop');
+    expect(frame).toContain(LOOP_ID.slice(0, 12));
+  });
+
+  it('shows Schedule breadcrumb with shortId when entityType=schedules', () => {
+    const { lastFrame } = render(
+      <Header
+        version="1.0.0"
+        data={null}
+        refreshedAt={null}
+        error={null}
+        viewKind="detail"
+        entityType="schedules"
+        entityId={SCHEDULE_ID}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Schedule');
+    expect(frame).toContain(SCHEDULE_ID.slice(0, 12));
+  });
+
+  it('shows Orch breadcrumb with shortId when entityType=orchestrations', () => {
+    const { lastFrame } = render(
+      <Header
+        version="1.0.0"
+        data={null}
+        refreshedAt={null}
+        error={null}
+        viewKind="detail"
+        entityType="orchestrations"
+        entityId={ORCH_ID}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Orch');
+    expect(frame).toContain(ORCH_ID.slice(0, 12));
+  });
+
+  it('shows Pipeline breadcrumb with shortId when entityType=pipelines', () => {
+    const { lastFrame } = render(
+      <Header
+        version="1.0.0"
+        data={null}
+        refreshedAt={null}
+        error={null}
+        viewKind="detail"
+        entityType="pipelines"
+        entityId={PIPELINE_ID}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Pipeline');
+    expect(frame).toContain(PIPELINE_ID.slice(0, 12));
+  });
+
+  it('falls back to [D] Detail when entityType is missing', () => {
+    const { lastFrame } = render(
+      <Header version="1.0.0" data={null} refreshedAt={null} error={null} viewKind="detail" />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('[D]');
+    expect(frame).toContain('Detail');
+    expect(frame).not.toContain('Metrics ·');
+  });
+
+  it('contains Metrics in entity trail', () => {
+    const { lastFrame } = render(
+      <Header
+        version="1.0.0"
+        data={null}
+        refreshedAt={null}
+        error={null}
+        viewKind="detail"
+        entityType="tasks"
+        entityId={TASK_ID}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Metrics');
   });
 });

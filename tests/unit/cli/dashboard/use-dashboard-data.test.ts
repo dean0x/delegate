@@ -7,7 +7,14 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { ViewState } from '../../../../src/cli/dashboard/types.js';
-import { buildEntityCounts, FETCH_LIMIT, fetchAllData } from '../../../../src/cli/dashboard/use-dashboard-data.js';
+import type { LivenessCacheEntry } from '../../../../src/cli/dashboard/use-dashboard-data.js';
+import {
+  buildEntityCounts,
+  computeOrchestrationLiveness,
+  FETCH_LIMIT,
+  fetchAllData,
+  POLL_INTERVAL_BY_VIEW,
+} from '../../../../src/cli/dashboard/use-dashboard-data.js';
 import type { ReadOnlyContext } from '../../../../src/cli/read-only-context.js';
 import { err, ok } from '../../../../src/core/result.js';
 
@@ -91,11 +98,17 @@ function makeCtx(overrides: Partial<ReadOnlyContext> = {}): ReadOnlyContext {
     ),
   };
 
+  const pipelineRepo = {
+    ...makeMockRepo(),
+    findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+  };
+
   return {
     taskRepository: taskRepo as unknown as ReadOnlyContext['taskRepository'],
     loopRepository: loopRepo as unknown as ReadOnlyContext['loopRepository'],
     scheduleRepository: scheduleRepo as unknown as ReadOnlyContext['scheduleRepository'],
     orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
+    pipelineRepository: pipelineRepo as unknown as ReadOnlyContext['pipelineRepository'],
     outputRepository: {} as ReadOnlyContext['outputRepository'],
     usageRepository: usageRepo as unknown as ReadOnlyContext['usageRepository'],
     workerRepository: {
@@ -107,6 +120,20 @@ function makeCtx(overrides: Partial<ReadOnlyContext> = {}): ReadOnlyContext {
 }
 
 const MAIN_VIEW: ViewState = { kind: 'main' };
+
+// ============================================================================
+// POLL_INTERVAL_BY_VIEW — per-view cadence ordering contract
+// ============================================================================
+
+describe('POLL_INTERVAL_BY_VIEW', () => {
+  it('workspace polls faster than main, which polls faster than detail', () => {
+    // Ordering contract: workspace < main < detail
+    // workspace: snappier refresh for live task output
+    // detail: slower cadence reduces DB pressure for single-entity view
+    expect(POLL_INTERVAL_BY_VIEW.workspace).toBeLessThan(POLL_INTERVAL_BY_VIEW.main);
+    expect(POLL_INTERVAL_BY_VIEW.main).toBeLessThan(POLL_INTERVAL_BY_VIEW.detail);
+  });
+});
 
 // ============================================================================
 // buildEntityCounts
@@ -147,8 +174,10 @@ describe('fetchAllData', () => {
     expect(result.value.loops).toEqual([]);
     expect(result.value.schedules).toEqual([]);
     expect(result.value.orchestrations).toEqual([]);
+    expect(result.value.pipelines).toEqual([]);
     expect(result.value.taskCounts.total).toBe(0);
     expect(result.value.loopCounts.total).toBe(0);
+    expect(result.value.pipelineCounts.total).toBe(0);
   });
 
   it('calls findAll(FETCH_LIMIT) on all repositories', async () => {
@@ -159,6 +188,7 @@ describe('fetchAllData', () => {
     expect(ctx.loopRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
     expect(ctx.scheduleRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
     expect(ctx.orchestrationRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
+    expect(ctx.pipelineRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
   });
 
   it('calls countByStatus on all repositories', async () => {
@@ -169,6 +199,7 @@ describe('fetchAllData', () => {
     expect(ctx.loopRepository.countByStatus).toHaveBeenCalled();
     expect(ctx.scheduleRepository.countByStatus).toHaveBeenCalled();
     expect(ctx.orchestrationRepository.countByStatus).toHaveBeenCalled();
+    expect(ctx.pipelineRepository.countByStatus).toHaveBeenCalled();
   });
 
   it('returns error when task findAll fails', async () => {
@@ -456,5 +487,190 @@ describe('fetchAllData — orchestration liveness caching', () => {
     expect(result.value.orchestrationLiveness?.['orch-done']).toBeUndefined();
     // Cache should be empty — no liveness computed for completed orch
     expect(cache.size).toBe(0);
+  });
+
+  // ---- Liveness cache sweep tests (T21, T22) ----
+
+  it('stale cache entries older than TTL are swept before computing liveness (T21)', async () => {
+    const { OrchestratorStatus: Status } = await import('../../../../src/core/domain.js');
+    // No running orchestrations — so cache sweep logic runs without liveness side effects
+    const orchestrationRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+      getOrchestratorChildren: vi.fn().mockResolvedValue(ok([])),
+      countOrchestratorChildren: vi.fn().mockResolvedValue(ok(0)),
+    };
+    const ctx = makeCtx({
+      orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
+    });
+
+    // Inject a stale entry (timestamp far in the past, well beyond 4s TTL)
+    const staleTimestamp = Date.now() - 10_000; // 10 seconds ago
+    const cache = new Map([['stale-orch', { result: 'live' as const, timestamp: staleTimestamp }]]);
+
+    await fetchAllData(ctx, MAIN_VIEW, 0, cache);
+
+    // After fetchAllData with the sweep, stale entry should be removed
+    expect(cache.has('stale-orch')).toBe(false);
+  });
+
+  it('fresh cache entries within TTL are retained during sweep (T22)', async () => {
+    const orchestrationRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+      getOrchestratorChildren: vi.fn().mockResolvedValue(ok([])),
+      countOrchestratorChildren: vi.fn().mockResolvedValue(ok(0)),
+    };
+    const ctx = makeCtx({
+      orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
+    });
+
+    // Fresh entry (just added)
+    const freshTimestamp = Date.now() - 1_000; // 1 second ago, well within 4s TTL
+    const cache = new Map([['fresh-orch', { result: 'live' as const, timestamp: freshTimestamp }]]);
+
+    await fetchAllData(ctx, MAIN_VIEW, 0, cache);
+
+    // Fresh entry should still be in the cache
+    expect(cache.has('fresh-orch')).toBe(true);
+    expect(cache.get('fresh-orch')?.result).toBe('live');
+  });
+});
+
+// ============================================================================
+// computeOrchestrationLiveness — extracted pure liveness computation
+// ============================================================================
+
+describe('computeOrchestrationLiveness', () => {
+  function makeLivenessDeps() {
+    return {
+      loopRepo: {
+        findAll: vi.fn(),
+        getIterations: vi.fn(),
+      } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['loopRepo'],
+      taskRepo: {
+        findAll: vi.fn(),
+        get: vi.fn(),
+      } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['taskRepo'],
+      workerRepo: { findAll: vi.fn() } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['workerRepo'],
+      isProcessAlive: vi.fn().mockReturnValue(true),
+    };
+  }
+
+  it('empty orchestrations array returns empty result, cache untouched', async () => {
+    const cache = new Map<string, LivenessCacheEntry>();
+    const deps = makeLivenessDeps();
+    const result = await computeOrchestrationLiveness([], cache, deps);
+    expect(result).toEqual({});
+    expect(cache.size).toBe(0);
+  });
+
+  it('COMPLETED orchestration produces no entry in result', async () => {
+    const { OrchestratorStatus: Status } = await import('../../../../src/core/domain.js');
+    const orch = { id: 'orch-done', status: Status.COMPLETED, loopId: 'loop-1' };
+    const cache = new Map<string, LivenessCacheEntry>();
+    const deps = makeLivenessDeps();
+    const result = await computeOrchestrationLiveness([orch as never], cache, deps);
+    expect(result['orch-done']).toBeUndefined();
+  });
+
+  it('PLANNING orchestration without loopId returns "unknown"', async () => {
+    const { OrchestratorStatus: Status } = await import('../../../../src/core/domain.js');
+    const orch = { id: 'orch-plan', status: Status.PLANNING, loopId: undefined };
+    const cache = new Map<string, LivenessCacheEntry>();
+    const deps = makeLivenessDeps();
+    const result = await computeOrchestrationLiveness([orch as never], cache, deps);
+    expect(result['orch-plan']).toBe('unknown');
+  });
+
+  it('PLANNING orchestration with loopId produces no entry', async () => {
+    const { OrchestratorStatus: Status } = await import('../../../../src/core/domain.js');
+    const orch = { id: 'orch-plan-loop', status: Status.PLANNING, loopId: 'loop-99' };
+    const cache = new Map<string, LivenessCacheEntry>();
+    const deps = makeLivenessDeps();
+    const result = await computeOrchestrationLiveness([orch as never], cache, deps);
+    expect(result['orch-plan-loop']).toBeUndefined();
+  });
+
+  it('RUNNING orchestration, cold cache — cache entry added after computation', async () => {
+    const { OrchestratorStatus: Status } = await import('../../../../src/core/domain.js');
+    // orch with no loopId so checkOrchestrationLiveness returns 'unknown' quickly (broken chain)
+    const orch = { id: 'orch-run', status: Status.RUNNING, loopId: undefined };
+    const cache = new Map<string, LivenessCacheEntry>();
+    const deps = makeLivenessDeps();
+    const result = await computeOrchestrationLiveness([orch as never], cache, deps);
+    expect(result['orch-run']).toBeDefined();
+    expect(cache.has('orch-run')).toBe(true);
+  });
+
+  it('RUNNING orchestration, warm cache within TTL — cached result returned, isProcessAlive not called', async () => {
+    const { OrchestratorStatus: Status } = await import('../../../../src/core/domain.js');
+    const orch = { id: 'orch-cached', status: Status.RUNNING, loopId: 'loop-1' };
+    const cache = new Map<string, LivenessCacheEntry>([
+      ['orch-cached', { result: 'live' as const, timestamp: Date.now() - 100 }], // within TTL
+    ]);
+    const deps = makeLivenessDeps();
+    const result = await computeOrchestrationLiveness([orch as never], cache, deps);
+    expect(result['orch-cached']).toBe('live');
+    // isProcessAlive should NOT have been called (cache hit — no liveness computation)
+    expect(deps.isProcessAlive).not.toHaveBeenCalled();
+  });
+
+  it('stale cache entry swept before computation', async () => {
+    const cache = new Map<string, LivenessCacheEntry>([
+      ['stale-orch', { result: 'live', timestamp: Date.now() - 10_000 }], // 10s ago > 4s TTL
+    ]);
+    const deps = makeLivenessDeps();
+    await computeOrchestrationLiveness([], cache, deps);
+    expect(cache.has('stale-orch')).toBe(false);
+  });
+
+  it('fresh cache entry survives sweep', async () => {
+    const freshTs = Date.now() - 1_000; // 1s ago < 4s TTL
+    const cache = new Map<string, LivenessCacheEntry>([['fresh-orch', { result: 'live', timestamp: freshTs }]]);
+    const deps = makeLivenessDeps();
+    await computeOrchestrationLiveness([], cache, deps);
+    expect(cache.has('fresh-orch')).toBe(true);
+  });
+
+  it('checkOrchestrationLiveness throws → returns "unknown", no crash', async () => {
+    const { OrchestratorStatus: Status } = await import('../../../../src/core/domain.js');
+    // orch with loopId so checkOrchestrationLiveness is actually invoked
+    const orch = { id: 'orch-throw', status: Status.RUNNING, loopId: 'loop-throw' };
+    const cache = new Map<string, LivenessCacheEntry>();
+    const deps = {
+      loopRepo: {
+        getLatestIteration: vi.fn().mockRejectedValue(new Error('db gone')),
+        getIterations: vi.fn().mockRejectedValue(new Error('db gone')),
+      } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['loopRepo'],
+      taskRepo: {
+        get: vi.fn().mockRejectedValue(new Error('db gone')),
+      } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['taskRepo'],
+      workerRepo: { findAll: vi.fn() } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['workerRepo'],
+      isProcessAlive: vi.fn().mockReturnValue(true),
+    };
+    const result = await computeOrchestrationLiveness([orch as never], cache, deps);
+    // Should degrade gracefully to 'unknown'
+    expect(result['orch-throw']).toBe('unknown');
+  });
+
+  it('mixed RUNNING + COMPLETED + PLANNING — only RUNNING and orphan-PLANNING get entries', async () => {
+    const { OrchestratorStatus: Status } = await import('../../../../src/core/domain.js');
+    const orchestrations = [
+      { id: 'orch-run', status: Status.RUNNING, loopId: undefined },
+      { id: 'orch-done', status: Status.COMPLETED, loopId: 'loop-1' },
+      { id: 'orch-plan-no-loop', status: Status.PLANNING, loopId: undefined },
+      { id: 'orch-plan-with-loop', status: Status.PLANNING, loopId: 'loop-2' },
+    ];
+    const cache = new Map<string, LivenessCacheEntry>();
+    const deps = makeLivenessDeps();
+    const result = await computeOrchestrationLiveness(orchestrations as never[], cache, deps);
+
+    expect(result['orch-run']).toBeDefined(); // RUNNING → liveness computed
+    expect(result['orch-done']).toBeUndefined(); // COMPLETED → no entry
+    expect(result['orch-plan-no-loop']).toBe('unknown'); // PLANNING + no loopId → orphan
+    expect(result['orch-plan-with-loop']).toBeUndefined(); // PLANNING + loopId → no entry
   });
 });

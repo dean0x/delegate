@@ -15,7 +15,8 @@
 
 import { useInput } from 'ink';
 import { useRef } from 'react';
-import { DETAIL_SCROLL_MAX_DEFAULT } from './keyboard/constants.js';
+import { OrchestratorStatus } from '../../core/domain.js';
+import { DETAIL_SCROLL_MAX_DEFAULT, ENTITY_BROWSER_VIEWPORT_HEIGHT } from './keyboard/constants.js';
 import { handleDetailKeys } from './keyboard/handle-detail-keys.js';
 import { handleMainKeys } from './keyboard/handle-main-keys.js';
 import { handleWorkspaceKeys } from './keyboard/handle-workspace-keys.js';
@@ -30,7 +31,7 @@ export type { UseKeyboardParams } from './keyboard/types.js';
  * Global keys (handled before view dispatch):
  *  - q: quit
  *  - r: refresh
- *  - v: toggle between main/workspace (ignored when in detail — user must Esc first)
+ *  - v: toggle main/workspace; in orchestration detail, scopes workspace to that orchestration
  *  - m: jump to main (works from any view)
  *  - w: jump to workspace (works from any view)
  */
@@ -46,11 +47,26 @@ export function useKeyboard({
   mutations,
   workspaceNav,
   setWorkspaceNav,
+  entityBrowserViewportHeight,
 }: UseKeyboardParams): void {
   // Keep a ref to the latest data so setNav functional updaters always see
   // current data, not stale closure data from the render that registered useInput.
   const dataRef = useRef(data);
   dataRef.current = data;
+
+  const navigateToWorkspace = (orchestrationId?: import('../../core/domain.js').OrchestratorId) => {
+    if (orchestrationId && setWorkspaceNav && dataRef.current?.orchestrations) {
+      const idx = dataRef.current.orchestrations.findIndex((o) => o.id === orchestrationId);
+      if (idx >= 0) {
+        setWorkspaceNav((prev) => ({
+          ...prev,
+          committedOrchestratorIndex: idx,
+          selectedOrchestratorIndex: idx,
+        }));
+      }
+    }
+    setView({ kind: 'workspace', orchestrationId });
+  };
 
   useInput((input, key) => {
     // Global keys — handled before view dispatch
@@ -63,13 +79,24 @@ export function useKeyboard({
       return;
     }
 
-    // v — toggle between main and workspace (ignored in detail view)
-    if (input === 'v' && view.kind !== 'detail') {
+    // v — toggle between main and workspace.
+    // Special case: when in orchestration detail, v toggles to workspace scoped to that
+    // orchestration (grid mode). When already in workspace, v returns to main.
+    // Ignored in non-orchestration detail views — user must Esc first.
+    if (input === 'v') {
+      if (view.kind === 'detail' && view.entityType === 'orchestrations') {
+        navigateToWorkspace(view.entityId);
+        return;
+      }
       if (view.kind === 'workspace') {
         setView({ kind: 'main' });
-      } else {
-        setView({ kind: 'workspace' });
+        return;
       }
+      if (view.kind === 'main') {
+        navigateToWorkspace();
+        return;
+      }
+      // Other detail views: ignore v (user must Esc first)
       return;
     }
 
@@ -79,9 +106,25 @@ export function useKeyboard({
       return;
     }
 
-    // w — jump to workspace from any view (including detail — acts like Esc→w)
+    // w — jump to workspace from any view.
+    // DECISION: Navigate to workspace only when orchestrations exist. If a running
+    // orchestration exists, scope the workspace to it. If none are running, navigate
+    // to the most recently created orchestration's detail view in list mode.
+    // If no orchestrations exist at all, w is a no-op.
     if (input === 'w') {
-      setView({ kind: 'workspace' });
+      const orchestrations = dataRef.current?.orchestrations;
+      if (!orchestrations || orchestrations.length === 0) {
+        return;
+      }
+      const running = orchestrations.find((o) => o.status === OrchestratorStatus.RUNNING);
+      if (running) {
+        navigateToWorkspace(running.id);
+      } else {
+        const mostRecent = orchestrations[0];
+        if (mostRecent) {
+          navigateToWorkspace(mostRecent.id);
+        }
+      }
       return;
     }
 
@@ -97,6 +140,7 @@ export function useKeyboard({
       refreshNow,
       workspaceNav,
       setWorkspaceNav,
+      entityBrowserViewportHeight: entityBrowserViewportHeight ?? ENTITY_BROWSER_VIEWPORT_HEIGHT,
     };
 
     if (view.kind === 'detail') {

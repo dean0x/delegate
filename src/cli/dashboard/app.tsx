@@ -2,18 +2,22 @@
  * Dashboard App root component
  * ARCHITECTURE: Shell — composes data hook, keyboard hook, and view components
  * Pattern: State lives here; pure view components receive data as props
+ *
+ * DECISION (Phase A): Replaced triple useState (view + nav + workspaceNav) with
+ * useReducer(dashboardReducer) so all state transitions are centralised and testable
+ * as a pure function. Keyboard handlers retain setView/setNav setter signatures —
+ * thin adapters dispatch SET_VIEW / UPDATE_NAV actions so no handler rewrite needed.
  */
 
 import { Box, useApp } from 'ink';
-import React, { useCallback, useEffect, useState } from 'react';
-import type { ActivityEntry } from '../../core/domain.js';
+import React, { useCallback, useEffect, useReducer } from 'react';
 import type { OutputRepository, ResourceMonitor } from '../../core/interfaces.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { Footer } from './components/footer.js';
 import { Header } from './components/header.js';
 import { computeMetricsLayout, computeWorkspaceLayout } from './layout.js';
+import { type DashboardState, dashboardReducer } from './nav-reducer.js';
 import type { DashboardMutationContext, NavState, ViewState } from './types.js';
-import { openDetail } from './types.js';
 import { useDashboardData } from './use-dashboard-data.js';
 import { useKeyboard } from './use-keyboard.js';
 import { useResourceMetrics } from './use-resource-metrics.js';
@@ -21,8 +25,7 @@ import { useTaskOutputStream } from './use-task-output-stream.js';
 import { useTerminalSize } from './use-terminal-size.js';
 import { DetailView } from './views/detail-view.js';
 import { MetricsView } from './views/metrics-view.js';
-import { WorkspaceView } from './views/workspace-view.js';
-import type { WorkspaceNavState } from './workspace-types.js';
+import { OrchestrationDetail } from './views/orchestration-detail.js';
 import { createInitialWorkspaceNavState } from './workspace-types.js';
 
 interface AppProps {
@@ -45,16 +48,21 @@ interface AppProps {
   readonly outputRepository?: OutputRepository;
 }
 
-/** Initial navigation state — focus on loops panel, no selection, no filters */
+/** Initial navigation state — focus on tasks panel (most common starting point), no selection, no filters */
 const INITIAL_NAV: NavState = {
-  focusedPanel: 'loops',
-  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
-  filters: { loops: null, tasks: null, schedules: null, orchestrations: null },
-  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
-  activityFocused: false,
-  activitySelectedIndex: 0,
+  focusedPanel: 'tasks',
+  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
+  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
+  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
+};
+
+const INITIAL_DASHBOARD_STATE: DashboardState = {
+  view: { kind: 'main' },
+  nav: INITIAL_NAV,
+  workspaceNav: createInitialWorkspaceNavState(),
+  animFrame: 0,
 };
 
 /**
@@ -64,15 +72,39 @@ const INITIAL_NAV: NavState = {
 export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, resourceMonitor, outputRepository }) => {
   const { exit } = useApp();
 
-  const [view, setView] = useState<ViewState>({ kind: 'main' });
-  const [nav, setNav] = useState<NavState>(INITIAL_NAV);
-  const [workspaceNav, setWorkspaceNav] = useState<WorkspaceNavState>(createInitialWorkspaceNavState());
+  const [state, dispatch] = useReducer(dashboardReducer, INITIAL_DASHBOARD_STATE);
+  const { view, nav, workspaceNav, animFrame } = state;
+
+  // Adapter setters — keep keyboard handler signatures stable
+  const setView = useCallback((v: ViewState) => dispatch({ type: 'SET_VIEW', view: v }), []);
+  const setNav = useCallback((updaterOrValue: NavState | ((prev: NavState) => NavState)) => {
+    if (typeof updaterOrValue === 'function') {
+      dispatch({ type: 'UPDATE_NAV', updater: updaterOrValue });
+    } else {
+      dispatch({ type: 'SET_NAV', nav: updaterOrValue });
+    }
+  }, []);
+  const setWorkspaceNav = useCallback(
+    (
+      updaterOrValue:
+        | import('./workspace-types.js').WorkspaceNavState
+        | ((
+            prev: import('./workspace-types.js').WorkspaceNavState,
+          ) => import('./workspace-types.js').WorkspaceNavState),
+    ) => {
+      if (typeof updaterOrValue === 'function') {
+        dispatch({ type: 'UPDATE_WORKSPACE_NAV', updater: updaterOrValue });
+      } else {
+        dispatch({ type: 'SET_WORKSPACE_NAV', workspaceNav: updaterOrValue });
+      }
+    },
+    [],
+  );
 
   // Shared animation frame counter — single interval drives all StatusBadge animations
-  const [animFrame, setAnimFrame] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => {
-      setAnimFrame((prev) => prev + 1);
+      dispatch({ type: 'TICK_ANIM' });
     }, 250);
     return () => clearInterval(timer);
   }, []);
@@ -99,6 +131,10 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
   const childTaskStatuses = data?.workspaceData?.childTaskStatuses ?? new Map();
 
   // Live output streaming — only enabled when in workspace view and outputRepository is available
+  // Phase C prep: a future `o` toggle in task detail would also enable streaming here.
+  // That requires keyboard handler changes (handle-detail-keys) deferred to a later phase.
+  // TODO: When grid/detail mode is fully wired via the 'v' toggle, also enable streaming
+  // for orchestration detail in grid mode (view.kind === 'detail' && view.entityType === 'orchestrations').
   const streamingEnabled = view.kind === 'workspace' && outputRepository !== undefined;
   const { streams } = useTaskOutputStream(
     outputRepository ?? ctx.outputRepository,
@@ -118,31 +154,8 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
     mutations,
     workspaceNav,
     setWorkspaceNav,
+    entityBrowserViewportHeight: Math.max(4, metricsLayout.bottomRowHeight - 4),
   });
-
-  /**
-   * Activity row selection — map ActivityEntry kind to detail entityType and open.
-   * Phase E: wires the stub in MetricsView.ActivityPanel.onSelect.
-   */
-  const handleActivitySelect = useCallback(
-    (entry: ActivityEntry) => {
-      switch (entry.kind) {
-        case 'task':
-          setView(openDetail('tasks', entry.entityId as never, 'main'));
-          break;
-        case 'loop':
-          setView(openDetail('loops', entry.entityId as never, 'main'));
-          break;
-        case 'orchestration':
-          setView(openDetail('orchestrations', entry.entityId as never, 'main'));
-          break;
-        case 'schedule':
-          setView(openDetail('schedules', entry.entityId as never, 'main'));
-          break;
-      }
-    },
-    [setView],
-  );
 
   // View dispatcher
   const renderView = (): React.ReactNode => {
@@ -154,7 +167,6 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
           nav={nav}
           resourceMetrics={resourceMetrics}
           resourceError={resourceError}
-          onActivitySelect={handleActivitySelect}
         />
       );
     }
@@ -163,7 +175,39 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
       if (!data) {
         return null;
       }
-      return <WorkspaceView data={data} layout={workspaceLayout} nav={workspaceNav} streams={streams} />;
+      // Phase C: workspace folded into OrchestrationDetail with viewMode='grid'
+      // DECISION: Eliminates WorkspaceView as a separate component — detail shows list, workspace shows grid.
+      const orchestrations = data.orchestrations;
+      const committedOrch = orchestrations[workspaceNav.committedOrchestratorIndex] ?? orchestrations[0];
+      const workspaceChildren = data.workspaceData?.children ?? [];
+      // Provide a sentinel orchestration when none exist — GridMode handles the empty state via EmptyWorkspace
+      const sentinelOrch = committedOrch ?? {
+        id: '' as never,
+        goal: '',
+        status: 'planning' as never,
+        agent: undefined,
+        model: undefined,
+        loopId: undefined,
+        maxDepth: 0,
+        maxWorkers: 0,
+        maxIterations: 0,
+        workingDirectory: '',
+        stateFilePath: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        completedAt: undefined,
+      };
+      return (
+        <OrchestrationDetail
+          orchestration={sentinelOrch as import('../../core/domain.js').Orchestration}
+          children={workspaceChildren}
+          viewMode="grid"
+          orchestrations={orchestrations}
+          workspaceNav={workspaceNav}
+          taskStreams={streams}
+          workspaceLayout={workspaceLayout}
+        />
+      );
     }
 
     if (view.kind === 'detail') {
@@ -186,7 +230,15 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
 
   return (
     <Box flexDirection="column" width="100%">
-      <Header version={version} data={data} refreshedAt={refreshedAt} error={error} viewKind={view.kind} />
+      <Header
+        version={version}
+        data={data}
+        refreshedAt={refreshedAt}
+        error={error}
+        viewKind={view.kind}
+        entityType={view.kind === 'detail' ? view.entityType : undefined}
+        entityId={view.kind === 'detail' ? view.entityId : undefined}
+      />
       {renderView()}
       <Footer viewKind={view.kind} hasMutations={mutations !== undefined} />
     </Box>

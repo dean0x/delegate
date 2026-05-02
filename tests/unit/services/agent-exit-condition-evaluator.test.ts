@@ -39,15 +39,15 @@ function createOutputRepo(lines: string[]): OutputRepository {
   return {
     get: vi.fn().mockResolvedValue(
       ok({
+        taskId: 'stub-task' as TaskId,
         stdout: lines,
         stderr: [],
-        truncated: false,
-        byteSize: lines.join('\n').length,
+        totalSize: Buffer.byteLength(lines.join('\n'), 'utf-8'),
       }),
     ),
     save: vi.fn().mockResolvedValue(ok(undefined)),
     delete: vi.fn().mockResolvedValue(ok(undefined)),
-    getByteSize: vi.fn().mockResolvedValue(ok(0)),
+    getSize: vi.fn().mockResolvedValue(ok(0)),
   } as unknown as OutputRepository;
 }
 
@@ -615,7 +615,7 @@ describe('AgentExitConditionEvaluator', () => {
         get: vi.fn().mockResolvedValue(err(new Error('DB read failed'))),
         save: vi.fn(),
         delete: vi.fn(),
-        getByteSize: vi.fn(),
+        getSize: vi.fn(),
       } as unknown as OutputRepository;
       const loopRepo = createLoopRepo();
       const evaluator = new AgentExitConditionEvaluator(eventBus, outputRepo, loopRepo, logger);
@@ -633,7 +633,7 @@ describe('AgentExitConditionEvaluator', () => {
         get: vi.fn().mockResolvedValue(ok(null)),
         save: vi.fn(),
         delete: vi.fn(),
-        getByteSize: vi.fn(),
+        getSize: vi.fn(),
       } as unknown as OutputRepository;
       const loopRepo = createLoopRepo();
       const evaluator = new AgentExitConditionEvaluator(eventBus, outputRepo, loopRepo, logger);

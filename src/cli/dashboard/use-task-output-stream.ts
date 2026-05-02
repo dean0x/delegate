@@ -10,6 +10,10 @@
  *  - mergeOutputLines: Pure function (exported for testing)
  *  - shouldPollThisTick: Pure function (exported for testing)
  *  - MAX_LINES_PER_STREAM: Constant (exported for testing)
+ *  - codePointLength: Pure function (exported for testing)
+ *  - codePointSlice: Pure function (exported for testing)
+ *  - computeDelta: Pure function (exported for testing)
+ *  - trySizeProbe: Async probe function (exported for testing)
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -97,6 +101,116 @@ export function mergeOutputLines(content: string): string[] {
 }
 
 /**
+ * Count Unicode code points in a string using the for-of iterator.
+ * Correct for multi-byte characters (emoji, CJK) that are represented as
+ * surrogate pairs in JavaScript's UTF-16 encoding: spread/for-of yields one
+ * iteration per code point, not per UTF-16 code unit.
+ *
+ * ARCHITECTURE: Replaces `[...str].length` spread — avoids allocating a full
+ * array of characters on every poll tick, eliminating the O(N) memory spike
+ * that caused dashboard OOM crashes with large task outputs.
+ */
+export function codePointLength(str: string): number {
+  // ASCII fast-path: for strings with no multi-byte characters (charCode ≤ 0x7F),
+  // every UTF-16 code unit is exactly one code point so str.length is correct.
+  // CLI/build log output is almost always pure ASCII, making this the common case.
+  for (let i = 0; i < str.length; i++) {
+    if (str.charCodeAt(i) > 0x7f) {
+      // Non-ASCII found — fall through to accurate for-of code-point count
+      let n = 0;
+      for (const _ of str) n++;
+      return n;
+    }
+  }
+  return str.length;
+}
+
+/**
+ * Return the substring of `str` starting at the given Unicode code-point index.
+ * Safe for multi-byte characters: the for-of iterator yields one step per code
+ * point, so the returned slice never cuts inside a surrogate pair.
+ *
+ * ARCHITECTURE: Replaces `[...str].slice(start).join('')` spread — avoids
+ * allocating a full code-point array, eliminating the OOM-inducing allocation
+ * that grew linearly with task output size on every poll tick.
+ */
+export function codePointSlice(str: string, start: number): string {
+  if (start === 0) return str;
+  let cpIdx = 0;
+  let cuIdx = 0;
+  for (const ch of str) {
+    if (cpIdx === start) return str.substring(cuIdx);
+    cuIdx += ch.length;
+    cpIdx++;
+  }
+  return '';
+}
+
+/**
+ * Compute the incremental delta from a set of output chunks, given the previously
+ * processed character count.
+ *
+ * Algorithm:
+ * 1. Pass 1 — count code points per chunk via codePointLength (ASCII fast-path is
+ *    O(1) per pure-ASCII chunk), accumulate into fullChars.
+ * 2. If prevTotalChars >= fullChars → no new data; return { fullChars, newContent: '' }.
+ * 3. If prevTotalChars === 0 → first fetch; join all chunks (nothing to skip).
+ * 4. Pass 2 — walk chunks with a running code-point accumulator; find the boundary
+ *    chunk where accumulated + chunkLen > prevTotalChars, then codePointSlice the
+ *    boundary chunk and join only the remaining chunks.
+ *
+ * PERFORMANCE: Avoids the O(N) `stdout.join('')` allocation on every change tick by
+ * working per-chunk and only joining the new suffix. The ASCII fast-path in
+ * codePointLength makes Pass 1 nearly free for typical CLI/build output.
+ *
+ * CORRECTNESS: codePointSlice is used at the boundary so multi-byte characters
+ * (emoji, CJK) are never split, preventing U+FFFD replacement characters.
+ */
+export function computeDelta(
+  chunks: readonly string[],
+  prevTotalChars: number,
+): { fullChars: number; newContent: string } {
+  // Pass 1: count total code points across all chunks
+  let fullChars = 0;
+  for (const chunk of chunks) {
+    fullChars += codePointLength(chunk);
+  }
+
+  // No new content (includes the prevTotalChars > fullChars defensive case)
+  if (prevTotalChars >= fullChars) {
+    return { fullChars, newContent: '' };
+  }
+
+  // First fetch — return all chunks joined (nothing to skip)
+  if (prevTotalChars === 0) {
+    return { fullChars, newContent: chunks.join('') };
+  }
+
+  // Pass 2: walk chunks to find the boundary where prevTotalChars falls
+  let accumulated = 0;
+  const result: string[] = [];
+  let boundaryFound = false;
+
+  for (const chunk of chunks) {
+    const chunkLen = codePointLength(chunk);
+
+    if (boundaryFound) {
+      // All chunks after the boundary are included in full
+      result.push(chunk);
+    } else if (accumulated + chunkLen > prevTotalChars) {
+      // This chunk contains the boundary — slice from the remaining offset
+      const offsetInChunk = prevTotalChars - accumulated;
+      result.push(codePointSlice(chunk, offsetInChunk));
+      boundaryFound = true;
+    }
+    // accumulated + chunkLen <= prevTotalChars → entire chunk already seen, skip
+    accumulated += chunkLen;
+  }
+
+  return { fullChars, newContent: result.join('') };
+}
+
+/**
  * Determine whether a task should be polled on the given tick number.
  * - running: every tick
  * - pending/queued: every SLOW_POLL_INTERVAL ticks
@@ -149,28 +263,22 @@ export function buildStreamState(
     };
   }
 
-  // Reconstruct full stdout content (all chunks concatenated)
-  const fullContent = output.stdout.join('');
-  const fullChars = [...fullContent].length; // spread to count Unicode code points
-
+  // Compute delta: extract only the code points beyond what we've already processed.
+  // computeDelta works per-chunk, avoiding the O(N) stdout.join('') allocation on
+  // every change tick. It also uses codePointSlice at chunk boundaries, which is
+  // UTF-8-safe and prevents U+FFFD corruption for multi-byte characters (emoji, CJK).
+  //
   // prevTotalChars defaults to 0 if the caller constructed the state literal
   // without the totalChars field (backward-compatible — treats as fresh start).
   const prevTotalChars = prev.totalChars ?? 0;
+  const { fullChars, newContent } = computeDelta(output.stdout, prevTotalChars);
 
-  // Delta: extract only the characters (code points) beyond what we've already processed.
-  // Using character-index slicing is UTF-8-safe: it never splits a surrogate pair or
-  // multi-byte sequence the way a raw byte-offset slice would.
-  let newContent: string;
-  if (prevTotalChars > 0 && prevTotalChars < fullChars) {
-    // String.prototype.slice uses UTF-16 code-unit indices; spreading and slicing
-    // handles multi-byte characters correctly across all BMP + astral-plane chars.
-    newContent = [...fullContent].slice(prevTotalChars).join('');
-  } else if (prevTotalChars === 0) {
-    newContent = fullContent;
-  } else {
-    // No new characters
+  if (newContent === '') {
+    // No new characters — update metadata only
     return {
       ...prev,
+      totalBytes: newTotalBytes,
+      totalChars: fullChars,
       taskStatus: nextStatus,
       lastFetchedAt: new Date(),
     };
@@ -209,6 +317,36 @@ export function buildStreamState(
     droppedLines,
     taskStatus: nextStatus,
   };
+}
+
+// ============================================================================
+// Size probe (exported for unit testing)
+// ============================================================================
+
+/**
+ * Cheap size-probe: queries `outputRepo.getSize()` to determine whether the
+ * remote output has changed since the last fetch.
+ *
+ * Returns `true` when the probe confirms output is unchanged (full fetch can be
+ * skipped). Returns `false` in ALL other cases — getSize error, size changed,
+ * or prev.lines is empty (initial fetch must always proceed).
+ *
+ * DECISION: Side effects on probe-hit (updating streamsRef, marking terminal)
+ * are intentionally left to the caller so this function stays pure and
+ * independently testable.
+ */
+export async function trySizeProbe(
+  outputRepo: OutputRepository,
+  taskId: TaskId,
+  prev: OutputStreamState,
+  closing: boolean,
+): Promise<boolean> {
+  if (closing) return true; // closing — treat as "skip fetch"
+  const sizeResult = await outputRepo.getSize(taskId);
+  if (sizeResult.ok && sizeResult.value === prev.totalBytes && prev.lines.length > 0) {
+    return true;
+  }
+  return false;
 }
 
 // ============================================================================
@@ -323,6 +461,11 @@ export function useTaskOutputStream(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskIdsKey]);
 
+  // Convenience accessor: returns the current stream state for a task, or the
+  // initial state if no entry exists yet. Centralises the fallback pattern that
+  // previously appeared 5× in doPoll, each time with a slightly different spread.
+  const getPrev = (id: TaskId): OutputStreamState => streamsRef.current.get(id) ?? INITIAL_STREAM_STATE;
+
   // doPoll reads taskIds/taskStatuses via refs — stable identity across renders.
   const doPoll = useCallback(async (): Promise<void> => {
     if (fetchingRef.current || !enabled) return;
@@ -339,7 +482,7 @@ export function useTaskOutputStream(
       const fetches: Array<Promise<void>> = [];
 
       for (const taskId of currentTaskIds) {
-        const prev = streamsRef.current.get(taskId) ?? { ...INITIAL_STREAM_STATE };
+        const prev = getPrev(taskId);
         const rawStatus = currentTaskStatuses.get(taskId) ?? 'pending';
         const status = classifyStatus(rawStatus);
 
@@ -354,38 +497,39 @@ export function useTaskOutputStream(
 
         const fetchTask = async (): Promise<void> => {
           try {
-            // TODO(perf): OutputRepository.get() returns the entire stdout blob on every poll.
-            // Per-panel this is O(N·T) — N bytes × T ticks. The correct fix is to add
-            // OutputRepository.getSize(taskId): Promise<Result<number, Error>> for a cheap
-            // probe, and OutputRepository.getSince(taskId, byteOffset): Promise<Result<TaskOutput, Error>>
-            // for true incremental reads. Implement in src/implementations/output-repository.ts
-            // and src/core/interfaces.ts, then read taskIdsRef.current[taskId].totalBytes here
-            // to skip the full fetch when size is unchanged.
+            const probeHit = await trySizeProbe(outputRepo, taskId, prev, closingRef.current);
+            if (probeHit) {
+              // Probe confirmed no new output — apply status/timestamp update only
+              if (!closingRef.current) {
+                streamsRef.current.set(taskId, {
+                  ...getPrev(taskId),
+                  taskStatus: status,
+                  lastFetchedAt: new Date(),
+                });
+                if (status === 'terminal') terminalFetchedRef.current.add(taskId);
+              }
+              return;
+            }
+
             const result = await outputRepo.get(taskId);
             if (closingRef.current) return;
 
             if (!result.ok) {
               const errorState: OutputStreamState = {
-                ...(streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE),
+                ...getPrev(taskId),
                 error: result.error.message,
               };
               streamsRef.current.set(taskId, errorState);
               return;
             }
 
-            const nextStatus = status === 'terminal' ? 'terminal' : classifyStatus(rawStatus);
-            const prevState = streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE;
-            const nextState = buildStreamState(prevState, result.value, nextStatus);
-            streamsRef.current.set(taskId, nextState);
+            streamsRef.current.set(taskId, buildStreamState(getPrev(taskId), result.value, status));
 
-            // Mark terminal task as final-fetched
-            if (status === 'terminal') {
-              terminalFetchedRef.current.add(taskId);
-            }
+            if (status === 'terminal') terminalFetchedRef.current.add(taskId);
           } catch (e) {
             if (!closingRef.current) {
               const errorState: OutputStreamState = {
-                ...(streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE),
+                ...getPrev(taskId),
                 error: e instanceof Error ? e.message : String(e),
               };
               streamsRef.current.set(taskId, errorState);
