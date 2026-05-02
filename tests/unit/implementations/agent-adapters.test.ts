@@ -1,5 +1,5 @@
 /**
- * Agent Adapter Tests — Claude, Codex, Gemini
+ * Agent Adapter Tests — Claude, Codex
  *
  * ARCHITECTURE: Tests the spawn arguments, environment stripping, kill
  * behavior, and pre-spawn auth validation for each agent adapter.
@@ -8,7 +8,7 @@
  */
 
 import type { ChildProcess } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs';
+import { mkdirSync, rmSync } from 'fs';
 import os, { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,7 +17,6 @@ import { _testSetConfigDir, saveAgentConfig } from '../../../src/core/configurat
 import { ErrorCode } from '../../../src/core/errors';
 import { ClaudeAdapter } from '../../../src/implementations/claude-adapter';
 import { CodexAdapter } from '../../../src/implementations/codex-adapter';
-import { GeminiAdapter, GeminiBasePromptCache } from '../../../src/implementations/gemini-adapter';
 
 // Mock child_process.spawn
 vi.mock('child_process', () => ({
@@ -198,44 +197,6 @@ describe('CodexAdapter', () => {
   });
 });
 
-describe('GeminiAdapter', () => {
-  const { getAdapter } = setupAdapter(() => new GeminiAdapter(testConfig, 'gemini'));
-
-  it('should have provider set to gemini', () => {
-    expect(getAdapter().provider).toBe('gemini');
-  });
-
-  it('should spawn with --yolo --prompt flags for non-interactive auto-accept mode', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    const result = getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    expect(result.ok).toBe(true);
-    const [command, args] = mockSpawn.mock.calls[0];
-    expect(command).toBe('gemini');
-    expect(args).toContain('--yolo');
-    expect(args).toContain('--prompt');
-    expect(args).toContain('test prompt');
-  });
-
-  it('should preserve GEMINI_ env vars including API key (no known nesting indicators)', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    process.env.GEMINI_API_KEY = 'secret';
-    try {
-      getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-      const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-      expect(spawnOptions.env.GEMINI_API_KEY).toBe('secret');
-      expect(spawnOptions.env.AUTOBEAT_WORKER).toBe('true');
-    } finally {
-      delete process.env.GEMINI_API_KEY;
-    }
-  });
-});
-
 // ============================================================================
 // BaseAgentAdapter kill/dispose Tests
 // ============================================================================
@@ -317,40 +278,6 @@ describe('BaseAgentAdapter kill', () => {
 });
 
 // ============================================================================
-// GeminiAdapter env Tests
-// ============================================================================
-
-describe('GeminiAdapter env', () => {
-  const { getAdapter } = setupAdapter(() => new GeminiAdapter(testConfig, 'gemini'));
-
-  it('should set GEMINI_SANDBOX=false in spawn env', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-    expect(spawnOptions.env.GEMINI_SANDBOX).toBe('false');
-  });
-
-  it("should allow user's GEMINI_SANDBOX=true to override adapter default", () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    process.env.GEMINI_SANDBOX = 'true';
-    try {
-      getAdapter().spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-      const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-      // User's env (cleanEnv) spreads after additionalEnv, so user wins
-      expect(spawnOptions.env.GEMINI_SANDBOX).toBe('true');
-    } finally {
-      delete process.env.GEMINI_SANDBOX;
-    }
-  });
-});
-
-// ============================================================================
 // Pre-Spawn Auth Validation Tests
 // ============================================================================
 
@@ -422,35 +349,6 @@ describe('Pre-spawn auth validation', () => {
     // Verify the stored key was injected into spawn env
     const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
     expect(spawnOptions.env.OPENAI_API_KEY).toBe('sk-stored-key');
-
-    adapter.dispose();
-  });
-
-  it('should pass auth when CLI is in PATH (login assumed)', () => {
-    // CLI found
-    mockIsCommandInPath.mockReturnValue(true);
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    const adapter = new GeminiAdapter(testConfig, 'gemini');
-    const result = adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    expect(result.ok).toBe(true);
-    adapter.dispose();
-  });
-
-  it('should include actionable hints when CLI not in PATH', () => {
-    mockIsCommandInPath.mockReturnValue(false);
-
-    const adapter = new GeminiAdapter(testConfig, 'gemini');
-    const result = adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.code).toBe(ErrorCode.AGENT_MISCONFIGURED);
-      expect(result.error.message).toContain('gemini');
-      expect(result.error.message).toContain('not found in PATH');
-    }
 
     adapter.dispose();
   });
@@ -571,18 +469,6 @@ describe('baseUrl passthrough', () => {
     adapter.dispose();
   });
 
-  it('GeminiAdapter: should inject GEMINI_BASE_URL from config', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-    saveAgentConfig('gemini', 'baseUrl', 'https://gemini-proxy.example.com');
-
-    const adapter = new GeminiAdapter(testConfig, 'gemini');
-    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-    expect(spawnOptions.env.GEMINI_BASE_URL).toBe('https://gemini-proxy.example.com');
-    adapter.dispose();
-  });
 });
 
 // ============================================================================
@@ -686,27 +572,6 @@ describe('model passthrough', () => {
     adapter.dispose();
   });
 
-  it('GeminiAdapter: should include --model in args when model provided', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    const adapter = new GeminiAdapter(testConfig, 'gemini');
-    adapter.spawn({
-      prompt: 'test prompt',
-      workingDirectory: '/workspace',
-      taskId: 'task-1',
-      model: 'gemini-2.0-flash',
-    });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).toContain('--model');
-    expect(args).toContain('gemini-2.0-flash');
-    // --model should appear before --prompt
-    const modelIdx = (args as string[]).indexOf('--model');
-    const promptIdx = (args as string[]).indexOf('--prompt');
-    expect(modelIdx).toBeLessThan(promptIdx);
-    adapter.dispose();
-  });
 });
 
 // ============================================================================
@@ -841,7 +706,7 @@ describe('system prompt passthrough', () => {
     mkdirSync(testDir, { recursive: true });
     restoreConfig = _testSetConfigDir(testDir);
     mockIsCommandInPath.mockReturnValue(true);
-    // Redirect os.homedir() to our temp directory so Gemini cache reads are isolated
+    // Redirect os.homedir() to our temp directory for system prompt path isolation
     homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(testDir);
   });
 
@@ -922,233 +787,5 @@ describe('system prompt passthrough', () => {
     );
   });
 
-  // ---- Gemini: no cache (fallback to prependToPrompt) -----------------------
-
-  it('GeminiAdapter: without base cache — falls back to prependToPrompt (systemPrompt prepended to prompt arg)', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    // No cache file created — fallback path
-    const adapter = new GeminiAdapter(testConfig, 'gemini');
-    const result = adapter.spawn({
-      prompt: 'do the work',
-      workingDirectory: '/workspace',
-      taskId: 'task-fallback',
-      systemPrompt: 'Be careful',
-    });
-    consoleSpy.mockRestore();
-    adapter.dispose();
-
-    expect(result.ok).toBe(true);
-    const [, args] = mockSpawn.mock.calls[0];
-    // --prompt arg value should contain both systemPrompt and original prompt
-    const promptIdx = (args as string[]).indexOf('--prompt');
-    expect(promptIdx).toBeGreaterThan(-1);
-    const promptValue = (args as string[])[promptIdx + 1];
-    expect(promptValue).toContain('Be careful');
-    expect(promptValue).toContain('do the work');
-    // GEMINI_SYSTEM_MD env var should NOT be set in fallback
-    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-    expect(spawnOptions.env.GEMINI_SYSTEM_MD).toBeUndefined();
-  });
-
-  // ---- Gemini: with cache (GEMINI_SYSTEM_MD injection) ---------------------
-
-  it('GeminiAdapter: with valid base cache — sets GEMINI_SYSTEM_MD env var with combined file', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    // Create the base cache file that GeminiAdapter looks for
-    const cacheDir = path.join(testDir, '.autobeat', 'system-prompts');
-    mkdirSync(cacheDir, { recursive: true });
-    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
-    writeFileSync(baseCachePath, 'Base Gemini system prompt content', 'utf8');
-
-    const adapter = new GeminiAdapter(testConfig, 'gemini');
-    const result = adapter.spawn({
-      prompt: 'do the work',
-      workingDirectory: '/workspace',
-      taskId: 'task-with-cache',
-      systemPrompt: 'Additional instructions',
-    });
-    adapter.dispose();
-
-    expect(result.ok).toBe(true);
-    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-    // GEMINI_SYSTEM_MD must be set to the task-scoped combined file
-    expect(spawnOptions.env.GEMINI_SYSTEM_MD).toBeDefined();
-    expect(spawnOptions.env.GEMINI_SYSTEM_MD).toContain('task-with-cache');
-    // The --prompt arg should be the original prompt (not prepended)
-    const [, args] = mockSpawn.mock.calls[0];
-    const promptIdx = (args as string[]).indexOf('--prompt');
-    const promptValue = (args as string[])[promptIdx + 1];
-    expect(promptValue).toBe('do the work');
-    expect(promptValue).not.toContain('Additional instructions');
-  });
-
-  it('GeminiAdapter: without systemPrompt — no GEMINI_SYSTEM_MD or prepend (regression guard)', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    const adapter = new GeminiAdapter(testConfig, 'gemini');
-    adapter.spawn({ prompt: 'do the work', workingDirectory: '/workspace', taskId: 'task-no-sp' });
-    adapter.dispose();
-
-    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-    expect(spawnOptions.env.GEMINI_SYSTEM_MD).toBeUndefined();
-    const [, args] = mockSpawn.mock.calls[0];
-    const promptIdx = (args as string[]).indexOf('--prompt');
-    const promptValue = (args as string[])[promptIdx + 1];
-    expect(promptValue).toBe('do the work');
-  });
 });
 
-// ============================================================================
-// GeminiBasePromptCache Unit Tests
-// ============================================================================
-
-describe('GeminiBasePromptCache', () => {
-  let cacheDir: string;
-  let cache: GeminiBasePromptCache;
-  let consoleSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    cacheDir = path.join(tmpdir(), `gemini-cache-test-${Date.now()}`);
-    mkdirSync(cacheDir, { recursive: true });
-    cache = new GeminiBasePromptCache(cacheDir);
-    consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    consoleSpy.mockRestore();
-    rmSync(cacheDir, { recursive: true, force: true });
-  });
-
-  it('returns null when no gemini-base.md exists (no cache file)', () => {
-    const result = cache.buildCombinedFile('user system prompt', path.join(cacheDir, 'task-1.md'));
-    expect(result).toBeNull();
-  });
-
-  it('returns null when gemini-base.md is stale (older than 30 days)', () => {
-    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
-    writeFileSync(baseCachePath, 'base content', 'utf8');
-
-    // Backdate the file's mtime to 31 days ago
-    const thirtyOneDaysAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
-    utimesSync(baseCachePath, thirtyOneDaysAgo, thirtyOneDaysAgo);
-
-    const result = cache.buildCombinedFile('user system prompt', path.join(cacheDir, 'task-stale.md'));
-    expect(result).toBeNull();
-  });
-
-  it('returns null when combined prompt exceeds 64KB size guard', () => {
-    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
-    // Write a base prompt that fills most of the 64KB budget
-    const bigBase = 'x'.repeat(60 * 1024);
-    writeFileSync(baseCachePath, bigBase, 'utf8');
-
-    const bigUserPrompt = 'y'.repeat(10 * 1024); // combined exceeds 64KB
-    const result = cache.buildCombinedFile(bigUserPrompt, path.join(cacheDir, 'task-big.md'));
-    expect(result).toBeNull();
-  });
-
-  it('writes combined file and returns outputPath on cache hit', () => {
-    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
-    writeFileSync(baseCachePath, 'Base instructions', 'utf8');
-
-    const outputPath = path.join(cacheDir, 'task-abc.md');
-    const result = cache.buildCombinedFile('User instructions', outputPath);
-
-    expect(result).toBe(outputPath);
-    const written = readFileSync(outputPath, 'utf8');
-    expect(written).toContain('Base instructions');
-    expect(written).toContain('User instructions');
-  });
-
-  it('returns in-memory cache hit on second call without re-reading disk', () => {
-    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
-    writeFileSync(baseCachePath, 'Base instructions', 'utf8');
-
-    const out1 = path.join(cacheDir, 'task-1.md');
-    const out2 = path.join(cacheDir, 'task-2.md');
-
-    // First call loads from disk
-    cache.buildCombinedFile('prompt', out1);
-
-    // Overwrite disk file — in-memory cache should still be used
-    writeFileSync(baseCachePath, 'CHANGED base', 'utf8');
-
-    // Second call should use cached in-memory value (original "Base instructions")
-    const result2 = cache.buildCombinedFile('prompt', out2);
-    expect(result2).toBe(out2);
-    const written2 = readFileSync(out2, 'utf8');
-    expect(written2).toContain('Base instructions');
-    expect(written2).not.toContain('CHANGED base');
-  });
-
-  it('invalidate() causes next buildCombinedFile to re-read from disk', () => {
-    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
-    writeFileSync(baseCachePath, 'Original base', 'utf8');
-
-    const out1 = path.join(cacheDir, 'task-before.md');
-    cache.buildCombinedFile('prompt', out1);
-
-    // Overwrite disk then invalidate
-    writeFileSync(baseCachePath, 'Updated base', 'utf8');
-    cache.invalidate();
-
-    const out2 = path.join(cacheDir, 'task-after.md');
-    const result2 = cache.buildCombinedFile('prompt', out2);
-    expect(result2).toBe(out2);
-    const written2 = readFileSync(out2, 'utf8');
-    expect(written2).toContain('Updated base');
-  });
-
-  it('buildCombinedFile rejects outputPath outside cacheDir (path traversal)', () => {
-    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
-    writeFileSync(baseCachePath, 'Base instructions', 'utf8');
-
-    // Attempt to write outside cacheDir via traversal
-    const outsidePath = path.join(path.dirname(cacheDir), 'escaped.md');
-    const result = cache.buildCombinedFile('User prompt', outsidePath);
-
-    expect(result).toBeNull();
-    expect(existsSync(outsidePath)).toBe(false);
-  });
-
-  it('cleanupTaskFile removes the task file when it exists', () => {
-    const taskId = 'task-to-delete';
-    const taskFile = path.join(cacheDir, `${taskId}.md`);
-    writeFileSync(taskFile, 'content', 'utf8');
-
-    cache.cleanupTaskFile(taskId);
-
-    expect(existsSync(taskFile)).toBe(false);
-  });
-
-  it('cleanupTaskFile is non-fatal when file does not exist (missing file)', () => {
-    expect(() => cache.cleanupTaskFile('nonexistent-task-id')).not.toThrow();
-  });
-
-  it('cleanupTaskFile rejects path traversal attempts', () => {
-    // Create a file one level above cacheDir that a traversal would target
-    const outsideFile = path.join(path.dirname(cacheDir), 'sensitive.md');
-    writeFileSync(outsideFile, 'sensitive', 'utf8');
-
-    try {
-      // Attempt traversal: taskId containing ../ to escape cacheDir
-      const traversalId = `../sensitive`;
-      cache.cleanupTaskFile(traversalId);
-
-      // File should still exist — traversal was blocked
-      expect(existsSync(outsideFile)).toBe(true);
-    } finally {
-      try {
-        rmSync(outsideFile, { force: true });
-      } catch {
-        /* best effort */
-      }
-    }
-  });
-});

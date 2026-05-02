@@ -562,7 +562,7 @@ describe('ConfigurationSchema - defaultAgent', () => {
   });
 
   it('should accept all valid agent providers', () => {
-    for (const agent of ['claude', 'codex', 'gemini']) {
+    for (const agent of ['claude', 'codex']) {
       const result = ConfigurationSchema.safeParse({ defaultAgent: agent });
       expect(result.success).toBe(true);
     }
@@ -603,9 +603,9 @@ describe('loadConfiguration - AUTOBEAT_DEFAULT_AGENT env var', () => {
   });
 
   it('should load defaultAgent from AUTOBEAT_DEFAULT_AGENT env var', () => {
-    process.env.AUTOBEAT_DEFAULT_AGENT = 'gemini';
+    process.env.AUTOBEAT_DEFAULT_AGENT = 'codex';
     const config = loadConfiguration();
-    expect(config.defaultAgent).toBe('gemini');
+    expect(config.defaultAgent).toBe('codex');
   });
 
   it('should ignore invalid AUTOBEAT_DEFAULT_AGENT value', () => {

@@ -340,10 +340,10 @@ describe('buildOrchestratorPrompt - non-regression snapshot', () => {
   it('threads agent/model flags into systemPrompt and operationalContract', () => {
     const { systemPrompt, operationalContract } = buildOrchestratorPrompt({
       ...params,
-      agent: 'gemini',
-      model: 'gemini-2.5-pro',
+      agent: 'codex',
+      model: 'gpt-4o',
     });
-    expect(systemPrompt).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
-    expect(operationalContract).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
+    expect(systemPrompt).toContain('beat run --agent codex --model gpt-4o "<prompt>"');
+    expect(operationalContract).toContain('beat run --agent codex --model gpt-4o "<prompt>"');
   });
 });

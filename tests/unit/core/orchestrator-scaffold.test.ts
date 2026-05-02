@@ -150,14 +150,14 @@ describe('scaffoldCustomOrchestrator', () => {
   it('threads both agent and model flags into delegation snippet', () => {
     const result = scaffoldCustomOrchestrator({
       goal: 'Test goal',
-      agent: 'gemini',
-      model: 'gemini-2.5-pro',
+      agent: 'codex',
+      model: 'gpt-4o',
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(result.value.instructions.delegation).toContain('--agent gemini --model gemini-2.5-pro');
+    expect(result.value.instructions.delegation).toContain('--agent codex --model gpt-4o');
   });
 
   it('includes state file path in state management snippet', () => {

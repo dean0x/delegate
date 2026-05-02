@@ -346,7 +346,7 @@ describe('SQLiteTaskRepository', () => {
     });
 
     it('should return model in findAll results', async () => {
-      const task = createTestTask({ id: 'findall-model-task', model: 'gemini-2.0-flash' });
+      const task = createTestTask({ id: 'findall-model-task', model: 'o3-mini' });
       await repo.save(task);
 
       const result = await repo.findAll();
@@ -354,7 +354,7 @@ describe('SQLiteTaskRepository', () => {
       if (!result.ok) return;
       const found = result.value.find((t) => t.id === 'findall-model-task');
       expect(found).toBeDefined();
-      expect(found!.model).toBe('gemini-2.0-flash');
+      expect(found!.model).toBe('o3-mini');
     });
 
     it('should preserve model on tasks without model (backward compat)', async () => {

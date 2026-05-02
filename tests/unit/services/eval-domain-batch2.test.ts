@@ -367,7 +367,7 @@ describe('AgentExitConditionEvaluator — dual prompt directive', () => {
     const loopRepo = createLoopRepo();
     const evaluator = new AgentExitConditionEvaluator(eventBus, outputRepo, loopRepo, logger);
 
-    const loop = createTestLoop({ agent: 'gemini', strategy: LoopStrategy.OPTIMIZE });
+    const loop = createTestLoop({ agent: 'codex', strategy: LoopStrategy.OPTIMIZE });
     const { capturedTask } = await captureEvalTask(evaluator, loop, TaskId('task-p3'), eventBus);
 
     expect(capturedTask?.prompt).toContain('LAST LINE');

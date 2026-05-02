@@ -18,16 +18,16 @@ import { AutobeatError, ErrorCode } from '../../../src/core/errors';
 
 describe('Agent Types (v0.5.0)', () => {
   describe('AGENT_PROVIDERS constant', () => {
-    it('should contain all three supported agents', () => {
-      expect(AGENT_PROVIDERS).toEqual(['claude', 'codex', 'gemini']);
+    it('should contain all supported agents', () => {
+      expect(AGENT_PROVIDERS).toEqual(['claude', 'codex']);
     });
 
     it('should be frozen (immutable)', () => {
       expect(Object.isFrozen(AGENT_PROVIDERS)).toBe(true);
     });
 
-    it('should have exactly 3 providers', () => {
-      expect(AGENT_PROVIDERS.length).toBe(3);
+    it('should have exactly 2 providers', () => {
+      expect(AGENT_PROVIDERS.length).toBe(2);
     });
   });
 
@@ -39,9 +39,9 @@ describe('Agent Types (v0.5.0)', () => {
     });
 
     it('should return config default when no task agent', () => {
-      const result = resolveDefaultAgent(undefined, 'gemini');
+      const result = resolveDefaultAgent(undefined, 'codex');
       expect(result.ok).toBe(true);
-      if (result.ok) expect(result.value).toBe('gemini');
+      if (result.ok) expect(result.value).toBe('codex');
     });
 
     it('should return error when neither is set', () => {
@@ -58,9 +58,9 @@ describe('Agent Types (v0.5.0)', () => {
     });
 
     it('should prefer task agent over config default', () => {
-      const result = resolveDefaultAgent('gemini', 'claude');
+      const result = resolveDefaultAgent('codex', 'claude');
       expect(result.ok).toBe(true);
-      if (result.ok) expect(result.value).toBe('gemini');
+      if (result.ok) expect(result.value).toBe('codex');
     });
   });
 
@@ -85,7 +85,7 @@ describe('Agent Types (v0.5.0)', () => {
     it('should return false for case-mismatched names', () => {
       expect(isAgentProvider('Claude')).toBe(false);
       expect(isAgentProvider('CODEX')).toBe(false);
-      expect(isAgentProvider('Gemini')).toBe(false);
+      expect(isAgentProvider('Codex')).toBe(false);
     });
 
     it('should return false for provider names with extra whitespace', () => {
@@ -110,13 +110,11 @@ describe('Agent Types (v0.5.0)', () => {
     it('should map correct env vars per provider', () => {
       expect(AGENT_AUTH.claude.envVars).toContain('ANTHROPIC_API_KEY');
       expect(AGENT_AUTH.codex.envVars).toContain('OPENAI_API_KEY');
-      expect(AGENT_AUTH.gemini.envVars).toContain('GEMINI_API_KEY');
     });
 
     it('should map correct CLI commands per provider', () => {
       expect(AGENT_AUTH.claude.command).toBe('claude');
       expect(AGENT_AUTH.codex.command).toBe('codex');
-      expect(AGENT_AUTH.gemini.command).toBe('gemini');
     });
 
     it('should be frozen (immutable)', () => {
@@ -170,7 +168,7 @@ describe('Agent Types (v0.5.0)', () => {
     });
 
     it('should return all three hint options when not configured', () => {
-      const status = checkAgentAuth('gemini', undefined, {});
+      const status = checkAgentAuth('codex', undefined, {});
       if (!status.ready) {
         expect(status.hint).toContain('Log in:');
         expect(status.hint).toContain('Set API key:');

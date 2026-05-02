@@ -236,11 +236,11 @@ describe('TaskManagerService', () => {
       });
 
       it('should use config defaultAgent when task does not specify one', async () => {
-        const geminiConfig = new ConfigFactory().withDefaultAgent('gemini').build();
+        const codexConfig = new ConfigFactory().withDefaultAgent('codex').build();
         const svc = new TaskManagerService({
           eventBus: eventBus as unknown as EventBus,
           logger,
-          config: geminiConfig,
+          config: codexConfig,
           taskRepo: taskRepo as unknown as TaskRepository,
           outputCapture: outputCapture as unknown as OutputCapture,
           outputRepository: outputRepository as unknown as OutputRepository,
@@ -250,7 +250,7 @@ describe('TaskManagerService', () => {
 
         expect(result.ok).toBe(true);
         if (!result.ok) return;
-        expect(result.value.agent).toBe('gemini');
+        expect(result.value.agent).toBe('codex');
       });
 
       it('should prefer explicit task agent over config default', async () => {

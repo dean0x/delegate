@@ -1018,7 +1018,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
     });
 
     it('should accept all valid agent values', async () => {
-      const agents = ['claude', 'codex', 'gemini'] as const;
+      const agents = ['claude', 'codex'] as const;
 
       for (const agent of agents) {
         mockTaskManager.reset();
@@ -1101,7 +1101,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
       const mockRegistry = {
         get: vi.fn(),
         has: vi.fn().mockReturnValue(true),
-        list: vi.fn().mockReturnValue(['claude', 'codex', 'gemini']),
+        list: vi.fn().mockReturnValue(['claude', 'codex']),
         dispose: vi.fn(),
       };
 

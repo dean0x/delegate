@@ -116,7 +116,7 @@ describe('loadProxyConfig', () => {
       JSON.stringify({
         agents: {
           claude: {
-            translate: 'gemini-native',
+            translate: 'unsupported-target',
             baseUrl: 'https://api.example.com',
             apiKey: 'key',
             model: 'model',

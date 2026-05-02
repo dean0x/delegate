@@ -433,7 +433,7 @@ describe('Domain Models - REAL Behavior Tests', () => {
     });
 
     it('should accept all valid agent providers (v0.5.0)', () => {
-      const agents = ['claude', 'codex', 'gemini'] as const;
+      const agents = ['claude', 'codex'] as const;
 
       for (const agent of agents) {
         const task = createTask({
@@ -449,11 +449,11 @@ describe('Domain Models - REAL Behavior Tests', () => {
     it('should freeze task with agent field (v0.5.0)', () => {
       const task = createTask({
         prompt: 'frozen agent task',
-        agent: 'gemini',
+        agent: 'codex',
       });
 
       expect(Object.isFrozen(task)).toBe(true);
-      expect(task.agent).toBe('gemini');
+      expect(task.agent).toBe('codex');
     });
 
     it('should propagate model field from request to task', () => {

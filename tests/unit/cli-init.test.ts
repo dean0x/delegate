@@ -93,7 +93,7 @@ describe('parseInitArgs', () => {
   });
 
   it('should parse combined flags', () => {
-    expect(parseInitArgs(['-a', 'gemini', '-y'])).toEqual({ agent: 'gemini', yes: true });
+    expect(parseInitArgs(['-a', 'codex', '-y'])).toEqual({ agent: 'codex', yes: true });
   });
 
   it('should parse --install-skills flag', () => {
@@ -105,7 +105,7 @@ describe('parseInitArgs', () => {
   });
 
   it('should parse --skills-agents=value syntax', () => {
-    expect(parseInitArgs(['--skills-agents=claude,gemini'])).toEqual({ skillsAgents: 'claude,gemini' });
+    expect(parseInitArgs(['--skills-agents=claude,codex'])).toEqual({ skillsAgents: 'claude,codex' });
   });
 
   it('should parse combined --agent --install-skills --skills-agents', () => {
@@ -128,8 +128,8 @@ describe('parseSkillsAgents', () => {
   });
 
   it('should parse valid comma-separated agents', () => {
-    const result = parseSkillsAgents('claude,codex,gemini');
-    expect(result).toEqual({ ok: true, value: ['claude', 'codex', 'gemini'] });
+    const result = parseSkillsAgents('claude,codex');
+    expect(result).toEqual({ ok: true, value: ['claude', 'codex'] });
   });
 
   it('should trim whitespace', () => {
@@ -298,7 +298,7 @@ describe('runInit — interactive', () => {
     let savedAgent: unknown;
 
     const deps = makeDeps({
-      selectAgent: async () => 'gemini',
+      selectAgent: async () => 'codex',
       saveConfig(key, value) {
         if (key === 'defaultAgent') savedAgent = value;
         return { ok: true };
@@ -307,8 +307,8 @@ describe('runInit — interactive', () => {
 
     const result = await runInit({}, deps);
 
-    expect(result).toEqual({ code: 0, agent: 'gemini', status: expect.objectContaining({ provider: 'gemini' }) });
-    expect(savedAgent).toBe('gemini');
+    expect(result).toEqual({ code: 0, agent: 'codex', status: expect.objectContaining({ provider: 'codex' }) });
+    expect(savedAgent).toBe('codex');
   });
 
   it('should pass auth statuses to selectAgent', async () => {
@@ -372,16 +372,16 @@ describe('runInit — skill install (interactive)', () => {
     let receivedDefault: AgentProvider | undefined;
 
     const deps = makeSkillDeps({
-      selectAgent: async () => 'gemini',
+      selectAgent: async () => 'codex',
       async selectSkillAgents(defaultAgent) {
         receivedDefault = defaultAgent;
-        return ['gemini'];
+        return ['codex'];
       },
     });
 
     await runInit({}, deps);
 
-    expect(receivedDefault).toBe('gemini');
+    expect(receivedDefault).toBe('codex');
   });
 
   it('should skip skill install when user declines confirm', async () => {
@@ -464,7 +464,7 @@ describe('runInit — skill install (interactive)', () => {
     let copiedAgents: readonly AgentProvider[] | undefined;
 
     const deps = makeSkillDeps({
-      selectSkillAgents: async () => ['claude', 'codex', 'gemini'],
+      selectSkillAgents: async () => ['claude', 'codex'],
       copySkills(agents) {
         copiedAgents = agents;
         return {
@@ -472,7 +472,6 @@ describe('runInit — skill install (interactive)', () => {
           value: [
             '/project/.claude/skills/autobeat',
             '/project/.agents/skills/autobeat',
-            '/project/.gemini/skills/autobeat',
           ],
         };
       },
@@ -480,8 +479,8 @@ describe('runInit — skill install (interactive)', () => {
 
     const result = await runInit({}, deps);
 
-    expect(copiedAgents).toEqual(['claude', 'codex', 'gemini']);
-    expect('skillPaths' in result && result.skillPaths).toHaveLength(3);
+    expect(copiedAgents).toEqual(['claude', 'codex']);
+    expect('skillPaths' in result && result.skillPaths).toHaveLength(2);
   });
 
   it('should return error when copy fails', async () => {
@@ -600,10 +599,6 @@ describe('AGENT_SKILL_DIRS', () => {
     expect(AGENT_SKILL_DIRS.codex).toEqual(['.agents/skills/autobeat']);
   });
 
-  it('should map Gemini to both .gemini/ and .agents/', () => {
-    expect(AGENT_SKILL_DIRS.gemini).toEqual(['.gemini/skills/autobeat', '.agents/skills/autobeat']);
-  });
-
   it('should have non-empty entries for all providers', () => {
     for (const provider of AGENT_PROVIDERS) {
       expect(AGENT_SKILL_DIRS[provider].length).toBeGreaterThan(0);
@@ -621,18 +616,10 @@ describe('getSkillTargetDirs', () => {
     expect(dirs).toEqual(['/project/.claude/skills/autobeat']);
   });
 
-  it('should deduplicate .agents/ when codex and gemini both target it', () => {
-    const dirs = getSkillTargetDirs(['codex', 'gemini'], '/project');
-    // codex → .agents/, gemini → .gemini/ + .agents/ (deduped) → 2 dirs, not 3
+  it('should return 2 unique dirs for all agents', () => {
+    const dirs = getSkillTargetDirs(['claude', 'codex'], '/project');
     expect(dirs).toHaveLength(2);
-    expect(dirs).toContain('/project/.agents/skills/autobeat');
-    expect(dirs).toContain('/project/.gemini/skills/autobeat');
-  });
-
-  it('should return 3 unique dirs for all three agents', () => {
-    const dirs = getSkillTargetDirs(['claude', 'codex', 'gemini'], '/project');
-    expect(dirs).toHaveLength(3);
-    expect(new Set(dirs).size).toBe(3);
+    expect(new Set(dirs).size).toBe(2);
   });
 
   it('should return empty array for empty agents', () => {

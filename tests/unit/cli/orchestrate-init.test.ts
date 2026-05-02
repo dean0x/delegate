@@ -77,11 +77,11 @@ describe('parseOrchestrateInitArgs', () => {
     });
 
     it('parses -a shorthand', () => {
-      const result = parseOrchestrateInitArgs(['goal', '-a', 'gemini']);
+      const result = parseOrchestrateInitArgs(['goal', '-a', 'codex']);
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.value.agent).toBe('gemini');
+      expect(result.value.agent).toBe('codex');
     });
 
     it('rejects unknown agent', () => {
@@ -103,11 +103,11 @@ describe('parseOrchestrateInitArgs', () => {
     });
 
     it('parses -m shorthand', () => {
-      const result = parseOrchestrateInitArgs(['goal', '-m', 'gemini-2.5-pro']);
+      const result = parseOrchestrateInitArgs(['goal', '-m', 'o3-mini']);
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.value.model).toBe('gemini-2.5-pro');
+      expect(result.value.model).toBe('o3-mini');
     });
   });
 

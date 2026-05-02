@@ -2136,7 +2136,7 @@ describe('CLI - Task Completion Lifecycle', () => {
 
   describe('Agent flag parsing (v0.5.0)', () => {
     it('should accept valid --agent flag values', () => {
-      for (const agent of ['claude', 'codex', 'gemini']) {
+      for (const agent of ['claude', 'codex']) {
         expect(isAgentProvider(agent)).toBe(true);
       }
     });
@@ -2164,7 +2164,7 @@ describe('CLI - Task Completion Lifecycle', () => {
     });
 
     it('should parse -a shorthand flag', () => {
-      const args = ['analyze code', '-a', 'gemini'];
+      const args = ['analyze code', '-a', 'codex'];
 
       let agentValue: string | undefined;
       for (let i = 0; i < args.length; i++) {
@@ -2176,7 +2176,7 @@ describe('CLI - Task Completion Lifecycle', () => {
         }
       }
 
-      expect(agentValue).toBe('gemini');
+      expect(agentValue).toBe('codex');
     });
   });
 
@@ -2187,7 +2187,7 @@ describe('CLI - Task Completion Lifecycle', () => {
     });
 
     it('should list all AGENT_PROVIDERS', () => {
-      expect(AGENT_PROVIDERS).toEqual(['claude', 'codex', 'gemini']);
+      expect(AGENT_PROVIDERS).toEqual(['claude', 'codex']);
     });
   });
 

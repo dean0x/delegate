@@ -23,14 +23,12 @@ function createMockAdapter(provider: AgentProvider): AgentAdapter {
 describe('InMemoryAgentRegistry', () => {
   let claudeAdapter: AgentAdapter;
   let codexAdapter: AgentAdapter;
-  let geminiAdapter: AgentAdapter;
   let registry: InMemoryAgentRegistry;
 
   beforeEach(() => {
     claudeAdapter = createMockAdapter('claude');
     codexAdapter = createMockAdapter('codex');
-    geminiAdapter = createMockAdapter('gemini');
-    registry = new InMemoryAgentRegistry([claudeAdapter, codexAdapter, geminiAdapter]);
+    registry = new InMemoryAgentRegistry([claudeAdapter, codexAdapter]);
   });
 
   afterEach(() => {
@@ -48,7 +46,7 @@ describe('InMemoryAgentRegistry', () => {
     });
 
     it('should return the correct adapter for each registered provider', () => {
-      for (const provider of ['claude', 'codex', 'gemini'] as const) {
+      for (const provider of ['claude', 'codex'] as const) {
         const result = registry.get(provider);
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -72,7 +70,6 @@ describe('InMemoryAgentRegistry', () => {
     it('should return true for registered providers', () => {
       expect(registry.has('claude')).toBe(true);
       expect(registry.has('codex')).toBe(true);
-      expect(registry.has('gemini')).toBe(true);
     });
 
     it('should return false for unregistered provider in empty registry', () => {
@@ -85,7 +82,7 @@ describe('InMemoryAgentRegistry', () => {
     it('should return all registered provider names sorted', () => {
       const providers = registry.list();
 
-      expect(providers).toEqual(['claude', 'codex', 'gemini']);
+      expect(providers).toEqual(['claude', 'codex']);
     });
 
     it('should return empty array for empty registry', () => {
@@ -105,7 +102,6 @@ describe('InMemoryAgentRegistry', () => {
 
       expect(claudeAdapter.dispose).toHaveBeenCalledOnce();
       expect(codexAdapter.dispose).toHaveBeenCalledOnce();
-      expect(geminiAdapter.dispose).toHaveBeenCalledOnce();
     });
 
     it('should clear all adapters after dispose', () => {

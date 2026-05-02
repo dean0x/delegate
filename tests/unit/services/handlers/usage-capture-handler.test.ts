@@ -143,18 +143,6 @@ describe('UsageCaptureHandler', () => {
       expect(usageResult.value).toBeNull();
     });
 
-    it('skips capture for gemini agent', async () => {
-      const task = createTask({ prompt: 'gemini task', agent: 'gemini' });
-      await taskRepo.save(task);
-
-      await eventBus.emit('TaskCompleted', { taskId: task.id, exitCode: 0, duration: 500 });
-      await flushEventLoop();
-
-      const usageResult = await usageRepo.get(task.id);
-      expect(usageResult.ok).toBe(true);
-      if (!usageResult.ok) return;
-      expect(usageResult.value).toBeNull();
-    });
   });
 
   describe('resilience — best-effort capture', () => {

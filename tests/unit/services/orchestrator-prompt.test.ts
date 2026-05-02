@@ -115,10 +115,10 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
     it('should thread both --agent and --model flags when both are set', () => {
       const { systemPrompt } = buildOrchestratorPrompt({
         ...defaultParams,
-        agent: 'gemini',
-        model: 'gemini-2.5-pro',
+        agent: 'codex',
+        model: 'gpt-4o',
       });
-      expect(systemPrompt).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
+      expect(systemPrompt).toContain('beat run --agent codex --model gpt-4o "<prompt>"');
     });
 
     it('should thread flags into loop delegation examples too', () => {
@@ -154,10 +154,10 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
     it('should thread --agent and --model flags into delegation command', () => {
       const { operationalContract } = buildOrchestratorPrompt({
         ...defaultParams,
-        agent: 'gemini',
-        model: 'gemini-2.5-pro',
+        agent: 'codex',
+        model: 'gpt-4o',
       });
-      expect(operationalContract).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
+      expect(operationalContract).toContain('beat run --agent codex --model gpt-4o "<prompt>"');
     });
 
     it('should contain failure signal', () => {
