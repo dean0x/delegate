@@ -16,8 +16,8 @@
  * loadProxyConfig() returns null when translate is not set.
  *
  * DECISION: One ProxyManager per agent provider. Currently only 'claude' is
- * supported (Anthropic Messages API ↔ OpenAI Chat Completions). Codex/Gemini
- * use their own API formats and do not need translation.
+ * supported (Anthropic Messages API ↔ OpenAI Chat Completions). Codex
+ * uses its own API format and does not need translation.
  */
 
 import type { AgentProvider } from '../../core/agents.js';

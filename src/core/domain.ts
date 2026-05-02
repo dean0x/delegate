@@ -115,8 +115,7 @@ export interface Task {
   readonly jsonSchema?: string;
 
   // System prompt override: injected into agent via per-agent mechanism
-  // Claude: --append-system-prompt (preserves defaults); Codex: -c developer_instructions;
-  // Gemini: GEMINI_SYSTEM_MD env var (combined with base prompt).
+  // Claude: --append-system-prompt (preserves defaults); Codex: -c developer_instructions.
   readonly systemPrompt?: string;
 
   // Orchestration attribution (v1.3.0): orchestration that spawned this task
@@ -210,7 +209,7 @@ export interface TaskRequest {
   readonly jsonSchema?: string;
 
   // System prompt override: injected into agent via per-agent mechanism
-  // Claude: --append-system-prompt; Codex: -c developer_instructions; Gemini: GEMINI_SYSTEM_MD.
+  // Claude: --append-system-prompt; Codex: -c developer_instructions.
   readonly systemPrompt?: string;
 
   // Orchestration attribution (v1.3.0): orchestration that spawned this task

@@ -94,7 +94,7 @@ InitCustomOrchestrator gives you the building blocks to create your own.
 All task-creating tools accept an optional \`model\` field to override the agent's default model:
 - DelegateTask with model: "claude-opus-4-5" → uses that model for this task only
 - CreatePipeline steps can each have their own model, or set a top-level default
-- CreateLoop with model: "gemini-2.0-flash" → each iteration uses that model
+- CreateLoop with model: "o3-mini" → each iteration uses that model
 
 ### Agent defaults (ConfigureAgent)
 Use ConfigureAgent to configure per-agent defaults that apply when no per-task override is set:
@@ -126,7 +126,6 @@ DelegateTask, CreateLoop, and CreateOrchestrator accept an optional \`systemProm
 The mechanism is per-agent:
 - Claude: \`--append-system-prompt\` — appended after Claude Code's built-in instructions (preserves tool access)
 - Codex: \`-c developer_instructions=<text>\` — appended after default, preserves AGENTS.md
-- Gemini: \`GEMINI_SYSTEM_MD\` combining cached base prompt + user system prompt (fallback: prepended to user prompt)
 
 Priority rules:
 - DelegateTask: systemPrompt is used for that task and any retry/resume tasks created from it

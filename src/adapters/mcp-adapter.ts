@@ -125,13 +125,13 @@ export const DelegateTaskSchema = z.object({
   /**
    * System prompt to inject into the agent.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Gemini GEMINI_SYSTEM_MD (combined with base).
+   * Codex: -c developer_instructions.
    */
   systemPrompt: z
     .string()
     .optional()
     .describe(
-      'System prompt to inject into the agent (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+      'System prompt to inject into the agent (Claude: --append-system-prompt, Codex: developer_instructions)',
     ),
 });
 
@@ -185,13 +185,13 @@ const ScheduleTaskSchema = z.object({
   /**
    * System prompt injected into the agent on every scheduled run.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Gemini GEMINI_SYSTEM_MD (combined with base).
+   * Codex: -c developer_instructions.
    */
   systemPrompt: z
     .string()
     .optional()
     .describe(
-      'System prompt to inject into the agent on every scheduled run (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+      'System prompt to inject into the agent on every scheduled run (Claude: --append-system-prompt, Codex: developer_instructions)',
     ),
 });
 
@@ -292,13 +292,13 @@ const SchedulePipelineSchema = z.object({
   /**
    * System prompt injected into every step task agent on each scheduled trigger.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Gemini GEMINI_SYSTEM_MD (combined with base).
+   * Codex: -c developer_instructions.
    */
   systemPrompt: z
     .string()
     .optional()
     .describe(
-      'System prompt to inject into every step task agent on each scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+      'System prompt to inject into every step task agent on each scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions)',
     ),
 });
 
@@ -451,7 +451,7 @@ const CreateLoopSchema = z.object({
   /**
    * System prompt for each iteration task.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Gemini GEMINI_SYSTEM_MD (combined with base).
+   * Codex: -c developer_instructions.
    */
   systemPrompt: z.string().optional().describe('System prompt injected into each iteration task agent'),
 });
@@ -522,13 +522,13 @@ const ScheduleLoopSchema = z.object({
   /**
    * System prompt injected into each iteration task agent on every scheduled trigger.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Gemini GEMINI_SYSTEM_MD (combined with base).
+   * Codex: -c developer_instructions.
    */
   systemPrompt: z
     .string()
     .optional()
     .describe(
-      'System prompt to inject into each iteration task agent on every scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+      'System prompt to inject into each iteration task agent on every scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions)',
     ),
 });
 
@@ -774,7 +774,7 @@ export class MCPAdapter {
                   systemPrompt: {
                     type: 'string',
                     description:
-                      'System prompt to inject into the agent (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+                      'System prompt to inject into the agent (Claude: --append-system-prompt, Codex: developer_instructions)',
                   },
                 },
                 required: ['prompt'],
@@ -942,7 +942,7 @@ export class MCPAdapter {
                   systemPrompt: {
                     type: 'string',
                     description:
-                      'System prompt to inject into the agent on every scheduled run (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+                      'System prompt to inject into the agent on every scheduled run (Claude: --append-system-prompt, Codex: developer_instructions)',
                   },
                 },
                 required: ['prompt', 'scheduleType'],
@@ -1220,7 +1220,7 @@ export class MCPAdapter {
                   systemPrompt: {
                     type: 'string',
                     description:
-                      'System prompt to inject into every step task agent on each scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+                      'System prompt to inject into every step task agent on each scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions)',
                   },
                 },
                 required: ['steps', 'scheduleType'],
@@ -1488,7 +1488,7 @@ export class MCPAdapter {
                   systemPrompt: {
                     type: 'string',
                     description:
-                      'System prompt to inject into each iteration task agent on every scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
+                      'System prompt to inject into each iteration task agent on every scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions)',
                   },
                 },
                 required: ['strategy', 'scheduleType'],

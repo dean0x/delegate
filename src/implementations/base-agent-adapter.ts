@@ -58,14 +58,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    *
    * DECISION: Each agent CLI has a different mechanism for system prompts (inline flag,
    * config override, env var + file). This pattern lets each adapter declare its needs.
-   * Adapters that require a file (e.g. Gemini) must write it inside this method.
+   * Adapters that require a file must write it inside this method.
    * The base class handles prompt prepending when prependToPrompt is true.
    *
    * @param systemPrompt - The system prompt text to inject
    * @param systemPromptPath - Resolved temp file path for adapters that write to disk
    * @returns Injection configuration:
    *   - args: Additional CLI args to append (e.g. ['--append-system-prompt', text])
-   *   - env: Additional env vars to inject (e.g. { GEMINI_SYSTEM_MD: path })
+   *   - env: Additional env vars to inject
    *   - prependToPrompt: If true, base class prepends systemPrompt to user prompt instead
    */
   protected abstract getSystemPromptConfig(
@@ -189,7 +189,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       let systemPromptEnv: Record<string, string> = {};
 
       if (systemPrompt) {
-        // Compute temp file path — passed to adapters that need to write a file (e.g. Gemini).
+        // Compute temp file path — passed to adapters that need to write a file.
         // Use a random suffix when taskId is absent to avoid path collisions across concurrent spawns.
         const safeId = taskId ?? crypto.randomUUID().substring(0, 8);
         const systemPromptPath = path.join(os.homedir(), '.autobeat', 'system-prompts', `${safeId}.md`);
@@ -296,7 +296,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Default no-op cleanup. Adapters that write task-scoped files (e.g. Gemini)
+   * Default no-op cleanup. Adapters that write task-scoped files
    * override this to remove them.
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

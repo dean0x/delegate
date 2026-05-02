@@ -2,7 +2,7 @@
  * Usage capture handler — subscribes to TaskCompleted and saves token/cost data.
  *
  * ARCHITECTURE: Event-driven, best-effort capture.
- * - Claude only (v1.3.0): Codex/Gemini parser returns null for now.
+ * - Claude only (v1.3.0): Codex parser returns null for now.
  * - All errors logged as warn, never thrown.
  * - Factory pattern for async initialization (matches CheckpointHandler).
  * Pattern: Template Method via BaseEventHandler.
