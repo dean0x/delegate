@@ -987,6 +987,87 @@ export class Database implements TransactionRunner {
           db.exec(`CREATE INDEX IF NOT EXISTS idx_pipelines_updated_at ON pipelines(updated_at)`);
         },
       },
+      {
+        version: 25,
+        // DECISION: Gemini agent support removed (v1.5.0). Nullify any existing judge_agent='gemini'
+        // rows so they satisfy the new CHECK constraint after table recreation. Uses same
+        // table-recreation pattern as migration v22 — SQLite does not support modifying
+        // CHECK constraints via ALTER TABLE.
+        description: 'Remove gemini from judge_agent CHECK constraint in loops table',
+        up: (db) => {
+          // Nullify any rows that reference the removed provider before recreation
+          db.exec(`UPDATE loops SET judge_agent = NULL WHERE judge_agent = 'gemini'`);
+
+          db.exec(`
+            CREATE TABLE loops_new (
+              id TEXT PRIMARY KEY,
+              strategy TEXT NOT NULL CHECK(strategy IN ('retry', 'optimize')),
+              task_template TEXT NOT NULL,
+              pipeline_steps TEXT,
+              exit_condition TEXT NOT NULL,
+              eval_direction TEXT,
+              eval_timeout INTEGER NOT NULL DEFAULT 60000,
+              eval_mode TEXT NOT NULL DEFAULT 'shell',
+              eval_prompt TEXT,
+              working_directory TEXT NOT NULL,
+              max_iterations INTEGER NOT NULL DEFAULT 10,
+              max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+              cooldown_ms INTEGER NOT NULL DEFAULT 0,
+              fresh_context INTEGER NOT NULL DEFAULT 1,
+              status TEXT NOT NULL DEFAULT 'running'
+                CHECK(status IN ('running', 'paused', 'completed', 'failed', 'cancelled')),
+              current_iteration INTEGER NOT NULL DEFAULT 0,
+              best_score REAL,
+              best_iteration_id INTEGER,
+              best_iteration_commit_sha TEXT,
+              consecutive_failures INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              completed_at INTEGER,
+              git_branch TEXT,
+              git_base_branch TEXT,
+              git_start_commit_sha TEXT,
+              schedule_id TEXT REFERENCES schedules(id) ON DELETE SET NULL,
+              eval_type TEXT DEFAULT 'feedforward'
+                CHECK(eval_type IS NULL OR eval_type IN ('feedforward', 'judge', 'schema')),
+              judge_agent TEXT
+                CHECK(judge_agent IS NULL OR judge_agent IN ('claude', 'codex')),
+              judge_prompt TEXT
+            )
+          `);
+
+          db.exec(`
+            INSERT INTO loops_new (
+              id, strategy, task_template, pipeline_steps, exit_condition,
+              eval_direction, eval_timeout, eval_mode, eval_prompt,
+              working_directory, max_iterations, max_consecutive_failures,
+              cooldown_ms, fresh_context, status, current_iteration,
+              best_score, best_iteration_id, best_iteration_commit_sha,
+              consecutive_failures, created_at, updated_at, completed_at,
+              git_branch, git_base_branch, git_start_commit_sha, schedule_id,
+              eval_type, judge_agent, judge_prompt
+            )
+            SELECT
+              id, strategy, task_template, pipeline_steps, exit_condition,
+              eval_direction, eval_timeout, eval_mode, eval_prompt,
+              working_directory, max_iterations, max_consecutive_failures,
+              cooldown_ms, fresh_context, status, current_iteration,
+              best_score, best_iteration_id, best_iteration_commit_sha,
+              consecutive_failures, created_at, updated_at, completed_at,
+              git_branch, git_base_branch, git_start_commit_sha, schedule_id,
+              eval_type, judge_agent, judge_prompt
+            FROM loops
+          `);
+
+          db.exec(`DROP TABLE loops`);
+          db.exec(`ALTER TABLE loops_new RENAME TO loops`);
+
+          // Recreate indexes (dropped with the table rename)
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_loops_status ON loops(status)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_loops_schedule_id ON loops(schedule_id)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_loops_updated_at ON loops(updated_at)`);
+        },
+      },
     ];
   }
 
