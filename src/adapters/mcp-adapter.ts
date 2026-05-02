@@ -130,9 +130,7 @@ export const DelegateTaskSchema = z.object({
   systemPrompt: z
     .string()
     .optional()
-    .describe(
-      'System prompt to inject into the agent (Claude: --append-system-prompt, Codex: developer_instructions)',
-    ),
+    .describe('System prompt to inject into the agent (Claude: --append-system-prompt, Codex: developer_instructions)'),
 });
 
 const TaskStatusSchema = z.object({

@@ -249,4 +249,3 @@ export async function agentsConfigReset(agent: string | undefined): Promise<void
   ui.success(`${agent} config cleared`);
   process.exit(0);
 }
-

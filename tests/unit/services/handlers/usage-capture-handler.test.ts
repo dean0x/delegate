@@ -142,7 +142,6 @@ describe('UsageCaptureHandler', () => {
       if (!usageResult.ok) return;
       expect(usageResult.value).toBeNull();
     });
-
   });
 
   describe('resilience — best-effort capture', () => {

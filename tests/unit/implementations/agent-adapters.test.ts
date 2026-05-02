@@ -468,7 +468,6 @@ describe('baseUrl passthrough', () => {
     expect(spawnOptions.env.OPENAI_BASE_URL).toBe('https://openai-proxy.example.com');
     adapter.dispose();
   });
-
 });
 
 // ============================================================================
@@ -571,7 +570,6 @@ describe('model passthrough', () => {
     expect(args).toContain('gpt-4o');
     adapter.dispose();
   });
-
 });
 
 // ============================================================================
@@ -786,6 +784,4 @@ describe('system prompt passthrough', () => {
       false,
     );
   });
-
 });
-

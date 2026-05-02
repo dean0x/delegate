@@ -469,10 +469,7 @@ describe('runInit — skill install (interactive)', () => {
         copiedAgents = agents;
         return {
           ok: true,
-          value: [
-            '/project/.claude/skills/autobeat',
-            '/project/.agents/skills/autobeat',
-          ],
+          value: ['/project/.claude/skills/autobeat', '/project/.agents/skills/autobeat'],
         };
       },
     });
