@@ -22,7 +22,7 @@ import {
   loadConfiguration,
   resetAgentConfig,
   saveAgentConfig,
-  TRANSLATE_TARGETS,
+  PROXY_TARGETS,
 } from '../../core/configuration.js';
 import { probeUrl } from '../../utils/url-probe.js';
 import * as ui from '../ui.js';
@@ -105,7 +105,7 @@ export async function agentsConfigSet(
   value: string | undefined,
 ): Promise<void> {
   if (!agent || !key || !value) {
-    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model|translate> <value>');
+    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model|proxy> <value>');
     process.exit(1);
   }
 
@@ -114,8 +114,8 @@ export async function agentsConfigSet(
     process.exit(1);
   }
 
-  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model' && key !== 'translate') {
-    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model, translate`);
+  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model' && key !== 'proxy') {
+    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model, proxy`);
     process.exit(1);
   }
 
@@ -127,10 +127,10 @@ export async function agentsConfigSet(
     );
   }
 
-  // Validate translate is a supported target (empty string clears)
-  if (key === 'translate' && value !== '') {
-    if (!(TRANSLATE_TARGETS as readonly string[]).includes(value)) {
-      ui.error(`Unsupported translate target: "${value}". Supported values: ${TRANSLATE_TARGETS.join(', ')}`);
+  // Validate proxy is a supported target (empty string clears)
+  if (key === 'proxy' && value !== '') {
+    if (!(PROXY_TARGETS as readonly string[]).includes(value)) {
+      ui.error(`Unsupported proxy target: "${value}". Supported values: ${PROXY_TARGETS.join(', ')}`);
       process.exit(1);
     }
   }
@@ -157,8 +157,8 @@ export async function agentsConfigSet(
     ui.success(`${agent}.${key} saved: ${value}`);
   }
 
-  // Probe connectivity when a URL/auth/translate field is changed and non-empty
-  if ((key === 'baseUrl' || key === 'apiKey' || key === 'translate') && value !== '') {
+  // Probe connectivity when a URL/auth/proxy field is changed and non-empty
+  if ((key === 'baseUrl' || key === 'apiKey' || key === 'proxy') && value !== '') {
     const config = loadAgentConfig(agent);
     const effectiveBaseUrl = key === 'baseUrl' ? value : config.baseUrl;
     if (effectiveBaseUrl) {
@@ -178,12 +178,12 @@ export async function agentsConfigSet(
     }
   }
 
-  // Warn when translate is set but required fields are missing
-  if (key === 'translate' && value !== '') {
+  // Warn when proxy is set but required fields are missing
+  if (key === 'proxy' && value !== '') {
     const config = loadAgentConfig(agent);
-    if (!config.baseUrl) ui.note('translate requires baseUrl to be set', 'Warning');
-    if (!config.apiKey) ui.note('translate requires apiKey to be set', 'Warning');
-    if (!config.model) ui.note('translate requires model to be set', 'Warning');
+    if (!config.baseUrl) ui.note('proxy requires baseUrl to be set', 'Warning');
+    if (!config.apiKey) ui.note('proxy requires apiKey to be set', 'Warning');
+    if (!config.model) ui.note('proxy requires model to be set', 'Warning');
   }
 
   process.exit(0);
@@ -215,8 +215,8 @@ export async function agentsConfigShow(agent?: string): Promise<void> {
     if (config.model) {
       parts.push(`model: ${config.model}`);
     }
-    if (config.translate) {
-      parts.push(`translate: ${config.translate}`);
+    if (config.proxy) {
+      parts.push(`proxy: ${config.proxy}`);
     }
 
     if (parts.length > 0) {

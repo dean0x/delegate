@@ -381,7 +381,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   container.registerSingleton('taskQueue', () => new PriorityTaskQueue());
 
   // ============================================================================
-  // Translation proxy — optional, activated by agents.claude.translate config
+  // Translation proxy — optional, activated by agents.claude.proxy config
   //
   // ARCHITECTURE: If proxy config exists, start a local TranslationProxy that
   // routes Anthropic Messages API requests to an OpenAI-compatible backend.
@@ -402,7 +402,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // when a processSpawner is injected (tests with mock spawners).
   //
   // DECISION: Proxy failure is fatal when config exists. The user
-  // explicitly configured translate — falling back to direct Anthropic API
+  // explicitly configured proxy — falling back to direct Anthropic API
   // would fail (wrong key/model) and produce confusing downstream errors.
   // Error message includes remediation steps for working without the proxy.
   // ============================================================================
@@ -423,7 +423,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
           new AutobeatError(
             ErrorCode.CONFIGURATION_ERROR,
             `Translation proxy failed to start: ${proxyResult.error.message}. ` +
-              'To work without the proxy, run: beat agents config set claude translate ""',
+              'To work without the proxy, run: beat agents config set claude proxy ""',
             { error: proxyResult.error.message },
           ),
         );

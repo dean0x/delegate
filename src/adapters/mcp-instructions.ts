@@ -101,20 +101,20 @@ Use ConfigureAgent to configure per-agent defaults that apply when no per-task o
 - action: "set", apiKey: "sk-..." → store API key
 - action: "set", baseUrl: "https://proxy.example.com/v1" → route requests through a proxy
 - action: "set", model: "claude-opus-4-5" → default model for all tasks using that agent
-- action: "set", translate: "openai" → route Anthropic API calls through a translation proxy to an OpenAI-compatible backend
-- action: "check" → see current auth status and stored config (baseUrl/model/translate shown when set)
+- action: "set", proxy: "openai" → route Anthropic API calls through a translation proxy to an OpenAI-compatible backend
+- action: "check" → see current auth status and stored config (baseUrl/model/proxy shown when set)
 - action: "reset" → clear all stored config for the agent
 
-### API Translation (translate)
-Use \`translate\` to route Claude Code workers through any OpenAI-compatible API backend:
-1. ConfigureAgent action: "set", agent: "claude", translate: "openai"
+### API Proxy (proxy)
+Use \`proxy\` to route Claude Code workers through any OpenAI-compatible API backend:
+1. ConfigureAgent action: "set", agent: "claude", proxy: "openai"
 2. ConfigureAgent action: "set", agent: "claude", baseUrl: "https://integrate.api.nvidia.com/v1"
 3. ConfigureAgent action: "set", agent: "claude", apiKey: "nvapi-..."
 4. ConfigureAgent action: "set", agent: "claude", model: "moonshotai/kimi-k2-thinking"
 
-When translate is set, a local proxy starts automatically at boot that translates Anthropic Messages API requests into OpenAI Chat Completions format. Claude Code is unaware — it sends its normal API calls which are transparently translated. Supported targets: "openai".
+When proxy is set, a local proxy starts automatically at boot that translates Anthropic Messages API requests into OpenAI Chat Completions format. Claude Code is unaware — it sends its normal API calls which are transparently translated. Supported targets: "openai".
 
-Set translate to "" (empty string) to disable translation and return to direct Anthropic API access.
+Set proxy to "" (empty string) to disable and return to direct Anthropic API access.
 
 Model resolution order (highest priority wins):
 1. Per-task \`model\` field (DelegateTask, pipeline step, etc.)
