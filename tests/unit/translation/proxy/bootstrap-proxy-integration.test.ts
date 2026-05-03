@@ -225,4 +225,30 @@ describe('proxy startup by bootstrap mode', () => {
     // After dispose, all services are cleared
     expect(container.get('proxyManager').ok).toBe(false);
   });
+
+  it('skips proxy startup when runtime is set for claude', async () => {
+    // Even though proxy config has baseUrl/apiKey/model set, runtime takes precedence
+    const configWithRuntime = {
+      agents: {
+        claude: {
+          proxy: 'openai',
+          baseUrl: 'https://api.example.com',
+          apiKey: 'test-key',
+          model: 'test-model',
+          runtime: 'ollama',
+        },
+      },
+    };
+    await writeFile(join(tempDir, 'config.json'), JSON.stringify(configWithRuntime));
+    const result = await bootstrap({ mode: 'run' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const container = result.value;
+    try {
+      // proxyManager should NOT be registered when runtime is set
+      expect(container.get('proxyManager').ok).toBe(false);
+    } finally {
+      await container.dispose();
+    }
+  });
 });

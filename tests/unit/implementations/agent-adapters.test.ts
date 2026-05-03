@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync 
 import os, { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Configuration } from '../../../src/core/configuration';
+import type { AgentConfig, Configuration } from '../../../src/core/configuration';
 import { _testSetConfigDir, saveAgentConfig } from '../../../src/core/configuration';
 import { ErrorCode } from '../../../src/core/errors';
 import { ClaudeAdapter } from '../../../src/implementations/claude-adapter';
@@ -1150,5 +1150,232 @@ describe('GeminiBasePromptCache', () => {
         /* best effort */
       }
     }
+  });
+});
+
+// ─── Ollama Runtime Integration Tests ────────────────────────────────────────
+// Tests for resolveRuntime() and spawn() with ollama runtime wrapping.
+// Placed here (not a separate file) to share the module registry mocks established
+// above — isolate:false means each new vi.mock() call creates a new fn instance
+// that breaks imports already captured in other test files.
+
+describe('resolveRuntime', () => {
+  let testDir: string;
+  let restoreConfig: () => void;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsCommandInPath.mockReturnValue(true);
+    testDir = path.join(tmpdir(), `autobeat-runtime-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    restoreConfig = _testSetConfigDir(testDir);
+  });
+
+  afterEach(() => {
+    restoreConfig();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('returns ok(null) when runtime is not set', () => {
+    const adapter = new ClaudeAdapter(testConfig);
+    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({});
+    expect(result).toEqual({ ok: true, value: null });
+    adapter.dispose();
+  });
+
+  it('returns ollama config when runtime is ollama for claude', () => {
+    const adapter = new ClaudeAdapter(testConfig);
+    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({
+      runtime: 'ollama' as const,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        command: 'ollama',
+        suppressModel: true,
+        suppressAuth: true,
+        suppressBaseUrl: true,
+      },
+    });
+    adapter.dispose();
+  });
+
+  it('returns ollama config when runtime is ollama for codex', () => {
+    const adapter = new CodexAdapter(testConfig);
+    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({
+      runtime: 'ollama' as const,
+    });
+    expect(result).toMatchObject({ ok: true, value: { command: 'ollama' } });
+    adapter.dispose();
+  });
+
+  it('returns error when runtime is ollama for gemini', () => {
+    const adapter = new GeminiAdapter(testConfig);
+    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({
+      runtime: 'ollama' as const,
+    }) as { ok: false; error: { code: string; message: string } };
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe(ErrorCode.AGENT_MISCONFIGURED);
+    expect(result.error.message).toContain("Runtime 'ollama' does not support agent 'gemini'");
+    adapter.dispose();
+  });
+
+  it('uses taskModel over agentConfig.model in prependArgs', () => {
+    const adapter = new ClaudeAdapter(testConfig);
+    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime(
+      { runtime: 'ollama' as const, model: 'config-model' },
+      'task-model',
+    ) as { ok: true; value: { prependArgs: readonly string[] } };
+    expect(result.ok).toBe(true);
+    expect(result.value.prependArgs).toContain('task-model');
+    expect(result.value.prependArgs).not.toContain('config-model');
+    adapter.dispose();
+  });
+
+  it('uses agentConfig.model when no taskModel provided', () => {
+    const adapter = new ClaudeAdapter(testConfig);
+    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({
+      runtime: 'ollama' as const,
+      model: 'config-model',
+    }) as { ok: true; value: { prependArgs: readonly string[] } };
+    expect(result.ok).toBe(true);
+    expect(result.value.prependArgs).toContain('config-model');
+    adapter.dispose();
+  });
+
+  it('omits --model from prependArgs when neither model source is set', () => {
+    const adapter = new ClaudeAdapter(testConfig);
+    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({
+      runtime: 'ollama' as const,
+    }) as { ok: true; value: { prependArgs: readonly string[] } };
+    expect(result.ok).toBe(true);
+    expect(result.value.prependArgs).not.toContain('--model');
+    adapter.dispose();
+  });
+});
+
+describe('spawn with ollama runtime', () => {
+  let testDir: string;
+  let restoreConfig: () => void;
+  let adapter: ClaudeAdapter;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsCommandInPath.mockReturnValue(true);
+    mockSpawn.mockReturnValue(createMockChildProcess(1234));
+    testDir = path.join(tmpdir(), `autobeat-runtime-spawn-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    restoreConfig = _testSetConfigDir(testDir);
+    adapter = new ClaudeAdapter(testConfig);
+  });
+
+  afterEach(() => {
+    adapter.dispose();
+    restoreConfig();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('wraps command with ollama launch when runtime is set', () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    const result = adapter.spawn({ prompt: 'test', workingDirectory: '/workspace', taskId: 'task-1' });
+
+    expect(result.ok).toBe(true);
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    const [command, args] = mockSpawn.mock.calls[0];
+    expect(command).toBe('ollama');
+    expect(args[0]).toBe('launch');
+    expect(args[1]).toBe('claude');
+  });
+
+  it('checks isCommandInPath for ollama not claude when runtime is active', () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    adapter.spawn({ prompt: 'test', workingDirectory: '/workspace', taskId: 'task-1' });
+
+    const checkedCommands = mockIsCommandInPath.mock.calls.map(([cmd]) => cmd);
+    expect(checkedCommands).toContain('ollama');
+  });
+
+  it('returns error when ollama binary is not found', () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    mockIsCommandInPath.mockImplementation((cmd: string) => cmd !== 'ollama');
+
+    const result = adapter.spawn({ prompt: 'test', workingDirectory: '/workspace', taskId: 'task-1' });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(ErrorCode.AGENT_MISCONFIGURED);
+      expect(result.error.message).toContain("CLI binary 'ollama' not found");
+    }
+  });
+
+  it('suppresses --model from inner buildArgs when runtime is active', () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    adapter.spawn({ prompt: 'test', workingDirectory: '/workspace', taskId: 'task-1', model: 'claude-opus-4-5' });
+
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    const [, args] = mockSpawn.mock.calls[0];
+    const doubleDashIdx = args.indexOf('--');
+    const innerArgs = doubleDashIdx >= 0 ? args.slice(doubleDashIdx + 1) : args;
+    expect(innerArgs).not.toContain('--model');
+  });
+
+  it('includes ollama --model in prependArgs when model is set', () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    saveAgentConfig('claude', 'model', 'qwen3');
+    adapter.spawn({ prompt: 'test', workingDirectory: '/workspace', taskId: 'task-1' });
+
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    const [, args] = mockSpawn.mock.calls[0];
+    const doubleDashIdx = args.indexOf('--');
+    const outerArgs = doubleDashIdx >= 0 ? args.slice(0, doubleDashIdx) : args;
+    expect(outerArgs).toContain('--model');
+    expect(outerArgs).toContain('qwen3');
+  });
+
+  it('suppresses auth env var injection when runtime is active', () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    saveAgentConfig('claude', 'apiKey', 'sk-test-key');
+    adapter.spawn({ prompt: 'test', workingDirectory: '/workspace', taskId: 'task-1' });
+
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    const [, , spawnOpts] = mockSpawn.mock.calls[0];
+    const env = (spawnOpts as { env?: Record<string, string> } | undefined)?.env;
+    expect(env?.ANTHROPIC_API_KEY).not.toBe('sk-test-key');
+  });
+
+  it('suppresses baseUrl env var injection when runtime is active', () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    saveAgentConfig('claude', 'baseUrl', 'https://custom.api.example.com');
+    adapter.spawn({ prompt: 'test', workingDirectory: '/workspace', taskId: 'task-1' });
+
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    const [, , spawnOpts] = mockSpawn.mock.calls[0];
+    const env = (spawnOpts as { env?: Record<string, string> } | undefined)?.env;
+    expect(env?.ANTHROPIC_BASE_URL).not.toBe('https://custom.api.example.com');
+  });
+
+  it('preserves AUTOBEAT_ env vars when runtime is active', () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    adapter.spawn({ prompt: 'test', workingDirectory: '/workspace', taskId: 'task-42' });
+
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    const [, , spawnOpts] = mockSpawn.mock.calls[0];
+    const env = (spawnOpts as { env?: Record<string, string> } | undefined)?.env;
+    expect(env?.AUTOBEAT_WORKER).toBe('true');
+    expect(env?.AUTOBEAT_TASK_ID).toBe('task-42');
+  });
+
+  it('passes system prompt args through when runtime is active', () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    adapter.spawn({
+      prompt: 'test',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      systemPrompt: 'Be concise.',
+    });
+
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    const [, args] = mockSpawn.mock.calls[0];
+    expect(args.join(' ')).toContain('--append-system-prompt');
   });
 });

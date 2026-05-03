@@ -23,11 +23,11 @@ import {
   loadAgentConfig,
   loadConfiguration,
   PROXY_TARGETS,
-  resetAgentConfig,
   RUNTIME_AGENT_SUPPORT,
   RUNTIME_TARGETS,
-  saveAgentConfig,
   type Runtime,
+  resetAgentConfig,
+  saveAgentConfig,
 } from '../../core/configuration.js';
 import { probeUrl } from '../../utils/url-probe.js';
 import * as ui from '../ui.js';

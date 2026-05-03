@@ -16,13 +16,13 @@ import {
 } from '../core/agents.js';
 import {
   type Configuration,
-  loadAgentConfig,
-  resetAgentConfig,
-  saveAgentConfig,
   isRuntimeSupportedForAgent,
+  loadAgentConfig,
   PROXY_TARGETS,
   RUNTIME_AGENT_SUPPORT,
   RUNTIME_TARGETS,
+  resetAgentConfig,
+  saveAgentConfig,
 } from '../core/configuration.js';
 import {
   EvalMode,
