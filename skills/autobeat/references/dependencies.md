@@ -203,6 +203,13 @@ Wrap a pipeline in a schedule for recurring execution:
 
 Each trigger creates a fresh set of pipeline tasks with linear dependencies.
 
+### Pipeline Entity Management
+
+Pipelines are first-class entities with IDs (`pipeline-xxxx`) queryable via:
+- `PipelineStatus` — check step progress and failure details
+- `ListPipelines` — list by status (pending, running, completed, failed, cancelled)
+- `CancelPipeline` — cancel with optional task cancellation
+
 ### Schedule Chaining (`afterSchedule`)
 
 Chain schedules so one runs after another:
@@ -225,16 +232,18 @@ Pipeline and scheduled pipeline steps support per-step configuration:
     "steps": [
       { "prompt": "Lint", "priority": "P1" },
       { "prompt": "Test", "priority": "P0", "workingDirectory": "/path/to/test-repo" },
-      { "prompt": "Deploy", "agent": "codex" }
+      { "prompt": "Deploy", "agent": "codex", "model": "o3", "systemPrompt": "Follow deployment runbook strictly" }
     ],
     "priority": "P2",
     "workingDirectory": "/path/to/repo",
-    "agent": "claude"
+    "agent": "claude",
+    "model": "claude-sonnet-4-6",
+    "systemPrompt": "You are a CI/CD specialist"
   }
 }
 ```
 
-- Step-level `priority`, `workingDirectory`, `agent` override pipeline-level defaults
+- Step-level `priority`, `workingDirectory`, `agent`, `model`, `systemPrompt` override pipeline-level defaults
 - Unset step fields inherit from the pipeline-level value
 
 ## Validation Rules

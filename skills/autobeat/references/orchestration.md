@@ -119,6 +119,10 @@ beat orchestrate "Migrate the Express API to Fastify" --foreground  # block and 
 | `maxDepth` | 3 | 1-10 | Max delegation depth |
 | `maxWorkers` | 5 | 1-20 | Max concurrent worker agents |
 | `maxIterations` | 50 | 1-200 | Max orchestrator loop iterations |
+| `model` | — | string | Model override (overrides agent-config default) |
+| `systemPrompt` | — | string | Custom system prompt (replaces auto-generated role instructions) |
+
+**Caveat**: `systemPrompt` replaces the auto-generated role instructions entirely — it does not append. This prevents conflicting ROLE sections.
 
 ### How It Works
 
@@ -139,6 +143,46 @@ beat orchestrate "Migrate the Express API to Fastify" --foreground  # block and 
 - Steps are known upfront → Pipeline
 - It's iterative improvement on one task → Loop
 - It's a single task → DelegateTask
+
+## Custom Orchestrators
+
+For orchestrations that need custom eval criteria, custom prompt structure, or multi-phase logic, use `InitCustomOrchestrator` to scaffold building blocks and compose them into a `CreateLoop`.
+
+### When to Use
+
+| | CreateOrchestrator | InitCustomOrchestrator + CreateLoop |
+|---|---|---|
+| Prompt | Auto-generated role instructions | You provide full systemPrompt |
+| Eval | Built-in state file polling | Your custom evalPrompt + evalType |
+| Control | Turnkey — autobeat manages everything | Full control — you compose the loop |
+| Best for | Standard goal execution | Custom eval, multi-phase, specialized prompts |
+
+### Workflow
+
+1. Call `InitCustomOrchestrator` with your goal → receive artifacts (state file, exit script, snippets)
+2. Compose a `CreateLoop` using the artifacts: set `systemPrompt` with delegation snippets, `exitCondition` with the exit script, `evalPrompt` for custom evaluation
+3. Monitor with `LoopStatus`
+
+### MCP
+
+```json
+{
+  "tool": "InitCustomOrchestrator",
+  "arguments": {
+    "goal": "Migrate Express API to Fastify with zero regression",
+    "workingDirectory": "/path/to/repo",
+    "agent": "claude",
+    "maxWorkers": 5,
+    "maxDepth": 3
+  }
+}
+```
+
+### CLI
+
+```bash
+beat orchestrate init "Migrate Express API to Fastify" -w /path/to/repo -a claude
+```
 
 ## Schedules
 
@@ -214,6 +258,18 @@ Wrap any primitive in a schedule for deferred or recurring execution.
 - **active** → **cancelled** (CancelSchedule)
 - **active** → **completed** (maxRuns reached or expired)
 - Concurrent execution prevented: overlapping triggers are skipped
+
+## Pipeline Management
+
+Pipelines are first-class entities with their own IDs (`pipeline-xxxx`).
+
+| Tool | Purpose |
+|------|---------|
+| `PipelineStatus` | Get pipeline status, step progress, failure details |
+| `ListPipelines` | List pipelines with optional status filter |
+| `CancelPipeline` | Cancel a pipeline and optionally all in-flight step tasks |
+
+Pipeline states: pending, running, completed, failed, cancelled.
 
 ## Composition Patterns
 

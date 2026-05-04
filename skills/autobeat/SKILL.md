@@ -49,7 +49,11 @@ Is it a fixed sequence of steps?
 Does it need iterative improvement?
   YES → Is the exit condition objective (shell exit code / script score)?
     YES → CreateLoop with evalMode: shell
-    NO  → CreateLoop with evalMode: agent (AI judges quality)
+    NO  → CreateLoop with evalMode: agent
+           Which eval sub-strategy?
+             Need findings-only feedback, always run to maxIterations? → evalType: feedforward (default)
+             Need AI judge to decide continue/stop?                   → evalType: judge
+             Need deterministic structured pass/fail (Claude only)?    → evalType: schema
 
 Is the goal open-ended and complex?
   YES → CreateOrchestrator (autonomous planning + delegation)
@@ -101,6 +105,10 @@ Should it run on a schedule?
 | `CancelOrchestrator` | Cancel an orchestration |
 | `ListAgents` | List available agents with auth status |
 | `ConfigureAgent` | Check auth, store/reset API keys |
+| `InitCustomOrchestrator` | Scaffold custom orchestrator (state file, exit script, snippets) |
+| `PipelineStatus` | Check pipeline entity status |
+| `ListPipelines` | List pipelines with status filter |
+| `CancelPipeline` | Cancel a pipeline and optionally its tasks |
 
 ### CLI Commands
 
@@ -118,6 +126,12 @@ Should it run on a schedule?
 | `beat schedule create "<prompt>" --cron "0 9 * * *"` | Cron schedule |
 | `beat orchestrate "<goal>"` | Start orchestration |
 | `beat orchestrate status <id>` | Check orchestration |
+| `beat orchestrate init "<goal>"` | Scaffold custom orchestrator |
+| `beat dashboard` / `beat dash` | Terminal dashboard TUI |
+| `beat list` / `beat ls` | List tasks |
+| `beat agents check` | Check agent auth status |
+| `beat agents config set/show/reset` | Agent config management |
+| `beat config show/set/reset/path` | Config management |
 
 ## Composition Patterns
 
@@ -139,17 +153,51 @@ C = DelegateTask("process subset 2", dependsOn: [A])
 D = DelegateTask("merge results", dependsOn: [B, C], continueFrom: B)
 ```
 
+## System Prompts
+
+Inject custom instructions into any agent. Identical mechanics across all tools that accept `systemPrompt`.
+
+| Agent | Mechanism | Behavior |
+|-------|-----------|----------|
+| Claude | `--append-system-prompt` | Appends to Claude's built-in system prompt |
+| Codex | `-c developer_instructions` | Sets developer instructions config |
+| Gemini | `GEMINI_SYSTEM_MD` env var | Combined with Gemini's base prompt file |
+
+Supported on: `DelegateTask`, `CreatePipeline` (pipeline + per-step), `CreateLoop`, `ScheduleTask`, `SchedulePipeline` (pipeline + per-step), `ScheduleLoop`, `CreateOrchestrator`.
+
+**Caveat**: `CreateOrchestrator` systemPrompt **replaces** auto-generated role instructions entirely (not appends). This prevents conflicting ROLE sections. Use `InitCustomOrchestrator` for custom orchestrators with full prompt control.
+
+## Model Selection
+
+Override the default model per task, per pipeline step, or per loop iteration.
+
+Resolution order: per-task `model` > agent-config default (`ConfigureAgent`) > agent's built-in default.
+
+Pipelines support per-step overrides: set `model` at pipeline level for the default, override on individual `steps[]` as needed.
+
+Model names are opaque to autobeat — validation is the agent CLI's responsibility.
+
+## Translation Proxy & Ollama Runtime
+
+Configure via `ConfigureAgent` (set action):
+
+- **`proxy: "openai"`**: Routes Anthropic API calls through a local proxy that translates to OpenAI-compatible format. Requires `baseUrl` and `apiKey`. Works with all agents.
+- **`runtime: "ollama"`**: Wraps agent spawns with `ollama launch`. Supported agents: claude, codex only (not gemini).
+
+Mutually exclusive — `runtime` takes precedence if both are set. Clear with empty string: `proxy: ""` or `runtime: ""`.
+
 ## Anti-Patterns
 
 | Mistake | Why It's Wrong | Fix |
 |---------|---------------|-----|
 | Pipeline with 1 step | Unnecessary overhead | Use DelegateTask |
 | Manual dependsOn chain for sequential tasks | Error-prone wiring | Use CreatePipeline |
-| Loop without exit condition (shell mode) | Runs forever | Set exitCondition or use evalMode: agent |
+| Loop without exit condition (shell mode) | Runs forever | Set exitCondition or use evalMode: agent with appropriate sub-strategy |
 | Orchestrator for simple sequences | Overkill | Use Pipeline or Loop |
 | Polling TaskStatus in a tight loop | Wastes resources | Check periodically (30s+) |
 | Ignoring workingDirectory | Tasks run in wrong directory | Always set workingDirectory |
 | Unlimited maxIterations with no failures cap | Risk of infinite loop | Set maxIterations or maxConsecutiveFailures |
+| Using CreateOrchestrator for custom eval | Auto-generated prompts don't support custom eval logic | Use InitCustomOrchestrator + CreateLoop |
 
 ## Extended References
 

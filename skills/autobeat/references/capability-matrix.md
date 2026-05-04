@@ -18,6 +18,10 @@ Submit a task to a background AI agent instance.
 | `dependsOn` | string[] | No | — | Task IDs this task depends on |
 | `continueFrom` | string | No | — | Task ID to receive checkpoint context from |
 | `agent` | string | No | configured default | claude, codex, or gemini |
+| `model` | string | No | — | Model override (overrides agent-config default) |
+| `systemPrompt` | string | No | — | System prompt injected into agent (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD) |
+| `metadata.orchestratorId` | string | No | — | Orchestration attribution (format: orchestrator-{UUID}, 49 chars exactly) |
+| `jsonSchema` | string | No | — | JSON schema for structured output (Claude only) |
 
 ### TaskStatus
 
@@ -26,6 +30,7 @@ Get status of delegated tasks.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `taskId` | string | No | — | Specific task ID (omit for all tasks) |
+| `includeSystemPrompt` | boolean | No | false | Include system prompt in response |
 
 ### TaskLogs
 
@@ -73,9 +78,13 @@ Create a sequential pipeline of 2-20 tasks.
 | `steps[].priority` | string | No | inherited | Priority override (P0, P1, P2) |
 | `steps[].workingDirectory` | string | No | inherited | Working directory override |
 | `steps[].agent` | string | No | inherited | Agent override |
+| `steps[].model` | string | No | inherited | Model override for this step |
+| `steps[].systemPrompt` | string | No | inherited | System prompt override for this step |
 | `priority` | string | No | P2 | Default priority for all steps |
 | `workingDirectory` | string | No | — | Default working directory for all steps |
 | `agent` | string | No | configured default | Default agent for all steps |
+| `model` | string | No | — | Default model for all steps (steps can override) |
+| `systemPrompt` | string | No | — | Default system prompt for all steps (steps can override) |
 
 ### ScheduleTask
 
@@ -95,6 +104,8 @@ Schedule a task for future or recurring execution.
 | `expiresAt` | string | No | — | ISO 8601 expiry datetime |
 | `afterSchedule` | string | No | — | Schedule ID to chain after |
 | `agent` | string | No | configured default | Agent for the task |
+| `model` | string | No | — | Model override (overrides agent-config default) |
+| `systemPrompt` | string | No | — | System prompt injected on every scheduled run |
 
 ### ListSchedules
 
@@ -153,6 +164,8 @@ Schedule a recurring or one-time pipeline.
 | `steps[].priority` | string | No | inherited | Priority override |
 | `steps[].workingDirectory` | string | No | inherited | Working directory override |
 | `steps[].agent` | string | No | inherited | Agent override |
+| `steps[].model` | string | No | inherited | Model override for this step |
+| `steps[].systemPrompt` | string | No | inherited | System prompt override for this step |
 | `scheduleType` | string | Yes | — | "cron" or "one_time" |
 | `cronExpression` | string | Cond. | — | 5-field cron expression |
 | `scheduledAt` | string | Cond. | — | ISO 8601 datetime |
@@ -164,6 +177,8 @@ Schedule a recurring or one-time pipeline.
 | `expiresAt` | string | No | — | ISO 8601 expiry |
 | `afterSchedule` | string | No | — | Chain after schedule ID |
 | `agent` | string | No | configured default | Default agent |
+| `model` | string | No | — | Default model for all steps (steps can override) |
+| `systemPrompt` | string | No | — | Default system prompt for all steps (steps can override) |
 
 ### CreateLoop
 
@@ -186,6 +201,11 @@ Create an iterative loop.
 | `pipelineSteps` | string[] | No | — | Pipeline step prompts (2-20, creates pipeline loop) |
 | `priority` | string | No | P2 | Task priority |
 | `agent` | string | No | configured default | Agent for iterations |
+| `model` | string | No | — | Model override per iteration (overrides agent-config default) |
+| `systemPrompt` | string | No | — | System prompt injected into each iteration task agent |
+| `evalType` | string | No | feedforward | Agent eval sub-strategy: feedforward, judge, or schema (only when evalMode is agent) |
+| `judgeAgent` | string | No | loop agent | Agent for judge decisions (judge evalType only) |
+| `judgePrompt` | string | No | — | Custom judge instructions (judge evalType only) |
 | `gitBranch` | string | No | — | Git branch for iteration tracking |
 
 *`prompt` required unless `pipelineSteps` provided.
@@ -199,6 +219,7 @@ Get loop details.
 | `loopId` | string | Yes | — | Loop ID |
 | `includeHistory` | boolean | No | false | Include iteration history |
 | `historyLimit` | number | No | 20 | Max iterations to return |
+| `includeSystemPrompt` | boolean | No | false | Include system prompt in response |
 
 ### ListLoops
 
@@ -258,6 +279,8 @@ Schedule a recurring or one-time loop.
 | `gitBranch` | string | No | — | Git branch for tracking |
 | `priority` | string | No | — | Task priority |
 | `agent` | string | No | — | Agent for iterations |
+| `model` | string | No | — | Model override per iteration |
+| `systemPrompt` | string | No | — | System prompt injected into each iteration task agent on every trigger |
 | `scheduleType` | string | Yes | — | "cron" or "one_time" |
 | `cronExpression` | string | Cond. | — | 5-field cron expression |
 | `scheduledAt` | string | Cond. | — | ISO 8601 datetime |
@@ -275,6 +298,8 @@ Create and start an autonomous orchestration.
 | `goal` | string | Yes | — | High-level goal (1-8000 chars) |
 | `workingDirectory` | string | No | — | Working directory for workers |
 | `agent` | string | No | configured default | Agent for the orchestrator |
+| `model` | string | No | — | Model override (overrides agent-config default) |
+| `systemPrompt` | string | No | — | Custom system prompt (replaces auto-generated role instructions when provided) |
 | `maxDepth` | number | No | 3 | Max delegation depth (1-10) |
 | `maxWorkers` | number | No | 5 | Max concurrent workers (1-20) |
 | `maxIterations` | number | No | 50 | Max orchestrator iterations (1-200) |
@@ -319,6 +344,52 @@ Check auth status, store API key, or reset stored key for an agent.
 | `agent` | string | Yes | — | Agent provider (claude, codex, gemini) |
 | `action` | string | No | check | set, check, or reset |
 | `apiKey` | string | No | — | API key to store (required for set action) |
+| `baseUrl` | string | No | — | Base URL override (set action, e.g. https://proxy.example.com/v1) |
+| `model` | string | No | — | Default model override for this agent (set action) |
+| `proxy` | string | No | — | API proxy target (set action). Supported: "openai". Empty string clears. |
+| `runtime` | string | No | — | Runtime to wrap agent spawns (set action). Supported: "ollama". Supported agents: claude, codex. Mutually exclusive with proxy — runtime takes precedence. Empty string clears. |
+
+### InitCustomOrchestrator
+
+Scaffold building blocks for a custom orchestrator (state file, exit script, instruction snippets).
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `goal` | string | Yes | — | High-level goal for the custom orchestrator |
+| `workingDirectory` | string | No | server cwd | Working directory (absolute path) |
+| `agent` | string | No | configured default | AI agent for delegation commands |
+| `model` | string | No | — | Model for delegation commands |
+| `maxWorkers` | number | No | 5 | Max concurrent workers (1-20) |
+| `maxDepth` | number | No | 3 | Max delegation depth (1-10) |
+
+Returns: stateFilePath, exitConditionScript, suggestedExitCondition, instruction snippets (delegation, stateManagement, constraints).
+
+### PipelineStatus
+
+Get status of a pipeline entity.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `pipelineId` | string | Yes | — | Pipeline entity ID (pipeline-xxxx) |
+
+### ListPipelines
+
+List pipelines with optional status filter.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `status` | string | No | — | pending, running, completed, failed, cancelled |
+| `limit` | number | No | 50 | Max results (1-100) |
+
+### CancelPipeline
+
+Cancel a pipeline and optionally its in-flight tasks.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `pipelineId` | string | Yes | — | Pipeline entity ID |
+| `reason` | string | No | — | Cancellation reason |
+| `cancelTasks` | boolean | No | true | Also cancel in-flight step tasks |
 
 ## CLI Commands
 
@@ -327,6 +398,8 @@ Check auth status, store API key, or reset stored key for an agent.
 ```
 beat run "<prompt>" [options]
   --agent, -a <name>       Agent (claude, codex, gemini)
+  --model, -m <name>       Model override
+  --system-prompt "..."    System prompt injected into agent
   --priority, -p <level>   P0, P1, P2
   --working-directory, -w  Absolute path
   --timeout <ms>           Task timeout
@@ -359,6 +432,8 @@ beat loop --pipeline --step "..." --step "..." --until "<cmd>"  # Pipeline loop
 
 Options:
   --agent, -a <name>       Agent for iterations
+  --model, -m <name>       Model override per iteration
+  --system-prompt "..."    System prompt injected into each iteration task agent
   --priority, -p <level>   Task priority
   --working-directory, -w  Working directory
   --max-iterations <n>     Max iterations (0 = unlimited)
@@ -391,6 +466,8 @@ beat schedule create "<prompt>" [options]
   --step "..."             Pipeline step (repeatable, requires --pipeline)
   --loop                   Enable loop mode
   --agent, -a <name>       Default agent
+  --model, -m <name>       Model override
+  --system-prompt "..."    System prompt injected on every scheduled run
   --priority, -p <level>   Default priority
   --working-directory, -w  Working directory
 
@@ -406,6 +483,8 @@ beat schedule cancel <id> [--cancel-tasks] [reason]
 ```
 beat orchestrate "<goal>" [options]
   --agent, -a <name>       Agent for orchestrator
+  --model, -m <name>       Model override
+  --system-prompt "..."    Custom system prompt
   --working-directory, -w  Working directory
   --max-depth <n>          Max delegation depth (1-10)
   --max-workers <n>        Max concurrent workers (1-20)
@@ -415,6 +494,27 @@ beat orchestrate "<goal>" [options]
 beat orchestrate status <id>
 beat orchestrate list [--status <status>]
 beat orchestrate cancel <id> [reason]
+
+beat orchestrate init "<goal>" [options]
+  --working-directory, -w  Working directory
+  --agent, -a <name>       Agent for delegation
+  --model, -m <name>       Model for delegation
+  --max-depth <n>          Max delegation depth (1-10)
+  --max-workers <n>        Max concurrent workers (1-20)
+```
+
+### Dashboard Commands
+
+```
+beat dashboard               Terminal dashboard TUI
+beat dash                    Alias for dashboard
+```
+
+### List Commands
+
+```
+beat list [--status <status>]       List tasks
+beat ls [--status <status>]         Alias for list
 ```
 
 ### Setup Commands
@@ -426,5 +526,16 @@ beat init --install-skills             Install agent skills
 beat init --skills-agents <agents>     Comma-separated agents to install skills for (e.g. claude,codex)
 beat init --yes, -y                    Non-interactive: skip confirmations
 beat agents list                       Show agents with status
+beat agents check                      Check agent auth status
+beat agents config set <agent> [options]  Set agent config values
+beat agents config show <agent>           Show agent config
+beat agents config reset <agent>          Reset agent config
+beat agents refresh-base-prompt <agent>   Refresh Gemini base prompt
+
+beat config show                   Show configuration
+beat config set <key> <value>      Set configuration value
+beat config reset [key]            Reset config (all or specific key)
+beat config path                   Show config file path
+
 beat help                              Show help
 ```
