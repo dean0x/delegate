@@ -30,7 +30,7 @@ CLI: `beat status task-abc...`
 
 CLI: `beat logs task-abc...`
 
-- `tail`: number of recent lines (default: 100, max: 1000)
+- `tail`: number of recent lines (default: 100)
 - Returns stdout and stderr combined
 - Output persists even after task completion
 
@@ -277,8 +277,8 @@ There's no bulk cancel tool. Cancel individually:
 
 ### Task Timeout
 
-- **Cause**: Default timeout is 30 minutes
-- **Fix**: Set `timeout` on the task (max 24 hours = 86400000ms)
+- **Cause**: Default timeout is 0 (disabled) — tasks run until completion or manual cancellation
+- **Fix**: Set `timeout` on the task to enforce a limit (max 24 hours = 86400000ms)
 
 ### Pipeline Stuck in Pending
 

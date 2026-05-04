@@ -10,10 +10,10 @@ Submit a task to a background AI agent instance.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `prompt` | string | Yes | — | Task prompt (1-4000 chars) |
+| `prompt` | string | Yes | — | Task prompt |
 | `priority` | string | No | P2 | P0 (critical), P1 (high), P2 (normal) |
 | `workingDirectory` | string | No | — | Absolute path for task execution |
-| `timeout` | number | No | 1800000 | Timeout in ms (1000-86400000) |
+| `timeout` | number | No | 0 (disabled) | Timeout in ms (1000-86400000); 0 means no timeout |
 | `maxOutputBuffer` | number | No | 10485760 | Max output buffer bytes (1024-1073741824) |
 | `dependsOn` | string[] | No | — | Task IDs this task depends on |
 | `continueFrom` | string | No | — | Task ID to receive checkpoint context from |
@@ -39,7 +39,7 @@ Retrieve execution logs from a delegated task.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `taskId` | string | Yes | — | Task ID to get logs for |
-| `tail` | number | No | 100 | Number of recent lines (1-1000) |
+| `tail` | number | No | 100 | Number of recent lines |
 
 ### CancelTask
 
@@ -48,7 +48,7 @@ Cancel a running delegated task.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `taskId` | string | Yes | — | Task ID to cancel |
-| `reason` | string | No | — | Cancellation reason (max 200 chars) |
+| `reason` | string | No | — | Cancellation reason |
 
 ### RetryTask
 
@@ -65,7 +65,7 @@ Resume a terminal task with enriched context from its checkpoint.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `taskId` | string | Yes | — | Task ID (must be completed, failed, or cancelled) |
-| `additionalContext` | string | No | — | Extra instructions for the resumed task (max 4000 chars) |
+| `additionalContext` | string | No | — | Extra instructions for the resumed task |
 
 ### CreatePipeline
 
@@ -74,7 +74,7 @@ Create a sequential pipeline of 2-20 tasks.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `steps` | object[] | Yes | — | Ordered pipeline steps (2-20) |
-| `steps[].prompt` | string | Yes | — | Task prompt for this step (1-4000 chars) |
+| `steps[].prompt` | string | Yes | — | Task prompt for this step |
 | `steps[].priority` | string | No | inherited | Priority override (P0, P1, P2) |
 | `steps[].workingDirectory` | string | No | inherited | Working directory override |
 | `steps[].agent` | string | No | inherited | Agent override |
@@ -160,7 +160,7 @@ Schedule a recurring or one-time pipeline.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `steps` | object[] | Yes | — | Ordered pipeline steps (2-20) |
-| `steps[].prompt` | string | Yes | — | Task prompt (1-4000 chars) |
+| `steps[].prompt` | string | Yes | — | Task prompt for this step |
 | `steps[].priority` | string | No | inherited | Priority override |
 | `steps[].workingDirectory` | string | No | inherited | Working directory override |
 | `steps[].agent` | string | No | inherited | Agent override |
@@ -186,11 +186,11 @@ Create an iterative loop.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `prompt` | string | No* | — | Task prompt per iteration (1-4000 chars) |
+| `prompt` | string | No* | — | Task prompt per iteration |
 | `strategy` | string | Yes | — | "retry" or "optimize" |
 | `exitCondition` | string | No | — | Shell command for eval (shell mode) |
 | `evalMode` | string | No | shell | "shell" or "agent" |
-| `evalPrompt` | string | No | — | Custom agent eval prompt (1-8000 chars) |
+| `evalPrompt` | string | No | — | Custom agent eval prompt (agent eval mode only) |
 | `evalDirection` | string | No | — | "minimize" or "maximize" (optimize only) |
 | `evalTimeout` | number | No | 60000 | Eval timeout ms (1000-600000) |
 | `workingDirectory` | string | No | — | Working directory |
@@ -285,7 +285,7 @@ Schedule a recurring or one-time loop.
 | `cronExpression` | string | Cond. | — | 5-field cron expression |
 | `scheduledAt` | string | Cond. | — | ISO 8601 datetime |
 | `timezone` | string | No | UTC | IANA timezone |
-| `missedRunPolicy` | string | No | — | skip, catchup, or fail |
+| `missedRunPolicy` | string | No | skip | skip, catchup, or fail |
 | `maxRuns` | number | No | — | Max cron loop runs |
 | `expiresAt` | string | No | — | ISO 8601 expiry |
 
@@ -295,7 +295,7 @@ Create and start an autonomous orchestration.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `goal` | string | Yes | — | High-level goal (1-8000 chars) |
+| `goal` | string | Yes | — | High-level goal for the orchestrator |
 | `workingDirectory` | string | No | — | Working directory for workers |
 | `agent` | string | No | configured default | Agent for the orchestrator |
 | `model` | string | No | — | Model override (overrides agent-config default) |
