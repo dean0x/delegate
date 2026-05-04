@@ -4,7 +4,7 @@
  */
 
 import { validateConfiguration } from './core/config-validator.js';
-import { Configuration, loadConfiguration } from './core/configuration.js';
+import { Configuration, loadAgentConfig, loadConfiguration } from './core/configuration.js';
 import { Container } from './core/container.js';
 import { AutobeatError, ErrorCode } from './core/errors.js';
 import { EventBus, InMemoryEventBus } from './core/events/event-bus.js';
@@ -381,7 +381,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   container.registerSingleton('taskQueue', () => new PriorityTaskQueue());
 
   // ============================================================================
-  // Translation proxy — optional, activated by agents.claude.translate config
+  // Translation proxy — optional, activated by agents.claude.proxy config
   //
   // ARCHITECTURE: If proxy config exists, start a local TranslationProxy that
   // routes Anthropic Messages API requests to an OpenAI-compatible backend.
@@ -402,14 +402,17 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // when a processSpawner is injected (tests with mock spawners).
   //
   // DECISION: Proxy failure is fatal when config exists. The user
-  // explicitly configured translate — falling back to direct Anthropic API
+  // explicitly configured proxy — falling back to direct Anthropic API
   // would fail (wrong key/model) and produce confusing downstream errors.
   // Error message includes remediation steps for working without the proxy.
   // ============================================================================
   let proxyPort: number | undefined;
 
   if (!options.processSpawner && !skipProxy) {
-    const proxyConfig = loadProxyConfig('claude');
+    const claudeConfig = loadAgentConfig('claude');
+    // DECISION: Skip proxy startup when runtime is set — runtime (e.g. ollama) handles
+    // API routing itself, so the translation proxy is not needed and would conflict.
+    const proxyConfig = claudeConfig.runtime ? null : loadProxyConfig('claude', claudeConfig);
     if (proxyConfig !== null) {
       const proxyManager = new ProxyManager(proxyConfig, logger.child({ module: 'ProxyManager' }));
       const proxyResult = await proxyManager.start();
@@ -423,7 +426,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
           new AutobeatError(
             ErrorCode.CONFIGURATION_ERROR,
             `Translation proxy failed to start: ${proxyResult.error.message}. ` +
-              'To work without the proxy, run: beat agents config set claude translate ""',
+              'To work without the proxy, run: beat agents config set claude proxy ""',
             { error: proxyResult.error.message },
           ),
         );

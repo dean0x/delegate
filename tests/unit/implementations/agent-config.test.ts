@@ -181,6 +181,61 @@ describe('Agent Config Storage', () => {
     });
   });
 
+  describe('proxy support', () => {
+    it('should save and load proxy for a provider', () => {
+      const result = saveAgentConfig('claude', 'proxy', 'openai');
+      expect(result.ok).toBe(true);
+
+      const config = loadAgentConfig('claude');
+      expect(config.proxy).toBe('openai');
+    });
+
+    it('should clear proxy with empty string', () => {
+      saveAgentConfig('claude', 'proxy', 'openai');
+      saveAgentConfig('claude', 'proxy', '');
+      const config = loadAgentConfig('claude');
+      expect(config.proxy).toBeUndefined();
+    });
+
+    it('should drop unknown proxy targets silently', () => {
+      // Write raw JSON with an unsupported proxy value
+      const { writeFileSync } = require('fs');
+      writeFileSync(
+        require('path').join(testDir, 'config.json'),
+        JSON.stringify({ agents: { claude: { proxy: 'unsupported-backend' } } }),
+      );
+      const config = loadAgentConfig('claude');
+      expect(config.proxy).toBeUndefined();
+    });
+  });
+
+  describe('runtime support', () => {
+    it('should save and load runtime for a provider', () => {
+      const result = saveAgentConfig('claude', 'runtime', 'ollama');
+      expect(result.ok).toBe(true);
+
+      const config = loadAgentConfig('claude');
+      expect(config.runtime).toBe('ollama');
+    });
+
+    it('should clear runtime with empty string', () => {
+      saveAgentConfig('claude', 'runtime', 'ollama');
+      saveAgentConfig('claude', 'runtime', '');
+      const config = loadAgentConfig('claude');
+      expect(config.runtime).toBeUndefined();
+    });
+
+    it('should drop unknown runtime targets silently', () => {
+      const { writeFileSync } = require('fs');
+      writeFileSync(
+        require('path').join(testDir, 'config.json'),
+        JSON.stringify({ agents: { claude: { runtime: 'unknown-runtime' } } }),
+      );
+      const config = loadAgentConfig('claude');
+      expect(config.runtime).toBeUndefined();
+    });
+  });
+
   describe('model support', () => {
     it('should save and load model for a provider', () => {
       const result = saveAgentConfig('claude', 'model', 'claude-opus-4-5');

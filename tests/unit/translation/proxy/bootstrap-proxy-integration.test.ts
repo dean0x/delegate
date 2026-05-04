@@ -1,8 +1,8 @@
 /**
  * Tests for bootstrap integration with translation proxy.
  *
- * Verifies that loadProxyConfig reads translate + baseUrl/apiKey/model from
- * AgentConfig to derive proxy configuration. The `translate` field is the gate:
+ * Verifies that loadProxyConfig reads proxy + baseUrl/apiKey/model from
+ * AgentConfig to derive proxy configuration. The `proxy` field is the gate:
  * when set to a supported target (e.g. 'openai'), the existing baseUrl, apiKey,
  * and model fields become the target backend configuration.
  *
@@ -42,7 +42,7 @@ describe('loadProxyConfig', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null when translate is not set', async () => {
+  it('returns null when proxy is not set', async () => {
     await writeFile(
       join(tempDir, 'config.json'),
       JSON.stringify({
@@ -53,46 +53,46 @@ describe('loadProxyConfig', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null when translate is set but baseUrl is missing', async () => {
+  it('returns null when proxy is set but baseUrl is missing', async () => {
     await writeFile(
       join(tempDir, 'config.json'),
       JSON.stringify({
-        agents: { claude: { translate: 'openai', apiKey: 'sk-test', model: 'gpt-4o' } },
+        agents: { claude: { proxy: 'openai', apiKey: 'sk-test', model: 'gpt-4o' } },
       }),
     );
     const result = loadProxyConfig('claude');
     expect(result).toBeNull();
   });
 
-  it('returns null when translate is set but apiKey is missing', async () => {
+  it('returns null when proxy is set but apiKey is missing', async () => {
     await writeFile(
       join(tempDir, 'config.json'),
       JSON.stringify({
-        agents: { claude: { translate: 'openai', baseUrl: 'https://api.example.com', model: 'gpt-4o' } },
+        agents: { claude: { proxy: 'openai', baseUrl: 'https://api.example.com', model: 'gpt-4o' } },
       }),
     );
     const result = loadProxyConfig('claude');
     expect(result).toBeNull();
   });
 
-  it('returns null when translate is set but model is missing', async () => {
+  it('returns null when proxy is set but model is missing', async () => {
     await writeFile(
       join(tempDir, 'config.json'),
       JSON.stringify({
-        agents: { claude: { translate: 'openai', baseUrl: 'https://api.example.com', apiKey: 'sk-test' } },
+        agents: { claude: { proxy: 'openai', baseUrl: 'https://api.example.com', apiKey: 'sk-test' } },
       }),
     );
     const result = loadProxyConfig('claude');
     expect(result).toBeNull();
   });
 
-  it('returns ProxyConfig when translate + all required fields are present', async () => {
+  it('returns ProxyConfig when proxy + all required fields are present', async () => {
     await writeFile(
       join(tempDir, 'config.json'),
       JSON.stringify({
         agents: {
           claude: {
-            translate: 'openai',
+            proxy: 'openai',
             baseUrl: 'https://integrate.api.nvidia.com/v1',
             apiKey: 'nvapi-test-key',
             model: 'moonshotai/kimi-k2-thinking',
@@ -107,16 +107,16 @@ describe('loadProxyConfig', () => {
     expect(result?.targetModel).toBe('moonshotai/kimi-k2-thinking');
   });
 
-  it('returns null for unsupported translate target', async () => {
-    // Validation of the translate value happens in loadAgentConfig (configuration.ts):
-    // unknown targets are silently dropped (translate becomes undefined), so
-    // loadProxyConfig returns null at the `!agentConfig.translate` guard.
+  it('returns null for unsupported proxy target', async () => {
+    // Validation of the proxy value happens in loadAgentConfig (configuration.ts):
+    // unknown targets are silently dropped (proxy becomes undefined), so
+    // loadProxyConfig returns null at the `!agentConfig.proxy` guard.
     await writeFile(
       join(tempDir, 'config.json'),
       JSON.stringify({
         agents: {
           claude: {
-            translate: 'gemini-native',
+            proxy: 'gemini-native',
             baseUrl: 'https://api.example.com',
             apiKey: 'key',
             model: 'model',
@@ -168,7 +168,7 @@ describe('proxy startup by bootstrap mode', () => {
   const proxyConfig = {
     agents: {
       claude: {
-        translate: 'openai',
+        proxy: 'openai',
         baseUrl: 'https://api.example.com',
         apiKey: 'test-key',
         model: 'test-model',
@@ -224,5 +224,31 @@ describe('proxy startup by bootstrap mode', () => {
     await container.dispose();
     // After dispose, all services are cleared
     expect(container.get('proxyManager').ok).toBe(false);
+  });
+
+  it('skips proxy startup when runtime is set for claude', async () => {
+    // Even though proxy config has baseUrl/apiKey/model set, runtime takes precedence
+    const configWithRuntime = {
+      agents: {
+        claude: {
+          proxy: 'openai',
+          baseUrl: 'https://api.example.com',
+          apiKey: 'test-key',
+          model: 'test-model',
+          runtime: 'ollama',
+        },
+      },
+    };
+    await writeFile(join(tempDir, 'config.json'), JSON.stringify(configWithRuntime));
+    const result = await bootstrap({ mode: 'run' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const container = result.value;
+    try {
+      // proxyManager should NOT be registered when runtime is set
+      expect(container.get('proxyManager').ok).toBe(false);
+    } finally {
+      await container.dispose();
+    }
   });
 });

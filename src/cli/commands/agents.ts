@@ -15,14 +15,19 @@ import {
   AGENT_PROVIDERS,
   checkAgentAuth,
   isAgentProvider,
+  isCommandInPath,
   maskApiKey,
 } from '../../core/agents.js';
 import {
+  isRuntimeSupportedForAgent,
   loadAgentConfig,
   loadConfiguration,
+  PROXY_TARGETS,
+  RUNTIME_AGENT_SUPPORT,
+  RUNTIME_TARGETS,
+  type Runtime,
   resetAgentConfig,
   saveAgentConfig,
-  TRANSLATE_TARGETS,
 } from '../../core/configuration.js';
 import { probeUrl } from '../../utils/url-probe.js';
 import * as ui from '../ui.js';
@@ -91,6 +96,12 @@ export async function checkAgents(): Promise<void> {
         ui.info(`  ${ui.dim(line)}`);
       }
     }
+
+    if (agentConfig.runtime) {
+      const runtimeFound = isCommandInPath(agentConfig.runtime);
+      const runtimeStatus = runtimeFound ? ui.cyan('[found]') : '[not found]';
+      ui.info(`  ${ui.dim(`runtime: ${agentConfig.runtime} — ${agentConfig.runtime} CLI ${runtimeStatus}`)}`);
+    }
   }
 
   process.exit(0);
@@ -105,7 +116,7 @@ export async function agentsConfigSet(
   value: string | undefined,
 ): Promise<void> {
   if (!agent || !key || !value) {
-    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model|translate> <value>');
+    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model|proxy|runtime> <value>');
     process.exit(1);
   }
 
@@ -114,8 +125,8 @@ export async function agentsConfigSet(
     process.exit(1);
   }
 
-  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model' && key !== 'translate') {
-    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model, translate`);
+  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model' && key !== 'proxy' && key !== 'runtime') {
+    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model, proxy, runtime`);
     process.exit(1);
   }
 
@@ -127,10 +138,26 @@ export async function agentsConfigSet(
     );
   }
 
-  // Validate translate is a supported target (empty string clears)
-  if (key === 'translate' && value !== '') {
-    if (!(TRANSLATE_TARGETS as readonly string[]).includes(value)) {
-      ui.error(`Unsupported translate target: "${value}". Supported values: ${TRANSLATE_TARGETS.join(', ')}`);
+  // Validate proxy is a supported target (empty string clears)
+  if (key === 'proxy' && value !== '') {
+    if (!(PROXY_TARGETS as readonly string[]).includes(value)) {
+      ui.error(`Unsupported proxy target: "${value}". Supported values: ${PROXY_TARGETS.join(', ')}`);
+      process.exit(1);
+    }
+  }
+
+  // Validate runtime is a supported target (empty string clears)
+  if (key === 'runtime' && value !== '') {
+    if (!(RUNTIME_TARGETS as readonly string[]).includes(value)) {
+      ui.error(`Unsupported runtime: "${value}". Supported values: ${RUNTIME_TARGETS.join(', ')}`);
+      process.exit(1);
+    }
+    // Check agent-runtime compatibility
+    if (!isRuntimeSupportedForAgent(value as Runtime, agent)) {
+      ui.error(
+        `Runtime '${value}' does not support agent '${agent}'. ` +
+          `Supported agents: ${RUNTIME_AGENT_SUPPORT[value as Runtime].join(', ')}`,
+      );
       process.exit(1);
     }
   }
@@ -157,12 +184,13 @@ export async function agentsConfigSet(
     ui.success(`${agent}.${key} saved: ${value}`);
   }
 
-  // Probe connectivity when a URL/auth/translate field is changed and non-empty
-  if ((key === 'baseUrl' || key === 'apiKey' || key === 'translate') && value !== '') {
-    const config = loadAgentConfig(agent);
-    const effectiveBaseUrl = key === 'baseUrl' ? value : config.baseUrl;
+  const updatedConfig = loadAgentConfig(agent);
+
+  // Probe connectivity when a URL/auth/proxy field is changed and non-empty
+  if ((key === 'baseUrl' || key === 'apiKey' || key === 'proxy') && value !== '') {
+    const effectiveBaseUrl = key === 'baseUrl' ? value : updatedConfig.baseUrl;
     if (effectiveBaseUrl) {
-      const effectiveApiKey = key === 'apiKey' ? value : config.apiKey;
+      const effectiveApiKey = key === 'apiKey' ? value : updatedConfig.apiKey;
       const probeResult = await probeUrl(effectiveBaseUrl, {
         apiKey: effectiveApiKey,
         timeoutMs: 5000,
@@ -178,12 +206,20 @@ export async function agentsConfigSet(
     }
   }
 
-  // Warn when translate is set but required fields are missing
-  if (key === 'translate' && value !== '') {
-    const config = loadAgentConfig(agent);
-    if (!config.baseUrl) ui.note('translate requires baseUrl to be set', 'Warning');
-    if (!config.apiKey) ui.note('translate requires apiKey to be set', 'Warning');
-    if (!config.model) ui.note('translate requires model to be set', 'Warning');
+  // Warn when proxy is set but required fields are missing
+  if (key === 'proxy' && value !== '') {
+    if (!updatedConfig.baseUrl) ui.note('proxy requires baseUrl to be set', 'Warning');
+    if (!updatedConfig.apiKey) ui.note('proxy requires apiKey to be set', 'Warning');
+    if (!updatedConfig.model) ui.note('proxy requires model to be set', 'Warning');
+  }
+
+  // Warn about mutual exclusivity between runtime and proxy
+  if (key === 'runtime' && value !== '') {
+    if (updatedConfig.proxy) ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
+  }
+  if (key === 'proxy' && value !== '') {
+    if (updatedConfig.runtime)
+      ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
   }
 
   process.exit(0);
@@ -215,8 +251,11 @@ export async function agentsConfigShow(agent?: string): Promise<void> {
     if (config.model) {
       parts.push(`model: ${config.model}`);
     }
-    if (config.translate) {
-      parts.push(`translate: ${config.translate}`);
+    if (config.proxy) {
+      parts.push(`proxy: ${config.proxy}`);
+    }
+    if (config.runtime) {
+      parts.push(`runtime: ${config.runtime}`);
     }
 
     if (parts.length > 0) {

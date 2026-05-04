@@ -16,10 +16,13 @@ import {
 } from '../core/agents.js';
 import {
   type Configuration,
+  isRuntimeSupportedForAgent,
   loadAgentConfig,
+  PROXY_TARGETS,
+  RUNTIME_AGENT_SUPPORT,
+  RUNTIME_TARGETS,
   resetAgentConfig,
   saveAgentConfig,
-  TRANSLATE_TARGETS,
 } from '../core/configuration.js';
 import {
   EvalMode,
@@ -63,13 +66,9 @@ import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 // Zod schemas for MCP protocol validation
 // Exported for unit-testing schema validation independently of the MCP protocol layer
 
-// Reusable model schema — enforces safe characters to prevent shell injection via agent flags.
-// Pattern: letters, digits, dots, underscores, and hyphens only (e.g. "claude-opus-4-5").
-const modelSchema = z
-  .string()
-  .min(1)
-  .max(200)
-  .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens');
+// Model names are opaque to autobeat — validation is the agent CLI's responsibility.
+// Length bounds prevent abuse; format is not constrained (models use /, :, @ separators).
+const modelSchema = z.string().min(1).max(200);
 
 export const DelegateTaskSchema = z.object({
   prompt: z.string().min(1),
@@ -378,13 +377,20 @@ const ConfigureAgentSchema = z.object({
   apiKey: z.string().min(1).optional().describe('API key to store (set action)'),
   baseUrl: z.string().url().optional().describe('Base URL override (set action, e.g. https://proxy.example.com/v1)'),
   model: modelSchema.optional().describe('Default model override for this agent (set action)'),
-  translate: z
-    // TRANSLATE_TARGETS is the canonical list; '' is the "clear" sentinel accepted only at
+  proxy: z
+    // PROXY_TARGETS is the canonical list; '' is the "clear" sentinel accepted only at
     // save boundaries (CLI, MCP) — it is never persisted to stored config.
-    .enum([...TRANSLATE_TARGETS, ''] as const satisfies readonly [string, ...string[]])
+    .enum([...PROXY_TARGETS, ''] as const satisfies readonly [string, ...string[]])
     .optional()
     .describe(
-      'API translation target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
+      'API proxy target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
+    ),
+  runtime: z
+    // RUNTIME_TARGETS is the canonical list; '' is the "clear" sentinel.
+    .enum([...RUNTIME_TARGETS, ''] as const satisfies readonly [string, ...string[]])
+    .optional()
+    .describe(
+      'Runtime to wrap agent spawns (set action). Supported: "ollama". Wraps spawn with `ollama launch`. Supported agents: claude, codex. Mutually exclusive with proxy — runtime takes precedence. Empty string clears.',
     ),
 });
 
@@ -1747,10 +1753,15 @@ export class MCPAdapter {
                     minLength: 1,
                     maxLength: 200,
                   },
-                  translate: {
+                  proxy: {
                     type: 'string',
                     description:
-                      'API translation target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
+                      'API proxy target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
+                  },
+                  runtime: {
+                    type: 'string',
+                    description:
+                      'Runtime to wrap agent spawns (set action). Supported: "ollama". Wraps spawn with `ollama launch`. Supported agents: claude, codex. Mutually exclusive with proxy — runtime takes precedence. Empty string clears.',
                   },
                 },
                 required: ['agent'],
@@ -3075,7 +3086,8 @@ export class MCPAdapter {
         ...(authStatus.hint && { hint: authStatus.hint }),
         ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
         ...(agentConfig.model && { model: agentConfig.model }),
-        ...(agentConfig.translate && { translate: agentConfig.translate }),
+        ...(agentConfig.proxy && { proxy: agentConfig.proxy }),
+        ...(agentConfig.runtime && { runtime: agentConfig.runtime }),
         ...(claudeBaseUrlWarning && { warning: claudeBaseUrlWarning }),
       };
     });
@@ -3417,6 +3429,25 @@ export class MCPAdapter {
    * Actions: check auth status, set API key, reset stored key
    */
   private async handleConfigureAgent(args: unknown): Promise<MCPToolResponse> {
+    // Reject legacy 'translate' field with migration message (must precede safeParse — Zod strips unknown keys)
+    if (typeof args === 'object' && args !== null && 'translate' in args) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: false,
+                error: 'The "translate" field has been renamed to "proxy". Use proxy: "openai" instead.',
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
     const parseResult = ConfigureAgentSchema.safeParse(args);
     if (!parseResult.success) {
       return {
@@ -3437,7 +3468,7 @@ export class MCPAdapter {
       };
     }
 
-    const { agent, action, apiKey, baseUrl, model, translate } = parseResult.data;
+    const { agent, action, apiKey, baseUrl, model, proxy, runtime } = parseResult.data;
 
     switch (action) {
       case 'check': {
@@ -3460,15 +3491,21 @@ export class MCPAdapter {
           }
         }
 
-        const checkWarning = this.getClaudeBaseUrlWarning(agent, agentConfig.baseUrl, agentConfig.apiKey);
+        const checkWarnings: string[] = [];
+        const baseUrlWarning = this.getClaudeBaseUrlWarning(agent, agentConfig.baseUrl, agentConfig.apiKey);
+        if (baseUrlWarning) checkWarnings.push(baseUrlWarning);
+        if (agentConfig.runtime && agentConfig.proxy) {
+          checkWarnings.push('runtime and proxy are mutually exclusive — runtime takes precedence');
+        }
         const checkPayload = {
           success: true,
           ...status,
           ...(agentConfig.apiKey && { storedKey: maskApiKey(agentConfig.apiKey) }),
           ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
           ...(agentConfig.model && { model: agentConfig.model }),
-          ...(agentConfig.translate && { translate: agentConfig.translate }),
-          ...(checkWarning && { warning: checkWarning }),
+          ...(agentConfig.proxy && { proxy: agentConfig.proxy }),
+          ...(agentConfig.runtime && { runtime: agentConfig.runtime }),
+          ...(checkWarnings.length > 0 && { warning: checkWarnings.join('. ') }),
           ...(connectivity !== undefined && { connectivity }),
         };
 
@@ -3483,7 +3520,7 @@ export class MCPAdapter {
       }
 
       case 'set': {
-        if (!apiKey && !baseUrl && !model && translate === undefined) {
+        if (!apiKey && !baseUrl && !model && proxy === undefined && runtime === undefined) {
           return {
             content: [
               {
@@ -3491,7 +3528,30 @@ export class MCPAdapter {
                 text: JSON.stringify(
                   {
                     success: false,
-                    error: 'At least one of apiKey, baseUrl, model, or translate is required for set action',
+                    error: 'At least one of apiKey, baseUrl, model, proxy, or runtime is required for set action',
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Validate agent-runtime compatibility before writing
+        // runtime is 'ollama' | '' — truthy check excludes the clear-sentinel ''
+        if (runtime && !isRuntimeSupportedForAgent(runtime, agent)) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: false,
+                    error:
+                      `Runtime '${runtime}' does not support agent '${agent}'. ` +
+                      `Supported agents: ${RUNTIME_AGENT_SUPPORT[runtime].join(', ')}`,
                   },
                   null,
                   2,
@@ -3506,7 +3566,7 @@ export class MCPAdapter {
         // result before returning so that a late failure reports which fields
         // were already saved and which failed.
         type WriteAttempt = {
-          key: 'apiKey' | 'baseUrl' | 'model' | 'translate';
+          key: 'apiKey' | 'baseUrl' | 'model' | 'proxy' | 'runtime';
           label: string;
           ok: boolean;
           error?: string;
@@ -3543,11 +3603,21 @@ export class MCPAdapter {
           });
         }
 
-        if (translate !== undefined) {
-          const result = saveAgentConfig(agent, 'translate', translate);
+        if (proxy !== undefined) {
+          const result = saveAgentConfig(agent, 'proxy', proxy);
           attempts.push({
-            key: 'translate',
-            label: translate === '' ? 'translate cleared' : `translate set to ${translate}`,
+            key: 'proxy',
+            label: proxy === '' ? 'proxy cleared' : `proxy set to ${proxy}`,
+            ok: result.ok,
+            error: result.ok ? undefined : result.error,
+          });
+        }
+
+        if (runtime !== undefined) {
+          const result = saveAgentConfig(agent, 'runtime', runtime);
+          attempts.push({
+            key: 'runtime',
+            label: runtime === '' ? 'runtime cleared' : `runtime set to ${runtime}`,
             ok: result.ok,
             error: result.ok ? undefined : result.error,
           });
@@ -3579,26 +3649,34 @@ export class MCPAdapter {
         const currentConfig = loadAgentConfig(agent);
         const effectiveBaseUrl = baseUrl !== undefined ? baseUrl : currentConfig.baseUrl;
         const effectiveApiKey = apiKey ?? currentConfig.apiKey;
-        const effectiveTranslate = translate !== undefined ? translate : currentConfig.translate;
+        const effectiveProxy = proxy !== undefined ? proxy : currentConfig.proxy;
+        const effectiveRuntime = runtime !== undefined ? runtime : currentConfig.runtime;
 
         const warnings: string[] = [];
         const baseUrlWarning = this.getClaudeBaseUrlWarning(agent, effectiveBaseUrl, effectiveApiKey);
         if (baseUrlWarning) warnings.push(baseUrlWarning);
 
-        // Warn when translate is set but required fields are missing
-        if (effectiveTranslate) {
-          if (!effectiveBaseUrl) warnings.push('translate requires baseUrl to be set');
-          if (!effectiveApiKey) warnings.push('translate requires apiKey to be set');
+        // Warn when proxy is set but required fields are missing
+        if (effectiveProxy) {
+          if (!effectiveBaseUrl) warnings.push('proxy requires baseUrl to be set');
+          if (!effectiveApiKey) warnings.push('proxy requires apiKey to be set');
           if (!currentConfig.model && !attempts.some((a) => a.key === 'model'))
-            warnings.push('translate requires model to be set');
+            warnings.push('proxy requires model to be set');
         }
 
+        // Warn when both runtime and proxy are set (runtime takes precedence)
+        if (effectiveRuntime && effectiveProxy) {
+          warnings.push('runtime and proxy are mutually exclusive — runtime takes precedence');
+        }
+
+        // DECISION: Probe skipped when only runtime changes — runtime handles API routing locally,
+        // so connectivity to the configured baseUrl is not relevant.
         // Probe connectivity when a baseUrl-related field was changed and baseUrl is available.
         // DESIGN: On set, the save already succeeded so we only surface non-ok probe results
         // as a warning (not a diagnostic payload) — probe network errors are silently ignored
         // because the write succeeded regardless of transient connectivity. This differs from
         // the check action, which includes full probe diagnostics for user inspection.
-        if ((baseUrl !== undefined || apiKey !== undefined || translate !== undefined) && effectiveBaseUrl) {
+        if ((baseUrl !== undefined || apiKey !== undefined || proxy !== undefined) && effectiveBaseUrl) {
           const probeResult = await probeUrl(effectiveBaseUrl, {
             apiKey: effectiveApiKey,
             timeoutMs: 5000,

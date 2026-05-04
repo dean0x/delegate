@@ -11,9 +11,9 @@
  * 3. Pass proxyUrl to ProxiedClaudeAdapter via ANTHROPIC_BASE_URL
  * 4. Call stop() on shutdown
  *
- * Configuration: When an agent has `translate` set (e.g. 'openai'), the existing
+ * Configuration: When an agent has `proxy` set (e.g. 'openai'), the existing
  * `baseUrl`, `apiKey`, and `model` fields become the target backend config.
- * loadProxyConfig() returns null when translate is not set.
+ * loadProxyConfig() returns null when proxy is not set.
  *
  * DECISION: One ProxyManager per agent provider. Currently only 'claude' is
  * supported (Anthropic Messages API ↔ OpenAI Chat Completions). Codex/Gemini
@@ -33,7 +33,7 @@ import { TranslationProxy } from './translation-proxy.js';
 
 /**
  * Target backend configuration for the translation proxy.
- * Derived from AgentConfig fields when `translate` is set.
+ * Derived from AgentConfig fields when `proxy` is set.
  */
 export interface ProxyConfig {
   /** Base URL of the OpenAI-compatible backend, e.g. "https://integrate.api.nvidia.com/v1" */
@@ -45,34 +45,35 @@ export interface ProxyConfig {
 }
 
 /**
- * Load proxy configuration from AgentConfig when `translate` is set.
+ * Load proxy configuration from AgentConfig when `proxy` is set.
  *
- * ARCHITECTURE: When an agent has `translate: 'openai'`, the existing `baseUrl`,
+ * ARCHITECTURE: When an agent has `proxy: 'openai'`, the existing `baseUrl`,
  * `apiKey`, and `model` fields become the target backend config. This means users
  * configure the translation proxy with the same commands they'd use for any agent:
- *   beat agents config set claude translate openai
+ *   beat agents config set claude proxy openai
  *   beat agents config set claude baseUrl https://integrate.api.nvidia.com/v1
  *   beat agents config set claude apiKey nvapi-...
  *   beat agents config set claude model moonshotai/kimi-k2-thinking
  *
- * Returns null when: translate is not set or required fields (baseUrl, apiKey, model) are missing.
+ * Returns null when: proxy is not set or required fields (baseUrl, apiKey, model) are missing.
  *
  * @param provider - Agent provider key (currently only 'claude' is supported)
+ * @param agentConfig - Optional pre-loaded agent config (avoids redundant disk read)
  */
-export function loadProxyConfig(provider: AgentProvider): ProxyConfig | null {
+export function loadProxyConfig(provider: AgentProvider, agentConfig?: AgentConfig): ProxyConfig | null {
   // Only claude supports translation (Anthropic → OpenAI)
   if (provider !== 'claude') return null;
 
-  const agentConfig: AgentConfig = loadAgentConfig(provider);
-  if (!agentConfig.translate) return null;
+  const config = agentConfig ?? loadAgentConfig(provider);
+  if (!config.proxy) return null;
 
-  // translate requires baseUrl, apiKey, and model
-  if (!agentConfig.baseUrl || !agentConfig.apiKey || !agentConfig.model) return null;
+  // proxy requires baseUrl, apiKey, and model
+  if (!config.baseUrl || !config.apiKey || !config.model) return null;
 
   return {
-    targetBaseUrl: agentConfig.baseUrl,
-    targetApiKey: agentConfig.apiKey,
-    targetModel: agentConfig.model,
+    targetBaseUrl: config.baseUrl,
+    targetApiKey: config.apiKey,
+    targetModel: config.model,
   };
 }
 
@@ -115,8 +116,7 @@ export class ProxyManager {
   async start(): Promise<Result<{ port: number; proxyUrl: string }>> {
     // Idempotent: already running
     if (this.proxy !== null && this.port !== undefined) {
-      const url = `http://127.0.0.1:${this.port}`;
-      return ok({ port: this.port, proxyUrl: url });
+      return ok({ port: this.port, proxyUrl: `http://127.0.0.1:${this.port}` });
     }
 
     const proxyLogger = this.logger.child({ module: 'TranslationProxy' });
@@ -148,7 +148,6 @@ export class ProxyManager {
 
     this.proxy = proxy;
     this.port = startResult.value.port;
-    const url = `http://127.0.0.1:${this.port}`;
 
     this.logger.info('Translation proxy started', {
       port: this.port,
@@ -156,7 +155,7 @@ export class ProxyManager {
       targetModel: this.config.targetModel,
     });
 
-    return ok({ port: this.port, proxyUrl: url });
+    return ok({ port: this.port, proxyUrl: `http://127.0.0.1:${this.port}` });
   }
 
   /**
