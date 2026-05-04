@@ -222,15 +222,17 @@ describe('MCPAdapter - InitCustomOrchestrator tool', () => {
       expect(body.success).toBe(false);
     });
 
-    it('returns error when model contains shell metacharacters', async () => {
+    it('accepts model names with special characters (validation delegated to agent CLI)', async () => {
+      // Model names are opaque to autobeat — format is the agent CLI's responsibility.
+      // Models use /, :, @ separators (e.g. registry.example.com/model:tag).
       const response = await adapter.callTool('InitCustomOrchestrator', {
         goal: 'Test goal',
-        model: 'claude-opus; rm -rf /',
+        model: 'registry.example.com/model:tag',
       });
 
-      expect(response.isError).toBe(true);
+      expect(response.isError).toBeFalsy();
       const body = JSON.parse(response.content[0].text);
-      expect(body.success).toBe(false);
+      expect(body.success).toBe(true);
     });
 
     it('accepts valid model names with dots and hyphens', async () => {

@@ -66,13 +66,9 @@ import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 // Zod schemas for MCP protocol validation
 // Exported for unit-testing schema validation independently of the MCP protocol layer
 
-// Reusable model schema — enforces safe characters to prevent shell injection via agent flags.
-// Pattern: letters, digits, dots, underscores, and hyphens only (e.g. "claude-opus-4-5").
-const modelSchema = z
-  .string()
-  .min(1)
-  .max(200)
-  .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens');
+// Model names are opaque to autobeat — validation is the agent CLI's responsibility.
+// Length bounds prevent abuse; format is not constrained (models use /, :, @ separators).
+const modelSchema = z.string().min(1).max(200);
 
 export const DelegateTaskSchema = z.object({
   prompt: z.string().min(1),
@@ -1765,7 +1761,7 @@ export class MCPAdapter {
                   runtime: {
                     type: 'string',
                     description:
-                      'Runtime to wrap agent spawns (set action). Supported: "ollama". Wraps spawn with `ollama launch`. Supported agents: claude, codex. Empty string clears.',
+                      'Runtime to wrap agent spawns (set action). Supported: "ollama". Wraps spawn with `ollama launch`. Supported agents: claude, codex. Mutually exclusive with proxy — runtime takes precedence. Empty string clears.',
                   },
                 },
                 required: ['agent'],
@@ -3433,6 +3429,25 @@ export class MCPAdapter {
    * Actions: check auth status, set API key, reset stored key
    */
   private async handleConfigureAgent(args: unknown): Promise<MCPToolResponse> {
+    // Reject legacy 'translate' field with migration message (must precede safeParse — Zod strips unknown keys)
+    if (typeof args === 'object' && args !== null && 'translate' in args) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: false,
+                error: 'The "translate" field has been renamed to "proxy". Use proxy: "openai" instead.',
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
     const parseResult = ConfigureAgentSchema.safeParse(args);
     if (!parseResult.success) {
       return {
@@ -3476,7 +3491,12 @@ export class MCPAdapter {
           }
         }
 
-        const checkWarning = this.getClaudeBaseUrlWarning(agent, agentConfig.baseUrl, agentConfig.apiKey);
+        const checkWarnings: string[] = [];
+        const baseUrlWarning = this.getClaudeBaseUrlWarning(agent, agentConfig.baseUrl, agentConfig.apiKey);
+        if (baseUrlWarning) checkWarnings.push(baseUrlWarning);
+        if (agentConfig.runtime && agentConfig.proxy) {
+          checkWarnings.push('runtime and proxy are mutually exclusive — runtime takes precedence');
+        }
         const checkPayload = {
           success: true,
           ...status,
@@ -3485,7 +3505,7 @@ export class MCPAdapter {
           ...(agentConfig.model && { model: agentConfig.model }),
           ...(agentConfig.proxy && { proxy: agentConfig.proxy }),
           ...(agentConfig.runtime && { runtime: agentConfig.runtime }),
-          ...(checkWarning && { warning: checkWarning }),
+          ...(checkWarnings.length > 0 && { warning: checkWarnings.join('. ') }),
           ...(connectivity !== undefined && { connectivity }),
         };
 
@@ -3649,6 +3669,8 @@ export class MCPAdapter {
           warnings.push('runtime and proxy are mutually exclusive — runtime takes precedence');
         }
 
+        // DECISION: Probe skipped when only runtime changes — runtime handles API routing locally,
+        // so connectivity to the configured baseUrl is not relevant.
         // Probe connectivity when a baseUrl-related field was changed and baseUrl is available.
         // DESIGN: On set, the save already succeeded so we only surface non-ok probe results
         // as a warning (not a diagnostic payload) — probe network errors are silently ignored

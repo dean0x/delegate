@@ -121,8 +121,10 @@ Use \`runtime\` to run agents through Ollama for local model execution:
 1. ConfigureAgent action: "set", agent: "claude", runtime: "ollama"
 2. ConfigureAgent action: "set", agent: "claude", model: "qwen3.6"
 
-When runtime is "ollama", spawns are wrapped with \`ollama launch\`, which handles
-model routing and API compatibility. Ollama must be installed and running.
+When runtime is "ollama", spawns are wrapped with \`ollama launch --yes\`, which handles
+model routing, API compatibility, and automatic model download acceptance. Ollama must
+be installed and running. First execution with a new model may be slow due to download.
+Pre-pull with: \`ollama pull <model>\`.
 
 Supported agents: claude, codex. Gemini CLI is not supported by ollama launch.
 
