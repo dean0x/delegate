@@ -197,11 +197,15 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       );
     }
 
+    // DECISION: Single-runtime direct dispatch. With one runtime ('ollama'), a strategy
+    // pattern would be over-engineering. The exhaustive guard below ensures compile-time
+    // error if RUNTIME_TARGETS gains a new entry without handler.
     if (agentConfig.runtime === 'ollama') {
       const effectiveModel = taskModel ?? agentConfig.model;
       const modelArgs: string[] = effectiveModel ? ['--model', effectiveModel] : [];
       return ok({
         command: 'ollama',
+        // --yes: auto-accept model downloads + license prompts (without it, ollama blocks on interactive confirmation)
         prependArgs: ['launch', this.command, ...modelArgs, '--yes', '--'],
         suppressModel: true,
         suppressAuth: true,
@@ -217,6 +221,64 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     );
   }
 
+  private resolveSystemPromptInjection(
+    prompt: string,
+    systemPrompt: string | undefined,
+    taskId: string | undefined,
+  ): { effectivePrompt: string; args: readonly string[]; env: Record<string, string> } {
+    if (!systemPrompt) return { effectivePrompt: prompt, args: [], env: {} };
+
+    const safeId = taskId ?? crypto.randomUUID().substring(0, 8);
+    const systemPromptPath = path.join(os.homedir(), '.autobeat', 'system-prompts', `${safeId}.md`);
+    const config = this.getSystemPromptConfig(systemPrompt, systemPromptPath);
+
+    if (config.prependToPrompt) {
+      return { effectivePrompt: `${systemPrompt}\n\n${prompt}`, args: [...config.args], env: config.env };
+    }
+    return { effectivePrompt: prompt, args: [...config.args], env: config.env };
+  }
+
+  private buildSpawnEnv(options: {
+    runtimeConfig: { suppressBaseUrl: boolean } | null;
+    agentConfig: AgentConfig;
+    authEnv: Record<string, string>;
+    systemPromptEnv: Record<string, string>;
+    taskId?: string;
+    orchestratorId?: string;
+  }): Record<string, string> {
+    const exactMatches = this.envExactMatchesToStrip;
+    const cleanEnv = Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) => !this.envPrefixesToStrip.some((prefix) => key.startsWith(prefix)) && !exactMatches.includes(key),
+      ),
+    );
+    const baseUrlEnv = options.runtimeConfig?.suppressBaseUrl ? {} : this.resolveBaseUrl(options.agentConfig);
+
+    const ORCHESTRATOR_ID_RE = /^orchestrator-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    const safeOrchestratorId =
+      options.orchestratorId && ORCHESTRATOR_ID_RE.test(options.orchestratorId) ? options.orchestratorId : undefined;
+    if (options.orchestratorId && !safeOrchestratorId) {
+      console.error(
+        JSON.stringify({
+          level: 'warn',
+          message: 'spawn: dropping malformed AUTOBEAT_ORCHESTRATOR_ID — format did not match canonical pattern',
+          provider: this.provider,
+        }),
+      );
+    }
+
+    return {
+      ...this.additionalEnv,
+      ...cleanEnv,
+      ...options.authEnv,
+      ...baseUrlEnv,
+      ...options.systemPromptEnv,
+      AUTOBEAT_WORKER: 'true',
+      ...(options.taskId && { AUTOBEAT_TASK_ID: options.taskId }),
+      ...(safeOrchestratorId && { AUTOBEAT_ORCHESTRATOR_ID: safeOrchestratorId }),
+    };
+  }
+
   spawn({
     prompt,
     workingDirectory,
@@ -227,6 +289,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     systemPrompt,
   }: SpawnOptions): Result<{ process: ChildProcess; pid: number }> {
     try {
+      // DECISION: Runtime takes precedence over proxy. When runtime is set, auth/baseUrl/model
+      // are suppressed from inner agent args. See also bootstrap.ts:413 (proxy startup skip)
+      // and mcp-adapter.ts set/check handlers (warning path).
       // Load agent config once — passed to resolveRuntime, resolveAuth, resolveBaseUrl, resolveModel
       // to avoid redundant readFileSync + JSON.parse calls per spawn
       const agentConfig = loadAgentConfig(this.provider);
@@ -262,71 +327,20 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const resolvedModel = runtimeConfig?.suppressModel ? undefined : this.resolveModel(agentConfig, model);
 
       // Resolve system prompt injection
-      let effectivePrompt = prompt;
-      let systemPromptArgs: readonly string[] = [];
-      let systemPromptEnv: Record<string, string> = {};
-
-      if (systemPrompt) {
-        // Compute temp file path — passed to adapters that need to write a file (e.g. Gemini).
-        // Use a random suffix when taskId is absent to avoid path collisions across concurrent spawns.
-        const safeId = taskId ?? crypto.randomUUID().substring(0, 8);
-        const systemPromptPath = path.join(os.homedir(), '.autobeat', 'system-prompts', `${safeId}.md`);
-
-        const config = this.getSystemPromptConfig(systemPrompt, systemPromptPath);
-
-        if (config.prependToPrompt) {
-          // Adapter cannot inject via CLI args/env — prepend to user prompt as fallback
-          effectivePrompt = `${systemPrompt}\n\n${prompt}`;
-        } else {
-          // Adapter is responsible for any file I/O inside getSystemPromptConfig
-          systemPromptArgs = config.args;
-          systemPromptEnv = config.env;
-        }
-      }
+      const { effectivePrompt, args: systemPromptArgs, env: systemPromptEnv } =
+        this.resolveSystemPromptInjection(prompt, systemPrompt, taskId);
 
       const finalPrompt = this.transformPrompt(effectivePrompt);
       const args = [...this.buildArgs(finalPrompt, resolvedModel, jsonSchema), ...systemPromptArgs];
 
-      const exactMatches = this.envExactMatchesToStrip;
-      const cleanEnv = Object.fromEntries(
-        Object.entries(process.env).filter(
-          ([key]) => !this.envPrefixesToStrip.some((prefix) => key.startsWith(prefix)) && !exactMatches.includes(key),
-        ),
-      );
-      // Base URL suppressed from inner env when runtime handles API routing
-      const baseUrlEnv = runtimeConfig?.suppressBaseUrl ? {} : this.resolveBaseUrl(agentConfig);
-      // NOTE: AUTOBEAT_ prefix is NOT in envPrefixesToStrip — it is preserved in cleanEnv.
-      // We explicitly set AUTOBEAT_WORKER and AUTOBEAT_TASK_ID here, and optionally
-      // AUTOBEAT_ORCHESTRATOR_ID so sub-tasks spawned by this agent are attributed to
-      // the parent orchestration (v1.3.0).
-      //
-      // SECURITY: Validate orchestratorId format before injecting into child env.
-      // Belt-and-suspenders: the MCP path already validates via Zod, but the env var
-      // path (run.ts reading AUTOBEAT_ORCHESTRATOR_ID) or a persisted DB row may not
-      // have gone through the same boundary. Reject malformed values here to prevent
-      // log injection in child processes. Attribution silently fails but spawn succeeds.
-      const ORCHESTRATOR_ID_RE = /^orchestrator-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-      const safeOrchestratorId = orchestratorId && ORCHESTRATOR_ID_RE.test(orchestratorId) ? orchestratorId : undefined;
-      if (orchestratorId && !safeOrchestratorId) {
-        // Log structured warning — do not throw; spawn continues without attribution
-        console.error(
-          JSON.stringify({
-            level: 'warn',
-            message: 'spawn: dropping malformed AUTOBEAT_ORCHESTRATOR_ID — format did not match canonical pattern',
-            provider: this.provider,
-          }),
-        );
-      }
-      const env = {
-        ...this.additionalEnv,
-        ...cleanEnv,
-        ...authResult.value.injectedEnv,
-        ...baseUrlEnv,
-        ...systemPromptEnv,
-        AUTOBEAT_WORKER: 'true',
-        ...(taskId && { AUTOBEAT_TASK_ID: taskId }),
-        ...(safeOrchestratorId && { AUTOBEAT_ORCHESTRATOR_ID: safeOrchestratorId }),
-      };
+      const env = this.buildSpawnEnv({
+        runtimeConfig,
+        agentConfig,
+        authEnv: authResult.value.injectedEnv,
+        systemPromptEnv,
+        taskId,
+        orchestratorId,
+      });
 
       // When runtime is active, wrap the command: ollama launch <agent> [--model x] --yes -- <inner-args>
       const spawnCommand = runtimeConfig ? runtimeConfig.command : this.command;
