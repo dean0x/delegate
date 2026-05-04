@@ -3480,3 +3480,132 @@ describe('ConfigureAgent — URL probe integration', () => {
     });
   });
 });
+
+// ============================================================================
+// ConfigureAgent — runtime + proxy integration tests (Fix 9A)
+// ============================================================================
+
+describe('ConfigureAgent — runtime + proxy integration via callTool()', () => {
+  let testDir: string;
+  let restoreConfig: () => void;
+
+  function makeConfigureAgentAdapter() {
+    return new MCPAdapter({
+      taskManager: new MockTaskManager(),
+      logger: new MockLogger(),
+      scheduleService: stubScheduleService,
+      loopService: stubLoopService,
+      agentRegistry: undefined,
+      config: testConfig,
+    });
+  }
+
+  beforeEach(() => {
+    testDir = path.join(tmpdir(), `autobeat-configure-agent-runtime-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    restoreConfig = _testSetConfigDir(testDir);
+  });
+
+  afterEach(() => {
+    restoreConfig();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('saves runtime for supported agent (claude)', async () => {
+    const adapter = makeConfigureAgentAdapter();
+    const result = await adapter.callTool('ConfigureAgent', {
+      agent: 'claude',
+      action: 'set',
+      runtime: 'ollama',
+    });
+    expect(result.isError).toBeFalsy();
+    const response = JSON.parse(result.content[0].text);
+    expect(response.success).toBe(true);
+  });
+
+  it('rejects runtime for unsupported agent (gemini)', async () => {
+    const adapter = makeConfigureAgentAdapter();
+    const result = await adapter.callTool('ConfigureAgent', {
+      agent: 'gemini',
+      action: 'set',
+      runtime: 'ollama',
+    });
+    expect(result.isError).toBe(true);
+    const response = JSON.parse(result.content[0].text);
+    expect(response.error).toContain('does not support');
+  });
+
+  it('clears runtime with empty string', async () => {
+    const adapter = makeConfigureAgentAdapter();
+    // First set runtime
+    await adapter.callTool('ConfigureAgent', {
+      agent: 'claude',
+      action: 'set',
+      runtime: 'ollama',
+    });
+    // Then clear it
+    const result = await adapter.callTool('ConfigureAgent', {
+      agent: 'claude',
+      action: 'set',
+      runtime: '',
+    });
+    expect(result.isError).toBeFalsy();
+    const response = JSON.parse(result.content[0].text);
+    expect(response.success).toBe(true);
+  });
+
+  it('warns when runtime and proxy are both set', async () => {
+    const adapter = makeConfigureAgentAdapter();
+    // Pre-save proxy configuration
+    saveAgentConfig('claude', 'proxy', 'openai');
+    saveAgentConfig('claude', 'baseUrl', 'https://example.com/v1');
+    saveAgentConfig('claude', 'apiKey', 'sk-test');
+    saveAgentConfig('claude', 'model', 'gpt-4');
+    // Set runtime — should trigger mutual exclusivity warning
+    const result = await adapter.callTool('ConfigureAgent', {
+      agent: 'claude',
+      action: 'set',
+      runtime: 'ollama',
+    });
+    expect(result.isError).toBeFalsy();
+    const response = JSON.parse(result.content[0].text);
+    expect(response.warning).toContain('mutually exclusive');
+  });
+
+  it('rejects legacy translate field with migration message', async () => {
+    const adapter = makeConfigureAgentAdapter();
+    const result = await adapter.callTool('ConfigureAgent', {
+      agent: 'claude',
+      action: 'set',
+      translate: 'openai',
+    } as Record<string, unknown>);
+    expect(result.isError).toBe(true);
+    const response = JSON.parse(result.content[0].text);
+    expect(response.error).toContain('renamed to');
+  });
+
+  it('includes runtime in check response when set', async () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    const adapter = makeConfigureAgentAdapter();
+    const result = await adapter.callTool('ConfigureAgent', {
+      agent: 'claude',
+      action: 'check',
+    });
+    expect(result.isError).toBeFalsy();
+    const response = JSON.parse(result.content[0].text);
+    expect(response.runtime).toBe('ollama');
+  });
+
+  it('warns on mutual exclusivity in check', async () => {
+    saveAgentConfig('claude', 'runtime', 'ollama');
+    saveAgentConfig('claude', 'proxy', 'openai');
+    const adapter = makeConfigureAgentAdapter();
+    const result = await adapter.callTool('ConfigureAgent', {
+      agent: 'claude',
+      action: 'check',
+    });
+    expect(result.isError).toBeFalsy();
+    const response = JSON.parse(result.content[0].text);
+    expect(response.warning).toContain('mutually exclusive');
+  });
+});

@@ -1159,6 +1159,17 @@ describe('GeminiBasePromptCache', () => {
 // above — isolate:false means each new vi.mock() call creates a new fn instance
 // that breaks imports already captured in other test files.
 
+function callResolveRuntime(
+  adapter: ClaudeAdapter | CodexAdapter | GeminiAdapter,
+  config: AgentConfig,
+  taskModel?: string,
+) {
+  return (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime(
+    config,
+    taskModel,
+  );
+}
+
 describe('resolveRuntime', () => {
   let testDir: string;
   let restoreConfig: () => void;
@@ -1178,16 +1189,14 @@ describe('resolveRuntime', () => {
 
   it('returns ok(null) when runtime is not set', () => {
     const adapter = new ClaudeAdapter(testConfig);
-    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({});
+    const result = callResolveRuntime(adapter, {});
     expect(result).toEqual({ ok: true, value: null });
     adapter.dispose();
   });
 
   it('returns ollama config when runtime is ollama for claude', () => {
     const adapter = new ClaudeAdapter(testConfig);
-    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({
-      runtime: 'ollama' as const,
-    });
+    const result = callResolveRuntime(adapter, { runtime: 'ollama' as const });
     expect(result).toMatchObject({
       ok: true,
       value: {
@@ -1202,18 +1211,17 @@ describe('resolveRuntime', () => {
 
   it('returns ollama config when runtime is ollama for codex', () => {
     const adapter = new CodexAdapter(testConfig);
-    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({
-      runtime: 'ollama' as const,
-    });
+    const result = callResolveRuntime(adapter, { runtime: 'ollama' as const });
     expect(result).toMatchObject({ ok: true, value: { command: 'ollama' } });
     adapter.dispose();
   });
 
   it('returns error when runtime is ollama for gemini', () => {
     const adapter = new GeminiAdapter(testConfig);
-    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({
-      runtime: 'ollama' as const,
-    }) as { ok: false; error: { code: string; message: string } };
+    const result = callResolveRuntime(adapter, { runtime: 'ollama' as const }) as {
+      ok: false;
+      error: { code: string; message: string };
+    };
     expect(result.ok).toBe(false);
     expect(result.error.code).toBe(ErrorCode.AGENT_MISCONFIGURED);
     expect(result.error.message).toContain("Runtime 'ollama' does not support agent 'gemini'");
@@ -1222,10 +1230,10 @@ describe('resolveRuntime', () => {
 
   it('uses taskModel over agentConfig.model in prependArgs', () => {
     const adapter = new ClaudeAdapter(testConfig);
-    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime(
-      { runtime: 'ollama' as const, model: 'config-model' },
-      'task-model',
-    ) as { ok: true; value: { prependArgs: readonly string[] } };
+    const result = callResolveRuntime(adapter, { runtime: 'ollama' as const, model: 'config-model' }, 'task-model') as {
+      ok: true;
+      value: { prependArgs: readonly string[] };
+    };
     expect(result.ok).toBe(true);
     expect(result.value.prependArgs).toContain('task-model');
     expect(result.value.prependArgs).not.toContain('config-model');
@@ -1234,7 +1242,7 @@ describe('resolveRuntime', () => {
 
   it('uses agentConfig.model when no taskModel provided', () => {
     const adapter = new ClaudeAdapter(testConfig);
-    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({
+    const result = callResolveRuntime(adapter, {
       runtime: 'ollama' as const,
       model: 'config-model',
     }) as { ok: true; value: { prependArgs: readonly string[] } };
@@ -1245,9 +1253,10 @@ describe('resolveRuntime', () => {
 
   it('omits --model from prependArgs when neither model source is set', () => {
     const adapter = new ClaudeAdapter(testConfig);
-    const result = (adapter as unknown as { resolveRuntime(c: AgentConfig, m?: string): unknown }).resolveRuntime({
-      runtime: 'ollama' as const,
-    }) as { ok: true; value: { prependArgs: readonly string[] } };
+    const result = callResolveRuntime(adapter, { runtime: 'ollama' as const }) as {
+      ok: true;
+      value: { prependArgs: readonly string[] };
+    };
     expect(result.ok).toBe(true);
     expect(result.value.prependArgs).not.toContain('--model');
     adapter.dispose();
@@ -1377,5 +1386,39 @@ describe('spawn with ollama runtime', () => {
     expect(mockSpawn).toHaveBeenCalledOnce();
     const [, args] = mockSpawn.mock.calls[0];
     expect(args.join(' ')).toContain('--append-system-prompt');
+  });
+});
+
+describe('spawn with ollama runtime (codex)', () => {
+  let testDir: string;
+  let restoreConfig: () => void;
+  let adapter: CodexAdapter;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsCommandInPath.mockReturnValue(true);
+    mockSpawn.mockReturnValue(createMockChildProcess(1234));
+    testDir = path.join(tmpdir(), `autobeat-runtime-codex-spawn-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    restoreConfig = _testSetConfigDir(testDir);
+    adapter = new CodexAdapter(testConfig);
+  });
+
+  afterEach(() => {
+    adapter.dispose();
+    restoreConfig();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('wraps codex command with ollama launch when runtime is set', () => {
+    saveAgentConfig('codex', 'runtime', 'ollama');
+    const result = adapter.spawn({ prompt: 'test', workingDirectory: '/workspace', taskId: 'task-1' });
+
+    expect(result.ok).toBe(true);
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    const [command, args] = mockSpawn.mock.calls[0];
+    expect(command).toBe('ollama');
+    expect(args[0]).toBe('launch');
+    expect(args[1]).toBe('codex');
   });
 });

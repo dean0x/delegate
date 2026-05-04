@@ -233,9 +233,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const config = this.getSystemPromptConfig(systemPrompt, systemPromptPath);
 
     if (config.prependToPrompt) {
-      return { effectivePrompt: `${systemPrompt}\n\n${prompt}`, args: [...config.args], env: config.env };
+      return { effectivePrompt: `${systemPrompt}\n\n${prompt}`, args: config.args, env: config.env };
     }
-    return { effectivePrompt: prompt, args: [...config.args], env: config.env };
+    return { effectivePrompt: prompt, args: config.args, env: config.env };
   }
 
   private buildSpawnEnv(options: {
@@ -327,8 +327,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const resolvedModel = runtimeConfig?.suppressModel ? undefined : this.resolveModel(agentConfig, model);
 
       // Resolve system prompt injection
-      const { effectivePrompt, args: systemPromptArgs, env: systemPromptEnv } =
-        this.resolveSystemPromptInjection(prompt, systemPrompt, taskId);
+      const {
+        effectivePrompt,
+        args: systemPromptArgs,
+        env: systemPromptEnv,
+      } = this.resolveSystemPromptInjection(prompt, systemPrompt, taskId);
 
       const finalPrompt = this.transformPrompt(effectivePrompt);
       const args = [...this.buildArgs(finalPrompt, resolvedModel, jsonSchema), ...systemPromptArgs];
@@ -396,7 +399,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Default no-op cleanup. Adapters that write task-scoped files (e.g. Gemini)
    * override this to remove them.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   cleanup(_taskId: string): void {
     // no-op — subclasses override if they create task-scoped resources
   }

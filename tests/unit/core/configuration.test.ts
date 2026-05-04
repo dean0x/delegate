@@ -6,6 +6,7 @@ import {
   _testSetConfigDir,
   type Configuration,
   ConfigurationSchema,
+  isRuntimeSupportedForAgent,
   loadConfigFile,
   loadConfiguration,
   resetConfigValue,
@@ -960,5 +961,19 @@ describe('Config File - loadConfiguration with file', () => {
     expect(warnSpy.mock.calls[0][0]).toContain('environment variables and defaults');
 
     warnSpy.mockRestore();
+  });
+});
+
+describe('isRuntimeSupportedForAgent', () => {
+  it('returns true for ollama + claude', () => {
+    expect(isRuntimeSupportedForAgent('ollama', 'claude')).toBe(true);
+  });
+
+  it('returns true for ollama + codex', () => {
+    expect(isRuntimeSupportedForAgent('ollama', 'codex')).toBe(true);
+  });
+
+  it('returns false for ollama + gemini', () => {
+    expect(isRuntimeSupportedForAgent('ollama', 'gemini')).toBe(false);
   });
 });

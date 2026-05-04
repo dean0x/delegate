@@ -218,7 +218,8 @@ export async function agentsConfigSet(
     if (updatedConfig.proxy) ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
   }
   if (key === 'proxy' && value !== '') {
-    if (updatedConfig.runtime) ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
+    if (updatedConfig.runtime)
+      ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
   }
 
   process.exit(0);
