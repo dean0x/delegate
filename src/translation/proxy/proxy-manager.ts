@@ -58,21 +58,22 @@ export interface ProxyConfig {
  * Returns null when: proxy is not set or required fields (baseUrl, apiKey, model) are missing.
  *
  * @param provider - Agent provider key (currently only 'claude' is supported)
+ * @param agentConfig - Optional pre-loaded agent config (avoids redundant disk read)
  */
-export function loadProxyConfig(provider: AgentProvider): ProxyConfig | null {
+export function loadProxyConfig(provider: AgentProvider, agentConfig?: AgentConfig): ProxyConfig | null {
   // Only claude supports translation (Anthropic → OpenAI)
   if (provider !== 'claude') return null;
 
-  const agentConfig = loadAgentConfig(provider);
-  if (!agentConfig.proxy) return null;
+  const config = agentConfig ?? loadAgentConfig(provider);
+  if (!config.proxy) return null;
 
   // proxy requires baseUrl, apiKey, and model
-  if (!agentConfig.baseUrl || !agentConfig.apiKey || !agentConfig.model) return null;
+  if (!config.baseUrl || !config.apiKey || !config.model) return null;
 
   return {
-    targetBaseUrl: agentConfig.baseUrl,
-    targetApiKey: agentConfig.apiKey,
-    targetModel: agentConfig.model,
+    targetBaseUrl: config.baseUrl,
+    targetApiKey: config.apiKey,
+    targetModel: config.model,
   };
 }
 
@@ -115,7 +116,7 @@ export class ProxyManager {
   async start(): Promise<Result<{ port: number; proxyUrl: string }>> {
     // Idempotent: already running
     if (this.proxy !== null && this.port !== undefined) {
-      return ok({ port: this.port, proxyUrl: this.proxyUrl! });
+      return ok({ port: this.port, proxyUrl: `http://127.0.0.1:${this.port}` });
     }
 
     const proxyLogger = this.logger.child({ module: 'TranslationProxy' });
@@ -154,7 +155,7 @@ export class ProxyManager {
       targetModel: this.config.targetModel,
     });
 
-    return ok({ port: this.port, proxyUrl: this.proxyUrl! });
+    return ok({ port: this.port, proxyUrl: `http://127.0.0.1:${this.port}` });
   }
 
   /**

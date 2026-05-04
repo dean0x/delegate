@@ -412,7 +412,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     const claudeConfig = loadAgentConfig('claude');
     // DECISION: Skip proxy startup when runtime is set — runtime (e.g. ollama) handles
     // API routing itself, so the translation proxy is not needed and would conflict.
-    const proxyConfig = claudeConfig.runtime ? null : loadProxyConfig('claude');
+    const proxyConfig = claudeConfig.runtime ? null : loadProxyConfig('claude', claudeConfig);
     if (proxyConfig !== null) {
       const proxyManager = new ProxyManager(proxyConfig, logger.child({ module: 'ProxyManager' }));
       const proxyResult = await proxyManager.start();
