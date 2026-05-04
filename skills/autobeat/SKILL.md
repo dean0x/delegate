@@ -92,7 +92,7 @@ Should it run on a schedule?
 | `PauseLoop` | Pause a loop mid-iteration |
 | `ResumeLoop` | Resume a paused loop |
 | `ScheduleTask` | Schedule a task (cron or one-time) |
-| `SchedulePipeline` | Schedule a recurring pipeline |
+| `SchedulePipeline` | Schedule a recurring or one-time pipeline |
 | `ScheduleLoop` | Schedule a recurring loop |
 | `ListSchedules` | List schedules with status filter |
 | `ScheduleStatus` | Get schedule details + history |
@@ -192,7 +192,7 @@ Mutually exclusive — `runtime` takes precedence if both are set. Clear with em
 |---------|---------------|-----|
 | Pipeline with 1 step | Unnecessary overhead | Use DelegateTask |
 | Manual dependsOn chain for sequential tasks | Error-prone wiring | Use CreatePipeline |
-| Loop without exit condition (shell mode) | Runs forever | Set exitCondition or use evalMode: agent with appropriate sub-strategy |
+| Loop without exit condition (shell mode) | Runs forever | Set exitCondition, or use evalMode: agent with an evalType |
 | Orchestrator for simple sequences | Overkill | Use Pipeline or Loop |
 | Polling TaskStatus in a tight loop | Wastes resources | Check periodically (30s+) |
 | Ignoring workingDirectory | Tasks run in wrong directory | Always set workingDirectory |

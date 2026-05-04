@@ -222,9 +222,9 @@ The resumed task receives:
 ### List and Filter
 
 ```json
-{ "tool": "TaskStatus", "arguments": {} }  // All tasks
-{ "tool": "ListLoops", "arguments": { "status": "running" } }  // Running loops only
-{ "tool": "ListSchedules", "arguments": { "status": "active" } }  // Active schedules
+{ "tool": "TaskStatus", "arguments": {} }
+{ "tool": "ListLoops", "arguments": { "status": "running" } }
+{ "tool": "ListSchedules", "arguments": { "status": "active" } }
 { "tool": "ListOrchestrators", "arguments": { "status": "running", "limit": 10 } }
 ```
 

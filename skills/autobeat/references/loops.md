@@ -44,7 +44,7 @@ Use when the exit condition requires judgment. Agent eval uses a two-level hiera
 
 | evalType | Behavior | Stop Decision | Requirements |
 |----------|----------|--------------|--------------|
-| `feedforward` (default) | Eval gathers findings, injects as context into next iteration | None — always runs to maxIterations | Works with any agent |
+| `feedforward` (default) | Eval agent gathers findings, injects as context into next iteration | None — always runs to maxIterations | Works with any agent |
 | `judge` | Two-phase: eval agent generates findings, then judge agent writes `{"continue": bool}` to file | File-based + --json-schema fallback | Requires `evalPrompt` |
 | `schema` | Single-phase: agent responds `{"continue": bool, "reasoning": string}` via --json-schema | Deterministic structured output | Requires `agent: "claude"` only |
 
@@ -147,7 +147,7 @@ Use when the quality measure requires judgment. The same two-level hierarchy app
 
 | evalType | Behavior | Score Decision | Requirements |
 |----------|----------|---------------|--------------|
-| `feedforward` (default) | Eval gathers findings, injects as context; score from output | Numeric score parsed from eval output | Works with any agent |
+| `feedforward` (default) | Eval agent gathers findings, injects as context; score from output | Numeric score parsed from eval output | Works with any agent |
 | `judge` | Two-phase: eval generates findings, judge writes `{"continue": bool}` | File-based decision + score | Requires `evalPrompt` |
 | `schema` | Single-phase: agent responds with structured output including score | Deterministic structured output | Requires `agent: "claude"` only |
 

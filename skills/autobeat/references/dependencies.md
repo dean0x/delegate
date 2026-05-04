@@ -250,8 +250,7 @@ Pipeline and scheduled pipeline steps support per-step configuration:
 
 - **Cycle detection**: DAG validation prevents cycles (A→B→A) using DFS algorithm
 - **TOCTOU protection**: Dependency addition uses synchronous SQLite transactions
-- **Task existence**: Referenced task IDs must exist
-- **Terminal state**: Dependencies can only be on existing tasks
+- **Task existence**: Referenced task IDs must exist at the time of dependency creation
 - **Max fan-out**: No hard limit, but keep practical (< 50 concurrent dependents)
 
 ## Recipes

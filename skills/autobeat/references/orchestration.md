@@ -150,7 +150,7 @@ For orchestrations that need custom eval criteria, custom prompt structure, or m
 
 ### When to Use
 
-| | CreateOrchestrator | InitCustomOrchestrator + CreateLoop |
+| | `CreateOrchestrator` | `InitCustomOrchestrator` + `CreateLoop` |
 |---|---|---|
 | Prompt | Auto-generated role instructions | You provide full systemPrompt |
 | Eval | Built-in state file polling | Your custom evalPrompt + evalType |

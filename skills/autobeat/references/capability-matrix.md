@@ -280,7 +280,7 @@ Schedule a recurring or one-time loop.
 | `priority` | string | No | — | Task priority |
 | `agent` | string | No | — | Agent for iterations |
 | `model` | string | No | — | Model override per iteration |
-| `systemPrompt` | string | No | — | System prompt injected into each iteration task agent on every trigger |
+| `systemPrompt` | string | No | — | System prompt injected into each iteration task agent (applied on every trigger) |
 | `scheduleType` | string | Yes | — | "cron" or "one_time" |
 | `cronExpression` | string | Cond. | — | 5-field cron expression |
 | `scheduledAt` | string | Cond. | — | ISO 8601 datetime |
@@ -299,7 +299,7 @@ Create and start an autonomous orchestration.
 | `workingDirectory` | string | No | — | Working directory for workers |
 | `agent` | string | No | configured default | Agent for the orchestrator |
 | `model` | string | No | — | Model override (overrides agent-config default) |
-| `systemPrompt` | string | No | — | Custom system prompt (replaces auto-generated role instructions when provided) |
+| `systemPrompt` | string | No | — | Custom system prompt (replaces auto-generated role instructions entirely) |
 | `maxDepth` | number | No | 3 | Max delegation depth (1-10) |
 | `maxWorkers` | number | No | 5 | Max concurrent workers (1-20) |
 | `maxIterations` | number | No | 50 | Max orchestrator iterations (1-200) |
@@ -362,7 +362,7 @@ Scaffold building blocks for a custom orchestrator (state file, exit script, ins
 | `maxWorkers` | number | No | 5 | Max concurrent workers (1-20) |
 | `maxDepth` | number | No | 3 | Max delegation depth (1-10) |
 
-Returns: stateFilePath, exitConditionScript, suggestedExitCondition, instruction snippets (delegation, stateManagement, constraints).
+Returns: `stateFilePath`, `exitConditionScript`, `suggestedExitCondition`, and instruction snippets (`delegation`, `stateManagement`, `constraints`).
 
 ### PipelineStatus
 
