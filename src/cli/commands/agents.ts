@@ -98,9 +98,9 @@ export async function checkAgents(): Promise<void> {
     }
 
     if (agentConfig.runtime) {
-      const ollamaFound = isCommandInPath('ollama');
-      const ollamaStatus = ollamaFound ? ui.cyan('[found]') : '[not found]';
-      ui.info(`  ${ui.dim(`runtime: ${agentConfig.runtime} — ollama CLI ${ollamaStatus}`)}`);
+      const runtimeFound = isCommandInPath(agentConfig.runtime);
+      const runtimeStatus = runtimeFound ? ui.cyan('[found]') : '[not found]';
+      ui.info(`  ${ui.dim(`runtime: ${agentConfig.runtime} — ${agentConfig.runtime} CLI ${runtimeStatus}`)}`);
     }
   }
 
@@ -184,12 +184,13 @@ export async function agentsConfigSet(
     ui.success(`${agent}.${key} saved: ${value}`);
   }
 
+  const updatedConfig = loadAgentConfig(agent);
+
   // Probe connectivity when a URL/auth/proxy field is changed and non-empty
   if ((key === 'baseUrl' || key === 'apiKey' || key === 'proxy') && value !== '') {
-    const config = loadAgentConfig(agent);
-    const effectiveBaseUrl = key === 'baseUrl' ? value : config.baseUrl;
+    const effectiveBaseUrl = key === 'baseUrl' ? value : updatedConfig.baseUrl;
     if (effectiveBaseUrl) {
-      const effectiveApiKey = key === 'apiKey' ? value : config.apiKey;
+      const effectiveApiKey = key === 'apiKey' ? value : updatedConfig.apiKey;
       const probeResult = await probeUrl(effectiveBaseUrl, {
         apiKey: effectiveApiKey,
         timeoutMs: 5000,
@@ -207,20 +208,17 @@ export async function agentsConfigSet(
 
   // Warn when proxy is set but required fields are missing
   if (key === 'proxy' && value !== '') {
-    const config = loadAgentConfig(agent);
-    if (!config.baseUrl) ui.note('proxy requires baseUrl to be set', 'Warning');
-    if (!config.apiKey) ui.note('proxy requires apiKey to be set', 'Warning');
-    if (!config.model) ui.note('proxy requires model to be set', 'Warning');
+    if (!updatedConfig.baseUrl) ui.note('proxy requires baseUrl to be set', 'Warning');
+    if (!updatedConfig.apiKey) ui.note('proxy requires apiKey to be set', 'Warning');
+    if (!updatedConfig.model) ui.note('proxy requires model to be set', 'Warning');
   }
 
   // Warn about mutual exclusivity between runtime and proxy
   if (key === 'runtime' && value !== '') {
-    const config = loadAgentConfig(agent);
-    if (config.proxy) ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
+    if (updatedConfig.proxy) ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
   }
   if (key === 'proxy' && value !== '') {
-    const config = loadAgentConfig(agent);
-    if (config.runtime) ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
+    if (updatedConfig.runtime) ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
   }
 
   process.exit(0);
