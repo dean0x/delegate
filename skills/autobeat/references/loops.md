@@ -149,7 +149,7 @@ Use when the quality measure requires judgment. The same two-level hierarchy app
 |----------|----------|---------------|--------------|
 | `feedforward` (default) | Eval agent gathers findings, injects as context; score from output | Numeric score parsed from eval output | Works with any agent |
 | `judge` | Two-phase: eval generates findings, judge writes `{"continue": bool}` | File-based decision + score | Requires `evalPrompt` |
-| `schema` | Single-phase: agent responds with structured output including score | Deterministic structured output | Requires `agent: "claude"` only |
+| `schema` | Single-phase: agent responds `{"continue": bool, "score": number, "reasoning": string}` via --json-schema | Deterministic structured output | Requires `agent: "claude"` only |
 
 #### Feedforward (default)
 
@@ -193,7 +193,7 @@ Two-phase evaluation for optimize loops. The eval agent generates a score and fi
 
 #### Schema (Claude only)
 
-Deterministic structured scoring via Claude `--json-schema`. **Requires `agent: "claude"`**.
+Deterministic structured scoring via Claude `--json-schema`. The agent responds with `{"continue": bool, "score": number, "reasoning": string}`. **Requires `agent: "claude"`**.
 
 ```json
 {
