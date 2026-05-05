@@ -30,7 +30,7 @@ CLI: `beat status task-abc...`
 
 CLI: `beat logs task-abc...`
 
-- `tail`: number of recent lines (default: 100, max: 1000)
+- `tail`: number of recent lines (default: 100)
 - Returns stdout and stderr combined
 - Output persists even after task completion
 
@@ -53,6 +53,26 @@ Returns: loop state, current iteration, best score, consecutive failures, and it
 CLI: `beat orchestrate status <id>`
 
 Returns: goal, status, guardrails, plan steps, iteration count.
+
+### Check Pipeline
+
+```json
+{ "tool": "PipelineStatus", "arguments": { "pipelineId": "pipeline-xxxx" } }
+```
+
+Returns: pipeline state, step count, completed steps, failed step details.
+
+### List Pipelines
+
+```json
+{ "tool": "ListPipelines", "arguments": { "status": "running", "limit": 20 } }
+```
+
+### Cancel Pipeline
+
+```json
+{ "tool": "CancelPipeline", "arguments": { "pipelineId": "pipeline-xxxx", "cancelTasks": true, "reason": "Superseded" } }
+```
 
 ## Task States
 
@@ -94,6 +114,16 @@ Returns: goal, status, guardrails, plan steps, iteration count.
 | `completed` | maxRuns reached or expired |
 | `cancelled` | Manually cancelled |
 | `expired` | Past expiresAt datetime |
+
+### Pipeline States
+
+| State | Meaning |
+|-------|---------|
+| `pending` | Created, first step not yet started |
+| `running` | At least one step executing |
+| `completed` | All steps completed successfully |
+| `failed` | A step failed, downstream steps cancelled |
+| `cancelled` | Manually cancelled via CancelPipeline |
 
 ## Recovery Decision Tree
 
@@ -172,6 +202,13 @@ The resumed task receives:
 3. The orchestrator manages its own tasks — you monitor the orchestration level
 4. If stuck: `CancelOrchestrator` and try a different approach
 
+### For Pipelines
+
+1. Create: `CreatePipeline` → save pipelineId
+2. Check: `PipelineStatus` for overall progress
+3. If step failed: `TaskLogs` on the failed step's taskId
+4. If stuck: `CancelPipeline` to abort and investigate
+
 ### Polling Cadence
 
 - Simple tasks (< 5 min expected): check every 30s
@@ -185,9 +222,9 @@ The resumed task receives:
 ### List and Filter
 
 ```json
-{ "tool": "TaskStatus", "arguments": {} }  // All tasks
-{ "tool": "ListLoops", "arguments": { "status": "running" } }  // Running loops only
-{ "tool": "ListSchedules", "arguments": { "status": "active" } }  // Active schedules
+{ "tool": "TaskStatus", "arguments": {} }
+{ "tool": "ListLoops", "arguments": { "status": "running" } }
+{ "tool": "ListSchedules", "arguments": { "status": "active" } }
 { "tool": "ListOrchestrators", "arguments": { "status": "running", "limit": 10 } }
 ```
 
@@ -240,5 +277,21 @@ There's no bulk cancel tool. Cancel individually:
 
 ### Task Timeout
 
-- **Cause**: Default timeout is 30 minutes
-- **Fix**: Set `timeout` on the task (max 24 hours = 86400000ms)
+- **Cause**: Default timeout is 0 (disabled) — tasks run until completion or manual cancellation
+- **Fix**: Set `timeout` on the task to enforce a limit (max 24 hours = 86400000ms)
+
+### Pipeline Stuck in Pending
+
+- **Cause**: First step hasn't started, no available workers
+- **Check**: `PipelineStatus` to confirm step 0 status, check worker availability
+- **Fix**: Cancel lower-priority tasks or wait for workers to free up
+
+### Pipeline Step Failed
+
+- **Cause**: A step task failed
+- **Check**: `TaskLogs` on the failed step's taskId for error details
+- **Fix**: Downstream steps are auto-cancelled. Fix the issue and create a new pipeline
+
+### Dashboard
+
+`beat dashboard` (or `beat dash`) provides a terminal TUI for visual monitoring of tasks, loops, orchestrations, and pipelines. Agents don't interact with the dashboard directly — use the MCP tools above.

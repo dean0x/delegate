@@ -36,7 +36,21 @@ beat loop "Fix all failing tests" --until "npm test" -w /path/to/repo
 
 ### Agent Eval
 
-Use when the exit condition requires judgment (code quality, design correctness, etc.):
+Use when the exit condition requires judgment. Agent eval uses a two-level hierarchy:
+
+**Top level: `evalMode: agent`** — activates agent-based evaluation.
+
+**Sub-strategy: `evalType`** (only when evalMode is agent):
+
+| evalType | Behavior | Stop Decision | Requirements |
+|----------|----------|--------------|--------------|
+| `feedforward` (default) | Eval agent gathers findings, injects as context into next iteration | None — always runs to maxIterations | Works with any agent |
+| `judge` | Two-phase: eval agent generates findings, then judge agent writes `{"continue": bool}` to file | File-based + --json-schema fallback | Requires `evalPrompt` |
+| `schema` | Single-phase: agent responds `{"continue": bool, "reasoning": string}` via --json-schema | Deterministic structured output | Requires `agent: "claude"` only |
+
+#### Feedforward (default)
+
+Eval agent gathers findings per iteration, injects them as context into the next iteration. No stop/continue decision — always runs to `maxIterations`. If no `evalPrompt` is set, no eval agent is spawned.
 
 ```json
 {
@@ -45,7 +59,50 @@ Use when the exit condition requires judgment (code quality, design correctness,
     "prompt": "Refactor the auth module for better testability",
     "strategy": "retry",
     "evalMode": "agent",
-    "evalPrompt": "Review the refactoring. PASS if dependency injection is used correctly and all tests pass. FAIL with explanation otherwise.",
+    "evalType": "feedforward",
+    "evalPrompt": "Review the refactoring. List specific issues with dependency injection usage and test coverage.",
+    "workingDirectory": "/path/to/repo",
+    "maxIterations": 5
+  }
+}
+```
+
+#### Judge
+
+Two-phase evaluation: eval agent generates findings, then a separate judge agent writes a `{"continue": bool}` decision to `.autobeat-judge-task-{uuid}` file. Configure the judge phase independently with `judgeAgent` and `judgePrompt`.
+
+Fallback chain: file-based decision → Claude `--json-schema` fallback → defaults to continue if both fail.
+
+```json
+{
+  "tool": "CreateLoop",
+  "arguments": {
+    "prompt": "Refactor the auth module for better testability",
+    "strategy": "retry",
+    "evalMode": "agent",
+    "evalType": "judge",
+    "evalPrompt": "Review the refactoring quality. Focus on DI patterns and test coverage.",
+    "judgeAgent": "claude",
+    "judgePrompt": "Based on the evaluation, decide if the code meets production quality standards.",
+    "workingDirectory": "/path/to/repo"
+  }
+}
+```
+
+#### Schema (Claude only)
+
+Deterministic structured output via Claude `--json-schema`. The agent responds with `{"continue": bool, "reasoning": string}`. No separate judge agent. **Requires `agent: "claude"`** — only Claude supports `--json-schema`.
+
+```json
+{
+  "tool": "CreateLoop",
+  "arguments": {
+    "prompt": "Refactor the auth module for better testability",
+    "strategy": "retry",
+    "evalMode": "agent",
+    "evalType": "schema",
+    "evalPrompt": "Evaluate if DI is used correctly and all tests pass. Set continue=false when satisfied.",
+    "agent": "claude",
     "workingDirectory": "/path/to/repo"
   }
 }
@@ -56,12 +113,6 @@ CLI:
 beat loop "Refactor the auth module" --eval-mode agent --strategy retry \
   --eval-prompt "Review changes. PASS if DI is correct and tests pass, else FAIL."
 ```
-
-**Agent eval behavior (retry)**:
-- Evaluator agent reads the task output and git diff
-- Must output `PASS` or `FAIL` as the last line
-- Optional explanation before the verdict
-- `evalPrompt` customizes what the evaluator checks
 
 ## Optimize Strategy
 
@@ -92,7 +143,17 @@ beat loop "Optimize query performance" --eval "node scripts/benchmark.js" --mini
 
 ### Agent Eval
 
-The evaluator agent scores each iteration 0-100:
+Use when the quality measure requires judgment. The same two-level hierarchy applies (`evalMode: agent` + `evalType`):
+
+| evalType | Behavior | Score Decision | Requirements |
+|----------|----------|---------------|--------------|
+| `feedforward` (default) | Eval agent gathers findings, injects as context; score from output | Numeric score parsed from eval output | Works with any agent |
+| `judge` | Two-phase: eval generates findings, judge writes `{"continue": bool}` | File-based decision + score | Requires `evalPrompt` |
+| `schema` | Single-phase: agent responds `{"continue": bool, "score": number, "reasoning": string}` via --json-schema | Deterministic structured output | Requires `agent: "claude"` only |
+
+#### Feedforward (default)
+
+The evaluator agent scores each iteration 0-100. Findings are injected as context into the next iteration for progressive improvement.
 
 ```json
 {
@@ -101,8 +162,50 @@ The evaluator agent scores each iteration 0-100:
     "prompt": "Improve test coverage for the payment module",
     "strategy": "optimize",
     "evalMode": "agent",
+    "evalType": "feedforward",
     "evalDirection": "maximize",
     "evalPrompt": "Score the test coverage quality 0-100. Consider: branch coverage, edge cases, error paths, integration vs unit balance.",
+    "workingDirectory": "/path/to/repo"
+  }
+}
+```
+
+#### Judge
+
+Two-phase evaluation for optimize loops. The eval agent generates a score and findings; the judge agent writes a `{"continue": bool}` decision.
+
+```json
+{
+  "tool": "CreateLoop",
+  "arguments": {
+    "prompt": "Improve test coverage for the payment module",
+    "strategy": "optimize",
+    "evalMode": "agent",
+    "evalType": "judge",
+    "evalDirection": "maximize",
+    "evalPrompt": "Score test coverage quality 0-100 and list remaining gaps.",
+    "judgeAgent": "claude",
+    "judgePrompt": "Decide if coverage is sufficient for production. Output continue=false when score >= 90.",
+    "workingDirectory": "/path/to/repo"
+  }
+}
+```
+
+#### Schema (Claude only)
+
+Deterministic structured scoring via Claude `--json-schema`. The agent responds with `{"continue": bool, "score": number, "reasoning": string}`. **Requires `agent: "claude"`**.
+
+```json
+{
+  "tool": "CreateLoop",
+  "arguments": {
+    "prompt": "Improve test coverage for the payment module",
+    "strategy": "optimize",
+    "evalMode": "agent",
+    "evalType": "schema",
+    "evalDirection": "maximize",
+    "evalPrompt": "Evaluate test coverage. Return a score 0-100 and set continue=false when coverage is satisfactory.",
+    "agent": "claude",
     "workingDirectory": "/path/to/repo"
   }
 }
@@ -131,9 +234,27 @@ beat loop "Improve test coverage" --eval-mode agent --strategy optimize --maximi
 | `freshContext` | true | boolean | Fresh agent context per iteration |
 | `evalMode` | shell | shell, agent | How to evaluate iterations |
 | `evalPrompt` | (default) | string | Custom eval instructions (agent mode) |
+| `evalType` | feedforward | feedforward, judge, schema | Agent eval sub-strategy (only when evalMode is agent) |
+| `judgeAgent` | loop agent | claude, codex, gemini | Agent for judge decisions (judge evalType only) |
+| `judgePrompt` | — | string | Custom judge instructions (judge evalType only) |
 | `evalDirection` | — | minimize, maximize | Score direction (optimize only) |
 | `gitBranch` | — | string | Git branch for iteration tracking |
 | `priority` | P2 | P0, P1, P2 | Task priority per iteration |
+| `model` | — | string | Model override per iteration |
+| `systemPrompt` | — | string | System prompt per iteration task |
+
+### Eval Type Decision Tree
+
+```
+Need iterative feedback but always run to maxIterations?
+  → evalType: feedforward (default)
+Need an AI judge to decide continue/stop?
+  → evalType: judge (optionally set judgeAgent for a separate judge)
+Need deterministic structured pass/fail (Claude only)?
+  → evalType: schema
+Only care about shell exit code / script score?
+  → evalMode: shell (evalType is ignored)
+```
 
 ### Fresh Context vs Checkpoint Continuation
 
@@ -276,6 +397,7 @@ RUNNING → CANCELLED (CancelLoop)
     "prompt": "Review the PR changes and improve code quality: reduce complexity, improve naming, add missing error handling.",
     "strategy": "optimize",
     "evalMode": "agent",
+    "evalType": "feedforward",
     "evalDirection": "maximize",
     "evalPrompt": "Score the code quality 0-100. Consider: readability, error handling, naming, complexity, test coverage. Output just the number.",
     "workingDirectory": "/path/to/repo",
@@ -320,6 +442,66 @@ RUNNING → CANCELLED (CancelLoop)
     "evalPrompt": "Score the test coverage improvement 0-100. Check: new branches covered, edge cases, no redundant tests.",
     "maxIterations": 5,
     "workingDirectory": "/path/to/repo"
+  }
+}
+```
+
+### Feedforward Findings Loop
+
+Accumulates findings across iterations — each iteration gets the previous eval's findings injected as context. Always runs to `maxIterations`.
+
+```json
+{
+  "tool": "CreateLoop",
+  "arguments": {
+    "prompt": "Review and improve API error handling across all endpoints.",
+    "strategy": "retry",
+    "evalMode": "agent",
+    "evalType": "feedforward",
+    "evalPrompt": "List specific endpoints still missing proper error handling. Include line numbers and what's missing.",
+    "workingDirectory": "/path/to/repo",
+    "maxIterations": 4
+  }
+}
+```
+
+### Judge Loop
+
+Separate evaluator and judge agents. The evaluator generates findings; the judge decides continue/stop.
+
+```json
+{
+  "tool": "CreateLoop",
+  "arguments": {
+    "prompt": "Refactor the payment module to use Result types throughout.",
+    "strategy": "retry",
+    "evalMode": "agent",
+    "evalType": "judge",
+    "evalPrompt": "Review the refactoring. Identify any remaining throw statements in business logic.",
+    "judgeAgent": "claude",
+    "judgePrompt": "Based on the evaluation, decide if all business logic now uses Result types. Output continue=false only when no throw statements remain in business logic.",
+    "workingDirectory": "/path/to/repo",
+    "maxIterations": 6
+  }
+}
+```
+
+### Schema Test Gate (Claude only)
+
+Deterministic structured pass/fail. Claude responds with `{"continue": bool, "reasoning": string}` via `--json-schema`.
+
+```json
+{
+  "tool": "CreateLoop",
+  "arguments": {
+    "prompt": "Fix all TypeScript type errors in src/. Do not use 'any' as a workaround.",
+    "strategy": "retry",
+    "evalMode": "agent",
+    "evalType": "schema",
+    "evalPrompt": "Run `npm run typecheck`. Evaluate if all type errors are resolved without using 'any'. Set continue=false only when typecheck passes cleanly.",
+    "agent": "claude",
+    "workingDirectory": "/path/to/repo",
+    "maxIterations": 5
   }
 }
 ```
