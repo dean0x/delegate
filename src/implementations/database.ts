@@ -991,7 +991,12 @@ export class Database implements TransactionRunner {
         version: 25,
         description: 'Add mode and pid columns to orchestrations table for interactive mode',
         up: (db) => {
-          db.exec(`ALTER TABLE orchestrations ADD COLUMN mode TEXT DEFAULT NULL`);
+          // DECISION: CHECK constraint enforces valid mode values at the DB level as defense-in-depth,
+          // consistent with the pattern established in migrations v2, v3, v4, v10, v11, v14, v22, v24.
+          // SQLite supports inline CHECK on ALTER TABLE ADD COLUMN for nullable columns.
+          db.exec(
+            `ALTER TABLE orchestrations ADD COLUMN mode TEXT DEFAULT NULL CHECK(mode IS NULL OR mode IN ('standard', 'interactive'))`,
+          );
           db.exec(`ALTER TABLE orchestrations ADD COLUMN pid INTEGER DEFAULT NULL`);
         },
       },

@@ -248,6 +248,21 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   /**
    * Shared resolution logic: loads config, resolves runtime/auth/model/system-prompt/env.
    * Used by both spawn() and spawnInteractive() to avoid duplicating the resolution chain.
+   *
+   * Resolution order:
+   * 1. Runtime config (resolveRuntime) — checked first; when a runtime (e.g. 'ollama') is
+   *    active, auth/baseUrl/model are suppressed so the runtime handles them internally.
+   *    DECISION: Runtime takes precedence over proxy. See also bootstrap.ts (proxy startup skip)
+   *    and mcp-adapter.ts set/check handlers (warning path).
+   * 2. CLI binary existence — validated before auth to give a clear error if the agent is
+   *    not installed, avoiding misleading auth failures.
+   * 3. Auth (resolveAuth) — skipped when suppressAuth is set by the runtime config.
+   * 4. Model (resolveModel) — task-level model overrides agent-level config; runtime may
+   *    suppress both via suppressModel.
+   * 5. System prompt injection — resolved before env so the prompt variant (args vs env var
+   *    vs prepend) is determined before the env map is frozen.
+   * 6. Env assembly (buildSpawnEnv) — merges runtime, agent config, auth, and system prompt
+   *    env vars into a single clean environment for the spawned process.
    */
   protected resolveSpawnConfig(options: {
     prompt: string;
