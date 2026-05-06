@@ -689,10 +689,7 @@ describe('updateInteractiveOrchestrationPid - PID validation', () => {
     if (!createResult.ok) return;
     createdStateFiles.push(createResult.value.orchestration.stateFilePath);
 
-    const updateResult = await service.updateInteractiveOrchestrationPid(
-      createResult.value.orchestration.id,
-      12345,
-    );
+    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 12345);
     expect(updateResult.ok).toBe(true);
   });
 
@@ -702,10 +699,7 @@ describe('updateInteractiveOrchestrationPid - PID validation', () => {
     if (!createResult.ok) return;
     createdStateFiles.push(createResult.value.orchestration.stateFilePath);
 
-    const updateResult = await service.updateInteractiveOrchestrationPid(
-      createResult.value.orchestration.id,
-      0,
-    );
+    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 0);
     expect(updateResult.ok).toBe(false);
     if (updateResult.ok) return;
     expect(updateResult.error.message).toContain('Invalid PID');
@@ -717,10 +711,7 @@ describe('updateInteractiveOrchestrationPid - PID validation', () => {
     if (!createResult.ok) return;
     createdStateFiles.push(createResult.value.orchestration.stateFilePath);
 
-    const updateResult = await service.updateInteractiveOrchestrationPid(
-      createResult.value.orchestration.id,
-      -1,
-    );
+    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, -1);
     expect(updateResult.ok).toBe(false);
     if (updateResult.ok) return;
     expect(updateResult.error.message).toContain('Invalid PID');
@@ -732,10 +723,7 @@ describe('updateInteractiveOrchestrationPid - PID validation', () => {
     if (!createResult.ok) return;
     createdStateFiles.push(createResult.value.orchestration.stateFilePath);
 
-    const updateResult = await service.updateInteractiveOrchestrationPid(
-      createResult.value.orchestration.id,
-      3.14,
-    );
+    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 3.14);
     expect(updateResult.ok).toBe(false);
     if (updateResult.ok) return;
     expect(updateResult.error.message).toContain('Invalid PID');

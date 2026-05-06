@@ -57,25 +57,17 @@ export class OrchestrationManagerService implements OrchestrationService {
     this.logger.debug('OrchestrationManagerService initialized');
   }
 
-  async createOrchestration(request: OrchestratorCreateRequest): Promise<Result<Orchestration>> {
-    // ========================================================================
-    // DECISION (2026-04-10): Compensation pattern (keep original 3-step order,
-    // mark FAILED on error) instead of inverted ordering. Inverted ordering had
-    // a race where the loop's first iteration could complete before the orch row
-    // was saved, leaving OrchestrationHandler.handleLoopCompleted unable to find
-    // the row via findByLoopId.
-    // ========================================================================
-
-    // ========================================================================
-    // Input validation
-    // ========================================================================
-
-    // Validate goal: non-empty
+  /**
+   * Validate goal, working directory, and resolve agent from request.
+   * Shared by createOrchestration and createInteractiveOrchestration.
+   */
+  private validateAndResolveRequest(
+    request: OrchestratorCreateRequest,
+  ): Result<{ validatedWorkingDirectory: string; agent: AgentProvider }> {
     if (!request.goal || request.goal.trim().length === 0) {
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, 'goal is required', { field: 'goal' }));
     }
 
-    // Validate working directory
     let validatedWorkingDirectory = process.cwd();
     if (request.workingDirectory) {
       const pathResult = validatePath(request.workingDirectory);
@@ -89,17 +81,25 @@ export class OrchestrationManagerService implements OrchestrationService {
       validatedWorkingDirectory = pathResult.value;
     }
 
-    // Resolve agent
     const agentResult = resolveDefaultAgent(request.agent, this.config.defaultAgent);
     if (!agentResult.ok) return agentResult;
-    const agent = agentResult.value;
 
-    // ========================================================================
-    // State file setup
-    // ========================================================================
+    return ok({ validatedWorkingDirectory, agent: agentResult.value });
+  }
 
+  /**
+   * Set up orchestration state directory, state file, and optionally the exit condition script.
+   *
+   * @param goal - Goal text used to seed the initial state.
+   * @param withExitScript - When true, also writes the exit condition script (standard mode).
+   *   Interactive orchestrations omit the exit script because they have no loop.
+   */
+  private setupStateFiles(
+    goal: string,
+    withExitScript: boolean,
+  ): Result<{ stateFilePath: string; exitConditionScript?: string; cleanupFiles: () => void }> {
     let stateFilePath: string;
-    let exitConditionScript: string;
+    let exitConditionScript: string | undefined;
     try {
       const stateDir = getStateDir();
       mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -107,19 +107,17 @@ export class OrchestrationManagerService implements OrchestrationService {
       const stateFileName = `state-${Date.now()}-${crypto.randomUUID().substring(0, 8)}.json`;
       stateFilePath = path.join(stateDir, stateFileName);
 
-      // Write initial state
-      const initialState = createInitialState(request.goal);
+      const initialState = createInitialState(goal);
       writeStateFile(stateFilePath, initialState);
 
-      // Write exit condition script
-      exitConditionScript = writeExitConditionScript(stateDir, stateFilePath);
+      if (withExitScript) {
+        exitConditionScript = writeExitConditionScript(stateDir, stateFilePath);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error('Failed to set up orchestration state files', undefined, { error: message });
       return err(
-        new AutobeatError(ErrorCode.SYSTEM_ERROR, `Failed to set up state files: ${message}`, {
-          error: message,
-        }),
+        new AutobeatError(ErrorCode.SYSTEM_ERROR, `Failed to set up state files: ${message}`, { error: message }),
       );
     }
 
@@ -131,7 +129,7 @@ export class OrchestrationManagerService implements OrchestrationService {
       return resolved.startsWith(expectedDir + path.sep);
     };
     const cleanupFiles = (): void => {
-      for (const filePath of [stateFilePath, exitConditionScript]) {
+      for (const filePath of [stateFilePath, exitConditionScript].filter(Boolean) as string[]) {
         if (isWithinStateDir(filePath)) {
           try {
             unlinkSync(filePath);
@@ -141,6 +139,32 @@ export class OrchestrationManagerService implements OrchestrationService {
         }
       }
     };
+
+    return ok({ stateFilePath, exitConditionScript, cleanupFiles });
+  }
+
+  async createOrchestration(request: OrchestratorCreateRequest): Promise<Result<Orchestration>> {
+    // ========================================================================
+    // DECISION (2026-04-10): Compensation pattern (keep original 3-step order,
+    // mark FAILED on error) instead of inverted ordering. Inverted ordering had
+    // a race where the loop's first iteration could complete before the orch row
+    // was saved, leaving OrchestrationHandler.handleLoopCompleted unable to find
+    // the row via findByLoopId.
+    // ========================================================================
+
+    // ========================================================================
+    // Input validation + state file setup
+    // ========================================================================
+
+    const validationResult = this.validateAndResolveRequest(request);
+    if (!validationResult.ok) return validationResult;
+    const { validatedWorkingDirectory, agent } = validationResult.value;
+
+    const stateResult = this.setupStateFiles(request.goal, true);
+    if (!stateResult.ok) return stateResult;
+    const { stateFilePath, exitConditionScript, cleanupFiles } = stateResult.value;
+    // exitConditionScript is always defined when withExitScript=true; assert non-null
+    const resolvedExitScript = exitConditionScript!;
 
     // ========================================================================
     // Create orchestration domain object (PLANNING, loopId=undefined)
@@ -209,7 +233,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     const loopResult = await this.loopService.createLoop({
       strategy: LoopStrategy.RETRY,
       prompt: finalUserPrompt,
-      exitCondition: `node ${JSON.stringify(exitConditionScript)}`,
+      exitCondition: `node ${JSON.stringify(resolvedExitScript)}`,
       maxIterations: orchestration.maxIterations,
       maxConsecutiveFailures: 5,
       freshContext: true,
@@ -330,47 +354,22 @@ export class OrchestrationManagerService implements OrchestrationService {
   async createInteractiveOrchestration(
     request: OrchestratorCreateRequest,
   ): Promise<Result<{ orchestration: Orchestration; systemPrompt: string; userPrompt: string }>> {
-    if (!request.goal || request.goal.trim().length === 0) {
-      return err(new AutobeatError(ErrorCode.INVALID_INPUT, 'goal is required', { field: 'goal' }));
-    }
+    const validationResult = this.validateAndResolveRequest(request);
+    if (!validationResult.ok) return validationResult;
+    const { validatedWorkingDirectory, agent } = validationResult.value;
 
-    let validatedWorkingDirectory = process.cwd();
-    if (request.workingDirectory) {
-      const pathResult = validatePath(request.workingDirectory);
-      if (!pathResult.ok) {
-        return err(
-          new AutobeatError(ErrorCode.INVALID_DIRECTORY, `Invalid working directory: ${pathResult.error.message}`, {
-            workingDirectory: request.workingDirectory,
-          }),
-        );
-      }
-      validatedWorkingDirectory = pathResult.value;
-    }
+    // Interactive orchestrations have no loop, so no exit condition script is needed.
+    const stateResult = this.setupStateFiles(request.goal, false);
+    if (!stateResult.ok) return stateResult;
+    const { stateFilePath, cleanupFiles } = stateResult.value;
 
-    const agentResult = resolveDefaultAgent(request.agent, this.config.defaultAgent);
-    if (!agentResult.ok) return agentResult;
-    const agent = agentResult.value;
-
-    let stateFilePath: string;
-    try {
-      const stateDir = getStateDir();
-      mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-      const stateFileName = `state-${Date.now()}-${crypto.randomUUID().substring(0, 8)}.json`;
-      stateFilePath = path.join(stateDir, stateFileName);
-      const initialState = createInitialState(request.goal);
-      writeStateFile(stateFilePath, initialState);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error('Failed to set up interactive orchestration state files', undefined, { error: message });
-      return err(
-        new AutobeatError(ErrorCode.SYSTEM_ERROR, `Failed to set up state files: ${message}`, { error: message }),
-      );
-    }
-
-    const orchestration = Object.freeze({
-      ...createOrchestration({ ...request, agent }, stateFilePath, validatedWorkingDirectory),
+    // Use the factory + updateOrchestration to build the domain object.
+    // DECISION: interactive orchestrations start at RUNNING (no PLANNING→RUNNING loop transition)
+    // and carry mode:'interactive' so cancelOrchestration uses the PID path instead of loopService.
+    const baseOrchestration = createOrchestration({ ...request, agent }, stateFilePath, validatedWorkingDirectory);
+    const orchestration = updateOrchestration(baseOrchestration, {
       status: OrchestratorStatus.RUNNING,
-      mode: 'interactive' as const,
+      mode: 'interactive',
     });
 
     const saveResult = await this.orchestrationRepo.save(orchestration);
@@ -378,6 +377,7 @@ export class OrchestrationManagerService implements OrchestrationService {
       this.logger.error('Failed to save interactive orchestration', saveResult.error, {
         orchestratorId: orchestration.id,
       });
+      cleanupFiles();
       return err(saveResult.error);
     }
 
@@ -417,6 +417,12 @@ export class OrchestrationManagerService implements OrchestrationService {
   }
 
   async updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<void>> {
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return err(
+        new AutobeatError(ErrorCode.INVALID_INPUT, `Invalid PID: ${pid}. PID must be a positive integer.`, { pid }),
+      );
+    }
+
     const lookupResult = await this.getOrchestration(id);
     if (!lookupResult.ok) return lookupResult;
 
@@ -474,8 +480,10 @@ export class OrchestrationManagerService implements OrchestrationService {
     this.logger.info('Cancelling orchestration', { orchestratorId: id, reason });
 
     if (orchestration.mode === 'interactive') {
-      // Interactive mode: send SIGTERM to stored PID, then update DB directly
-      if (orchestration.pid) {
+      // Interactive mode: send SIGTERM to stored PID, then update DB directly.
+      // Guard ensures only positive integer PIDs reach process.kill —
+      // defensive against rows written before the PID validation was added.
+      if (orchestration.pid && Number.isInteger(orchestration.pid) && orchestration.pid > 0) {
         try {
           process.kill(orchestration.pid, 'SIGTERM');
         } catch {
