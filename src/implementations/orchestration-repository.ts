@@ -462,7 +462,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       maxWorkers: data.max_workers,
       maxIterations: data.max_iterations,
       status: this.toOrchestratorStatus(data.status),
-      mode: (data.mode as OrchestratorMode) ?? undefined,
+      mode: (data.mode ?? undefined) as OrchestratorMode | undefined,
       pid: data.pid ?? undefined,
       createdAt: data.created_at,
       updatedAt: data.updated_at,

@@ -728,6 +728,10 @@ async function handleOrchestrateInteractive(parsed: OrchestrateInteractiveParsed
   }
 
   const adapter = adapterResult.value;
+  const eventBusResult = container.get<import('../../core/events/event-bus.js').EventBus>('eventBus');
+  const orchRepoResult =
+    container.get<import('../../core/interfaces.js').OrchestrationRepository>('orchestrationRepository');
+
   const spawnResult = adapter.spawnInteractive({
     prompt: userPrompt,
     workingDirectory: orchestration.workingDirectory,
@@ -737,11 +741,9 @@ async function handleOrchestrateInteractive(parsed: OrchestrateInteractiveParsed
   });
   if (!spawnResult.ok) {
     ui.error(`Failed to spawn interactive agent: ${spawnResult.error.message}`);
-    const orchRepo =
-      container.get<import('../../core/interfaces.js').OrchestrationRepository>('orchestrationRepository');
-    if (orchRepo.ok) {
+    if (orchRepoResult.ok) {
       const failed = updateOrchestration(orchestration, { status: OrchestratorStatus.FAILED, completedAt: Date.now() });
-      await orchRepo.value.update(failed);
+      await orchRepoResult.value.update(failed);
     }
     await container.dispose();
     process.exit(1);
@@ -771,10 +773,6 @@ async function handleOrchestrateInteractive(parsed: OrchestrateInteractiveParsed
   for (const handler of originalSigintHandlers) {
     process.on('SIGINT', handler as NodeJS.SignalsListener);
   }
-
-  const eventBusResult = container.get<import('../../core/events/event-bus.js').EventBus>('eventBus');
-  const orchRepoResult =
-    container.get<import('../../core/interfaces.js').OrchestrationRepository>('orchestrationRepository');
 
   let finalStatus: OrchestratorStatus;
   if (cancelled) {
@@ -812,10 +810,7 @@ async function handleOrchestrateInteractive(parsed: OrchestrateInteractiveParsed
     ui.error(`\nOrchestration failed (exit code: ${exitCode}).`);
   }
 
-  // Cleanup Gemini temp file if applicable
-  if (agent === 'gemini') {
-    adapter.cleanup(orchestration.id);
-  }
+  adapter.cleanup(orchestration.id);
 
   await container.dispose();
   process.exit(exitCode ?? 1);
