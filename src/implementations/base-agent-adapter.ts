@@ -424,7 +424,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     systemPrompt,
   }: InteractiveSpawnOptions): Result<{ process: ChildProcess; pid: number }> {
     try {
-      const configResult = this.resolveSpawnConfig({ prompt, workingDirectory, taskId, model, orchestratorId, systemPrompt });
+      const configResult = this.resolveSpawnConfig({
+        prompt,
+        workingDirectory,
+        taskId,
+        model,
+        orchestratorId,
+        systemPrompt,
+      });
       if (!configResult.ok) return configResult;
       const cfg = configResult.value;
 

@@ -657,10 +657,7 @@ describe('cancelOrchestration - interactive mode', () => {
     if (!createResult.ok) return;
     createdStateFiles.push(createResult.value.orchestration.stateFilePath);
 
-    const pidResult = await service.updateInteractiveOrchestrationPid(
-      createResult.value.orchestration.id,
-      99999,
-    );
+    const pidResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 99999);
     expect(pidResult.ok).toBe(true);
 
     const cancelResult = await service.cancelOrchestration(createResult.value.orchestration.id);
