@@ -255,11 +255,15 @@ export interface SpawnOptions {
 
 /**
  * Options for spawning an agent in interactive mode (user-facing terminal session).
- * Subset of SpawnOptions — no taskId (not a worker task) and no jsonSchema (no structured output).
+ * Subset of SpawnOptions — no jsonSchema (no structured output).
+ * taskId is optional: when provided it is used as the system-prompt temp-file name so
+ * cleanup(taskId) can remove the file deterministically. Omit for headless callers that
+ * do not call cleanup.
  */
 export interface InteractiveSpawnOptions {
   readonly prompt: string;
   readonly workingDirectory: string;
+  readonly taskId?: string;
   readonly model?: string;
   readonly orchestratorId?: string;
   readonly systemPrompt?: string;

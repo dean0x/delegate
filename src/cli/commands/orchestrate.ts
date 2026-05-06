@@ -687,117 +687,133 @@ async function handleOrchestrateInteractive(parsed: OrchestrateInteractiveParsed
     process.exit(1);
   }
 
+  let container: Container | undefined;
   const s = ui.createSpinner();
-  s.start('Setting up interactive orchestration...');
-  const { container, orchestrationService } = await withServices(s);
-  s.stop('Ready');
+  try {
+    s.start('Setting up interactive orchestration...');
+    const services = await withServices(s);
+    container = services.container;
+    const { orchestrationService } = services;
+    s.stop('Ready');
 
-  const agentRegistryResult = container.get<import('../../core/agents.js').AgentRegistry>('agentRegistry');
-  if (!agentRegistryResult.ok) {
-    ui.error(`Failed to get agent registry: ${agentRegistryResult.error.message}`);
-    await container.dispose();
-    process.exit(1);
-  }
-  const agentRegistry = agentRegistryResult.value;
+    const agentRegistryResult = container.get<import('../../core/agents.js').AgentRegistry>('agentRegistry');
+    if (!agentRegistryResult.ok) {
+      ui.error(`Failed to get agent registry: ${agentRegistryResult.error.message}`);
+      await container.dispose();
+      process.exit(1);
+    }
+    const agentRegistry = agentRegistryResult.value;
 
-  const createResult = await orchestrationService.createInteractiveOrchestration({
-    goal: parsed.goal,
-    workingDirectory: parsed.workingDirectory,
-    agent: parsed.agent,
-    model: parsed.model,
-    maxDepth: parsed.maxDepth,
-    maxWorkers: parsed.maxWorkers,
-    systemPrompt: parsed.systemPrompt,
-  });
-  if (!createResult.ok) {
-    ui.error(`Failed to create interactive orchestration: ${createResult.error.message}`);
-    await container.dispose();
-    process.exit(1);
-  }
+    const createResult = await orchestrationService.createInteractiveOrchestration({
+      goal: parsed.goal,
+      workingDirectory: parsed.workingDirectory,
+      agent: parsed.agent,
+      model: parsed.model,
+      maxDepth: parsed.maxDepth,
+      maxWorkers: parsed.maxWorkers,
+      systemPrompt: parsed.systemPrompt,
+    });
+    if (!createResult.ok) {
+      ui.error(`Failed to create interactive orchestration: ${createResult.error.message}`);
+      await container.dispose();
+      process.exit(1);
+    }
 
-  const { orchestration, systemPrompt, userPrompt } = createResult.value;
-  ui.info(`Orchestration ID: ${orchestration.id}`);
-  ui.info(`State file:       ${orchestration.stateFilePath}`);
+    const { orchestration, systemPrompt, userPrompt } = createResult.value;
+    ui.info(`Orchestration ID: ${orchestration.id}`);
+    ui.info(`State file:       ${orchestration.stateFilePath}`);
 
-  const agent = orchestration.agent ?? 'claude';
-  const adapterResult = agentRegistry.get(agent);
-  if (!adapterResult.ok) {
-    ui.error(`Agent adapter not available: ${adapterResult.error.message}`);
-    await container.dispose();
-    process.exit(1);
-  }
+    const agent = orchestration.agent ?? 'claude';
+    const adapterResult = agentRegistry.get(agent);
+    if (!adapterResult.ok) {
+      ui.error(`Agent adapter not available: ${adapterResult.error.message}`);
+      await container.dispose();
+      process.exit(1);
+    }
 
-  const adapter = adapterResult.value;
-  const eventBusResult = container.get<import('../../core/events/event-bus.js').EventBus>('eventBus');
-  const orchRepoResult =
-    container.get<import('../../core/interfaces.js').OrchestrationRepository>('orchestrationRepository');
+    const adapter = adapterResult.value;
+    const eventBusResult = container.get<import('../../core/events/event-bus.js').EventBus>('eventBus');
+    if (!eventBusResult.ok) {
+      ui.error(`Failed to get event bus: ${eventBusResult.error.message}`);
+      await container.dispose();
+      process.exit(1);
+    }
+    const orchRepoResult =
+      container.get<import('../../core/interfaces.js').OrchestrationRepository>('orchestrationRepository');
+    if (!orchRepoResult.ok) {
+      ui.error(`Failed to get orchestration repository: ${orchRepoResult.error.message}`);
+      await container.dispose();
+      process.exit(1);
+    }
 
-  const spawnResult = adapter.spawnInteractive({
-    prompt: userPrompt,
-    workingDirectory: orchestration.workingDirectory,
-    model: orchestration.model,
-    orchestratorId: orchestration.id,
-    systemPrompt,
-  });
-  if (!spawnResult.ok) {
-    ui.error(`Failed to spawn interactive agent: ${spawnResult.error.message}`);
-    if (orchRepoResult.ok) {
+    const spawnResult = adapter.spawnInteractive({
+      prompt: userPrompt,
+      workingDirectory: orchestration.workingDirectory,
+      taskId: orchestration.id,
+      model: orchestration.model,
+      orchestratorId: orchestration.id,
+      systemPrompt,
+    });
+    if (!spawnResult.ok) {
+      ui.error(`Failed to spawn interactive agent: ${spawnResult.error.message}`);
       const failed = updateOrchestration(orchestration, { status: OrchestratorStatus.FAILED, completedAt: Date.now() });
       await orchRepoResult.value.update(failed);
+      await container.dispose();
+      process.exit(1);
     }
-    await container.dispose();
-    process.exit(1);
-  }
 
-  const child = spawnResult.value.process;
+    const child = spawnResult.value.process;
 
-  // Store PID in DB for remote cancel support (best-effort — lifecycle works without it)
-  const pidResult = await orchestrationService.updateInteractiveOrchestrationPid(
-    orchestration.id,
-    spawnResult.value.pid,
-  );
-  if (!pidResult.ok) {
-    ui.info(`Warning: failed to store PID for remote cancel: ${pidResult.error.message}`);
-  }
+    // Store PID in DB for remote cancel support (best-effort — lifecycle works without it)
+    const pidResult = await orchestrationService.updateInteractiveOrchestrationPid(
+      orchestration.id,
+      spawnResult.value.pid,
+    );
+    if (!pidResult.ok) {
+      ui.info(`Warning: failed to store PID for remote cancel: ${pidResult.error.message}`);
+    }
 
-  let cancelled = false;
-  const originalSigintHandlers = process.listeners('SIGINT');
-  process.removeAllListeners('SIGINT');
-  process.on('SIGINT', () => {
-    cancelled = true;
-    // Do NOT kill child — child receives SIGINT via shared TTY
-  });
+    let cancelled = false;
+    let sigintCount = 0;
+    const originalSigintHandlers = process.listeners('SIGINT');
+    process.removeAllListeners('SIGINT');
+    process.on('SIGINT', () => {
+      sigintCount++;
+      if (sigintCount >= 2) {
+        // Double Ctrl+C: force-exit so the process is never unkillable via SIGINT
+        process.exit(130);
+      }
+      cancelled = true;
+      // Do NOT kill child — child receives SIGINT via shared TTY
+    });
 
-  ui.info('Launching interactive session...\n');
+    ui.info('Launching interactive session...\n');
 
-  const exitCode = await new Promise<number | null>((resolve) => {
-    child.on('exit', (code: number | null) => resolve(code));
-  });
+    const exitCode = await new Promise<number | null>((resolve) => {
+      child.on('exit', (code: number | null) => resolve(code));
+    });
 
-  // Restore SIGINT handlers
-  process.removeAllListeners('SIGINT');
-  for (const handler of originalSigintHandlers) {
-    process.on('SIGINT', handler as NodeJS.SignalsListener);
-  }
+    // Restore SIGINT handlers
+    process.removeAllListeners('SIGINT');
+    for (const handler of originalSigintHandlers) {
+      process.on('SIGINT', handler as NodeJS.SignalsListener);
+    }
 
-  let finalStatus: OrchestratorStatus;
-  if (cancelled) {
-    finalStatus = OrchestratorStatus.CANCELLED;
-  } else if (exitCode === 0) {
-    finalStatus = OrchestratorStatus.COMPLETED;
-  } else {
-    finalStatus = OrchestratorStatus.FAILED;
-  }
+    let finalStatus: OrchestratorStatus;
+    if (cancelled) {
+      finalStatus = OrchestratorStatus.CANCELLED;
+    } else if (exitCode === 0) {
+      finalStatus = OrchestratorStatus.COMPLETED;
+    } else {
+      finalStatus = OrchestratorStatus.FAILED;
+    }
 
-  const updated = updateOrchestration(orchestration, {
-    status: finalStatus,
-    completedAt: Date.now(),
-  });
-  if (orchRepoResult.ok) {
+    const updated = updateOrchestration(orchestration, {
+      status: finalStatus,
+      completedAt: Date.now(),
+    });
     await orchRepoResult.value.update(updated);
-  }
 
-  if (eventBusResult.ok) {
     if (finalStatus === OrchestratorStatus.CANCELLED) {
       await eventBusResult.value.emit('OrchestrationCancelled', {
         orchestratorId: orchestration.id,
@@ -806,20 +822,25 @@ async function handleOrchestrateInteractive(parsed: OrchestrateInteractiveParsed
     } else if (finalStatus === OrchestratorStatus.COMPLETED) {
       await eventBusResult.value.emit('OrchestrationCompleted', { orchestratorId: orchestration.id });
     }
+
+    if (finalStatus === OrchestratorStatus.CANCELLED) {
+      ui.info('\nOrchestration cancelled.');
+    } else if (finalStatus === OrchestratorStatus.COMPLETED) {
+      ui.success('\nOrchestration completed.');
+    } else {
+      ui.error(`\nOrchestration failed (exit code: ${exitCode}).`);
+    }
+
+    adapter.cleanup(orchestration.id);
+
+    await container.dispose();
+    process.exit(exitCode ?? 1);
+  } catch (error) {
+    s.stop('Failed');
+    ui.error(errorMessage(error));
+    if (container) await container.dispose();
+    process.exit(1);
   }
-
-  if (finalStatus === OrchestratorStatus.CANCELLED) {
-    ui.info('\nOrchestration cancelled.');
-  } else if (finalStatus === OrchestratorStatus.COMPLETED) {
-    ui.success('\nOrchestration completed.');
-  } else {
-    ui.error(`\nOrchestration failed (exit code: ${exitCode}).`);
-  }
-
-  adapter.cleanup(orchestration.id);
-
-  await container.dispose();
-  process.exit(exitCode ?? 1);
 }
 
 // ============================================================================
@@ -832,6 +853,9 @@ async function handleOrchestrateInteractive(parsed: OrchestrateInteractiveParsed
  * omitted to keep startup fast and avoid unnecessary DB connections.
  */
 function handleOrchestrateInit(parsed: OrchestrateInitParsed): void {
+  // DECISION: validatePath without mustExist — workingDirectory is only embedded in the
+  // printed usage snippet, not created on disk. Scaffold files go to ~/.autobeat/.
+  // Requiring existence would reject valid future directories with no security benefit.
   if (parsed.workingDirectory) {
     const pathResult = validatePath(parsed.workingDirectory);
     if (!pathResult.ok) {
