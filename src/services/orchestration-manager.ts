@@ -327,6 +327,103 @@ export class OrchestrationManagerService implements OrchestrationService {
     return { finalSystemPrompt, finalUserPrompt };
   }
 
+  async createInteractiveOrchestration(
+    request: OrchestratorCreateRequest,
+  ): Promise<Result<{ orchestration: Orchestration; systemPrompt: string; userPrompt: string }>> {
+    if (!request.goal || request.goal.trim().length === 0) {
+      return err(new AutobeatError(ErrorCode.INVALID_INPUT, 'goal is required', { field: 'goal' }));
+    }
+
+    let validatedWorkingDirectory = process.cwd();
+    if (request.workingDirectory) {
+      const pathResult = validatePath(request.workingDirectory);
+      if (!pathResult.ok) {
+        return err(
+          new AutobeatError(ErrorCode.INVALID_DIRECTORY, `Invalid working directory: ${pathResult.error.message}`, {
+            workingDirectory: request.workingDirectory,
+          }),
+        );
+      }
+      validatedWorkingDirectory = pathResult.value;
+    }
+
+    const agentResult = resolveDefaultAgent(request.agent, this.config.defaultAgent);
+    if (!agentResult.ok) return agentResult;
+    const agent = agentResult.value;
+
+    let stateFilePath: string;
+    try {
+      const stateDir = getStateDir();
+      mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+      const stateFileName = `state-${Date.now()}-${crypto.randomUUID().substring(0, 8)}.json`;
+      stateFilePath = path.join(stateDir, stateFileName);
+      const initialState = createInitialState(request.goal);
+      writeStateFile(stateFilePath, initialState);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error('Failed to set up interactive orchestration state files', undefined, { error: message });
+      return err(
+        new AutobeatError(ErrorCode.SYSTEM_ERROR, `Failed to set up state files: ${message}`, { error: message }),
+      );
+    }
+
+    const orchestration = Object.freeze({
+      ...createOrchestration({ ...request, agent }, stateFilePath, validatedWorkingDirectory),
+      status: OrchestratorStatus.RUNNING,
+      mode: 'interactive' as const,
+    });
+
+    const saveResult = await this.orchestrationRepo.save(orchestration);
+    if (!saveResult.ok) {
+      this.logger.error('Failed to save interactive orchestration', saveResult.error, {
+        orchestratorId: orchestration.id,
+      });
+      return err(saveResult.error);
+    }
+
+    const { finalSystemPrompt, finalUserPrompt } = this.buildFinalPrompts(
+      request,
+      orchestration,
+      stateFilePath,
+      validatedWorkingDirectory,
+      agent,
+    );
+
+    const interactiveAddendum = [
+      '',
+      'INTERACTIVE MODE:',
+      'You are running in an interactive terminal session. The user can see your',
+      'actions and may type additional instructions at any time. Treat user input',
+      'as a high-priority directive. When you finish achieving the goal, tell the',
+      'user you are done.',
+    ].join('\n');
+
+    const systemPromptWithAddendum = `${finalSystemPrompt}\n${interactiveAddendum}`;
+
+    const emitResult = await this.eventBus.emit('OrchestrationCreated', { orchestration });
+    if (!emitResult.ok) {
+      this.logger.error('Failed to emit OrchestrationCreated event', emitResult.error, {
+        orchestratorId: orchestration.id,
+      });
+    }
+
+    this.logger.info('Interactive orchestration created', {
+      orchestratorId: orchestration.id,
+      goal: request.goal.substring(0, 100),
+      mode: 'interactive',
+    });
+
+    return ok({ orchestration, systemPrompt: systemPromptWithAddendum, userPrompt: finalUserPrompt });
+  }
+
+  async updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<void>> {
+    const lookupResult = await this.getOrchestration(id);
+    if (!lookupResult.ok) return lookupResult;
+
+    const updated = updateOrchestration(lookupResult.value, { pid });
+    return this.orchestrationRepo.update(updated);
+  }
+
   async getOrchestration(id: OrchestratorId): Promise<Result<Orchestration>> {
     const result = await this.orchestrationRepo.findById(id);
     if (!result.ok) {
@@ -376,8 +473,22 @@ export class OrchestrationManagerService implements OrchestrationService {
 
     this.logger.info('Cancelling orchestration', { orchestratorId: id, reason });
 
-    // Cancel the underlying loop if it exists
-    if (orchestration.loopId) {
+    if (orchestration.mode === 'interactive') {
+      // Interactive mode: send SIGTERM to stored PID, then update DB directly
+      if (orchestration.pid) {
+        try {
+          process.kill(orchestration.pid, 'SIGTERM');
+        } catch {
+          // ESRCH — process already dead; proceed with DB update
+        }
+      }
+      const updated = updateOrchestration(orchestration, {
+        status: OrchestratorStatus.CANCELLED,
+        completedAt: Date.now(),
+      });
+      const updateResult = await this.orchestrationRepo.update(updated);
+      if (!updateResult.ok) return err(updateResult.error);
+    } else if (orchestration.loopId) {
       const cancelResult = await this.loopService.cancelLoop(orchestration.loopId, reason, true);
       if (!cancelResult.ok) {
         this.logger.warn('Failed to cancel orchestration loop', {

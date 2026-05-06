@@ -877,6 +877,14 @@ export interface SyncOrchestrationOperations {
  */
 export interface OrchestrationService {
   createOrchestration(request: OrchestratorCreateRequest): Promise<Result<Orchestration>>;
+  createInteractiveOrchestration(request: OrchestratorCreateRequest): Promise<
+    Result<{
+      orchestration: Orchestration;
+      systemPrompt: string;
+      userPrompt: string;
+    }>
+  >;
+  updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<void>>;
   getOrchestration(id: OrchestratorId): Promise<Result<Orchestration>>;
   listOrchestrations(
     status?: OrchestratorStatus,
