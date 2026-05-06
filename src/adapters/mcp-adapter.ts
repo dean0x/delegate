@@ -3395,7 +3395,7 @@ export class MCPAdapter {
       'CreateLoop with:',
       '  prompt: "<your orchestrator prompt>"',
       '  strategy: "retry"',
-      `  exitCondition: "${scaffold.suggestedExitCondition}"`,
+      `  exitCondition: "${scaffold.suggestedExitCondition ?? ''}"`,
       '  systemPrompt: "<include delegation + state management + constraints instructions>"',
       `  workingDirectory: "${workingDirectory}"`,
       ...(data.agent ? [`  agent: "${data.agent}"`] : []),

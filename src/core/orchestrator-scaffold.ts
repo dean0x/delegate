@@ -30,12 +30,14 @@ export interface ScaffoldParams {
   readonly model?: string;
   readonly maxWorkers?: number;
   readonly maxDepth?: number;
+  readonly template?: 'standard' | 'interactive';
 }
 
 export interface ScaffoldResult {
   readonly stateFilePath: string;
-  readonly exitConditionScript: string;
-  readonly suggestedExitCondition: string;
+  readonly exitConditionScript?: string;
+  readonly suggestedExitCondition?: string;
+  readonly suggestedCommand: string;
   readonly instructions: {
     readonly delegation: string;
     readonly stateManagement: string;
@@ -57,7 +59,8 @@ export interface ScaffoldResult {
  */
 export function scaffoldCustomOrchestrator(params: ScaffoldParams): Result<ScaffoldResult> {
   return tryCatch(() => {
-    const { goal, agent, model, maxWorkers = 5, maxDepth = 3 } = params;
+    const { goal, agent, model, maxWorkers = 5, maxDepth = 3, template } = params;
+    const isInteractive = template === 'interactive';
 
     const stateDir = getStateDir();
     const filename = `state-${Date.now()}-${randomUUID().substring(0, 8)}.json`;
@@ -66,17 +69,33 @@ export function scaffoldCustomOrchestrator(params: ScaffoldParams): Result<Scaff
     const state = createInitialState(goal);
     writeStateFile(stateFilePath, state);
 
-    const exitConditionScript = writeExitConditionScript(stateDir, stateFilePath);
-    const suggestedExitCondition = `node ${JSON.stringify(exitConditionScript)}`;
-
     const delegation = buildDelegationInstructions({ agent, model });
     const stateManagement = buildStateManagementInstructions({ stateFilePath });
     const constraints = buildConstraintInstructions({ maxWorkers, maxDepth });
+
+    if (isInteractive) {
+      const agentFlag = agent ? ` --agent ${agent}` : '';
+      const modelFlag = model ? ` --model ${model}` : '';
+      const suggestedCommand = `beat orchestrate -i${agentFlag}${modelFlag} "<your goal>"`;
+
+      return {
+        stateFilePath,
+        suggestedCommand,
+        instructions: { delegation, stateManagement, constraints },
+      };
+    }
+
+    const exitConditionScript = writeExitConditionScript(stateDir, stateFilePath);
+    const suggestedExitCondition = `node ${JSON.stringify(exitConditionScript)}`;
+    const agentFlag = agent ? ` --agent ${agent}` : '';
+    const modelFlag = model ? ` --model ${model}` : '';
+    const suggestedCommand = `beat loop${agentFlag}${modelFlag} "<your orchestrator prompt>" --strategy retry --until "${suggestedExitCondition}"`;
 
     return {
       stateFilePath,
       exitConditionScript,
       suggestedExitCondition,
+      suggestedCommand,
       instructions: { delegation, stateManagement, constraints },
     };
   });
