@@ -22,6 +22,11 @@ export class CodexAdapter extends BaseAgentAdapter {
     return ['--quiet', '--full-auto', ...modelArgs, '--', prompt];
   }
 
+  protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
+    const modelArgs: string[] = model ? ['--model', model] : [];
+    return ['--full-auto', ...modelArgs, '--', prompt];
+  }
+
   protected get envPrefixesToStrip(): readonly string[] {
     // ARCHITECTURE: No known Codex CLI nesting indicators.
     // Auth uses OPENAI_API_KEY (not CODEX_*), so stripping is unnecessary.

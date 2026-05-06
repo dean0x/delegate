@@ -26,6 +26,11 @@ export class ClaudeAdapter extends BaseAgentAdapter {
     return [...this.baseArgs, ...modelArgs, ...schemaArgs, '--', prompt];
   }
 
+  protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
+    const modelArgs: string[] = model ? ['--model', model] : [];
+    return ['--dangerously-skip-permissions', ...modelArgs, '--', prompt];
+  }
+
   protected get envPrefixesToStrip(): readonly string[] {
     // Strip CLAUDE_CODE_* prefix vars (e.g., CLAUDE_CODE_ENTRYPOINT)
     return ['CLAUDE_CODE_'];

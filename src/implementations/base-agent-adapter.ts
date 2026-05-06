@@ -21,6 +21,7 @@ import {
   AgentAdapter,
   AgentAuthConfig,
   AgentProvider,
+  type InteractiveSpawnOptions,
   isCommandInPath,
   SpawnOptions,
 } from '../core/agents.js';
@@ -50,6 +51,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * others should accept the parameter but ignore it.
    */
   protected abstract buildArgs(prompt: string, model?: string, jsonSchema?: string): readonly string[];
+
+  /**
+   * Build CLI args for interactive mode (stdio: 'inherit').
+   * Each adapter omits headless flags (e.g. --print, --quiet, --prompt).
+   */
+  protected abstract buildInteractiveArgs(prompt: string, model?: string): readonly string[];
 
   /** Env var prefixes to strip before spawning (prevents nesting issues) */
   protected abstract get envPrefixesToStrip(): readonly string[];
@@ -238,6 +245,78 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     return { effectivePrompt: prompt, args: config.args, env: config.env };
   }
 
+  /**
+   * Shared resolution logic: loads config, resolves runtime/auth/model/system-prompt/env.
+   * Used by both spawn() and spawnInteractive() to avoid duplicating the resolution chain.
+   */
+  protected resolveSpawnConfig(options: {
+    prompt: string;
+    workingDirectory: string;
+    taskId?: string;
+    model?: string;
+    orchestratorId?: string;
+    systemPrompt?: string;
+  }): Result<{
+    readonly command: string;
+    readonly runtimePrependArgs: readonly string[];
+    readonly resolvedModel: string | undefined;
+    readonly systemPromptArgs: readonly string[];
+    readonly effectivePrompt: string;
+    readonly env: Record<string, string>;
+    readonly workingDirectory: string;
+  }> {
+    const agentConfig = loadAgentConfig(this.provider);
+
+    const runtimeResult = this.resolveRuntime(agentConfig, options.model);
+    if (!runtimeResult.ok) return runtimeResult;
+    const runtimeConfig = runtimeResult.value;
+
+    const commandToCheck = runtimeConfig ? runtimeConfig.command : this.command;
+    if (!isCommandInPath(commandToCheck)) {
+      return err(
+        agentMisconfigured(
+          this.provider,
+          [
+            `CLI binary '${commandToCheck}' not found in PATH.`,
+            runtimeConfig ? '  Install Ollama: https://ollama.com/download' : `  Install: ${this.authConfig.loginHint}`,
+          ].join('\n'),
+        ),
+      );
+    }
+
+    const authResult = runtimeConfig?.suppressAuth
+      ? ok({ injectedEnv: {} as Record<string, string> })
+      : this.resolveAuth(agentConfig);
+    if (!authResult.ok) return authResult;
+
+    const resolvedModel = runtimeConfig?.suppressModel ? undefined : this.resolveModel(agentConfig, options.model);
+
+    const {
+      effectivePrompt,
+      args: systemPromptArgs,
+      env: systemPromptEnv,
+    } = this.resolveSystemPromptInjection(options.prompt, options.systemPrompt, options.taskId);
+
+    const env = this.buildSpawnEnv({
+      runtimeConfig,
+      agentConfig,
+      authEnv: authResult.value.injectedEnv,
+      systemPromptEnv,
+      taskId: options.taskId,
+      orchestratorId: options.orchestratorId,
+    });
+
+    return ok({
+      command: runtimeConfig ? runtimeConfig.command : this.command,
+      runtimePrependArgs: runtimeConfig ? runtimeConfig.prependArgs : [],
+      resolvedModel,
+      systemPromptArgs: [...systemPromptArgs],
+      effectivePrompt,
+      env,
+      workingDirectory: options.workingDirectory,
+    });
+  }
+
   private buildSpawnEnv(options: {
     runtimeConfig: { suppressBaseUrl: boolean } | null;
     agentConfig: AgentConfig;
@@ -289,70 +368,62 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     systemPrompt,
   }: SpawnOptions): Result<{ process: ChildProcess; pid: number }> {
     try {
-      // DECISION: Runtime takes precedence over proxy. When runtime is set, auth/baseUrl/model
-      // are suppressed from inner agent args. See also bootstrap.ts:413 (proxy startup skip)
-      // and mcp-adapter.ts set/check handlers (warning path).
-      // Load agent config once — passed to resolveRuntime, resolveAuth, resolveBaseUrl, resolveModel
-      // to avoid redundant readFileSync + JSON.parse calls per spawn
-      const agentConfig = loadAgentConfig(this.provider);
-
-      // Resolve runtime wrapper (e.g. ollama) before binary check so we know which binary to verify
-      const runtimeResult = this.resolveRuntime(agentConfig, model);
-      if (!runtimeResult.ok) return runtimeResult;
-      const runtimeConfig = runtimeResult.value;
-
-      // Pre-spawn: verify the correct CLI binary exists
-      const commandToCheck = runtimeConfig ? runtimeConfig.command : this.command;
-      if (!isCommandInPath(commandToCheck)) {
-        return err(
-          agentMisconfigured(
-            this.provider,
-            [
-              `CLI binary '${commandToCheck}' not found in PATH.`,
-              runtimeConfig
-                ? '  Install Ollama: https://ollama.com/download'
-                : `  Install: ${this.authConfig.loginHint}`,
-            ].join('\n'),
-          ),
-        );
-      }
-
-      // Pre-spawn auth validation (skipped when runtime handles auth)
-      const authResult = runtimeConfig?.suppressAuth
-        ? ok({ injectedEnv: {} as Record<string, string> })
-        : this.resolveAuth(agentConfig);
-      if (!authResult.ok) return authResult;
-
-      // Model suppressed from inner args when runtime handles model routing
-      const resolvedModel = runtimeConfig?.suppressModel ? undefined : this.resolveModel(agentConfig, model);
-
-      // Resolve system prompt injection
-      const {
-        effectivePrompt,
-        args: systemPromptArgs,
-        env: systemPromptEnv,
-      } = this.resolveSystemPromptInjection(prompt, systemPrompt, taskId);
-
-      const finalPrompt = this.transformPrompt(effectivePrompt);
-      const args = [...this.buildArgs(finalPrompt, resolvedModel, jsonSchema), ...systemPromptArgs];
-
-      const env = this.buildSpawnEnv({
-        runtimeConfig,
-        agentConfig,
-        authEnv: authResult.value.injectedEnv,
-        systemPromptEnv,
+      const configResult = this.resolveSpawnConfig({
+        prompt,
+        workingDirectory,
         taskId,
+        model,
         orchestratorId,
+        systemPrompt,
+      });
+      if (!configResult.ok) return configResult;
+      const cfg = configResult.value;
+
+      const finalPrompt = this.transformPrompt(cfg.effectivePrompt);
+      const args = [...this.buildArgs(finalPrompt, cfg.resolvedModel, jsonSchema), ...cfg.systemPromptArgs];
+
+      const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...args] : args;
+
+      const child = spawn(cfg.command, spawnArgs, {
+        cwd: cfg.workingDirectory,
+        env: cfg.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
 
-      // When runtime is active, wrap the command: ollama launch <agent> [--model x] --yes -- <inner-args>
-      const spawnCommand = runtimeConfig ? runtimeConfig.command : this.command;
-      const spawnArgs = runtimeConfig ? [...runtimeConfig.prependArgs, ...args] : args;
+      if (!child.pid) {
+        return err(processSpawnFailed('Failed to get process PID'));
+      }
 
-      const child = spawn(spawnCommand, spawnArgs, {
-        cwd: workingDirectory,
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+      return ok({ process: child, pid: child.pid });
+    } catch (error) {
+      return err(processSpawnFailed(String(error)));
+    }
+  }
+
+  spawnInteractive({
+    prompt,
+    workingDirectory,
+    model,
+    orchestratorId,
+    systemPrompt,
+  }: InteractiveSpawnOptions): Result<{ process: ChildProcess; pid: number }> {
+    try {
+      const configResult = this.resolveSpawnConfig({ prompt, workingDirectory, model, orchestratorId, systemPrompt });
+      if (!configResult.ok) return configResult;
+      const cfg = configResult.value;
+
+      const finalPrompt = this.transformPrompt(cfg.effectivePrompt);
+      const args = [...this.buildInteractiveArgs(finalPrompt, cfg.resolvedModel), ...cfg.systemPromptArgs];
+
+      const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...args] : args;
+
+      // Interactive: omit AUTOBEAT_WORKER from env (not a background worker)
+      const { AUTOBEAT_WORKER: _, ...interactiveEnv } = cfg.env;
+
+      const child = spawn(cfg.command, spawnArgs, {
+        cwd: cfg.workingDirectory,
+        env: interactiveEnv,
+        stdio: 'inherit',
       });
 
       if (!child.pid) {
