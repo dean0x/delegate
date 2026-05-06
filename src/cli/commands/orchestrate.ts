@@ -751,8 +751,14 @@ async function handleOrchestrateInteractive(parsed: OrchestrateInteractiveParsed
 
   const child = spawnResult.value.process;
 
-  // Store PID in DB for remote cancel support
-  await orchestrationService.updateInteractiveOrchestrationPid(orchestration.id, spawnResult.value.pid);
+  // Store PID in DB for remote cancel support (best-effort — lifecycle works without it)
+  const pidResult = await orchestrationService.updateInteractiveOrchestrationPid(
+    orchestration.id,
+    spawnResult.value.pid,
+  );
+  if (!pidResult.ok) {
+    ui.info(`Warning: failed to store PID for remote cancel: ${pidResult.error.message}`);
+  }
 
   let cancelled = false;
   const originalSigintHandlers = process.listeners('SIGINT');
