@@ -646,6 +646,31 @@ describe('cancelOrchestration - interactive mode', () => {
 
     expect(eventBus.emittedEvents.some((e) => e.type === 'OrchestrationCancelled')).toBe(true);
   });
+
+  it('should succeed when stored PID is not a live process (ESRCH path)', async () => {
+    // Exercises the process.kill(pid, 'SIGTERM') branch in cancelOrchestration for
+    // interactive mode. PID 99999 passes validation (positive integer) but is
+    // virtually guaranteed not to exist, so process.kill throws ESRCH. The cancel
+    // must still complete successfully and mark the orchestration as CANCELLED.
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test SIGTERM path' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+
+    const pidResult = await service.updateInteractiveOrchestrationPid(
+      createResult.value.orchestration.id,
+      99999,
+    );
+    expect(pidResult.ok).toBe(true);
+
+    const cancelResult = await service.cancelOrchestration(createResult.value.orchestration.id);
+    expect(cancelResult.ok).toBe(true);
+
+    const dbResult = await orchestrationRepo.findById(createResult.value.orchestration.id);
+    expect(dbResult.ok).toBe(true);
+    if (!dbResult.ok) return;
+    expect(dbResult.value!.status).toBe('cancelled');
+  });
 });
 
 // ============================================================================

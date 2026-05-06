@@ -822,6 +822,10 @@ async function handleOrchestrateInteractive(parsed: OrchestrateInteractiveParsed
     } else if (finalStatus === OrchestratorStatus.COMPLETED) {
       await eventBusResult.value.emit('OrchestrationCompleted', { orchestratorId: orchestration.id });
     }
+    // DECISION: OrchestrationFailed is intentionally NOT emitted for interactive mode.
+    // The child process exit code signals failure at the CLI layer; no downstream handler
+    // currently consumes OrchestrationFailed for interactive orchestrations, and the UI
+    // error message below is the appropriate feedback mechanism for the user.
 
     if (finalStatus === OrchestratorStatus.CANCELLED) {
       ui.info('\nOrchestration cancelled.');
