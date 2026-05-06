@@ -882,6 +882,18 @@ function handleOrchestrateInit(parsed: OrchestrateInitParsed): void {
 
   ui.success('Custom orchestrator scaffolding created');
 
+  const commonSnippets = [
+    '--- Delegation Instructions ---',
+    s.instructions.delegation,
+    '',
+    '--- State Management Instructions ---',
+    s.instructions.stateManagement,
+    '',
+    '--- Constraint Instructions ---',
+    s.instructions.constraints,
+    '',
+  ];
+
   if (s.template === 'interactive') {
     process.stdout.write(
       [
@@ -894,15 +906,7 @@ function handleOrchestrateInit(parsed: OrchestrateInitParsed): void {
         '',
         'Instruction snippets (for --system-prompt):',
         '',
-        '--- Delegation Instructions ---',
-        s.instructions.delegation,
-        '',
-        '--- State Management Instructions ---',
-        s.instructions.stateManagement,
-        '',
-        '--- Constraint Instructions ---',
-        s.instructions.constraints,
-        '',
+        ...commonSnippets,
       ].join('\n'),
     );
   } else {
@@ -932,15 +936,7 @@ function handleOrchestrateInit(parsed: OrchestrateInitParsed): void {
         '',
         'Instruction snippets (for manual composition):',
         '',
-        '--- Delegation Instructions ---',
-        s.instructions.delegation,
-        '',
-        '--- State Management Instructions ---',
-        s.instructions.stateManagement,
-        '',
-        '--- Constraint Instructions ---',
-        s.instructions.constraints,
-        '',
+        ...commonSnippets,
       ].join('\n'),
     );
   }
