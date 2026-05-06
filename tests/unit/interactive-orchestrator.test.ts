@@ -649,6 +649,116 @@ describe('cancelOrchestration - interactive mode', () => {
 });
 
 // ============================================================================
+// updateInteractiveOrchestrationPid — PID validation
+// ============================================================================
+
+describe('updateInteractiveOrchestrationPid - PID validation', () => {
+  let db: Database;
+  let orchestrationRepo: SQLiteOrchestrationRepository;
+  let eventBus: TestEventBus;
+  let logger: TestLogger;
+  let service: OrchestrationManagerService;
+  const createdStateFiles: string[] = [];
+  const config = createTestConfiguration({ defaultAgent: 'claude' });
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    const loopRepo = new SQLiteLoopRepository(db);
+    orchestrationRepo = new SQLiteOrchestrationRepository(db);
+    eventBus = new TestEventBus();
+    logger = new TestLogger();
+    const loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
+    service = new OrchestrationManagerService({ eventBus, logger, orchestrationRepo, loopService, config });
+  });
+
+  afterEach(() => {
+    db.close();
+    for (const f of createdStateFiles) {
+      try {
+        unlinkSync(f);
+      } catch {
+        /* ignore */
+      }
+    }
+    createdStateFiles.length = 0;
+  });
+
+  it('should accept a valid positive integer PID', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test PID' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+
+    const updateResult = await service.updateInteractiveOrchestrationPid(
+      createResult.value.orchestration.id,
+      12345,
+    );
+    expect(updateResult.ok).toBe(true);
+  });
+
+  it('should reject PID of zero', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test PID zero' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+
+    const updateResult = await service.updateInteractiveOrchestrationPid(
+      createResult.value.orchestration.id,
+      0,
+    );
+    expect(updateResult.ok).toBe(false);
+    if (updateResult.ok) return;
+    expect(updateResult.error.message).toContain('Invalid PID');
+  });
+
+  it('should reject a negative PID', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test negative PID' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+
+    const updateResult = await service.updateInteractiveOrchestrationPid(
+      createResult.value.orchestration.id,
+      -1,
+    );
+    expect(updateResult.ok).toBe(false);
+    if (updateResult.ok) return;
+    expect(updateResult.error.message).toContain('Invalid PID');
+  });
+
+  it('should reject a non-integer PID (float)', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test float PID' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+
+    const updateResult = await service.updateInteractiveOrchestrationPid(
+      createResult.value.orchestration.id,
+      3.14,
+    );
+    expect(updateResult.ok).toBe(false);
+    if (updateResult.ok) return;
+    expect(updateResult.error.message).toContain('Invalid PID');
+  });
+
+  it('should persist a valid PID to DB', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test persist PID' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    const updateResult = await service.updateInteractiveOrchestrationPid(id, 99999);
+    expect(updateResult.ok).toBe(true);
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    if (!dbResult.ok) return;
+    expect(dbResult.value!.pid).toBe(99999);
+  });
+});
+
+// ============================================================================
 // Migration v25
 // ============================================================================
 
@@ -713,8 +823,10 @@ describe('scaffoldCustomOrchestrator - interactive template', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     createdFiles.push(result.value.stateFilePath);
-    expect(result.value.exitConditionScript).toBeUndefined();
-    expect(result.value.suggestedExitCondition).toBeUndefined();
+    // Discriminant ensures these fields are absent at the type level for 'interactive'
+    expect(result.value.template).toBe('interactive');
+    expect('exitConditionScript' in result.value).toBe(false);
+    expect('suggestedExitCondition' in result.value).toBe(false);
   });
 
   it('should have suggestedCommand containing "beat orchestrate -i"', () => {
@@ -740,9 +852,10 @@ describe('scaffoldCustomOrchestrator - interactive template', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     createdFiles.push(result.value.stateFilePath);
-    if (result.value.exitConditionScript) createdFiles.push(result.value.exitConditionScript);
-    expect(result.value.exitConditionScript).toBeDefined();
-    expect(result.value.suggestedExitCondition).toBeDefined();
+    expect(result.value.template).toBe('standard');
+    if (result.value.template === 'standard') createdFiles.push(result.value.exitConditionScript);
+    expect(result.value.template === 'standard' && result.value.exitConditionScript).toBeTruthy();
+    expect(result.value.template === 'standard' && result.value.suggestedExitCondition).toBeTruthy();
   });
 
   it('should have suggestedCommand containing "beat loop" for standard template', () => {
@@ -750,7 +863,7 @@ describe('scaffoldCustomOrchestrator - interactive template', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     createdFiles.push(result.value.stateFilePath);
-    if (result.value.exitConditionScript) createdFiles.push(result.value.exitConditionScript);
+    if (result.value.template === 'standard') createdFiles.push(result.value.exitConditionScript);
     expect(result.value.suggestedCommand).toContain('beat loop');
   });
 
@@ -759,8 +872,9 @@ describe('scaffoldCustomOrchestrator - interactive template', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     createdFiles.push(result.value.stateFilePath);
-    if (result.value.exitConditionScript) createdFiles.push(result.value.exitConditionScript);
-    expect(result.value.exitConditionScript).toBeDefined();
+    expect(result.value.template).toBe('standard');
+    if (result.value.template === 'standard') createdFiles.push(result.value.exitConditionScript);
+    expect(result.value.template === 'standard' && result.value.exitConditionScript).toBeTruthy();
     expect(result.value.suggestedCommand).toContain('beat loop');
   });
 

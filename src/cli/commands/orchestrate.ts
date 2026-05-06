@@ -855,11 +855,10 @@ function handleOrchestrateInit(parsed: OrchestrateInitParsed): void {
   }
 
   const s = result.value;
-  const isInteractive = parsed.template === 'interactive';
 
   ui.success('Custom orchestrator scaffolding created');
 
-  if (isInteractive) {
+  if (s.template === 'interactive') {
     process.stdout.write(
       [
         '',

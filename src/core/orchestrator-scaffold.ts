@@ -33,10 +33,11 @@ export interface ScaffoldParams {
   readonly template?: 'standard' | 'interactive';
 }
 
-export interface ScaffoldResult {
+/**
+ * Shared fields present in every scaffold result regardless of template.
+ */
+interface ScaffoldResultBase {
   readonly stateFilePath: string;
-  readonly exitConditionScript?: string;
-  readonly suggestedExitCondition?: string;
   readonly suggestedCommand: string;
   readonly instructions: {
     readonly delegation: string;
@@ -44,6 +45,30 @@ export interface ScaffoldResult {
     readonly constraints: string;
   };
 }
+
+/**
+ * Result for template: 'standard' (or omitted).
+ * TypeScript guarantees exitConditionScript and suggestedExitCondition are always present.
+ */
+export interface StandardScaffoldResult extends ScaffoldResultBase {
+  readonly template: 'standard';
+  readonly exitConditionScript: string;
+  readonly suggestedExitCondition: string;
+}
+
+/**
+ * Result for template: 'interactive'.
+ * No exit-condition script is created — the session is managed by the user's TTY.
+ */
+export interface InteractiveScaffoldResult extends ScaffoldResultBase {
+  readonly template: 'interactive';
+}
+
+/**
+ * Discriminated union on `template`. Use `result.template === 'standard'` to
+ * narrow to the variant that carries exitConditionScript / suggestedExitCondition.
+ */
+export type ScaffoldResult = StandardScaffoldResult | InteractiveScaffoldResult;
 
 /**
  * Initialize scaffolding for a custom orchestrator.
@@ -79,6 +104,7 @@ export function scaffoldCustomOrchestrator(params: ScaffoldParams): Result<Scaff
       const suggestedCommand = `beat orchestrate -i${agentFlag}${modelFlag} "<your goal>"`;
 
       return {
+        template: 'interactive' as const,
         stateFilePath,
         suggestedCommand,
         instructions: { delegation, stateManagement, constraints },
@@ -92,6 +118,7 @@ export function scaffoldCustomOrchestrator(params: ScaffoldParams): Result<Scaff
     const suggestedCommand = `beat loop${agentFlag}${modelFlag} "<your orchestrator prompt>" --strategy retry --until "${suggestedExitCondition}"`;
 
     return {
+      template: 'standard' as const,
       stateFilePath,
       exitConditionScript,
       suggestedExitCondition,

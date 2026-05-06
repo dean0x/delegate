@@ -41,12 +41,15 @@ describe('scaffoldCustomOrchestrator', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
+    expect(result.value.template).toBe('standard');
     expect(result.value.stateFilePath).toBeTruthy();
-    expect(result.value.exitConditionScript).toBeTruthy();
-    expect(result.value.suggestedExitCondition).toBeTruthy();
     expect(result.value.instructions.delegation).toBeTruthy();
     expect(result.value.instructions.stateManagement).toBeTruthy();
     expect(result.value.instructions.constraints).toBeTruthy();
+    if (result.value.template === 'standard') {
+      expect(result.value.exitConditionScript).toBeTruthy();
+      expect(result.value.suggestedExitCondition).toBeTruthy();
+    }
   });
 
   it('creates state file on disk with initial content', () => {
@@ -77,6 +80,8 @@ describe('scaffoldCustomOrchestrator', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    expect(result.value.template).toBe('standard');
+    if (result.value.template !== 'standard') return;
 
     expect(existsSync(result.value.exitConditionScript)).toBe(true);
 
@@ -92,6 +97,8 @@ describe('scaffoldCustomOrchestrator', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    expect(result.value.template).toBe('standard');
+    if (result.value.template !== 'standard') return;
 
     // Path is JSON-quoted so spaces in home directory paths (e.g. /Users/John Doe/) don't break shell execution
     expect(result.value.suggestedExitCondition).toBe(`node ${JSON.stringify(result.value.exitConditionScript)}`);
@@ -180,7 +187,10 @@ describe('scaffoldCustomOrchestrator', () => {
     if (!result1.ok || !result2.ok) return;
 
     expect(result1.value.stateFilePath).not.toBe(result2.value.stateFilePath);
-    expect(result1.value.exitConditionScript).not.toBe(result2.value.exitConditionScript);
+    // Both standard — exit condition scripts are also unique
+    if (result1.value.template === 'standard' && result2.value.template === 'standard') {
+      expect(result1.value.exitConditionScript).not.toBe(result2.value.exitConditionScript);
+    }
   });
 
   it('returns a Result object (never throws)', () => {

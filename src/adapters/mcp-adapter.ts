@@ -3391,11 +3391,14 @@ export class MCPAdapter {
     const agentFlag = data.agent ? ` --agent ${data.agent}` : '';
     const modelFlag = data.model ? ` --model ${data.model}` : '';
 
+    // InitCustomOrchestrator does not accept a template field, so the scaffold is
+    // always StandardScaffoldResult. The usage snippet always includes CreateLoop
+    // with an exit condition.
     const usage = [
       'CreateLoop with:',
       '  prompt: "<your orchestrator prompt>"',
       '  strategy: "retry"',
-      `  exitCondition: "${scaffold.suggestedExitCondition ?? ''}"`,
+      `  exitCondition: "${scaffold.template === 'standard' ? scaffold.suggestedExitCondition : ''}"`,
       '  systemPrompt: "<include delegation + state management + constraints instructions>"',
       `  workingDirectory: "${workingDirectory}"`,
       ...(data.agent ? [`  agent: "${data.agent}"`] : []),
@@ -3410,8 +3413,8 @@ export class MCPAdapter {
             {
               success: true,
               stateFilePath: scaffold.stateFilePath,
-              exitConditionScript: scaffold.exitConditionScript,
-              suggestedExitCondition: scaffold.suggestedExitCondition,
+              exitConditionScript: scaffold.template === 'standard' ? scaffold.exitConditionScript : undefined,
+              suggestedExitCondition: scaffold.template === 'standard' ? scaffold.suggestedExitCondition : undefined,
               instructions: scaffold.instructions,
               agentFlags: `${agentFlag}${modelFlag}`.trim() || undefined,
               usage,
