@@ -16,6 +16,7 @@ import {
   Orchestration,
   OrchestratorChild,
   OrchestratorId,
+  type OrchestratorMode,
   OrchestratorStatus,
   TaskId,
   TaskStatus,
@@ -42,6 +43,8 @@ const OrchestrationRowSchema = z.object({
   max_workers: z.number(),
   max_iterations: z.number(),
   status: z.enum(['planning', 'running', 'completed', 'failed', 'cancelled']),
+  mode: z.enum(['standard', 'interactive']).nullable().optional(),
+  pid: z.number().nullable().optional(),
   created_at: z.number(),
   updated_at: z.number(),
   completed_at: z.number().nullable(),
@@ -79,6 +82,8 @@ interface OrchestrationRow {
   readonly max_workers: number;
   readonly max_iterations: number;
   readonly status: string;
+  readonly mode: string | null;
+  readonly pid: number | null;
   readonly created_at: number;
   readonly updated_at: number;
   readonly completed_at: number | null;
@@ -111,11 +116,11 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       INSERT INTO orchestrations (
         id, goal, loop_id, state_file_path, working_directory,
         agent, model, max_depth, max_workers, max_iterations,
-        status, created_at, updated_at, completed_at
+        status, mode, pid, created_at, updated_at, completed_at
       ) VALUES (
         @id, @goal, @loopId, @stateFilePath, @workingDirectory,
         @agent, @model, @maxDepth, @maxWorkers, @maxIterations,
-        @status, @createdAt, @updatedAt, @completedAt
+        @status, @mode, @pid, @createdAt, @updatedAt, @completedAt
       )
     `);
 
@@ -131,6 +136,8 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
         max_workers = @maxWorkers,
         max_iterations = @maxIterations,
         status = @status,
+        mode = @mode,
+        pid = @pid,
         updated_at = @updatedAt,
         completed_at = @completedAt
       WHERE id = @id
@@ -164,6 +171,8 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
         max_workers = @maxWorkers,
         max_iterations = @maxIterations,
         status = @status,
+        mode = @mode,
+        pid = @pid,
         updated_at = @updatedAt,
         completed_at = @completedAt
       WHERE id = @id AND status = @expectedStatus
@@ -431,6 +440,8 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       maxWorkers: orchestration.maxWorkers,
       maxIterations: orchestration.maxIterations,
       status: orchestration.status,
+      mode: orchestration.mode ?? null,
+      pid: orchestration.pid ?? null,
       createdAt: orchestration.createdAt,
       updatedAt: orchestration.updatedAt,
       completedAt: orchestration.completedAt ?? null,
@@ -451,6 +462,8 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       maxWorkers: data.max_workers,
       maxIterations: data.max_iterations,
       status: this.toOrchestratorStatus(data.status),
+      mode: (data.mode as OrchestratorMode) ?? undefined,
+      pid: data.pid ?? undefined,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
       completedAt: data.completed_at ?? undefined,

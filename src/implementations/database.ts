@@ -987,6 +987,14 @@ export class Database implements TransactionRunner {
           db.exec(`CREATE INDEX IF NOT EXISTS idx_pipelines_updated_at ON pipelines(updated_at)`);
         },
       },
+      {
+        version: 25,
+        description: 'Add mode and pid columns to orchestrations table for interactive mode',
+        up: (db) => {
+          db.exec(`ALTER TABLE orchestrations ADD COLUMN mode TEXT DEFAULT NULL`);
+          db.exec(`ALTER TABLE orchestrations ADD COLUMN pid INTEGER DEFAULT NULL`);
+        },
+      },
     ];
   }
 

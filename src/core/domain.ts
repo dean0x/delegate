@@ -773,6 +773,8 @@ export enum OrchestratorStatus {
   CANCELLED = 'cancelled',
 }
 
+export type OrchestratorMode = 'standard' | 'interactive';
+
 /**
  * Orchestration interface - defines an autonomous orchestration session
  * ARCHITECTURE: All fields readonly for immutability
@@ -790,6 +792,8 @@ export interface Orchestration {
   readonly maxWorkers: number;
   readonly maxIterations: number;
   readonly status: OrchestratorStatus;
+  readonly mode?: OrchestratorMode;
+  readonly pid?: number;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly completedAt?: number;
