@@ -55,7 +55,7 @@ import {
   ScheduleService,
   TaskManager,
 } from '../core/interfaces.js';
-import { scaffoldCustomOrchestrator } from '../core/orchestrator-scaffold.js';
+import { type StandardScaffoldResult, scaffoldCustomOrchestrator } from '../core/orchestrator-scaffold.js';
 import { match } from '../core/result.js';
 import { VERSION } from '../generated/version.js';
 import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
@@ -3387,18 +3387,17 @@ export class MCPAdapter {
       };
     }
 
-    const scaffold = result.value;
+    // InitCustomOrchestratorSchema has no template field, so the result is always
+    // StandardScaffoldResult (includes exitConditionScript and suggestedExitCondition).
+    const scaffold = result.value as StandardScaffoldResult;
     const agentFlag = data.agent ? ` --agent ${data.agent}` : '';
     const modelFlag = data.model ? ` --model ${data.model}` : '';
 
-    // InitCustomOrchestrator does not accept a template field, so the scaffold is
-    // always StandardScaffoldResult. The usage snippet always includes CreateLoop
-    // with an exit condition.
     const usage = [
       'CreateLoop with:',
       '  prompt: "<your orchestrator prompt>"',
       '  strategy: "retry"',
-      `  exitCondition: "${scaffold.template === 'standard' ? scaffold.suggestedExitCondition : ''}"`,
+      `  exitCondition: "${scaffold.suggestedExitCondition}"`,
       '  systemPrompt: "<include delegation + state management + constraints instructions>"',
       `  workingDirectory: "${workingDirectory}"`,
       ...(data.agent ? [`  agent: "${data.agent}"`] : []),
@@ -3413,8 +3412,8 @@ export class MCPAdapter {
             {
               success: true,
               stateFilePath: scaffold.stateFilePath,
-              exitConditionScript: scaffold.template === 'standard' ? scaffold.exitConditionScript : undefined,
-              suggestedExitCondition: scaffold.template === 'standard' ? scaffold.suggestedExitCondition : undefined,
+              exitConditionScript: scaffold.exitConditionScript,
+              suggestedExitCondition: scaffold.suggestedExitCondition,
               instructions: scaffold.instructions,
               agentFlags: `${agentFlag}${modelFlag}`.trim() || undefined,
               usage,
