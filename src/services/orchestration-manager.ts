@@ -567,8 +567,14 @@ export class OrchestrationManagerService implements OrchestrationService {
         status: OrchestratorStatus.CANCELLED,
         completedAt: Date.now(),
       });
-      const updateResult = await this.orchestrationRepo.update(updated);
+      const updateResult = await this.orchestrationRepo.updateIfStatus(updated, OrchestratorStatus.RUNNING);
       if (!updateResult.ok) return err(updateResult.error);
+      if (!updateResult.value) {
+        this.logger.info('Interactive orchestration already transitioned from RUNNING — cancel is a no-op', {
+          orchestratorId: id,
+        });
+        return ok(undefined);
+      }
     } else if (orchestration.loopId) {
       const cancelResult = await this.loopService.cancelLoop(orchestration.loopId, reason, true);
       if (!cancelResult.ok) {
@@ -585,8 +591,14 @@ export class OrchestrationManagerService implements OrchestrationService {
         status: OrchestratorStatus.CANCELLED,
         completedAt: Date.now(),
       });
-      const updateResult = await this.orchestrationRepo.update(updated);
+      const updateResult = await this.orchestrationRepo.updateIfStatus(updated, OrchestratorStatus.PLANNING);
       if (!updateResult.ok) return err(updateResult.error);
+      if (!updateResult.value) {
+        this.logger.info('Orchestration already transitioned from PLANNING — cancel is a no-op', {
+          orchestratorId: id,
+        });
+        return ok(undefined);
+      }
     }
 
     // Emit cancellation event.
