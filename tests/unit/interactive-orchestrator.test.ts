@@ -786,6 +786,27 @@ describe('finalizeInteractiveOrchestration', () => {
     expect(eventBus.getEventCount('OrchestrationCompleted')).toBe(0);
   });
 
+  it('should reject finalization of non-interactive orchestration (mode guard)', async () => {
+    // Create an interactive orchestration, then clear mode in DB to simulate a standard one.
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Guard test' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    // Manually clear mode to simulate a standard orchestration
+    const rawDb = db.getDatabase();
+    rawDb.exec(`UPDATE orchestrations SET mode = NULL WHERE id = '${id}'`);
+
+    eventBus.clearEmittedEvents();
+
+    const result = await service.finalizeInteractiveOrchestration(id, { exitCode: 0, cancelled: false });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('non-interactive');
+    expect(eventBus.getEventCount('OrchestrationCompleted')).toBe(0);
+  });
+
   it('should set FAILED on spawn failure (exitCode=null, cancelled=false)', async () => {
     const createResult = await service.createInteractiveOrchestration({ goal: 'Test spawn fail' });
     expect(createResult.ok).toBe(true);
