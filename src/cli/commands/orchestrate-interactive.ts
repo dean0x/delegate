@@ -5,12 +5,12 @@
  */
 
 import type { AgentProvider } from '../../core/agents.js';
-import { AGENT_PROVIDERS, isAgentProvider } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
 import type { OrchestrationService } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
 import { errorMessage, withServices } from '../services.js';
 import * as ui from '../ui.js';
+import { type CommonOrchestrateFlags, parseCommonOrchestrateFlag, parseIntFlag } from './orchestrate-parse-helpers.js';
 
 // ============================================================================
 // Types
@@ -30,66 +30,6 @@ export interface OrchestrateInteractiveParsed {
 // ============================================================================
 // Arg parsing
 // ============================================================================
-
-/** Shared mutable state accumulated by parseCommonOrchestrateFlag. */
-interface CommonOrchestrateFlags {
-  workingDirectory: string | undefined;
-  agent: AgentProvider | undefined;
-  model: string | undefined;
-  maxDepth: number | undefined;
-  maxWorkers: number | undefined;
-  goalWords: string[];
-}
-
-function parseIntFlag(name: string, value: string, min: number, max: number): Result<number, string> {
-  const val = parseInt(value, 10);
-  if (isNaN(val) || val < min || val > max) return err(`${name} must be ${min}-${max}`);
-  return ok(val);
-}
-
-function parseCommonOrchestrateFlag(
-  arg: string,
-  args: readonly string[],
-  i: number,
-  state: CommonOrchestrateFlags,
-): Result<number, string> | null {
-  if (arg === '--working-directory' || arg === '-w') {
-    const next = args[i + 1];
-    if (!next || next.startsWith('-')) return err('--working-directory requires a path');
-    state.workingDirectory = next;
-    return ok(i + 1);
-  }
-  if (arg === '--agent' || arg === '-a') {
-    const next = args[i + 1];
-    if (!next || next.startsWith('-')) return err(`--agent requires a name (${AGENT_PROVIDERS.join(', ')})`);
-    if (!isAgentProvider(next)) return err(`Unknown agent: "${next}". Available: ${AGENT_PROVIDERS.join(', ')}`);
-    state.agent = next;
-    return ok(i + 1);
-  }
-  if (arg === '--model' || arg === '-m') {
-    const next = args[i + 1];
-    if (!next || next.startsWith('-')) return err('--model requires a model name (e.g. claude-opus-4-5)');
-    state.model = next;
-    return ok(i + 1);
-  }
-  if (arg === '--max-depth') {
-    const parsed = parseIntFlag('--max-depth', args[i + 1], 1, 10);
-    if (!parsed.ok) return parsed;
-    state.maxDepth = parsed.value;
-    return ok(i + 1);
-  }
-  if (arg === '--max-workers') {
-    const parsed = parseIntFlag('--max-workers', args[i + 1], 1, 20);
-    if (!parsed.ok) return parsed;
-    state.maxWorkers = parsed.value;
-    return ok(i + 1);
-  }
-  if (!arg.startsWith('-')) {
-    state.goalWords.push(arg);
-    return ok(i);
-  }
-  return null;
-}
 
 export function parseOrchestrateInteractiveArgs(args: readonly string[]): Result<OrchestrateInteractiveParsed, string> {
   const state: CommonOrchestrateFlags = {
