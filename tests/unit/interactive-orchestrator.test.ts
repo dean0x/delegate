@@ -11,11 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // CLI Arg Parsing Tests
 // ============================================================================
 
-import {
-  parseOrchestrateCreateArgs,
-  parseOrchestrateInitArgs,
-  parseOrchestrateInteractiveArgs,
-} from '../../src/cli/commands/orchestrate.js';
+import { parseOrchestrateCreateArgs, parseOrchestrateInitArgs } from '../../src/cli/commands/orchestrate.js';
+import { parseOrchestrateInteractiveArgs } from '../../src/cli/commands/orchestrate-interactive.js';
 
 describe('parseOrchestrateInteractiveArgs', () => {
   it('should parse a single-word goal', () => {
@@ -667,6 +664,167 @@ describe('cancelOrchestration - interactive mode', () => {
     expect(dbResult.ok).toBe(true);
     if (!dbResult.ok) return;
     expect(dbResult.value!.status).toBe('cancelled');
+  });
+});
+
+// ============================================================================
+// finalizeInteractiveOrchestration
+// ============================================================================
+
+describe('finalizeInteractiveOrchestration', () => {
+  let db: Database;
+  let orchestrationRepo: SQLiteOrchestrationRepository;
+  let eventBus: TestEventBus;
+  let logger: TestLogger;
+  let service: OrchestrationManagerService;
+  const createdStateFiles: string[] = [];
+  const config = createTestConfiguration({ defaultAgent: 'claude' });
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    const loopRepo = new SQLiteLoopRepository(db);
+    orchestrationRepo = new SQLiteOrchestrationRepository(db);
+    eventBus = new TestEventBus();
+    logger = new TestLogger();
+    const loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
+    service = new OrchestrationManagerService({ eventBus, logger, orchestrationRepo, loopService, config });
+  });
+
+  afterEach(() => {
+    db.close();
+    for (const f of createdStateFiles) {
+      try {
+        unlinkSync(f);
+      } catch {
+        /* ignore */
+      }
+    }
+    createdStateFiles.length = 0;
+  });
+
+  it('should set COMPLETED and emit OrchestrationCompleted on exitCode=0', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test finalize' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    const result = await service.finalizeInteractiveOrchestration(id, { exitCode: 0, cancelled: false });
+    expect(result.ok).toBe(true);
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    expect(dbResult.value!.status).toBe('completed');
+    expect(dbResult.value!.completedAt).toBeGreaterThan(0);
+
+    expect(eventBus.getEventCount('OrchestrationCompleted')).toBe(1);
+    const payloads = eventBus.getEmittedEvents('OrchestrationCompleted');
+    expect(payloads[0]).toMatchObject({ orchestratorId: id, reason: expect.any(String) });
+  });
+
+  it('should set CANCELLED and emit OrchestrationCancelled when cancelled=true', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test cancel' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    const result = await service.finalizeInteractiveOrchestration(id, { exitCode: null, cancelled: true });
+    expect(result.ok).toBe(true);
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    expect(dbResult.value!.status).toBe('cancelled');
+
+    expect(eventBus.getEventCount('OrchestrationCancelled')).toBe(1);
+  });
+
+  it('should set FAILED and emit NO events on exitCode=1 (DECISION)', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test fail' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    const result = await service.finalizeInteractiveOrchestration(id, { exitCode: 1, cancelled: false });
+    expect(result.ok).toBe(true);
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    expect(dbResult.value!.status).toBe('failed');
+
+    expect(eventBus.getEventCount('OrchestrationCompleted')).toBe(0);
+    expect(eventBus.getEventCount('OrchestrationCancelled')).toBe(0);
+  });
+
+  it('should be idempotent — second finalize is a no-op', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test idempotent' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    const first = await service.finalizeInteractiveOrchestration(id, { exitCode: 0, cancelled: false });
+    expect(first.ok).toBe(true);
+
+    const second = await service.finalizeInteractiveOrchestration(id, { exitCode: 1, cancelled: false });
+    expect(second.ok).toBe(true);
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    expect(dbResult.value!.status).toBe('completed');
+
+    expect(eventBus.getEventCount('OrchestrationCompleted')).toBe(1);
+  });
+
+  it('should return err for non-existent orchestration', async () => {
+    const result = await service.finalizeInteractiveOrchestration('orchestrator-nonexistent' as OrchestratorId, {
+      exitCode: 0,
+      cancelled: false,
+    });
+    expect(result.ok).toBe(false);
+    expect(eventBus.getEventCount('OrchestrationCompleted')).toBe(0);
+  });
+
+  it('should set FAILED on spawn failure (exitCode=null, cancelled=false)', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test spawn fail' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    const result = await service.finalizeInteractiveOrchestration(id, { exitCode: null, cancelled: false });
+    expect(result.ok).toBe(true);
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    expect(dbResult.value!.status).toBe('failed');
+
+    expect(eventBus.getEventCount('OrchestrationCompleted')).toBe(0);
+    expect(eventBus.getEventCount('OrchestrationCancelled')).toBe(0);
+  });
+
+  it('should be no-op when remote cancel races finalize', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test race' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    const cancelResult = await service.cancelOrchestration(id);
+    expect(cancelResult.ok).toBe(true);
+
+    eventBus.clearEmittedEvents();
+
+    const finalizeResult = await service.finalizeInteractiveOrchestration(id, { exitCode: 143, cancelled: false });
+    expect(finalizeResult.ok).toBe(true);
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    expect(dbResult.value!.status).toBe('cancelled');
+
+    expect(eventBus.getEventCount('OrchestrationCancelled')).toBe(0);
+    expect(eventBus.getEventCount('OrchestrationCompleted')).toBe(0);
   });
 });
 

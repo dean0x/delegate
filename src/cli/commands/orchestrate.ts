@@ -9,7 +9,7 @@ import type { AgentProvider } from '../../core/agents.js';
 import { AGENT_PROVIDERS, isAgentProvider } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
 import type { LoopId } from '../../core/domain.js';
-import { OrchestratorId, OrchestratorStatus, updateOrchestration } from '../../core/domain.js';
+import { OrchestratorId, OrchestratorStatus } from '../../core/domain.js';
 import type { EventBus } from '../../core/events/event-bus.js';
 import type { LoopCancelledEvent, LoopCompletedEvent } from '../../core/events/events.js';
 import type { OrchestrationService } from '../../core/interfaces.js';
@@ -20,6 +20,11 @@ import { validatePath } from '../../utils/validation.js';
 import { createDetachLogDir, createDetachLogFile, pollLogFileForId, spawnDetachedProcess } from '../detach-helpers.js';
 import { errorMessage, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';
+import {
+  handleOrchestrateInteractive,
+  type OrchestrateInteractiveParsed,
+  parseOrchestrateInteractiveArgs,
+} from './orchestrate-interactive.js';
 
 // ============================================================================
 // Helpers
@@ -131,17 +136,6 @@ interface OrchestrateInitParsed {
   readonly maxWorkers?: number;
   readonly maxDepth?: number;
   readonly template?: 'standard' | 'interactive';
-}
-
-interface OrchestrateInteractiveParsed {
-  readonly kind: 'interactive';
-  readonly goal: string;
-  readonly workingDirectory?: string;
-  readonly agent?: AgentProvider;
-  readonly model?: string;
-  readonly maxDepth?: number;
-  readonly maxWorkers?: number;
-  readonly systemPrompt?: string;
 }
 
 type OrchestrateParsed =
@@ -316,53 +310,6 @@ export function parseOrchestrateInitArgs(args: readonly string[]): Result<Orches
     maxWorkers: state.maxWorkers,
     maxDepth: state.maxDepth,
     template,
-  });
-}
-
-export function parseOrchestrateInteractiveArgs(args: readonly string[]): Result<OrchestrateInteractiveParsed, string> {
-  const state: CommonOrchestrateFlags = {
-    workingDirectory: undefined,
-    agent: undefined,
-    model: undefined,
-    maxDepth: undefined,
-    maxWorkers: undefined,
-    goalWords: [],
-  };
-  let systemPrompt: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--foreground' || arg === '-f') {
-      return err('--foreground is mutually exclusive with --interactive');
-    }
-    if (arg === '--max-iterations') {
-      return err('--max-iterations is irrelevant for interactive mode (no loop)');
-    }
-    if (arg === '--system-prompt') {
-      const next = args[i + 1];
-      if (next === undefined) return err('--system-prompt requires a prompt string');
-      systemPrompt = next;
-      i++;
-    } else {
-      const commonResult = parseCommonOrchestrateFlag(arg, args, i, state);
-      if (commonResult === null) return err(`Unknown flag: ${arg}`);
-      if (!commonResult.ok) return commonResult;
-      i = commonResult.value;
-    }
-  }
-
-  const goal = state.goalWords.join(' ');
-  if (!goal) return err('goal is required');
-
-  return ok({
-    kind: 'interactive',
-    goal,
-    workingDirectory: state.workingDirectory,
-    agent: state.agent,
-    model: state.model,
-    maxDepth: state.maxDepth,
-    maxWorkers: state.maxWorkers,
-    systemPrompt,
   });
 }
 
@@ -678,176 +625,6 @@ async function handleOrchestrateCancel(orchestratorId: string, reason?: string):
 }
 
 // ============================================================================
-// Interactive mode (blocking, stdio: 'inherit')
-// ============================================================================
-
-async function handleOrchestrateInteractive(parsed: OrchestrateInteractiveParsed): Promise<void> {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    ui.error('Interactive mode requires a terminal. Use `beat orchestrate "<goal>"` for headless execution.');
-    process.exit(1);
-  }
-
-  let container: Container | undefined;
-  const s = ui.createSpinner();
-  try {
-    s.start('Setting up interactive orchestration...');
-    const services = await withServices(s);
-    container = services.container;
-    const { orchestrationService } = services;
-    s.stop('Ready');
-
-    const agentRegistryResult = container.get<import('../../core/agents.js').AgentRegistry>('agentRegistry');
-    if (!agentRegistryResult.ok) {
-      ui.error(`Failed to get agent registry: ${agentRegistryResult.error.message}`);
-      await container.dispose();
-      process.exit(1);
-    }
-    const agentRegistry = agentRegistryResult.value;
-
-    const createResult = await orchestrationService.createInteractiveOrchestration({
-      goal: parsed.goal,
-      workingDirectory: parsed.workingDirectory,
-      agent: parsed.agent,
-      model: parsed.model,
-      maxDepth: parsed.maxDepth,
-      maxWorkers: parsed.maxWorkers,
-      systemPrompt: parsed.systemPrompt,
-    });
-    if (!createResult.ok) {
-      ui.error(`Failed to create interactive orchestration: ${createResult.error.message}`);
-      await container.dispose();
-      process.exit(1);
-    }
-
-    const { orchestration, systemPrompt, userPrompt } = createResult.value;
-    ui.info(`Orchestration ID: ${orchestration.id}`);
-    ui.info(`State file:       ${orchestration.stateFilePath}`);
-
-    const agent = orchestration.agent ?? 'claude';
-    const adapterResult = agentRegistry.get(agent);
-    if (!adapterResult.ok) {
-      ui.error(`Agent adapter not available: ${adapterResult.error.message}`);
-      await container.dispose();
-      process.exit(1);
-    }
-
-    const adapter = adapterResult.value;
-    const eventBusResult = container.get<import('../../core/events/event-bus.js').EventBus>('eventBus');
-    if (!eventBusResult.ok) {
-      ui.error(`Failed to get event bus: ${eventBusResult.error.message}`);
-      await container.dispose();
-      process.exit(1);
-    }
-    const orchRepoResult =
-      container.get<import('../../core/interfaces.js').OrchestrationRepository>('orchestrationRepository');
-    if (!orchRepoResult.ok) {
-      ui.error(`Failed to get orchestration repository: ${orchRepoResult.error.message}`);
-      await container.dispose();
-      process.exit(1);
-    }
-
-    const spawnResult = adapter.spawnInteractive({
-      prompt: userPrompt,
-      workingDirectory: orchestration.workingDirectory,
-      taskId: orchestration.id,
-      model: orchestration.model,
-      orchestratorId: orchestration.id,
-      systemPrompt,
-    });
-    if (!spawnResult.ok) {
-      ui.error(`Failed to spawn interactive agent: ${spawnResult.error.message}`);
-      const failed = updateOrchestration(orchestration, { status: OrchestratorStatus.FAILED, completedAt: Date.now() });
-      await orchRepoResult.value.update(failed);
-      await container.dispose();
-      process.exit(1);
-    }
-
-    const child = spawnResult.value.process;
-
-    // Store PID in DB for remote cancel support (best-effort — lifecycle works without it)
-    const pidResult = await orchestrationService.updateInteractiveOrchestrationPid(
-      orchestration.id,
-      spawnResult.value.pid,
-    );
-    if (!pidResult.ok) {
-      ui.info(`Warning: failed to store PID for remote cancel: ${pidResult.error.message}`);
-    }
-
-    let cancelled = false;
-    let sigintCount = 0;
-    const originalSigintHandlers = process.listeners('SIGINT');
-    process.removeAllListeners('SIGINT');
-    process.on('SIGINT', () => {
-      sigintCount++;
-      if (sigintCount >= 2) {
-        // Double Ctrl+C: force-exit so the process is never unkillable via SIGINT
-        process.exit(130);
-      }
-      cancelled = true;
-      // Do NOT kill child — child receives SIGINT via shared TTY
-    });
-
-    ui.info('Launching interactive session...\n');
-
-    const exitCode = await new Promise<number | null>((resolve) => {
-      child.on('exit', (code: number | null) => resolve(code));
-    });
-
-    // Restore SIGINT handlers
-    process.removeAllListeners('SIGINT');
-    for (const handler of originalSigintHandlers) {
-      process.on('SIGINT', handler as NodeJS.SignalsListener);
-    }
-
-    let finalStatus: OrchestratorStatus;
-    if (cancelled) {
-      finalStatus = OrchestratorStatus.CANCELLED;
-    } else if (exitCode === 0) {
-      finalStatus = OrchestratorStatus.COMPLETED;
-    } else {
-      finalStatus = OrchestratorStatus.FAILED;
-    }
-
-    const updated = updateOrchestration(orchestration, {
-      status: finalStatus,
-      completedAt: Date.now(),
-    });
-    await orchRepoResult.value.update(updated);
-
-    if (finalStatus === OrchestratorStatus.CANCELLED) {
-      await eventBusResult.value.emit('OrchestrationCancelled', {
-        orchestratorId: orchestration.id,
-        reason: 'User pressed Ctrl+C',
-      });
-    } else if (finalStatus === OrchestratorStatus.COMPLETED) {
-      await eventBusResult.value.emit('OrchestrationCompleted', { orchestratorId: orchestration.id });
-    }
-    // DECISION: OrchestrationFailed is intentionally NOT emitted for interactive mode.
-    // The child process exit code signals failure at the CLI layer; no downstream handler
-    // currently consumes OrchestrationFailed for interactive orchestrations, and the UI
-    // error message below is the appropriate feedback mechanism for the user.
-
-    if (finalStatus === OrchestratorStatus.CANCELLED) {
-      ui.info('\nOrchestration cancelled.');
-    } else if (finalStatus === OrchestratorStatus.COMPLETED) {
-      ui.success('\nOrchestration completed.');
-    } else {
-      ui.error(`\nOrchestration failed (exit code: ${exitCode}).`);
-    }
-
-    adapter.cleanup(orchestration.id);
-
-    await container.dispose();
-    process.exit(exitCode ?? 1);
-  } catch (error) {
-    s.stop('Failed');
-    ui.error(errorMessage(error));
-    if (container) await container.dispose();
-    process.exit(1);
-  }
-}
-
-// ============================================================================
 // Init subcommand — custom orchestrator scaffolding
 // ============================================================================
 
@@ -882,31 +659,31 @@ function handleOrchestrateInit(parsed: OrchestrateInitParsed): void {
     process.exit(1);
   }
 
-  const s = result.value;
+  const scaffold = result.value;
 
   ui.success('Custom orchestrator scaffolding created');
 
   const commonSnippets = [
     '--- Delegation Instructions ---',
-    s.instructions.delegation,
+    scaffold.instructions.delegation,
     '',
     '--- State Management Instructions ---',
-    s.instructions.stateManagement,
+    scaffold.instructions.stateManagement,
     '',
     '--- Constraint Instructions ---',
-    s.instructions.constraints,
+    scaffold.instructions.constraints,
     '',
   ];
 
-  if (s.template === 'interactive') {
+  if (scaffold.template === 'interactive') {
     process.stdout.write(
       [
         '',
-        `State file:       ${s.stateFilePath}`,
+        `State file:       ${scaffold.stateFilePath}`,
         '',
         'Ready-to-use interactive command:',
         '',
-        `  ${s.suggestedCommand}`,
+        `  ${scaffold.suggestedCommand}`,
         '',
         'Instruction snippets (for --system-prompt):',
         '',
@@ -921,20 +698,20 @@ function handleOrchestrateInit(parsed: OrchestrateInitParsed): void {
     process.stdout.write(
       [
         '',
-        `State file:       ${s.stateFilePath}`,
-        `Exit condition:   ${s.suggestedExitCondition}`,
+        `State file:       ${scaffold.stateFilePath}`,
+        `Exit condition:   ${scaffold.suggestedExitCondition}`,
         '',
         'Ready-to-use loop command:',
         '',
         `  beat loop${agentFlag}${modelFlag}${workingDirectoryFlag} "<your orchestrator prompt>" \\`,
         `    --strategy retry \\`,
-        `    --until "${s.suggestedExitCondition}" \\`,
+        `    --until "${scaffold.suggestedExitCondition}" \\`,
         `    --system-prompt "$(cat <<'PROMPT'`,
-        s.instructions.delegation,
+        scaffold.instructions.delegation,
         '',
-        s.instructions.stateManagement,
+        scaffold.instructions.stateManagement,
         '',
-        s.instructions.constraints,
+        scaffold.instructions.constraints,
         `PROMPT`,
         `)"`,
         '',

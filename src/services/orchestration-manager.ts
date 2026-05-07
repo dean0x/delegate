@@ -163,8 +163,6 @@ export class OrchestrationManagerService implements OrchestrationService {
     const stateResult = this.setupStateFiles(request.goal, true);
     if (!stateResult.ok) return stateResult;
     const { stateFilePath, exitConditionScript, cleanupFiles } = stateResult.value;
-    // exitConditionScript is always defined when withExitScript=true; assert non-null
-    const resolvedExitScript = exitConditionScript!;
 
     // ========================================================================
     // Create orchestration domain object (PLANNING, loopId=undefined)
@@ -233,7 +231,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     const loopResult = await this.loopService.createLoop({
       strategy: LoopStrategy.RETRY,
       prompt: finalUserPrompt,
-      exitCondition: `node ${JSON.stringify(resolvedExitScript)}`,
+      exitCondition: `node ${JSON.stringify(exitConditionScript!)}`,
       maxIterations: orchestration.maxIterations,
       maxConsecutiveFailures: 5,
       freshContext: true,
@@ -430,6 +428,77 @@ export class OrchestrationManagerService implements OrchestrationService {
     return this.orchestrationRepo.update(updated);
   }
 
+  async finalizeInteractiveOrchestration(
+    id: OrchestratorId,
+    outcome: { exitCode: number | null; cancelled: boolean },
+  ): Promise<Result<void>> {
+    const lookupResult = await this.getOrchestration(id);
+    if (!lookupResult.ok) return lookupResult;
+
+    const orchestration = lookupResult.value;
+    if (orchestration.mode !== 'interactive') {
+      return err(
+        new AutobeatError(ErrorCode.INVALID_OPERATION, `Cannot finalize non-interactive orchestration ${id}`, {
+          orchestratorId: id,
+          mode: orchestration.mode,
+        }),
+      );
+    }
+
+    let finalStatus: OrchestratorStatus;
+    if (outcome.cancelled) {
+      finalStatus = OrchestratorStatus.CANCELLED;
+    } else if (outcome.exitCode === 0) {
+      finalStatus = OrchestratorStatus.COMPLETED;
+    } else {
+      finalStatus = OrchestratorStatus.FAILED;
+    }
+
+    const updated = updateOrchestration(orchestration, {
+      status: finalStatus,
+      completedAt: Date.now(),
+    });
+
+    const updateResult = await this.orchestrationRepo.updateIfStatus(updated, OrchestratorStatus.RUNNING);
+    if (!updateResult.ok) return err(updateResult.error);
+
+    if (!updateResult.value) {
+      this.logger.info('Orchestration already transitioned from RUNNING — finalize is a no-op', {
+        orchestratorId: id,
+        finalStatus,
+      });
+      return ok(undefined);
+    }
+
+    this.logger.info('Finalized interactive orchestration', {
+      orchestratorId: id,
+      finalStatus,
+      exitCode: outcome.exitCode,
+      cancelled: outcome.cancelled,
+    });
+
+    // DECISION: OrchestrationFailed is intentionally NOT emitted for interactive mode.
+    if (finalStatus === OrchestratorStatus.CANCELLED) {
+      const emitResult = await this.eventBus.emit('OrchestrationCancelled', {
+        orchestratorId: id,
+        reason: 'User pressed Ctrl+C',
+      });
+      if (!emitResult.ok) {
+        this.logger.error('Failed to emit OrchestrationCancelled', emitResult.error, { orchestratorId: id });
+      }
+    } else if (finalStatus === OrchestratorStatus.COMPLETED) {
+      const emitResult = await this.eventBus.emit('OrchestrationCompleted', {
+        orchestratorId: id,
+        reason: 'Interactive session completed successfully',
+      });
+      if (!emitResult.ok) {
+        this.logger.error('Failed to emit OrchestrationCompleted', emitResult.error, { orchestratorId: id });
+      }
+    }
+
+    return ok(undefined);
+  }
+
   async getOrchestration(id: OrchestratorId): Promise<Result<Orchestration>> {
     const result = await this.orchestrationRepo.findById(id);
     if (!result.ok) {
@@ -462,7 +531,11 @@ export class OrchestrationManagerService implements OrchestrationService {
     return this.orchestrationRepo.findAll(limit, offset);
   }
 
-  async cancelOrchestration(id: OrchestratorId, reason?: string): Promise<Result<void>> {
+  async cancelOrchestration(
+    id: OrchestratorId,
+    reason?: string,
+    _opts?: { cancelAttributedTasks?: boolean },
+  ): Promise<Result<void>> {
     const lookupResult = await this.getOrchestration(id);
     if (!lookupResult.ok) return lookupResult;
 

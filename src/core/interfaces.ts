@@ -885,6 +885,25 @@ export interface OrchestrationService {
     }>
   >;
   updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<void>>;
+  /**
+   * Finalize an interactive orchestration after the child process exits (or spawn failure).
+   * Determines terminal status from outcome, updates DB, emits lifecycle event.
+   *
+   * Idempotency: Uses updateIfStatus(RUNNING) for atomic check-and-set.
+   * If the orchestration has already transitioned from RUNNING (e.g., remote cancel
+   * beat the child exit), returns ok without re-emitting events.
+   *
+   * DECISION: OrchestrationFailed is intentionally NOT emitted for interactive mode.
+   * No downstream handler consumes it; the CLI error message is the feedback mechanism.
+   *
+   * @param outcome.cancelled - true if the user pressed Ctrl+C (SIGINT); determines
+   *   CANCELLED vs FAILED. Cannot be inferred from exitCode alone (non-zero exit can
+   *   be a genuine failure, not a cancellation).
+   */
+  finalizeInteractiveOrchestration(
+    id: OrchestratorId,
+    outcome: { exitCode: number | null; cancelled: boolean },
+  ): Promise<Result<void>>;
   getOrchestration(id: OrchestratorId): Promise<Result<Orchestration>>;
   listOrchestrations(
     status?: OrchestratorStatus,
