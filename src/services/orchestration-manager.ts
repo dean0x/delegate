@@ -425,7 +425,15 @@ export class OrchestrationManagerService implements OrchestrationService {
     if (!lookupResult.ok) return lookupResult;
 
     const updated = updateOrchestration(lookupResult.value, { pid });
-    return this.orchestrationRepo.update(updated);
+    const updateResult = await this.orchestrationRepo.updateIfStatus(updated, OrchestratorStatus.RUNNING);
+    if (!updateResult.ok) return err(updateResult.error);
+    if (!updateResult.value) {
+      this.logger.info('Orchestration already transitioned from RUNNING — PID update skipped', {
+        orchestratorId: id,
+        pid,
+      });
+    }
+    return ok(undefined);
   }
 
   async finalizeInteractiveOrchestration(
