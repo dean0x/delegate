@@ -168,10 +168,10 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
     process.removeAllListeners('SIGINT');
     process.on('SIGINT', () => {
       sigintCount++;
-      if (sigintCount >= 2) {
-        process.exit(130);
-      }
       cancelled = true;
+      if (sigintCount >= 2) {
+        child.kill('SIGKILL');
+      }
     });
 
     ui.info('Launching interactive session...\n');
