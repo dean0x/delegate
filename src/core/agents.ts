@@ -254,6 +254,22 @@ export interface SpawnOptions {
 }
 
 /**
+ * Options for spawning an agent in interactive mode (user-facing terminal session).
+ * Subset of SpawnOptions — no jsonSchema (no structured output).
+ * taskId is optional: when provided it is used as the system-prompt temp-file name so
+ * cleanup(taskId) can remove the file deterministically. Omit for headless callers that
+ * do not call cleanup.
+ */
+export interface InteractiveSpawnOptions {
+  readonly prompt: string;
+  readonly workingDirectory: string;
+  readonly taskId?: string;
+  readonly model?: string;
+  readonly orchestratorId?: string;
+  readonly systemPrompt?: string;
+}
+
+/**
  * Agent adapter interface — abstracts agent-specific CLI interactions
  *
  * ARCHITECTURE: Each agent implementation knows how to:
@@ -273,6 +289,12 @@ export interface AgentAdapter {
    * @returns Process handle with PID, or error
    */
   spawn(options: SpawnOptions): Result<{ process: ChildProcess; pid: number }>;
+
+  /**
+   * Spawn an agent in interactive mode (stdio: 'inherit').
+   * The caller blocks on the child's exit — no stream events, no piped output.
+   */
+  spawnInteractive(options: InteractiveSpawnOptions): Result<{ process: ChildProcess; pid: number }>;
 
   /**
    * Kill an agent process by PID
