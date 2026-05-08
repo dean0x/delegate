@@ -26,6 +26,15 @@ export class ClaudeAdapter extends BaseAgentAdapter {
     return [...this.baseArgs, ...modelArgs, ...schemaArgs, '--', prompt];
   }
 
+  protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
+    const modelArgs: string[] = model ? ['--model', model] : [];
+    // DECISION: --dangerously-skip-permissions is intentional for interactive orchestrators.
+    // Interactive orchestrators delegate sub-tasks and must run uninterrupted without prompting
+    // for tool permissions. The user retains control via Ctrl+C (SIGINT) at the terminal,
+    // which is surfaced as a cancellation event by the parent process.
+    return ['--dangerously-skip-permissions', ...modelArgs, '--', prompt];
+  }
+
   protected get envPrefixesToStrip(): readonly string[] {
     // Strip CLAUDE_CODE_* prefix vars (e.g., CLAUDE_CODE_ENTRYPOINT)
     return ['CLAUDE_CODE_'];

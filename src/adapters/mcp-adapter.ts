@@ -55,7 +55,7 @@ import {
   ScheduleService,
   TaskManager,
 } from '../core/interfaces.js';
-import { scaffoldCustomOrchestrator } from '../core/orchestrator-scaffold.js';
+import { type StandardScaffoldResult, scaffoldCustomOrchestrator } from '../core/orchestrator-scaffold.js';
 import { match } from '../core/result.js';
 import { VERSION } from '../generated/version.js';
 import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
@@ -3387,7 +3387,9 @@ export class MCPAdapter {
       };
     }
 
-    const scaffold = result.value;
+    // InitCustomOrchestratorSchema has no template field, so the result is always
+    // StandardScaffoldResult (includes exitConditionScript and suggestedExitCondition).
+    const scaffold = result.value as StandardScaffoldResult;
     const agentFlag = data.agent ? ` --agent ${data.agent}` : '';
     const modelFlag = data.model ? ` --model ${data.model}` : '';
 

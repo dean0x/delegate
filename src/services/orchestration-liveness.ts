@@ -38,6 +38,12 @@ export interface LivenessDeps {
  *               Conservative: caller should leave these rows alone.
  */
 export async function checkOrchestrationLiveness(orchestration: Orchestration, deps: LivenessDeps): Promise<Liveness> {
+  // Interactive mode: PID-based liveness (no loop chain)
+  if (orchestration.mode === 'interactive') {
+    if (!orchestration.pid) return 'unknown';
+    return deps.isProcessAlive(orchestration.pid) ? 'live' : 'dead';
+  }
+
   // No loop assigned yet (PLANNING state or create failed before loop was set)
   if (!orchestration.loopId) return 'unknown';
 

@@ -6,7 +6,6 @@
 
 import { bootstrap } from '../../bootstrap.js';
 import type { AgentProvider } from '../../core/agents.js';
-import { AGENT_PROVIDERS, isAgentProvider } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
 import type { LoopId } from '../../core/domain.js';
 import { OrchestratorId, OrchestratorStatus } from '../../core/domain.js';
@@ -20,6 +19,12 @@ import { validatePath } from '../../utils/validation.js';
 import { createDetachLogDir, createDetachLogFile, pollLogFileForId, spawnDetachedProcess } from '../detach-helpers.js';
 import { errorMessage, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';
+import {
+  handleOrchestrateInteractive,
+  type OrchestrateInteractiveParsed,
+  parseOrchestrateInteractiveArgs,
+} from './orchestrate-interactive.js';
+import { type CommonOrchestrateFlags, parseCommonOrchestrateFlag, parseIntFlag } from './orchestrate-parse-helpers.js';
 
 // ============================================================================
 // Helpers
@@ -86,13 +91,6 @@ export function waitForLoopCompletion(container: Container, loopId: LoopId): Pro
 // Arg parsing — pure functions
 // ============================================================================
 
-/** Parse and validate an integer flag value within [min, max]. */
-function parseIntFlag(name: string, value: string, min: number, max: number): Result<number, string> {
-  const val = parseInt(value, 10);
-  if (isNaN(val) || val < min || val > max) return err(`${name} must be ${min}-${max}`);
-  return ok(val);
-}
-
 interface OrchestrateCreateParsed {
   readonly kind: 'create';
   readonly goal: string;
@@ -130,6 +128,7 @@ interface OrchestrateInitParsed {
   readonly model?: string;
   readonly maxWorkers?: number;
   readonly maxDepth?: number;
+  readonly template?: 'standard' | 'interactive';
 }
 
 type OrchestrateParsed =
@@ -137,70 +136,8 @@ type OrchestrateParsed =
   | OrchestrateStatusParsed
   | OrchestrateListParsed
   | OrchestrateCancelParsed
-  | OrchestrateInitParsed;
-
-/** Shared mutable state accumulated by parseCommonOrchestrateFlag. */
-interface CommonOrchestrateFlags {
-  workingDirectory: string | undefined;
-  agent: AgentProvider | undefined;
-  model: string | undefined;
-  maxDepth: number | undefined;
-  maxWorkers: number | undefined;
-  goalWords: string[];
-}
-
-/**
- * Parse a single arg from the common flag set shared between `create` and `init`.
- * Returns the new index (incremented when the flag consumed a following value),
- * or an Err if the flag is invalid. Returns `null` when the arg is not a common
- * flag — the caller should then handle it as a subcommand-specific flag or error.
- *
- * DECISION: Single-arg dispatch rather than a full loop keeps each caller in
- * control of its own iteration and unique flags (--foreground, --system-prompt, etc.).
- */
-function parseCommonOrchestrateFlag(
-  arg: string,
-  args: readonly string[],
-  i: number,
-  state: CommonOrchestrateFlags,
-): Result<number, string> | null {
-  if (arg === '--working-directory' || arg === '-w') {
-    const next = args[i + 1];
-    if (!next || next.startsWith('-')) return err('--working-directory requires a path');
-    state.workingDirectory = next;
-    return ok(i + 1);
-  }
-  if (arg === '--agent' || arg === '-a') {
-    const next = args[i + 1];
-    if (!next || next.startsWith('-')) return err(`--agent requires a name (${AGENT_PROVIDERS.join(', ')})`);
-    if (!isAgentProvider(next)) return err(`Unknown agent: "${next}". Available: ${AGENT_PROVIDERS.join(', ')}`);
-    state.agent = next;
-    return ok(i + 1);
-  }
-  if (arg === '--model' || arg === '-m') {
-    const next = args[i + 1];
-    if (!next || next.startsWith('-')) return err('--model requires a model name (e.g. claude-opus-4-5)');
-    state.model = next;
-    return ok(i + 1);
-  }
-  if (arg === '--max-depth') {
-    const parsed = parseIntFlag('--max-depth', args[i + 1], 1, 10);
-    if (!parsed.ok) return parsed;
-    state.maxDepth = parsed.value;
-    return ok(i + 1);
-  }
-  if (arg === '--max-workers') {
-    const parsed = parseIntFlag('--max-workers', args[i + 1], 1, 20);
-    if (!parsed.ok) return parsed;
-    state.maxWorkers = parsed.value;
-    return ok(i + 1);
-  }
-  if (!arg.startsWith('-')) {
-    state.goalWords.push(arg);
-    return ok(i);
-  }
-  return null; // not a common flag — caller decides
-}
+  | OrchestrateInitParsed
+  | OrchestrateInteractiveParsed;
 
 export function parseOrchestrateCreateArgs(args: readonly string[]): Result<OrchestrateCreateParsed, string> {
   const state: CommonOrchestrateFlags = {
@@ -272,13 +209,23 @@ export function parseOrchestrateInitArgs(args: readonly string[]): Result<Orches
     maxWorkers: undefined,
     goalWords: [],
   };
+  let template: 'standard' | 'interactive' | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    const commonResult = parseCommonOrchestrateFlag(arg, args, i, state);
-    if (commonResult === null) return err(`Unknown flag: ${arg}`);
-    if (!commonResult.ok) return commonResult;
-    i = commonResult.value;
+    if (arg === '--template') {
+      const next = args[i + 1];
+      if (next === undefined) return err('--template requires a value (standard or interactive)');
+      if (next !== 'standard' && next !== 'interactive')
+        return err(`Unknown template: "${next}". Valid values: standard, interactive`);
+      template = next;
+      i++;
+    } else {
+      const commonResult = parseCommonOrchestrateFlag(arg, args, i, state);
+      if (commonResult === null) return err(`Unknown flag: ${arg}`);
+      if (!commonResult.ok) return commonResult;
+      i = commonResult.value;
+    }
   }
 
   const goal = state.goalWords.join(' ');
@@ -292,6 +239,7 @@ export function parseOrchestrateInitArgs(args: readonly string[]): Result<Orches
     model: state.model,
     maxWorkers: state.maxWorkers,
     maxDepth: state.maxDepth,
+    template,
   });
 }
 
@@ -326,8 +274,24 @@ function parseOrchestrateArgs(subCommand: string | undefined, subArgs: readonly 
     return result.value;
   }
 
+  // Interactive mode: --interactive or -i as subCommand position
+  if (subCommand === '--interactive' || subCommand === '-i') {
+    const result = parseOrchestrateInteractiveArgs(subArgs);
+    if (!result.ok) return null;
+    return result.value;
+  }
+
   // Default: create mode — subCommand is part of the goal
   const allArgs = subCommand ? [subCommand, ...subArgs] : [...subArgs];
+
+  // Check if --interactive/-i appears in the combined args
+  if (allArgs.includes('--interactive') || allArgs.includes('-i')) {
+    const filtered = allArgs.filter((a) => a !== '--interactive' && a !== '-i');
+    const result = parseOrchestrateInteractiveArgs(filtered);
+    if (!result.ok) return null;
+    return result.value;
+  }
+
   const result = parseOrchestrateCreateArgs(allArgs);
   if (!result.ok) return null;
   return result.value;
@@ -346,7 +310,7 @@ async function handleOrchestrateDetach(args: readonly string[]): Promise<void> {
     process.argv[1],
     'orchestrate',
     '--foreground',
-    ...args.filter((a) => a !== '--foreground' && a !== '-f'),
+    ...args.filter((a) => a !== '--foreground' && a !== '-f' && a !== '--interactive' && a !== '-i'),
   ];
   const pid = spawnDetachedProcess(childArgs, logFd);
 
@@ -489,6 +453,7 @@ async function handleOrchestrateStatus(orchestratorId: string): Promise<void> {
         id: o.id,
         goal: o.goal,
         status: o.status,
+        ...(o.mode && { mode: o.mode }),
         loopId: o.loopId,
         stateFilePath: o.stateFilePath,
         workingDirectory: o.workingDirectory,
@@ -565,7 +530,8 @@ async function handleOrchestrateList(status?: string): Promise<void> {
 
   for (const o of result.value) {
     const goal = o.goal.length > 60 ? `${o.goal.substring(0, 60)}...` : o.goal;
-    ui.stdout(`${o.id}  ${o.status.padEnd(10)}  ${goal}`);
+    const mode = (o.mode ?? '').padEnd(12);
+    ui.stdout(`${o.id}  ${mode}  ${o.status.padEnd(10)}  ${goal}`);
   }
 
   ctx.close();
@@ -609,13 +575,13 @@ function handleOrchestrateInit(parsed: OrchestrateInitParsed): void {
     }
   }
 
-  const workingDirectory = parsed.workingDirectory ?? process.cwd();
   const result = scaffoldCustomOrchestrator({
     goal: parsed.goal,
     agent: parsed.agent,
     model: parsed.model,
     maxWorkers: parsed.maxWorkers,
     maxDepth: parsed.maxDepth,
+    template: parsed.template,
   });
 
   if (!result.ok) {
@@ -623,45 +589,68 @@ function handleOrchestrateInit(parsed: OrchestrateInitParsed): void {
     process.exit(1);
   }
 
-  const s = result.value;
-  const agentFlag = parsed.agent ? ` --agent ${parsed.agent}` : '';
-  const modelFlag = parsed.model ? ` --model ${parsed.model}` : '';
-  const workingDirectoryFlag = parsed.workingDirectory ? ` --working-directory ${parsed.workingDirectory}` : '';
+  const scaffold = result.value;
 
   ui.success('Custom orchestrator scaffolding created');
-  process.stdout.write(
-    [
-      '',
-      `State file:       ${s.stateFilePath}`,
-      `Exit condition:   ${s.suggestedExitCondition}`,
-      '',
-      'Ready-to-use loop command:',
-      '',
-      `  beat loop${agentFlag}${modelFlag}${workingDirectoryFlag} "<your orchestrator prompt>" \\`,
-      `    --strategy retry \\`,
-      `    --until "${s.suggestedExitCondition}" \\`,
-      `    --system-prompt "$(cat <<'PROMPT'`,
-      s.instructions.delegation,
-      '',
-      s.instructions.stateManagement,
-      '',
-      s.instructions.constraints,
-      `PROMPT`,
-      `)"`,
-      '',
-      'Instruction snippets (for manual composition):',
-      '',
-      '--- Delegation Instructions ---',
-      s.instructions.delegation,
-      '',
-      '--- State Management Instructions ---',
-      s.instructions.stateManagement,
-      '',
-      '--- Constraint Instructions ---',
-      s.instructions.constraints,
-      '',
-    ].join('\n'),
-  );
+
+  const commonSnippets = [
+    '--- Delegation Instructions ---',
+    scaffold.instructions.delegation,
+    '',
+    '--- State Management Instructions ---',
+    scaffold.instructions.stateManagement,
+    '',
+    '--- Constraint Instructions ---',
+    scaffold.instructions.constraints,
+    '',
+  ];
+
+  if (scaffold.template === 'interactive') {
+    process.stdout.write(
+      [
+        '',
+        `State file:       ${scaffold.stateFilePath}`,
+        '',
+        'Ready-to-use interactive command:',
+        '',
+        `  ${scaffold.suggestedCommand}`,
+        '',
+        'Instruction snippets (for --system-prompt):',
+        '',
+        ...commonSnippets,
+      ].join('\n'),
+    );
+  } else {
+    const agentFlag = parsed.agent ? ` --agent ${parsed.agent}` : '';
+    const modelFlag = parsed.model ? ` --model ${parsed.model}` : '';
+    const workingDirectoryFlag = parsed.workingDirectory ? ` --working-directory ${parsed.workingDirectory}` : '';
+
+    process.stdout.write(
+      [
+        '',
+        `State file:       ${scaffold.stateFilePath}`,
+        `Exit condition:   ${scaffold.suggestedExitCondition}`,
+        '',
+        'Ready-to-use loop command:',
+        '',
+        `  beat loop${agentFlag}${modelFlag}${workingDirectoryFlag} "<your orchestrator prompt>" \\`,
+        `    --strategy retry \\`,
+        `    --until "${scaffold.suggestedExitCondition}" \\`,
+        `    --system-prompt "$(cat <<'PROMPT'`,
+        scaffold.instructions.delegation,
+        '',
+        scaffold.instructions.stateManagement,
+        '',
+        scaffold.instructions.constraints,
+        `PROMPT`,
+        `)"`,
+        '',
+        'Instruction snippets (for manual composition):',
+        '',
+        ...commonSnippets,
+      ].join('\n'),
+    );
+  }
 }
 
 // ============================================================================
@@ -680,21 +669,27 @@ export async function handleOrchestrateCommand(
       [
         '',
         'Subcommands:',
-        '  beat orchestrate "<goal>"              Start orchestration (detached)',
-        '  beat orchestrate "<goal>" --foreground  Start orchestration (blocking)',
-        '  beat orchestrate init "<goal>"          Initialize custom orchestrator scaffolding',
-        '  beat orchestrate status <id>            Show orchestration details',
-        '  beat orchestrate list [--status <s>]    List orchestrations',
-        '  beat orchestrate cancel <id> [reason]   Cancel orchestration',
+        '  beat orchestrate "<goal>"                Start orchestration (detached)',
+        '  beat orchestrate "<goal>" --foreground    Start orchestration (blocking)',
+        '  beat orchestrate -i "<goal>"              Start interactive session (terminal)',
+        '  beat orchestrate init "<goal>"            Initialize custom orchestrator scaffolding',
+        '  beat orchestrate status <id>              Show orchestration details',
+        '  beat orchestrate list [--status <s>]      List orchestrations',
+        '  beat orchestrate cancel <id> [reason]     Cancel orchestration',
         '',
         'Options:',
         '  -f, --foreground               Block and wait for completion',
+        '  -i, --interactive              Launch interactive terminal session',
         '  -w, --working-directory DIR    Working directory for workers',
         '  -a, --agent AGENT              AI agent (claude, codex, gemini)',
         '  -m, --model MODEL              Model override (e.g. claude-opus-4-5)',
         '  --max-depth N                  Max delegation depth (1-10, default: 3)',
         '  --max-workers N                Max concurrent workers (1-20, default: 5)',
         '  --max-iterations N             Max orchestrator iterations (1-200, default: 50)',
+        '  --system-prompt TEXT           Custom system prompt',
+        '',
+        'Init Options:',
+        '  --template <standard|interactive>  Template type (default: standard)',
         '',
       ].join('\n'),
     );
@@ -712,6 +707,9 @@ export async function handleOrchestrateCommand(
       }
       break;
     }
+    case 'interactive':
+      await handleOrchestrateInteractive(parsed);
+      break;
     case 'init':
       handleOrchestrateInit(parsed);
       break;

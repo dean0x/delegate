@@ -131,6 +131,11 @@ export class GeminiAdapter extends BaseAgentAdapter {
     return ['--yolo', ...modelArgs, '--prompt', prompt];
   }
 
+  protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
+    const modelArgs: string[] = model ? ['--model', model] : [];
+    return ['--yolo', ...modelArgs, prompt];
+  }
+
   protected get additionalEnv(): Record<string, string> {
     // --yolo enables Docker sandbox by default; disable it so Docker/Podman isn't required.
     // Users who want sandbox can set GEMINI_SANDBOX=true in their environment.

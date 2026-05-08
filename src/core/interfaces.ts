@@ -877,6 +877,40 @@ export interface SyncOrchestrationOperations {
  */
 export interface OrchestrationService {
   createOrchestration(request: OrchestratorCreateRequest): Promise<Result<Orchestration>>;
+  createInteractiveOrchestration(request: OrchestratorCreateRequest): Promise<
+    Result<{
+      orchestration: Orchestration;
+      systemPrompt: string;
+      userPrompt: string;
+    }>
+  >;
+  /**
+   * Store the child process PID for remote cancel support.
+   *
+   * @returns ok(true) if PID was stored (orchestration still RUNNING),
+   *   ok(false) if status already transitioned (e.g., remote cancel won the race —
+   *   caller should kill the child process since cancel couldn't reach it without a PID).
+   */
+  updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<boolean>>;
+  /**
+   * Finalize an interactive orchestration after the child process exits (or spawn failure).
+   * Determines terminal status from outcome, updates DB, emits lifecycle event.
+   *
+   * Idempotency: Uses updateIfStatus(RUNNING) for atomic check-and-set.
+   * If the orchestration has already transitioned from RUNNING (e.g., remote cancel
+   * beat the child exit), returns ok without re-emitting events.
+   *
+   * DECISION: OrchestrationFailed is intentionally NOT emitted for interactive mode.
+   * No downstream handler consumes it; the CLI error message is the feedback mechanism.
+   *
+   * @param outcome.cancelled - true if the user pressed Ctrl+C (SIGINT); determines
+   *   CANCELLED vs FAILED. Cannot be inferred from exitCode alone (non-zero exit can
+   *   be a genuine failure, not a cancellation).
+   */
+  finalizeInteractiveOrchestration(
+    id: OrchestratorId,
+    outcome: { exitCode: number | null; cancelled: boolean },
+  ): Promise<Result<void>>;
   getOrchestration(id: OrchestratorId): Promise<Result<Orchestration>>;
   listOrchestrations(
     status?: OrchestratorStatus,

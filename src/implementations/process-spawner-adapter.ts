@@ -9,9 +9,10 @@
  */
 
 import { ChildProcess } from 'child_process';
-import { AgentAdapter, AgentProvider, SpawnOptions } from '../core/agents.js';
+import { AgentAdapter, AgentProvider, type InteractiveSpawnOptions, SpawnOptions } from '../core/agents.js';
+import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { ProcessSpawner } from '../core/interfaces.js';
-import { Result } from '../core/result.js';
+import { err, Result } from '../core/result.js';
 
 export class ProcessSpawnerAdapter implements AgentAdapter {
   readonly provider: AgentProvider;
@@ -25,6 +26,12 @@ export class ProcessSpawnerAdapter implements AgentAdapter {
 
   spawn(options: SpawnOptions): Result<{ process: ChildProcess; pid: number }> {
     return this.spawner.spawn(options);
+  }
+
+  spawnInteractive(_options: InteractiveSpawnOptions): Result<{ process: ChildProcess; pid: number }> {
+    return err(
+      new AutobeatError(ErrorCode.INVALID_OPERATION, 'ProcessSpawnerAdapter does not support interactive mode'),
+    );
   }
 
   kill(pid: number): Result<void> {
