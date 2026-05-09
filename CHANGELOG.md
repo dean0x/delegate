@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [1.5.1] - 2026-05-09
+
+### Documentation
+- **CLI help text alignment**: Updated `beat --help` output to document orchestrate commands, `--model`/`--system-prompt` flags, loop pause/resume, and expanded agent config options (#161)
+
+---
+
 ## [1.5.0] - 2026-05-08
 
 ### Added
