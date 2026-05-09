@@ -28,6 +28,11 @@ Two-view dashboard (Metrics + Workspace), live agent output streaming in workspa
 
 Interactive terminal dashboard (`beat dashboard`) with 4 panels, keyboard navigation, and detail views. Per-agent baseUrl/model configuration for custom API endpoints and model selection across Claude, Codex, and Gemini.
 
+### v1.1.0 - Agent Eval Mode & Skill System ✅
+**Status**: **RELEASED** (2026-04-01)
+
+Agent eval mode for loop exit conditions (AI judges pass/fail instead of shell commands). Agent orchestration skill with structured reference files. Skill installer via `beat init --install-skills`. MCP instructions and ConfigureAgent/ListAgents tools.
+
 ### v0.8.2 - Package Rename ✅
 **Status**: **RELEASED** (2026-03-26)
 
@@ -70,11 +75,6 @@ Autoscaling workers, event-driven architecture, SQLite persistence.
 
 ---
 
-### v1.1.0 - Agent Eval Mode & Skill System ✅
-**Status**: **RELEASED** (2026-04-01)
-
-Agent eval mode for loop exit conditions (AI judges pass/fail instead of shell commands). Agent orchestration skill with structured reference files. Skill installer via `beat init --install-skills`. MCP instructions and ConfigureAgent/ListAgents tools.
-
 ## v1.0.0 - Autonomous Orchestration
 
 **Status**: **RELEASED** (2026-03-28)
@@ -100,7 +100,7 @@ The orchestrator is a loop that runs a lead agent whose system prompt gives it a
 ### Features Delivered
 
 - **CLI**: `beat orchestrate`, `beat orchestrate status`, `beat orchestrate list`, `beat orchestrate cancel`
-- **MCP Tools**: `Orchestrate`, `OrchestrationStatus`, `ListOrchestrations`, `CancelOrchestration`
+- **MCP Tools**: `CreateOrchestrator`, `OrchestratorStatus`, `ListOrchestrators`, `CancelOrchestrator`
 - **Detach Mode**: Fire-and-forget background orchestration with log polling
 - **Foreground Mode**: Blocking mode with SIGINT cancellation support
 - **State File**: Persistent JSON state file with plan, steps, iteration history
@@ -167,6 +167,8 @@ Multi-server support, shared state (Redis backend), fault tolerance, task affini
 | **v1.2.0** | ✅ Released | **Terminal Dashboard & Agent Config** |
 | **v1.3.0** | ✅ Released | **Dashboard Redesign, Eval Redesign & Reliability** |
 | **v1.4.0** | ✅ Released | **System Prompts & Custom Orchestrators** |
+| **v1.5.0** | ✅ Released | **Cross-Platform Agents & Interactive Orchestration** |
+
 
 ---
 

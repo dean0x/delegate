@@ -148,10 +148,13 @@ Last Updated: May 2026 (2026-05-08)
 - **OrchestratorStatus**: Get orchestration details including plan steps and state
 - **ListOrchestrators**: List orchestrations with status filter and pagination
 - **CancelOrchestrator**: Cancel an active orchestration with optional reason
+- **InitCustomOrchestrator**: Scaffold a custom orchestrator with state file, exit condition, and system prompt (v1.4.0)
 
 ### CLI Commands
 - `beat orchestrate "<goal>"`: Create and run an orchestration (detached by default)
 - `beat orchestrate "<goal>" --foreground`: Block and wait for completion (Ctrl+C to cancel)
+- `beat orchestrate -i "<goal>"`: Interactive foreground TTY session (v1.5.0)
+- `beat orchestrate init "<goal>"`: Scaffold custom orchestrator (state file, exit condition, system prompt) (v1.4.0)
 - `beat orchestrate status <id>`: Check orchestration status and plan progress
 - `beat orchestrate list [--status <status>]`: List orchestrations with optional status filter
 - `beat orchestrate cancel <id> [reason]`: Cancel an active orchestration
@@ -297,14 +300,42 @@ Last Updated: May 2026 (2026-05-08)
 - `beat schedule resume <id>`: Resume a paused schedule
 - `beat schedule cancel <id> [reason]`: Cancel a schedule with optional reason
 
+### Orchestrate Commands (v1.0.0+)
+- `beat orchestrate "<goal>"`: Create and run an orchestration (detached)
+- `beat orchestrate "<goal>" --foreground`: Block and wait for completion
+- `beat orchestrate -i "<goal>"`: Interactive foreground TTY session (v1.5.0)
+- `beat orchestrate init "<goal>"`: Scaffold custom orchestrator (v1.4.0)
+- `beat orchestrate status <id>`: Orchestration details
+- `beat orchestrate list [--status <s>]`: List orchestrations
+- `beat orchestrate cancel <id> [reason]`: Cancel orchestration
+
 ### Pipeline Commands (v0.4.0+)
-- `beat pipeline <prompt> [--delay Nm <prompt>]...`: Create chained one-time schedules with delays
+- `beat pipeline <prompt> [<prompt>]...`: Create chained one-time schedules
+
+### Loop Commands (v0.7.0+)
+- `beat loop <prompt> --until <cmd>`: Retry loop
+- `beat loop <prompt> --eval <cmd> --minimize|--maximize`: Optimize loop
+- `beat loop list [--status <s>]`: List loops
+- `beat loop status <id> [--history]`: Loop details
+- `beat loop pause <id>`: Pause loop (v0.8.0)
+- `beat loop resume <id>`: Resume loop (v0.8.0)
+- `beat loop cancel <id> [--cancel-tasks] [reason]`: Cancel loop
 
 ### Task Resumption Commands (v0.4.0+)
 - `beat resume <task-id>`: Resume a failed/completed task from its checkpoint
 - `beat resume <task-id> --context "..."`: Resume with additional instructions
 
-### Configuration Examples
+### Agent Commands (v0.5.0+)
+- `beat agents list`: List available agents with auth status
+- `beat agents check`: Auth status for all agents
+- `beat agents config show [agent]`: Show agent config
+- `beat agents config set <agent> <key> <value>`: Set agent config (apiKey, baseUrl, model, proxy, runtime)
+- `beat agents config reset <agent>`: Clear stored config
+
+### Dashboard (v1.2.0+)
+- `beat dashboard` / `beat dash`: Interactive terminal UI with metrics and workspace views
+
+### Configuration
 - **NPM Package**: Global installation support
 - **Local Development**: Source code execution
 - **Claude Desktop**: MCP server configuration

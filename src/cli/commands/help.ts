@@ -29,6 +29,8 @@ ${bold('Task Commands:')}
     -p, --priority P0|P1|P2    Task priority (P0=critical, P1=high, P2=normal)
     -w, --working-directory D  Working directory for task execution
     -a, --agent AGENT          AI agent to use (claude, codex, gemini)
+    -m, --model MODEL          Model override (e.g. claude-sonnet-4-5-20250514)
+    --system-prompt TEXT        System prompt to inject into the agent
     --deps TASK_IDS            Comma-separated task IDs this task depends on (alias: --depends-on)
     -c, --continue TASK_ID     Continue from a dependency's checkpoint (alias: --continue-from)
     -t, --timeout MS           Task timeout in milliseconds
@@ -66,9 +68,27 @@ ${bold('Schedule Commands:')}
 ${bold('Agent Commands:')}
   ${cyan('agents list')}                List available AI agents
   ${cyan('agents check')}               Check agent auth status and readiness
-  ${cyan('agents config set')} <agent> apiKey <key>   Store an API key for an agent
+  ${cyan('agents config set')} <agent> <key> <value>  Set agent config (apiKey, baseUrl, model, proxy, runtime)
   ${cyan('agents config show')} <agent>               Show stored config for an agent
   ${cyan('agents config reset')} <agent>              Remove stored config for an agent
+
+${bold('Orchestrate Commands:')}
+  ${cyan('orchestrate')} <goal> [options]       Start orchestration (detached by default)
+    -f, --foreground               Block and wait for completion
+    -i, --interactive              Launch interactive terminal session
+    -w, --working-directory DIR    Working directory for workers
+    -a, --agent AGENT              AI agent to use (claude, codex, gemini)
+    -m, --model MODEL              Model override (e.g. claude-opus-4-5)
+    --max-depth N                  Max delegation depth (1-10, default: 3)
+    --max-workers N                Max concurrent workers (1-20, default: 5)
+    --max-iterations N             Max orchestrator iterations (1-200, default: 50)
+    --system-prompt TEXT           Custom system prompt
+
+  ${cyan('orchestrate init')} <goal> [options]  Initialize custom orchestrator scaffolding
+    --template standard|interactive  Template type (default: standard)
+  ${cyan('orchestrate status')} <id>            Show orchestration details
+  ${cyan('orchestrate list')} [--status <s>]    List orchestrations
+  ${cyan('orchestrate cancel')} <id> [reason]   Cancel orchestration
 
 ${bold('Pipeline Commands:')}
   ${cyan('pipeline')} <prompt> [<prompt>]...   Create chained one-time schedules
@@ -88,6 +108,8 @@ ${bold('Loop Commands:')}
 
   ${cyan('loop list')} [--status running|completed|failed|cancelled]
   ${cyan('loop status')} <loop-id> [--history] [--history-limit N]
+  ${cyan('loop pause')} <loop-id>                Pause an active loop
+  ${cyan('loop resume')} <loop-id>               Resume a paused loop
   ${cyan('loop cancel')} <loop-id> [--cancel-tasks] [reason]
 
 ${bold('Configuration:')}
@@ -116,6 +138,12 @@ ${bold('Examples:')}
   beat schedule create "deploy" --at "2025-03-01T09:00:00Z"
   beat schedule list --status active
   beat schedule pause <id>
+
+  # Orchestration (multi-agent coordination)
+  beat orchestrate "refactor auth module"               # Detached
+  beat orchestrate "build feature X" --foreground       # Blocking
+  beat orchestrate -i "design API"                      # Interactive session
+  beat orchestrate init "migrate to v2"                 # Scaffold custom orchestrator
 
   # Pipeline (sequential chained tasks)
   beat pipeline "setup db" "run migrations" "seed data"

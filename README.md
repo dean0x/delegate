@@ -55,7 +55,7 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-Restart your MCP client to connect. Autobeat works with Claude Code, Codex, Gemini, and any MCP-compatible agent.
+Restart your MCP client to connect. Autobeat works with Claude Code, Codex, Gemini, Ollama, and any MCP-compatible agent.
 
 ### Prerequisites
 
@@ -86,12 +86,24 @@ beat orchestrate "Set up a GraphQL API with subscriptions, pagination, and integ
 # Foreground -blocks and shows progress, Ctrl+C cancels
 beat orchestrate "Migrate the database schema" --foreground
 
+# Interactive -foreground TTY session with live output
+beat orchestrate -i "Build the auth system"
+
 # With options
 beat orchestrate "Redesign the dashboard" \
   --agent claude \
   --max-workers 5 \
   --max-iterations 50 \
-  --max-depth 3
+  --max-depth 3 \
+  --system-prompt "Use functional patterns, no classes"
+```
+
+### Custom Orchestrators
+
+Scaffold a custom orchestrator with state file, exit condition, and system prompt:
+
+```bash
+beat orchestrate init "Migrate payments to microservice"
 ```
 
 ### Monitor and Control
@@ -208,7 +220,7 @@ beat schedule cancel <id>
 
 ## Agent Configuration
 
-Three agents are supported: **Claude**, **Codex**, and **Gemini**. Each agent can be configured with an API key, base URL, and default model.
+Four agent runtimes are supported: **Claude**, **Codex**, **Gemini**, and **Ollama** (local LLMs). Each agent can be configured with an API key, base URL, default model, proxy, and runtime.
 
 ```bash
 beat agents list                    # Show available agents
@@ -267,6 +279,27 @@ Or via environment variables (takes precedence over config):
 
 **Note**: Claude's login-based auth does not work with a custom `baseUrl` — you must also set an `apiKey`. Autobeat warns if `baseUrl` is set without one.
 
+### API Translation Proxy
+
+Run Claude-targeting agents on any OpenAI-compatible backend (OpenRouter, Together, vLLM, etc.). The proxy translates Anthropic Messages API to OpenAI Chat Completions format transparently.
+
+```bash
+beat agents config set claude proxy openai
+beat agents config set claude baseUrl "https://openrouter.ai/api/v1"
+beat agents config set claude apiKey "sk-or-your-key"
+```
+
+### Ollama Runtime
+
+Wrap agent spawns with `ollama launch` for local LLM execution. The runtime manages the Ollama process lifecycle alongside the agent.
+
+```bash
+beat agents config set gemini runtime ollama
+beat agents config set gemini model "llama3:8b"
+```
+
+Proxy and runtime are mutually exclusive — setting one clears the other.
+
 ### Using Local LLMs
 
 Most local inference servers (Ollama, llama.cpp, vLLM, LM Studio) expose an OpenAI-compatible API. Point the codex agent at your local server:
@@ -276,7 +309,7 @@ beat agents config set codex baseUrl "http://localhost:11434/v1"
 beat agents config set codex apiKey "any-string"
 beat agents config set codex model "llama3"
 
-beat run --agent codex --prompt "Refactor the utils module" --dir ./project
+beat run --agent codex "Refactor the utils module"
 ```
 
 ### Manage Config
@@ -293,10 +326,11 @@ Config is stored in `~/.autobeat/config.json`.
 
 | Tool | What It Does |
 |------|-------------|
-| **Orchestrate** | Autonomous goal execution with worker management |
-| **OrchestrationStatus** | Orchestration plan, steps, and iteration state |
-| **ListOrchestrations** | List orchestrations with status filter |
-| **CancelOrchestration** | Cancel an orchestration and its workers |
+| **CreateOrchestrator** | Autonomous goal execution with worker management |
+| **OrchestratorStatus** | Orchestration plan, steps, and iteration state |
+| **ListOrchestrators** | List orchestrations with status filter |
+| **CancelOrchestrator** | Cancel an orchestration and its workers |
+| **InitCustomOrchestrator** | Scaffold a custom orchestrator (state file, exit condition, system prompt) |
 | **DelegateTask** | Spawn a background coding agent |
 | **TaskStatus** | Real-time task status |
 | **TaskLogs** | Execution logs |
@@ -310,18 +344,24 @@ Config is stored in `~/.autobeat/config.json`.
 | **PauseLoop** / **ResumeLoop** | Pause and resume loops |
 | **ScheduleLoop** | Schedule a recurring loop |
 | **CreatePipeline** | Sequential multi-step pipeline |
+| **PipelineStatus** | Pipeline details and step progress |
+| **ListPipelines** | List pipelines with status filter |
+| **CancelPipeline** | Cancel a pipeline and its in-flight tasks |
 | **ScheduleTask** | Cron or one-time task schedule |
 | **SchedulePipeline** | Scheduled pipeline |
 | **ListSchedules** / **ScheduleStatus** | Schedule management |
 | **PauseSchedule** / **ResumeSchedule** | Schedule lifecycle |
 | **CancelSchedule** | Cancel schedule and optionally in-flight tasks |
 | **ListAgents** | List agents with auth status and config |
-| **ConfigureAgent** | Check, set, or reset agent config (apiKey, baseUrl, model) |
+| **ConfigureAgent** | Check, set, or reset agent config (apiKey, baseUrl, model, proxy, runtime) |
 
 ## All CLI Commands
 
 ```
-beat orchestrate <goal> [options]     Autonomous orchestration
+beat orchestrate <goal> [options]     Autonomous orchestration (detached)
+beat orchestrate <goal> -f            Foreground orchestration
+beat orchestrate -i <goal>            Interactive TTY session
+beat orchestrate init <goal>          Scaffold custom orchestrator
 beat orchestrate status <id>          Orchestration details
 beat orchestrate list                 List orchestrations
 beat orchestrate cancel <id>          Cancel orchestration
@@ -338,6 +378,8 @@ beat loop <prompt> --until <cmd>      Retry loop
 beat loop <prompt> --eval <cmd>       Optimize loop
 beat loop list                        List loops
 beat loop status <id>                 Loop details
+beat loop pause <id>                  Pause loop
+beat loop resume <id>                 Resume loop
 beat loop cancel <id>                 Cancel loop
 
 beat schedule create <prompt>         Create schedule
@@ -353,6 +395,7 @@ beat agents config show [agent]       Show agent config
 beat agents config set <agent> <key> <value>  Set agent config
 beat agents config reset <agent>      Clear agent config
 
+beat dashboard                        Interactive terminal dashboard
 beat init                             Interactive setup
 beat config show|set|reset|path       Configuration
 beat help                             Help
@@ -382,7 +425,7 @@ Event-driven system with autoscaling workers and SQLite persistence. Components 
 
 **Task Lifecycle**: `Queued` → `Running` → `Completed` / `Failed` / `Cancelled`
 
-Three agents supported: Claude, Codex, Gemini. Per-task agent selection. Crash recovery restores all in-flight work on restart.
+Four agent runtimes: Claude, Codex, Gemini, and Ollama (local LLMs). API translation proxy enables cross-platform agent execution. Per-task agent selection. Crash recovery restores all in-flight work on restart.
 
 See **[Architecture Documentation](./docs/architecture/)** for details.
 
@@ -392,7 +435,7 @@ See **[Architecture Documentation](./docs/architecture/)** for details.
 npm run dev          # Development mode with auto-reload
 npm run build        # Build TypeScript
 npm run test:core    # Core tests (~3s)
-npm run test:all     # Full suite (1,500+ tests)
+npm run test:all     # Full suite (3,600+ tests)
 ```
 
 See **[FEATURES.md](./docs/FEATURES.md)** for the complete feature list and **[ROADMAP.md](./docs/ROADMAP.md)** for what's next.
