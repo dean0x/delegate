@@ -249,6 +249,7 @@ Safety nets that exist in the codebase but are not part of the manual release st
 - `tasks.system_prompt` column: nullable TEXT for per-task system prompt injection (migration v23)
 - `pipelines` table: first-class pipeline entities with steps, status, FKs, indexes (migration v24)
 - `orchestrations.mode` and `orchestrations.pid` columns for interactive orchestrator mode (migration v25)
+- `loop_iterations` CHECK constraint updated: adds `progress` to iteration status enum (migration v26)
 
 ### Dependencies
 
