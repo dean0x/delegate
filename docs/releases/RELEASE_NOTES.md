@@ -2,9 +2,10 @@
 
 ## Latest Release
 
-- **[v1.5.1](./RELEASE_NOTES_v1.5.1.md)** — Docs & Help Text Alignment (2026-05-09)
+- **[v1.5.2](./RELEASE_NOTES_v1.5.2.md)** — RETRY Loop Progress Preservation (2026-05-12)
 
 ## Previous Releases
+- [v1.5.1](./RELEASE_NOTES_v1.5.1.md) — Docs & Help Text Alignment (2026-05-09)
 - [v1.5.0](./RELEASE_NOTES_v1.5.0.md) — Cross-Platform Agents & Interactive Orchestration (2026-05-08)
 - [v1.4.0](./RELEASE_NOTES_v1.4.0.md) — System Prompts & Custom Orchestrators (2026-04-22)
 - [v1.3.1](./RELEASE_NOTES_v1.3.1.md) — Preflight Script Hardening (2026-04-16)
