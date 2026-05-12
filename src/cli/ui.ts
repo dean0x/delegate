@@ -132,6 +132,8 @@ export function colorStatus(status: string): string {
     case 'cancelled':
     case 'paused':
       return pc.yellow(status);
+    case 'progress':
+      return pc.cyan(status);
     default:
       return status;
   }

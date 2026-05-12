@@ -1588,7 +1588,9 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(iter1!.gitCommitSha).toBe('commit_sha_after_keep_1234567890abcdef12345');
     });
 
-    it('should reset to gitStartCommitSha on retry fail', async () => {
+    it('RETRY: exit condition not met commits work as progress (no reset)', async () => {
+      // T1: The old behavior reset to gitStartCommitSha, wiping accumulated work.
+      // New behavior: commit work as 'progress' so next iteration builds on it.
       mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1, error: 'test failed' });
 
       const loop = await createGitLoop({ maxConsecutiveFailures: 5 });
@@ -1597,8 +1599,17 @@ describe('LoopHandler - Behavioral Tests', () => {
       await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
       await flushEventLoop();
 
-      // resetToCommit should have been called with the loop's gitStartCommitSha
-      expect(vi.mocked(resetToCommit)).toHaveBeenCalledWith('/tmp', 'aaa1111222233334444555566667777888899990000');
+      // commitAllChanges should have been called (work is preserved)
+      expect(vi.mocked(commitAllChanges)).toHaveBeenCalled();
+
+      // resetToCommit must NOT have been called (no work-wiping reset)
+      expect(vi.mocked(resetToCommit)).not.toHaveBeenCalled();
+
+      // Iteration status must be 'progress' (not 'fail')
+      const iters = await loopRepo.getIterations(loop.id, 10);
+      expect(iters.ok).toBe(true);
+      const iter1 = iters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1!.status).toBe('progress');
     });
 
     it('should reset to best iteration gitCommitSha on optimize discard', async () => {
@@ -1657,9 +1668,19 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(updatedLoop.value!.bestIterationCommitSha).toBe('cached_sha_1234567890abcdef1234567890abcdef12');
     });
 
-    it('should reset to gitStartCommitSha on task failure', async () => {
+    it('RETRY: task failure resets to preIterationCommitSha (preserves prior progress commits)', async () => {
+      // T2: Task failures (hard crash) reset to preIterationCommitSha, NOT gitStartCommitSha.
+      // This ensures prior successful 'progress' iteration commits are preserved.
       const loop = await createGitLoop({ maxConsecutiveFailures: 5 });
       const taskId = await getLatestTaskId(loop.id);
+
+      // Get the preIterationCommitSha captured for this iteration
+      const iteration = await getLatestIteration(loop.id);
+      expect(iteration).toBeDefined();
+      const preIterSha = iteration!.preIterationCommitSha;
+      expect(preIterSha).toBeDefined();
+
+      vi.mocked(resetToCommit).mockClear();
 
       await eventBus.emit('TaskFailed', {
         taskId: taskId!,
@@ -1668,9 +1689,11 @@ describe('LoopHandler - Behavioral Tests', () => {
       });
       await flushEventLoop();
 
-      // Task failure does NOT go through git commit/reset path
-      // (only exit condition evaluation triggers git operations)
-      // The iteration's preIterationCommitSha is still set though
+      // resetToCommit must have been called with preIterationCommitSha (not gitStartCommitSha)
+      expect(vi.mocked(resetToCommit)).toHaveBeenCalledWith('/tmp', preIterSha);
+      // gitStartCommitSha must NOT have been used for the reset
+      expect(vi.mocked(resetToCommit)).not.toHaveBeenCalledWith('/tmp', 'aaa1111222233334444555566667777888899990000');
+
       const allIters = await loopRepo.getIterations(loop.id, 10);
       expect(allIters.ok).toBe(true);
       const iter1 = allIters.value.find((i) => i.iterationNumber === 1);
@@ -1702,7 +1725,9 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(iteration!.gitCommitSha).toBe('agent_committed_sha_1234567890abcdef123456');
     });
 
-    it('should reset to gitStartCommitSha on pipeline intermediate step failure', async () => {
+    it('RETRY: pipeline intermediate step failure resets to preIterationCommitSha', async () => {
+      // RETRY pipeline failures now reset to preIterationCommitSha (not gitStartCommitSha),
+      // preserving accumulated progress commits from prior successful iterations.
       const loop = await createGitLoop({
         pipelineSteps: ['lint the code', 'run the tests', 'deploy'],
         prompt: undefined,
@@ -1714,6 +1739,8 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(iteration!.pipelineTaskIds).toBeDefined();
       expect(iteration!.pipelineTaskIds!.length).toBe(3);
       const taskIds = iteration!.pipelineTaskIds!;
+      const preIterSha = iteration!.preIterationCommitSha;
+      expect(preIterSha).toBeDefined();
 
       vi.mocked(resetToCommit).mockClear();
 
@@ -1725,8 +1752,9 @@ describe('LoopHandler - Behavioral Tests', () => {
       });
       await flushEventLoop();
 
-      // resetToCommit should have been called with the loop's gitStartCommitSha
-      expect(vi.mocked(resetToCommit)).toHaveBeenCalledWith('/tmp', 'aaa1111222233334444555566667777888899990000');
+      // resetToCommit should use preIterationCommitSha (not gitStartCommitSha) for RETRY
+      expect(vi.mocked(resetToCommit)).toHaveBeenCalledWith('/tmp', preIterSha);
+      expect(vi.mocked(resetToCommit)).not.toHaveBeenCalledWith('/tmp', 'aaa1111222233334444555566667777888899990000');
 
       // Iteration should be marked as 'fail' with pipeline step failure message
       const allIters = await loopRepo.getIterations(loop.id, 10);
@@ -1763,6 +1791,219 @@ describe('LoopHandler - Behavioral Tests', () => {
       const iter1 = iters.value.find((i) => i.iterationNumber === 1);
       expect(iter1!.status).toBe('crash');
     });
+
+    // -----------------------------------------------------------------------
+    // T4–T9: RETRY progress status and git preservation tests
+    // -----------------------------------------------------------------------
+
+    it('T4: RETRY exit condition not met + git → progress status, commit called, consecutiveFailures=0', async () => {
+      // T4: When exit condition is not met (passed=false, no decision), work should be committed
+      // as 'progress' and consecutiveFailures should be reset to 0 (task succeeded).
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1, error: 'not done yet' });
+
+      const loop = await createGitLoop({ maxConsecutiveFailures: 5 });
+      const taskId = await getLatestTaskId(loop.id);
+
+      await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // commitAllChanges should have been called (work preserved)
+      expect(vi.mocked(commitAllChanges)).toHaveBeenCalled();
+      // resetToCommit must NOT have been called
+      expect(vi.mocked(resetToCommit)).not.toHaveBeenCalled();
+
+      const iters = await loopRepo.getIterations(loop.id, 10);
+      expect(iters.ok).toBe(true);
+      const iter1 = iters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1!.status).toBe('progress');
+
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.consecutiveFailures).toBe(0);
+    });
+
+    it('T5: RETRY decision=continue + git → progress status, commit called, consecutiveFailures=0', async () => {
+      // T5: decision=continue path (feedforward/judge mode) should also commit work and use 'progress'.
+      mockEvaluator.evaluate.mockResolvedValue({
+        passed: false,
+        decision: 'continue',
+        feedback: 'keep going',
+        exitCode: 0,
+      });
+
+      const loop = await createGitLoop({ maxConsecutiveFailures: 5 });
+      const taskId = await getLatestTaskId(loop.id);
+
+      await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // commitAllChanges should have been called (work preserved)
+      expect(vi.mocked(commitAllChanges)).toHaveBeenCalled();
+      // resetToCommit must NOT have been called
+      expect(vi.mocked(resetToCommit)).not.toHaveBeenCalled();
+
+      // After 'progress', the loop starts iter 2 — look for iter 1 explicitly
+      const iters = await loopRepo.getIterations(loop.id, 10);
+      expect(iters.ok).toBe(true);
+      const iter1 = iters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1!.status).toBe('progress');
+
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.consecutiveFailures).toBe(0);
+    });
+
+    it('T6: RETRY TaskFailed after accumulated progress → fail status, reset to preIterationCommitSha', async () => {
+      // T6: After a successful progress iteration, a task failure should reset only to
+      // preIterationCommitSha (the start of THIS iteration), not gitStartCommitSha.
+      // This preserves work from prior progress iterations.
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1, error: 'not done' });
+
+      const loop = await createGitLoop({ maxConsecutiveFailures: 5 });
+
+      // Iteration 1: exit condition not met → progress (work committed)
+      const taskId1 = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: taskId1!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Verify iteration 1 is progress (look by number since iter2 starts after)
+      const iters1 = await loopRepo.getIterations(loop.id, 10);
+      expect(iters1.ok).toBe(true);
+      const iter1 = iters1.value.find((i) => i.iterationNumber === 1);
+      expect(iter1!.status).toBe('progress');
+
+      // Iteration 2: task FAILS — should reset to iter2's preIterationCommitSha
+      const taskId2 = await getLatestTaskId(loop.id);
+      const iter2 = await getLatestIteration(loop.id);
+      expect(iter2).toBeDefined();
+      const iter2PreSha = iter2!.preIterationCommitSha;
+      expect(iter2PreSha).toBeDefined();
+
+      vi.mocked(resetToCommit).mockClear();
+
+      await eventBus.emit('TaskFailed', {
+        taskId: taskId2!,
+        error: { message: 'Crashed', code: 'SYSTEM_ERROR' },
+        exitCode: 1,
+      });
+      await flushEventLoop();
+
+      // resetToCommit should be called with iter2's preIterationCommitSha
+      expect(vi.mocked(resetToCommit)).toHaveBeenCalledWith('/tmp', iter2PreSha);
+      // gitStartCommitSha must NOT have been used
+      expect(vi.mocked(resetToCommit)).not.toHaveBeenCalledWith('/tmp', 'aaa1111222233334444555566667777888899990000');
+
+      const iters = await loopRepo.getIterations(loop.id, 10);
+      expect(iters.ok).toBe(true);
+      const iter2Rec = iters.value.find((i) => i.iterationNumber === 2);
+      expect(iter2Rec!.status).toBe('fail');
+
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.consecutiveFailures).toBe(1);
+    });
+
+    it('T7: RETRY multi-iteration crash isolation — each failure resets only to its own preIterationCommitSha', async () => {
+      // T7: When multiple iterations run, a crash should reset to that specific iteration's
+      // preIterationCommitSha, not the loop start or a prior iteration's SHA.
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1, error: 'not done' });
+
+      const loop = await createGitLoop({ maxConsecutiveFailures: 10 });
+
+      // Iteration 1: progress
+      const taskId1 = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: taskId1!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Iteration 2: also progress
+      const taskId2 = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: taskId2!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Iteration 3: task FAILS — should reset to iter3's preIterationCommitSha specifically
+      const iter3 = await getLatestIteration(loop.id);
+      expect(iter3).toBeDefined();
+      const iter3PreSha = iter3!.preIterationCommitSha;
+      const taskId3 = await getLatestTaskId(loop.id);
+
+      vi.mocked(resetToCommit).mockClear();
+
+      await eventBus.emit('TaskFailed', {
+        taskId: taskId3!,
+        error: { message: 'Crashed on iter 3', code: 'SYSTEM_ERROR' },
+        exitCode: 1,
+      });
+      await flushEventLoop();
+
+      // Reset target must be iter3's own preIterationCommitSha (not iter1 or iter2's SHA)
+      expect(vi.mocked(resetToCommit)).toHaveBeenCalledWith('/tmp', iter3PreSha);
+
+      const iters = await loopRepo.getIterations(loop.id, 10);
+      expect(iters.ok).toBe(true);
+      const iter3Rec = iters.value.find((i) => i.iterationNumber === 3);
+      expect(iter3Rec!.status).toBe('fail');
+
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.consecutiveFailures).toBe(1);
+    });
+
+    it('T8: RETRY pipeline step failure → fail status, reset to preIterationCommitSha', async () => {
+      // T8: Pipeline step failures in RETRY loops should also use preIterationCommitSha.
+      const loop = await createGitLoop({
+        pipelineSteps: ['lint', 'test', 'deploy'],
+        prompt: undefined,
+        maxConsecutiveFailures: 5,
+      });
+
+      const iteration = await getLatestIteration(loop.id);
+      expect(iteration).toBeDefined();
+      const preIterSha = iteration!.preIterationCommitSha;
+      expect(preIterSha).toBeDefined();
+      const taskIds = iteration!.pipelineTaskIds!;
+
+      vi.mocked(resetToCommit).mockClear();
+
+      await eventBus.emit('TaskFailed', {
+        taskId: taskIds[0],
+        error: { message: 'lint failed', code: 'SYSTEM_ERROR' },
+        exitCode: 1,
+      });
+      await flushEventLoop();
+
+      // resetToCommit should use preIterationCommitSha (not gitStartCommitSha)
+      expect(vi.mocked(resetToCommit)).toHaveBeenCalledWith('/tmp', preIterSha);
+      expect(vi.mocked(resetToCommit)).not.toHaveBeenCalledWith('/tmp', 'aaa1111222233334444555566667777888899990000');
+
+      const iters = await loopRepo.getIterations(loop.id, 10);
+      expect(iters.ok).toBe(true);
+      const iter1 = iters.value.find((i) => i.iterationNumber === 1);
+      expect(iter1!.status).toBe('fail');
+      expect(iter1!.errorMessage).toContain('Pipeline step failed');
+    });
+
+    it('T9: consecutiveFailures resets to 0 after progress iteration', async () => {
+      // T9: After a prior crash increments consecutiveFailures, a successful 'progress' iteration
+      // should reset consecutiveFailures back to 0.
+      // Iteration 1: task fails (hard crash)
+      const loop = await createGitLoop({ maxConsecutiveFailures: 10 });
+      const taskId1 = await getLatestTaskId(loop.id);
+
+      await eventBus.emit('TaskFailed', {
+        taskId: taskId1!,
+        error: { message: 'Crashed', code: 'SYSTEM_ERROR' },
+        exitCode: 1,
+      });
+      await flushEventLoop();
+
+      const loopAfterFail = await getLoop(loop.id);
+      expect(loopAfterFail!.consecutiveFailures).toBe(1);
+
+      // Iteration 2: task completes, exit condition not met → 'progress'
+      mockEvaluator.evaluate.mockResolvedValueOnce({ passed: false, exitCode: 0, error: 'not done' });
+      const taskId2 = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: taskId2!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const loopAfterProgress = await getLoop(loop.id);
+      expect(loopAfterProgress!.consecutiveFailures).toBe(0);
+    });
   });
 
   // ==========================================================================
@@ -1797,11 +2038,11 @@ describe('LoopHandler - Behavioral Tests', () => {
       // consecutiveFailures must NOT have been incremented
       expect(updatedLoop!.consecutiveFailures).toBe(0);
 
-      // Iteration 1 should be recorded as 'fail' (exit condition not met) but without penalty
+      // T3: Iteration 1 should be recorded as 'progress' (work committed, exit condition not met)
       const iters = await loopRepo.getIterations(loop.id, 10);
       expect(iters.ok).toBe(true);
       const iter1 = iters.value.find((i) => i.iterationNumber === 1);
-      expect(iter1!.status).toBe('fail');
+      expect(iter1!.status).toBe('progress');
     });
 
     it('decision: continue — does not fail loop even at maxConsecutiveFailures boundary', async () => {
@@ -1913,8 +2154,10 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(updatedLoop!.status).toBe(LoopStatus.COMPLETED);
     });
 
-    it('undefined decision — falls through to normal passed/failed logic (backward compat)', async () => {
-      // No decision field set — must behave identically to the pre-v1.3.0 retry path.
+    it('undefined decision — falls through to progress path (RETRY non-crash fix)', async () => {
+      // No decision field set — passed=false with no decision uses the 'progress' path (bug fix).
+      // The old behavior incremented consecutiveFailures; new behavior resets it to 0.
+      // This ensures successful task completions that miss the exit condition preserve their work.
       mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1, error: 'test failed' });
 
       const loop = await createAndEmitLoop({
@@ -1926,9 +2169,9 @@ describe('LoopHandler - Behavioral Tests', () => {
       await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
       await flushEventLoop();
 
-      // Normal fail path: consecutiveFailures incremented
+      // New behavior: consecutiveFailures reset to 0 (task succeeded, exit condition not met)
       const updatedLoop = await getLoop(loop.id);
-      expect(updatedLoop!.consecutiveFailures).toBe(1);
+      expect(updatedLoop!.consecutiveFailures).toBe(0);
       expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
     });
   });

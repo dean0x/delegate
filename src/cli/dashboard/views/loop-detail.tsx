@@ -29,6 +29,7 @@ function iterationStatusColor(status: string, isBest: boolean): string | undefin
   if (isBest) return 'green';
   if (status === 'pass' || status === 'keep') return 'green';
   if (status === 'fail' || status === 'crash') return 'red';
+  if (status === 'progress') return 'cyan'; // RETRY: work committed, exit condition not yet met
   return undefined;
 }
 

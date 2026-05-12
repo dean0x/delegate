@@ -653,7 +653,7 @@ export interface LoopIteration {
   readonly iterationNumber: number;
   readonly taskId?: TaskId; // Optional: NULL after ON DELETE SET NULL when task is cleaned up
   readonly pipelineTaskIds?: readonly TaskId[];
-  readonly status: 'running' | 'pass' | 'fail' | 'keep' | 'discard' | 'crash' | 'cancelled';
+  readonly status: 'running' | 'pass' | 'fail' | 'keep' | 'discard' | 'crash' | 'cancelled' | 'progress';
   readonly score?: number;
   readonly exitCode?: number;
   readonly errorMessage?: string;

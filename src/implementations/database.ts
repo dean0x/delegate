@@ -1000,6 +1000,63 @@ export class Database implements TransactionRunner {
           db.exec(`ALTER TABLE orchestrations ADD COLUMN pid INTEGER DEFAULT NULL`);
         },
       },
+      {
+        version: 26,
+        description:
+          "Add 'progress' to loop_iterations status CHECK constraint for RETRY loop accumulated-work preservation",
+        up: (db) => {
+          // DECISION: SQLite cannot ALTER a CHECK constraint in-place — must recreate the table.
+          // The 'progress' status represents a RETRY iteration that completed successfully but did
+          // not yet satisfy the exit condition; work is committed and preserved for the next iteration.
+          // PF-002: no backward-compat path — clean break is correct for a feature with zero users.
+
+          // 1. Create new table with updated CHECK constraint
+          db.exec(`
+            CREATE TABLE loop_iterations_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              loop_id TEXT NOT NULL REFERENCES loops(id) ON DELETE CASCADE,
+              iteration_number INTEGER NOT NULL,
+              task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+              pipeline_task_ids TEXT,
+              status TEXT NOT NULL CHECK(status IN ('running', 'pass', 'fail', 'keep', 'discard', 'crash', 'cancelled', 'progress')),
+              score REAL,
+              exit_code INTEGER,
+              error_message TEXT,
+              started_at INTEGER NOT NULL,
+              completed_at INTEGER,
+              git_branch TEXT,
+              git_diff_summary TEXT,
+              git_commit_sha TEXT,
+              pre_iteration_commit_sha TEXT,
+              eval_feedback TEXT,
+              eval_response TEXT,
+              UNIQUE(loop_id, iteration_number)
+            )
+          `);
+
+          // 2. Copy all existing data
+          db.exec(`
+            INSERT INTO loop_iterations_new SELECT
+              id, loop_id, iteration_number, task_id, pipeline_task_ids,
+              status, score, exit_code, error_message, started_at, completed_at,
+              git_branch, git_diff_summary, git_commit_sha, pre_iteration_commit_sha,
+              eval_feedback, eval_response
+            FROM loop_iterations
+          `);
+
+          // 3. Drop old table and rename new one
+          db.exec(`DROP TABLE loop_iterations`);
+          db.exec(`ALTER TABLE loop_iterations_new RENAME TO loop_iterations`);
+
+          // 4. Recreate all indexes
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_loop_iterations_loop_id ON loop_iterations(loop_id)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_loop_iterations_task_id ON loop_iterations(task_id)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_loop_iterations_status ON loop_iterations(status)`);
+          db.exec(
+            `CREATE INDEX IF NOT EXISTS idx_loop_iterations_loop_iteration ON loop_iterations(loop_id, iteration_number DESC)`,
+          );
+        },
+      },
     ];
   }
 

@@ -259,8 +259,10 @@ export class LoopHandler extends BaseEventHandler {
         // Task FAILED — record failure, check limits
         const newConsecutiveFailures = loop.consecutiveFailures + 1;
 
-        // Git reset: revert working directory to pre-iteration state on failure (v0.8.1)
-        await this.resetIterationGitState(loop, iteration, 'task failure');
+        // Git reset: revert to preIterationCommitSha (not gitStartCommitSha) so accumulated
+        // 'progress' commits from prior successful-but-not-passing iterations are preserved.
+        // The failing task's own uncommitted changes are discarded, but prior iteration progress is kept.
+        await this.resetIterationGitState(loop, iteration, 'task failure', iteration.preIterationCommitSha);
 
         // Atomic: iteration fail + consecutiveFailures in single transaction
         const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
@@ -848,21 +850,26 @@ export class LoopHandler extends BaseEventHandler {
 
   /**
    * Handle retry strategy iteration result
-   * - decision='continue' → schedule next iteration WITHOUT incrementing consecutiveFailures
+   * - decision='continue' → commit work, schedule next iteration WITHOUT incrementing consecutiveFailures
    * - decision='stop' → complete loop (feedforward/judge modes)
    * - pass → complete loop with success (schema mode / backward compat)
-   * - fail → increment consecutiveFailures, check limits
+   * - exit condition not met → commit work as 'progress', reset consecutiveFailures to 0 (task succeeded, exit not met)
+   *
+   * DECISION: RETRY non-crash paths use 'progress' status to preserve accumulated work via git commit.
+   * 'fail' is reserved for TaskFailed (crash/hard failure) which resets to preIterationCommitSha.
+   * This fixes the bug where successful tasks that didn't satisfy the exit condition had their
+   * committed work wiped by a git reset to gitStartCommitSha.
    */
   private async handleRetryResult(loop: Loop, iteration: LoopIteration, evalResult: EvalResult): Promise<void> {
     // DECISION: Check explicit decision field first (feedforward/judge modes).
-    // This prevents consecutiveFailures from incrementing when feedforward just says "keep going".
+    // Uses 'progress' to commit accumulated work without incrementing consecutiveFailures.
     if (evalResult.decision === 'continue') {
       await this.recordAndContinue(
         loop,
         iteration,
-        'fail', // iteration "failed the exit condition" but loop should continue without penalty
-        loop.consecutiveFailures, // do NOT increment
-        {}, // no loop state update needed
+        'progress', // task completed, work preserved — exit condition not yet satisfied
+        loop.consecutiveFailures, // do NOT increment — reset crash counter on successful task completion
+        { consecutiveFailures: 0 }, // reset crash counter: successful task completion is not a failure
         {
           exitCode: evalResult.exitCode,
           evalFeedback: evalResult.feedback,
@@ -911,15 +918,14 @@ export class LoopHandler extends BaseEventHandler {
       return;
     }
 
-    // Exit condition failed — increment consecutiveFailures
-    const newConsecutiveFailures = loop.consecutiveFailures + 1;
-
+    // Exit condition not met — task succeeded but exit condition not satisfied.
+    // Use 'progress' to commit accumulated work; reset consecutiveFailures (not a crash).
     await this.recordAndContinue(
       loop,
       iteration,
-      'fail',
-      newConsecutiveFailures,
-      { consecutiveFailures: newConsecutiveFailures },
+      'progress', // task completed, work preserved — exit condition not yet satisfied
+      0, // reset crash counter: task completed successfully, only the exit condition was not met
+      { consecutiveFailures: 0 },
       {
         exitCode: evalResult.exitCode,
         errorMessage: evalResult.error,
@@ -1367,7 +1373,7 @@ export class LoopHandler extends BaseEventHandler {
     if (!iteration.preIterationCommitSha) return {};
 
     try {
-      const isCommitPath = iterationStatus === 'pass' || iterationStatus === 'keep';
+      const isCommitPath = iterationStatus === 'pass' || iterationStatus === 'keep' || iterationStatus === 'progress';
       if (isCommitPath) {
         return await this.commitAndCaptureDiff(loop, iteration, iterationStatus);
       }
@@ -1448,15 +1454,25 @@ export class LoopHandler extends BaseEventHandler {
    * No-op when the iteration has no preIterationCommitSha (non-git loop).
    * Logs warnings on failure but never throws — git reset is best-effort.
    *
+   * DECISION: RETRY task failures (hard crash/killed process) reset to preIterationCommitSha rather
+   * than gitStartCommitSha so that accumulated 'progress' commits from prior iterations are preserved.
+   * The overrideTarget parameter allows callers to specify the exact reset point.
+   *
    * @param loop - The loop owning the iteration
    * @param iteration - The iteration that failed/was discarded
    * @param context - Human-readable label for log messages (e.g., "task failure", "pipeline step failure")
+   * @param overrideTarget - Optional SHA to reset to instead of the loop's default reset target
    */
-  private async resetIterationGitState(loop: Loop, iteration: LoopIteration, context: string): Promise<void> {
+  private async resetIterationGitState(
+    loop: Loop,
+    iteration: LoopIteration,
+    context: string,
+    overrideTarget?: string,
+  ): Promise<void> {
     if (!iteration.preIterationCommitSha) return;
 
     try {
-      const resetTarget = this.getResetTargetSha(loop);
+      const resetTarget = overrideTarget ?? this.getResetTargetSha(loop);
       if (!resetTarget) return;
 
       const resetResult = await resetToCommit(loop.workingDirectory, resetTarget);
@@ -1594,8 +1610,14 @@ export class LoopHandler extends BaseEventHandler {
 
     await this.cancelRemainingPipelineTasks(iteration.pipelineTaskIds, taskId, loopId);
 
-    // Git reset: revert working directory to pre-iteration state on pipeline failure (v0.8.1)
-    await this.resetIterationGitState(loop, iteration, 'pipeline step failure');
+    // Git reset: for RETRY, reset to preIterationCommitSha to preserve prior progress commits.
+    // For OPTIMIZE, use the loop's default reset target (best iteration or gitStartCommitSha).
+    await this.resetIterationGitState(
+      loop,
+      iteration,
+      'pipeline step failure',
+      loop.strategy === LoopStrategy.RETRY ? iteration.preIterationCommitSha : undefined,
+    );
 
     // Atomic: iteration fail + consecutiveFailures in single transaction
     const newConsecutiveFailures = loop.consecutiveFailures + 1;
@@ -1830,8 +1852,14 @@ export class LoopHandler extends BaseEventHandler {
     if (task.status === TaskStatus.FAILED) {
       const newConsecutiveFailures = loop.consecutiveFailures + 1;
 
-      // Git reset: revert working directory to pre-iteration state on recovered failure (v0.8.1)
-      await this.resetIterationGitState(loop, latestIteration, 'recovered task failure');
+      // Git reset: for RETRY, reset to preIterationCommitSha to preserve prior progress commits.
+      // For OPTIMIZE, use the loop's default reset target.
+      await this.resetIterationGitState(
+        loop,
+        latestIteration,
+        'recovered task failure',
+        loop.strategy === LoopStrategy.RETRY ? latestIteration.preIterationCommitSha : undefined,
+      );
 
       // Atomic: iteration fail + consecutiveFailures in single transaction
       const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });

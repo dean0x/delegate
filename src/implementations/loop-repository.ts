@@ -76,7 +76,7 @@ const LoopIterationRowSchema = z.object({
   iteration_number: z.number(),
   task_id: z.string().nullable(),
   pipeline_task_ids: z.string().nullable(),
-  status: z.enum(['running', 'pass', 'fail', 'keep', 'discard', 'crash', 'cancelled']),
+  status: z.enum(['running', 'pass', 'fail', 'keep', 'discard', 'crash', 'cancelled', 'progress']),
   score: z.number().nullable(),
   exit_code: z.number().nullable(),
   error_message: z.string().nullable(),
