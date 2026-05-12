@@ -365,9 +365,9 @@ describe('Integration: Task Loops - End-to-End Flow', () => {
       expect(loop!.consecutiveFailures).toBe(2);
     });
 
-    it('should keep incrementing consecutiveFailures when task succeeds but exit condition fails', async () => {
-      // Exit condition: `false` always fails (exit code 1) so loop continues
-      // consecutiveFailures tracks iteration outcome, not task outcome
+    it('should reset consecutiveFailures when task succeeds but exit condition is not met', async () => {
+      // Exit condition: `false` always returns non-zero so loop continues
+      // consecutiveFailures only tracks crashes (TaskFailed), not exit-condition-not-met
       const createResult = await service.createLoop({
         prompt: 'Fix the bug',
         strategy: LoopStrategy.RETRY,
@@ -382,21 +382,21 @@ describe('Integration: Task Loops - End-to-End Flow', () => {
       const loopId = createResult.value.id;
       await flushEventLoop();
 
-      // Fail first iteration (TaskFailed)
+      // Fail first iteration (TaskFailed — crash)
       const iter1 = await getLatestIteration(loopId);
       await eventBus.emit('TaskFailed', { taskId: iter1!.taskId, error: 'fail', exitCode: 1 });
       await flushEventLoop();
 
       expect((await getLoop(loopId))!.consecutiveFailures).toBe(1);
 
-      // Succeed second iteration task, but exit condition `false` fails
+      // Succeed second iteration task, but exit condition `false` is not met
       const iter2 = await getLatestIteration(loopId);
       await eventBus.emit('TaskCompleted', { taskId: iter2!.taskId, exitCode: 0, duration: 100 });
       await flushEventLoop();
 
-      // consecutiveFailures increments because exit condition failed
+      // consecutiveFailures resets to 0: task succeeded (not a crash), exit condition just wasn't met
       const loop = await getLoop(loopId);
-      expect(loop!.consecutiveFailures).toBe(2);
+      expect(loop!.consecutiveFailures).toBe(0);
       expect(loop!.status).toBe(LoopStatus.RUNNING);
     });
   });
