@@ -867,9 +867,9 @@ export class LoopHandler extends BaseEventHandler {
       await this.recordAndContinue(
         loop,
         iteration,
-        'progress', // task completed, work preserved — exit condition not yet satisfied
-        loop.consecutiveFailures, // do NOT increment — reset crash counter on successful task completion
-        { consecutiveFailures: 0 }, // reset crash counter: successful task completion is not a failure
+        'progress', // work preserved — exit condition not yet satisfied
+        loop.consecutiveFailures, // do NOT increment consecutive failures (task succeeded)
+        { consecutiveFailures: 0 },
         {
           exitCode: evalResult.exitCode,
           evalFeedback: evalResult.feedback,
@@ -923,8 +923,8 @@ export class LoopHandler extends BaseEventHandler {
     await this.recordAndContinue(
       loop,
       iteration,
-      'progress', // task completed, work preserved — exit condition not yet satisfied
-      0, // reset crash counter: task completed successfully, only the exit condition was not met
+      'progress', // work preserved — exit condition not yet satisfied
+      0, // task succeeded — consecutiveFailures reset to 0
       { consecutiveFailures: 0 },
       {
         exitCode: evalResult.exitCode,
@@ -1359,11 +1359,11 @@ export class LoopHandler extends BaseEventHandler {
 
   /**
    * Handle git commit or revert based on iteration outcome.
-   * - pass/keep: commit all changes, capture diff summary
+   * - pass/keep/progress: commit all changes, capture diff summary
    * - fail/discard/crash: delegate to resetIterationGitState for clean revert
    *
    * Best-effort: logs warnings on failure, never throws.
-   * @returns { gitCommitSha, gitDiffSummary } — both undefined if non-git or on failure/discard
+   * @returns { gitCommitSha, gitDiffSummary } — both undefined if non-git or on revert path
    */
   private async handleIterationGitOutcome(
     loop: Loop,
@@ -1436,10 +1436,10 @@ export class LoopHandler extends BaseEventHandler {
   }
 
   /**
-   * Determine the commit SHA to reset to after a failed/discarded iteration.
-   * - Retry fail: reset to loop.gitStartCommitSha (start fresh)
-   * - Optimize discard/crash: reset to best iteration's gitCommitSha if available,
-   *   fallback to loop.gitStartCommitSha
+   * Determine the default commit SHA to reset to after a failed/discarded iteration.
+   * Used when no overrideTarget is provided (i.e., OPTIMIZE strategy or iteration discard).
+   * - Optimize: reset to best iteration's gitCommitSha if available, fallback to gitStartCommitSha
+   * - Retry callers pass overrideTarget = preIterationCommitSha directly (bypasses this method)
    * @returns SHA to reset to, or undefined if no git tracking
    */
   private getResetTargetSha(loop: Loop): string | undefined {
@@ -1801,7 +1801,7 @@ export class LoopHandler extends BaseEventHandler {
         return;
       }
 
-      // fail / discard / crash / keep / cancelled — check termination, then continue
+      // fail / discard / crash / keep / progress / cancelled — check termination, then continue
       // Loop's consecutiveFailures is already correct (committed atomically with iteration)
       if (await this.checkTerminationConditions(loop, loop.consecutiveFailures)) {
         return;

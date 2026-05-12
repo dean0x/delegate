@@ -123,6 +123,7 @@ export function colorStatus(status: string): string {
     case 'active':
       return pc.green(status);
     case 'running':
+    case 'progress':
       return pc.cyan(status);
     case 'failed':
       return pc.red(status);
@@ -132,8 +133,6 @@ export function colorStatus(status: string): string {
     case 'cancelled':
     case 'paused':
       return pc.yellow(status);
-    case 'progress':
-      return pc.cyan(status);
     default:
       return status;
   }

@@ -91,7 +91,7 @@ const STATUS_ICONS: Record<string, string> = {
   paused: '⏸',
   blocked: '⊖', // gray — blocked by dependency
   expired: '○', // gray — schedule expired
-  progress: '◉', // RETRY: work committed, exit condition not yet met
+  progress: '◉', // work committed, exit condition not yet met
 };
 
 /**
