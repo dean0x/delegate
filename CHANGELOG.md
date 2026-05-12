@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [1.5.2] - 2026-05-12
+
+### Fixed
+- **RETRY loop progress preservation**: Iterations that completed but didn't satisfy the exit condition now commit their work as `progress` instead of resetting to the loop start commit — preserves accumulated progress across iterations (#163)
+- **Crash recovery isolation**: `TaskFailed` resets to `preIterationCommitSha` instead of `gitStartCommitSha`, so prior iteration progress is preserved (#163)
+- **consecutiveFailures semantics**: Now only tracks actual crashes (`TaskFailed`), not exit-condition-not-met iterations (#163)
+
+### Changed
+- **Dashboard**: `progress` iteration status displayed with cyan color and circle icon (#163)
+
+### Database
+- **Migration v26**: Recreates `loop_iterations` with updated CHECK constraint adding `progress` to the status enum
+
+---
+
 ## [1.5.1] - 2026-05-09
 
 ### Documentation
