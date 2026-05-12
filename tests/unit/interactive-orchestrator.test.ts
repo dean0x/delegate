@@ -1000,9 +1000,9 @@ describe('migration v25 - mode and pid columns', () => {
     db.close();
   });
 
-  it('should be at schema version 25', () => {
+  it('should be at schema version 26', () => {
     const db = new Database(':memory:');
-    expect(db.getSchemaVersion()).toBe(25);
+    expect(db.getSchemaVersion()).toBe(26);
     db.close();
   });
 });
