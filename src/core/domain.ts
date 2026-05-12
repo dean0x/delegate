@@ -644,15 +644,7 @@ export interface Loop {
 }
 
 /** All possible statuses for a single loop iteration lifecycle. */
-export type IterationStatus =
-  | 'running'
-  | 'pass'
-  | 'fail'
-  | 'keep'
-  | 'discard'
-  | 'crash'
-  | 'cancelled'
-  | 'progress';
+export type IterationStatus = 'running' | 'pass' | 'fail' | 'keep' | 'discard' | 'crash' | 'cancelled' | 'progress';
 
 /**
  * Loop iteration record - tracks individual iteration execution

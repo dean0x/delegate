@@ -1465,11 +1465,7 @@ export class LoopHandler extends BaseEventHandler {
    * @param iteration - The iteration that failed/was discarded
    * @param context - Human-readable label for log messages (e.g., "task failure", "pipeline step failure")
    */
-  private async resetIterationGitState(
-    loop: Loop,
-    iteration: LoopIteration,
-    context: string,
-  ): Promise<void> {
+  private async resetIterationGitState(loop: Loop, iteration: LoopIteration, context: string): Promise<void> {
     if (!iteration.preIterationCommitSha) return;
 
     try {
