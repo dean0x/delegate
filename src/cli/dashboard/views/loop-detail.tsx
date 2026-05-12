@@ -11,7 +11,7 @@
 
 import { Box, Text } from 'ink';
 import React from 'react';
-import type { Loop, LoopIteration } from '../../../core/domain.js';
+import type { IterationStatus, Loop, LoopIteration } from '../../../core/domain.js';
 import { Field, LongField, StatusField } from '../components/field.js';
 import { ScrollableList } from '../components/scrollable-list.js';
 import { StatusBadge } from '../components/status-badge.js';
@@ -25,7 +25,7 @@ interface LoopDetailProps {
 }
 
 /** Map an iteration status to its display color. Best iterations override to green. */
-function iterationStatusColor(status: string, isBest: boolean): string | undefined {
+function iterationStatusColor(status: IterationStatus, isBest: boolean): string | undefined {
   if (isBest) return 'green';
   if (status === 'pass' || status === 'keep') return 'green';
   if (status === 'fail' || status === 'crash') return 'red';
