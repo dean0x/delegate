@@ -1173,6 +1173,33 @@ describe('LoopHandler - Behavioral Tests', () => {
 
       freshEventBus.dispose();
     });
+
+    it('should start next iteration when recovering progress iteration', async () => {
+      // I3: The 'progress' status (RETRY iteration that completed but did not pass the exit
+      // condition) should be handled identically to 'fail' and 'keep' during crash-window
+      // recovery — the handler must start the next iteration rather than stalling the loop.
+      const { loop } = await setupCrashWindowScenario({
+        iterationStatus: 'progress',
+        loopOverrides: { consecutiveFailures: 0 },
+      });
+
+      const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
+      await LoopHandler.create({
+        loopRepo,
+        taskRepo,
+        checkpointRepo: createMockCheckpointRepo(),
+        eventBus: freshEventBus,
+        database,
+        exitConditionEvaluator: mockEvaluator,
+        logger: new TestLogger(),
+      });
+
+      const recoveredLoop = await getLoop(loop.id);
+      expect(recoveredLoop!.status).toBe(LoopStatus.RUNNING);
+      expect(recoveredLoop!.currentIteration).toBe(2);
+
+      freshEventBus.dispose();
+    });
   });
 
   describe('Fix K — Retry pass path atomicity', () => {
@@ -1699,6 +1726,39 @@ describe('LoopHandler - Behavioral Tests', () => {
       const iter1 = allIters.value.find((i) => i.iterationNumber === 1);
       expect(iter1).toBeDefined();
       expect(iter1!.status).toBe('fail');
+    });
+
+    it('OPTIMIZE: TaskFailed resets to gitStartCommitSha (undefined overrideTarget path)', async () => {
+      // I4: Prove that OPTIMIZE TaskFailed still uses the loop's default reset target
+      // (gitStartCommitSha when no bestIterationCommitSha exists) via the undefined
+      // overrideTarget path in resetIterationGitState. The strategy-conditional at line 268
+      // passes undefined for OPTIMIZE, delegating to getResetTargetSha().
+      const loop = await createGitLoop({
+        strategy: LoopStrategy.OPTIMIZE,
+        evalDirection: OptimizeDirection.MAXIMIZE,
+        maxConsecutiveFailures: 5,
+      });
+      const taskId = await getLatestTaskId(loop.id);
+
+      vi.mocked(resetToCommit).mockClear();
+
+      await eventBus.emit('TaskFailed', {
+        taskId: taskId!,
+        error: { message: 'Task crashed', code: 'SYSTEM_ERROR' },
+        exitCode: 1,
+      });
+      await flushEventLoop();
+
+      // OPTIMIZE with no bestIterationCommitSha: reset target must be gitStartCommitSha
+      expect(vi.mocked(resetToCommit)).toHaveBeenCalledWith('/tmp', 'aaa1111222233334444555566667777888899990000');
+
+      const iters = await loopRepo.getIterations(loop.id, 10);
+      expect(iters.ok).toBe(true);
+      const iteration = iters.value.find((i) => i.iterationNumber === 1);
+      expect(iteration).toBeDefined();
+      // preIterationCommitSha must NOT have been used (that is the RETRY-only override path)
+      expect(vi.mocked(resetToCommit)).not.toHaveBeenCalledWith('/tmp', iteration!.preIterationCommitSha);
+      expect(iteration!.status).toBe('fail');
     });
 
     it('should use getCurrentCommitSha as fallback when commitAllChanges returns null (agent already committed)', async () => {
