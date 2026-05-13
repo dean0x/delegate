@@ -70,6 +70,9 @@ const INITIAL_DASHBOARD_STATE: DashboardState = {
   animFrame: 0,
 };
 
+/** Stable empty map used in detail mode to avoid allocating a new Map on every render. */
+const EMPTY_STATUS_MAP: ReadonlyMap<TaskId, string> = new Map();
+
 /**
  * Root dashboard component.
  * Renders to stderr via the render() call in index.tsx.
@@ -162,7 +165,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
   // Workspace uses childTaskIds; detail uses a single-element array.
   const streamTaskIds =
     view.kind === 'workspace' ? childTaskIds : detailStreamTaskId !== null ? [detailStreamTaskId] : [];
-  const streamTaskStatuses: ReadonlyMap<TaskId, string> = view.kind === 'workspace' ? childTaskStatuses : new Map();
+  const streamTaskStatuses: ReadonlyMap<TaskId, string> = view.kind === 'workspace' ? childTaskStatuses : EMPTY_STATUS_MAP;
 
   const { streams } = useTaskOutputStream(
     outputRepository ?? ctx.outputRepository,
