@@ -95,6 +95,38 @@ export function computeMetricsLayout(args: { columns: number; rows: number }): M
 }
 
 // ============================================================================
+// computeDetailOutputLayout
+// ============================================================================
+
+export interface DetailOutputLayout {
+  /** Number of terminal rows available for the output viewport */
+  readonly outputViewportHeight: number;
+  /** True when there is insufficient space to show output meaningfully (< 5 rows) */
+  readonly tooSmall: boolean;
+}
+
+/**
+ * Compute the output viewport height for a task or orchestration detail view.
+ *
+ * Layout structure (chrome = 4 rows):
+ *   - header: 2 rows
+ *   - footer: 1 row
+ *   - separator between metadata and output: 1 row
+ *
+ * Available rows = rows - metadataHeight - chrome.
+ * When available < 5, the terminal is too small to render the output usefully.
+ *
+ * DECISION (#165): Pure function so it can be tested without React mounting.
+ * The metadataHeight is measured via Ink's measureElement() in the view components.
+ */
+export function computeDetailOutputLayout(args: { rows: number; metadataHeight: number }): DetailOutputLayout {
+  const chrome = 4; // header(2) + footer(1) + separator(1)
+  const available = args.rows - args.metadataHeight - chrome;
+  if (available < 5) return { outputViewportHeight: 0, tooSmall: true };
+  return { outputViewportHeight: available, tooSmall: false };
+}
+
+// ============================================================================
 // computeWorkspaceLayout
 // ============================================================================
 

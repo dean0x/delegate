@@ -28,9 +28,10 @@ export function workspaceHints(): string {
 
 /**
  * Return the footer hint string for the detail view.
+ * Output controls (o/[/]/g/G) apply to task and orchestration detail only.
  */
 export function detailHints(): string {
-  return 'Esc back · ↑↓ scroll · r refresh · q quit';
+  return 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
 }
 
 /**

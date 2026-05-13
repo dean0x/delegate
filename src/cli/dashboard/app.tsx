@@ -134,16 +134,39 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
   const childTaskIds = data?.workspaceData?.childTaskIds ?? [];
   const childTaskStatuses = data?.workspaceData?.childTaskStatuses ?? new Map();
 
-  // Live output streaming — only enabled when in workspace view and outputRepository is available
-  // Phase C prep: a future `o` toggle in task detail would also enable streaming here.
-  // That requires keyboard handler changes (handle-detail-keys) deferred to a later phase.
-  // TODO: When grid/detail mode is fully wired via the 'v' toggle, also enable streaming
-  // for orchestration detail in grid mode (view.kind === 'detail' && view.entityType === 'orchestrations').
-  const streamingEnabled = view.kind === 'workspace' && outputRepository !== undefined;
+  // Resolve the task ID(s) to stream in detail mode (#165).
+  // Task detail: the task itself. Orchestration detail: the selected child (if any).
+  const detailStreamTaskId: import('../../core/domain.js').TaskId | null = (() => {
+    if (view.kind !== 'detail' || !outputRepository) return null;
+    if (view.entityType === 'tasks') return view.entityId as import('../../core/domain.js').TaskId;
+    if (view.entityType === 'orchestrations' && nav.orchestrationChildSelectedTaskId) {
+      return nav.orchestrationChildSelectedTaskId as import('../../core/domain.js').TaskId;
+    }
+    return null;
+  })();
+
+  // Live output streaming:
+  //  - Workspace: always enabled when outputRepository is present
+  //  - Task/orchestration detail: enabled when outputVisible flag is set and there is a task to stream
+  const streamingEnabled =
+    outputRepository !== undefined &&
+    (view.kind === 'workspace' ||
+      (view.kind === 'detail' &&
+        detailStreamTaskId !== null &&
+        nav.detailOutputVisible &&
+        (view.entityType === 'tasks' || view.entityType === 'orchestrations')));
+
+  // Build unified task ID and status arrays for the output stream hook.
+  // Workspace uses childTaskIds; detail uses a single-element array.
+  const streamTaskIds =
+    view.kind === 'workspace' ? childTaskIds : detailStreamTaskId !== null ? [detailStreamTaskId] : [];
+  const streamTaskStatuses: ReadonlyMap<import('../../core/domain.js').TaskId, string> =
+    view.kind === 'workspace' ? childTaskStatuses : new Map();
+
   const { streams } = useTaskOutputStream(
     outputRepository ?? ctx.outputRepository,
-    childTaskIds,
-    childTaskStatuses,
+    streamTaskIds,
+    streamTaskStatuses,
     streamingEnabled,
   );
 
@@ -226,6 +249,11 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
           orchestrationChildPage={nav.orchestrationChildPage}
           orchestrationChildrenTotal={data?.orchestrationChildrenTotal}
           loopIterationSelectedNumber={nav.loopIterationSelectedNumber}
+          taskStreams={streams}
+          detailOutputVisible={nav.detailOutputVisible}
+          detailOutputAutoTail={nav.detailOutputAutoTail}
+          detailOutputScrollOffset={nav.detailOutputScrollOffset}
+          terminalRows={terminalSize.rows}
         />
       );
     }

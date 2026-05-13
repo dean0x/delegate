@@ -8,6 +8,7 @@ import { Box, Text } from 'ink';
 import React from 'react';
 import type { Task, TaskId } from '../../../core/domain.js';
 import type { DashboardData, PanelId } from '../types.js';
+import type { OutputStreamState } from '../use-task-output-stream.js';
 import { LoopDetail } from './loop-detail.js';
 import { OrchestrationDetail } from './orchestration-detail.js';
 import { PipelineDetail } from './pipeline-detail.js';
@@ -59,6 +60,16 @@ interface DetailViewProps {
   readonly orchestrationChildrenTotal?: number;
   /** #168: iterationNumber of the highlighted row in loop detail */
   readonly loopIterationSelectedNumber?: number | null;
+  /** #165: live output streams map — keyed by TaskId */
+  readonly taskStreams?: ReadonlyMap<TaskId, OutputStreamState>;
+  /** #165: whether the output panel is visible */
+  readonly detailOutputVisible?: boolean;
+  /** #165: whether output auto-tails */
+  readonly detailOutputAutoTail?: boolean;
+  /** #165: scroll offset for paused output mode */
+  readonly detailOutputScrollOffset?: number;
+  /** #165: terminal row count for output layout computation */
+  readonly terminalRows?: number;
 }
 
 const NotFound: React.FC<{ entityType: PanelId; entityId: string }> = ({ entityType, entityId }) => (
@@ -78,6 +89,11 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
     orchestrationChildPage = 0,
     orchestrationChildrenTotal,
     loopIterationSelectedNumber = null,
+    taskStreams,
+    detailOutputVisible = true,
+    detailOutputAutoTail = true,
+    detailOutputScrollOffset = 0,
+    terminalRows = 24,
   }) => {
     switch (entityType) {
       case 'loops': {
@@ -100,7 +116,20 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
         // TODO(Phase C): usage data requires a dedicated TaskUsage lookup by taskId —
         // DashboardData does not carry per-task usage; fetch from UsageRepository when
         // detail-view extras are extended (similar to orchestrationCostAggregate pattern).
-        return <TaskDetail task={task} animFrame={animFrame} dependencies={dependencies} dependents={dependents} />;
+        const taskStream = taskStreams?.get(entityId as TaskId);
+        return (
+          <TaskDetail
+            task={task}
+            animFrame={animFrame}
+            dependencies={dependencies}
+            dependents={dependents}
+            stream={taskStream}
+            outputVisible={detailOutputVisible}
+            outputAutoTail={detailOutputAutoTail}
+            outputScrollOffset={detailOutputScrollOffset}
+            terminalRows={terminalRows}
+          />
+        );
       }
       case 'schedules': {
         const schedule = data?.schedules.find((s) => s.id === entityId);
@@ -126,6 +155,11 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
             childSelectedTaskId={orchestrationChildSelectedTaskId ?? null}
             currentPage={orchestrationChildPage}
             childrenTotal={orchestrationChildrenTotal}
+            taskStreams={taskStreams}
+            childOutputVisible={detailOutputVisible}
+            childOutputAutoTail={detailOutputAutoTail}
+            childOutputScrollOffset={detailOutputScrollOffset}
+            terminalRows={terminalRows}
           />
         );
       }
