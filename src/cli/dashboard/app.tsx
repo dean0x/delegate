@@ -11,6 +11,7 @@
 
 import { Box, useApp } from 'ink';
 import React, { useCallback, useEffect, useReducer } from 'react';
+import type { TaskId } from '../../core/domain.js';
 import type { OutputRepository, ResourceMonitor } from '../../core/interfaces.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { Footer } from './components/footer.js';
@@ -136,14 +137,15 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
 
   // Resolve the task ID(s) to stream in detail mode (#165).
   // Task detail: the task itself. Orchestration detail: the selected child (if any).
-  const detailStreamTaskId: import('../../core/domain.js').TaskId | null = (() => {
+  function resolveDetailStreamTaskId(): TaskId | null {
     if (view.kind !== 'detail' || !outputRepository) return null;
-    if (view.entityType === 'tasks') return view.entityId as import('../../core/domain.js').TaskId;
+    if (view.entityType === 'tasks') return view.entityId as TaskId;
     if (view.entityType === 'orchestrations' && nav.orchestrationChildSelectedTaskId) {
-      return nav.orchestrationChildSelectedTaskId as import('../../core/domain.js').TaskId;
+      return nav.orchestrationChildSelectedTaskId as TaskId;
     }
     return null;
-  })();
+  }
+  const detailStreamTaskId = resolveDetailStreamTaskId();
 
   // Live output streaming:
   //  - Workspace: always enabled when outputRepository is present
@@ -160,8 +162,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
   // Workspace uses childTaskIds; detail uses a single-element array.
   const streamTaskIds =
     view.kind === 'workspace' ? childTaskIds : detailStreamTaskId !== null ? [detailStreamTaskId] : [];
-  const streamTaskStatuses: ReadonlyMap<import('../../core/domain.js').TaskId, string> =
-    view.kind === 'workspace' ? childTaskStatuses : new Map();
+  const streamTaskStatuses: ReadonlyMap<TaskId, string> = view.kind === 'workspace' ? childTaskStatuses : new Map();
 
   const { streams } = useTaskOutputStream(
     outputRepository ?? ctx.outputRepository,

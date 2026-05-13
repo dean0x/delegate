@@ -273,11 +273,8 @@ export const LoopDetail: React.FC<LoopDetailProps> = React.memo(
     const selectedIteration = iterations !== undefined && iterations.length > 0 ? iterations[selectedIndex] : undefined;
 
     // Convergence trend — only for optimize loops with 2+ scored iterations
-    const showTrend =
-      loop.strategy === 'optimize' &&
-      iterations !== undefined &&
-      iterations.filter((i) => i.score !== undefined && i.status !== 'progress').length >= 2;
-
+    const scoredIterations = iterations?.filter((i) => i.score !== undefined && i.status !== 'progress') ?? [];
+    const showTrend = loop.strategy === 'optimize' && scoredIterations.length >= 2;
     const convergenceLine =
       showTrend && iterations !== undefined ? renderConvergenceLine(iterations, loop.evalDirection) : '';
 
