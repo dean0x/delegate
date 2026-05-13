@@ -57,6 +57,8 @@ interface DetailViewProps {
   readonly orchestrationChildPage?: number;
   /** D3 drill-through: total count of children for pagination footer */
   readonly orchestrationChildrenTotal?: number;
+  /** #168: iterationNumber of the highlighted row in loop detail */
+  readonly loopIterationSelectedNumber?: number | null;
 }
 
 const NotFound: React.FC<{ entityType: PanelId; entityId: string }> = ({ entityType, entityId }) => (
@@ -75,13 +77,20 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
     orchestrationChildSelectedTaskId,
     orchestrationChildPage = 0,
     orchestrationChildrenTotal,
+    loopIterationSelectedNumber = null,
   }) => {
     switch (entityType) {
       case 'loops': {
         const loop = data?.loops.find((l) => l.id === entityId);
         if (loop === undefined) return <NotFound entityType={entityType} entityId={entityId} />;
         return (
-          <LoopDetail loop={loop} iterations={data?.iterations} scrollOffset={scrollOffset} animFrame={animFrame} />
+          <LoopDetail
+            loop={loop}
+            iterations={data?.iterations}
+            scrollOffset={scrollOffset}
+            animFrame={animFrame}
+            selectedIterationNumber={loopIterationSelectedNumber}
+          />
         );
       }
       case 'tasks': {

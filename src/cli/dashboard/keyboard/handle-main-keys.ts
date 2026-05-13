@@ -100,10 +100,19 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
     const filteredItems = filter !== null ? allItems.filter((item) => item.status === filter) : allItems;
     const selectedItem = filteredItems[nav.selectedIndices[panel]];
     if (selectedItem === undefined) return true;
-    // Reset scroll offset for detail view so it starts at top, not at the main-list position
+    // Reset scroll offset and output/iteration state when drilling into a detail view.
+    // DECISION (#165/#168): Only reset here (main→detail transition), not in SET_VIEW reducer,
+    // because the reducer fires on ALL view transitions including Esc returns. Resetting here
+    // ensures each new entity opens with a clean output/iteration state while returning to a
+    // detail (Esc from a drilled-through task) preserves the user's previous state.
     setNav((prev) => ({
       ...prev,
       scrollOffsets: { ...prev.scrollOffsets, [panel]: 0 },
+      // Output stream: visible for task detail, hidden for all others (no output concept)
+      detailOutputVisible: panel === 'tasks',
+      detailOutputAutoTail: true,
+      detailOutputScrollOffset: 0,
+      loopIterationSelectedNumber: null,
     }));
     // Cast id back to the branded type for the discriminated ViewState union.
     // The id originates from the domain entity — the cast is safe at this boundary.

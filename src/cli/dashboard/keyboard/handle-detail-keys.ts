@@ -3,12 +3,13 @@
  *
  * Scope: view.kind === 'detail'. Handles Esc/Backspace to return to the
  * previous view, D3 orchestration drill-through child row navigation
- * (↑/↓/Enter/PgUp/PgDn), and scroll for non-orchestration detail content.
+ * (↑/↓/Enter/PgUp/PgDn), loop iteration navigation (↑/↓/Enter),
+ * output stream controls (o/[/]/g/G), and scroll for non-orchestration detail content.
  */
 
 import type { TaskId } from '../../../core/domain.js';
 import { ORCHESTRATION_CHILDREN_PAGE_SIZE } from '../views/orchestration-detail.js';
-import { resolveChildIndex } from './helpers.js';
+import { resolveChildIndex, resolveIterationIndex } from './helpers.js';
 import type { InkKey, KeyHandlerParams } from './types.js';
 
 /**
@@ -21,20 +22,47 @@ import type { InkKey, KeyHandlerParams } from './types.js';
  *  - PgUp/PgDn: navigate pages of children (resets selection to first row on page)
  *  - Esc/Backspace: returns to the view encoded in returnTo (main, workspace, or orchestration)
  *
- * For non-orchestration detail views, ↑/↓ scroll the detail content as before.
+ * Loop iteration navigation (#168):
+ *  - Loop detail: ↑/↓/j/k move iteration selection (by iterationNumber)
+ *  - Enter: drill into selected iteration's task detail (returnTo = loop object)
+ *  - Esc: returns to the view encoded in returnTo (main, workspace, or loop)
+ *
+ * Output controls (#165 — task/orchestration only):
+ *  - o: toggle output stream panel visibility
+ *  - [: scroll output up (enters paused mode)
+ *  - ]: scroll output down
+ *  - g: jump to top of output (paused mode)
+ *  - G: jump to tail (re-engages auto-tail)
+ *
+ * For non-orchestration/non-loop detail views, ↑/↓ scroll the detail content as before.
+ *
+ * Key handler ordering:
+ *  1. Esc/Backspace → return to previous view
+ *  2. Output controls (o/[/]/g/G) → guarded to task/orchestration only
+ *  3. Loop entity type → iteration navigation (↑/↓/Enter)
+ *  4. Orchestration entity type → child navigation (existing D3 pattern)
+ *  5. Generic scroll (↑/↓) → non-orchestration/non-loop detail (schedules, pipelines)
  */
 export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerParams): boolean {
   const { view, nav, setView, setNav, detailContentLength, refreshNow } = params;
   if (view.kind !== 'detail') return false;
 
+  // 1. Esc/Backspace — return to the view that opened this detail
   if (key.escape || key.backspace) {
-    // Return to the view that opened this detail (returnTo defaults to 'main')
     const returnTo = view.returnTo ?? 'main';
     if (typeof returnTo === 'object' && returnTo.kind === 'orchestrations') {
       // D3 drill-through Esc: return to the parent orchestration detail
       setView({
         kind: 'detail',
         entityType: 'orchestrations',
+        entityId: returnTo.entityId,
+        returnTo: returnTo.originalReturnTo,
+      });
+    } else if (typeof returnTo === 'object' && returnTo.kind === 'loops') {
+      // #168: loop drill-through Esc: return to the parent loop detail
+      setView({
+        kind: 'detail',
+        entityType: 'loops',
         entityId: returnTo.entityId,
         returnTo: returnTo.originalReturnTo,
       });
@@ -46,7 +74,86 @@ export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerP
     return true;
   }
 
-  // D3 orchestration detail: child row navigation + drill-through
+  // 2. Output controls — guarded to task/orchestration only (#165)
+  if (view.entityType === 'tasks' || view.entityType === 'orchestrations') {
+    if (input === 'o') {
+      setNav((prev) => ({ ...prev, detailOutputVisible: !prev.detailOutputVisible }));
+      return true;
+    }
+    if (input === '[') {
+      setNav((prev) => ({
+        ...prev,
+        detailOutputScrollOffset: Math.max(0, prev.detailOutputScrollOffset - 1),
+        detailOutputAutoTail: false,
+      }));
+      return true;
+    }
+    if (input === ']') {
+      setNav((prev) => ({
+        ...prev,
+        detailOutputScrollOffset: prev.detailOutputScrollOffset + 1,
+      }));
+      return true;
+    }
+    if (input === 'G') {
+      setNav((prev) => ({ ...prev, detailOutputScrollOffset: 0, detailOutputAutoTail: true }));
+      return true;
+    }
+    if (input === 'g') {
+      setNav((prev) => ({ ...prev, detailOutputScrollOffset: 0, detailOutputAutoTail: false }));
+      return true;
+    }
+  }
+
+  // 3. Loop detail: iteration navigation (#168)
+  if (view.entityType === 'loops') {
+    const iterations = params.dataRef.current?.iterations ?? [];
+
+    if (key.upArrow || input === 'k') {
+      if (iterations.length === 0) return true;
+      setNav((prev) => {
+        const currentIdx = resolveIterationIndex(prev.loopIterationSelectedNumber, iterations);
+        const nextIdx = Math.max(0, currentIdx - 1);
+        return { ...prev, loopIterationSelectedNumber: iterations[nextIdx]?.iterationNumber ?? null };
+      });
+      return true;
+    }
+
+    if (key.downArrow || input === 'j') {
+      if (iterations.length === 0) return true;
+      setNav((prev) => {
+        const currentIdx = resolveIterationIndex(prev.loopIterationSelectedNumber, iterations);
+        const nextIdx = Math.min(iterations.length - 1, currentIdx + 1);
+        return { ...prev, loopIterationSelectedNumber: iterations[nextIdx]?.iterationNumber ?? null };
+      });
+      return true;
+    }
+
+    if (key.return) {
+      // Enter: drill into the selected iteration's task detail
+      if (iterations.length === 0) return true;
+      const selectedIdx = resolveIterationIndex(nav.loopIterationSelectedNumber, iterations);
+      const iter = iterations[selectedIdx];
+      if (!iter || !iter.taskId) return true; // guard: no taskId means nothing to drill into
+      const originalReturnTo: 'main' | 'workspace' = view.returnTo === 'workspace' ? 'workspace' : 'main';
+      setView({
+        kind: 'detail',
+        entityType: 'tasks',
+        entityId: iter.taskId as TaskId,
+        returnTo: {
+          kind: 'loops',
+          entityId: view.entityId,
+          originalReturnTo,
+        },
+      });
+      return true;
+    }
+
+    // Any other key in loop detail is swallowed
+    return true;
+  }
+
+  // 4. D3 orchestration detail: child row navigation + drill-through
   if (view.entityType === 'orchestrations') {
     const children = params.dataRef.current?.orchestrationChildren ?? [];
     const childrenTotal = params.dataRef.current?.orchestrationChildrenTotal;
@@ -55,7 +162,12 @@ export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerP
       if (children.length === 0) return true;
       setNav((prev) => {
         const nextIdx = Math.max(0, resolveChildIndex(prev.orchestrationChildSelectedTaskId, children) - 1);
-        return { ...prev, orchestrationChildSelectedTaskId: children[nextIdx]?.taskId ?? null };
+        return {
+          ...prev,
+          orchestrationChildSelectedTaskId: children[nextIdx]?.taskId ?? null,
+          detailOutputAutoTail: true,
+          detailOutputScrollOffset: 0,
+        };
       });
       return true;
     }
@@ -67,7 +179,12 @@ export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerP
           children.length - 1,
           resolveChildIndex(prev.orchestrationChildSelectedTaskId, children) + 1,
         );
-        return { ...prev, orchestrationChildSelectedTaskId: children[nextIdx]?.taskId ?? null };
+        return {
+          ...prev,
+          orchestrationChildSelectedTaskId: children[nextIdx]?.taskId ?? null,
+          detailOutputAutoTail: true,
+          detailOutputScrollOffset: 0,
+        };
       });
       return true;
     }
@@ -119,7 +236,7 @@ export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerP
     return true;
   }
 
-  // Non-orchestration detail: ↑/↓ scroll the content
+  // 5. Non-orchestration/non-loop detail: ↑/↓ scroll the content
   if (key.upArrow || input === 'k') {
     setNav((prev) => ({
       ...prev,

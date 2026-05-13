@@ -468,6 +468,9 @@ const LoopStatusSchema = z.object({
   historyLimit: z.number().min(1).optional().default(20).describe('Max iterations to return'),
   // DECISION: System prompts can be up to 16KB. Default omission keeps status responses compact.
   includeSystemPrompt: z.boolean().optional().default(false).describe('Include system prompt in response'),
+  // DECISION (#168): evalResponse is omitted by default — raw eval text can be large (up to 16KB).
+  // Callers that need audit data for score analysis must explicitly opt in.
+  includeEvalResponse: z.boolean().optional().default(false).describe('Include raw eval response text per iteration (default: false)'),
 });
 
 const ListLoopsSchema = z.object({
@@ -1356,6 +1359,10 @@ export class MCPAdapter {
                   includeSystemPrompt: {
                     type: 'boolean',
                     description: 'Include system prompt in response (default: false)',
+                  },
+                  includeEvalResponse: {
+                    type: 'boolean',
+                    description: 'Include raw eval response text per iteration (default: false)',
                   },
                 },
                 required: ['loopId'],
@@ -2725,7 +2732,7 @@ export class MCPAdapter {
       };
     }
 
-    const { loopId, includeHistory, historyLimit, includeSystemPrompt } = parseResult.data;
+    const { loopId, includeHistory, historyLimit, includeSystemPrompt, includeEvalResponse } = parseResult.data;
 
     const result = await this.loopService.getLoop(LoopId(loopId), includeHistory, historyLimit);
 
@@ -2744,6 +2751,9 @@ export class MCPAdapter {
             bestScore: loop.bestScore,
             exitCondition: loop.exitCondition,
             evalDirection: loop.evalDirection,
+            evalType: loop.evalType ?? null,
+            judgeAgent: loop.judgeAgent ?? null,
+            judgePrompt: loop.judgePrompt ?? null,
             cooldownMs: loop.cooldownMs,
             freshContext: loop.freshContext,
             promptPreview: truncatePrompt(loop.taskTemplate.prompt, 50),
@@ -2782,6 +2792,7 @@ export class MCPAdapter {
             exitCode: iter.exitCode ?? null,
             errorMessage: iter.errorMessage ?? null,
             evalFeedback: iter.evalFeedback ?? null,
+            ...(includeEvalResponse ? { evalResponse: iter.evalResponse ?? null } : {}),
             gitBranch: iter.gitBranch ?? null,
             gitCommitSha: iter.gitCommitSha ?? null,
             preIterationCommitSha: iter.preIterationCommitSha ?? null,

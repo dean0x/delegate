@@ -225,6 +225,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
           orchestrationChildSelectedTaskId={nav.orchestrationChildSelectedTaskId}
           orchestrationChildPage={nav.orchestrationChildPage}
           orchestrationChildrenTotal={data?.orchestrationChildrenTotal}
+          loopIterationSelectedNumber={nav.loopIterationSelectedNumber}
         />
       );
     }
