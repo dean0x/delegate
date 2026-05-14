@@ -96,9 +96,9 @@ describe('buildStateManagementInstructions', () => {
     expect(result).toContain('START of every iteration');
   });
 
-  it('includes system-evaluates-output note', () => {
+  it('requires state file write before exit (consistent with resilienceSection)', () => {
     const result = buildStateManagementInstructions({ stateFilePath });
-    expect(result).toContain('system evaluates your output');
+    expect(result).toContain('Write updated state BEFORE exiting');
   });
 
   it('includes RESILIENCE section', () => {

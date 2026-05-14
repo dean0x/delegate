@@ -123,9 +123,9 @@ export function buildStateManagementInstructions(params: StateManagementInstruct
 
   return `STATE FILE: ${stateFilePath}
 Read this file at the START of every iteration to understand current progress.
-Optionally update the state file with your progress before exiting each iteration.
-The system evaluates your output to determine completion — you do not need to
-signal completion via the state file.
+Write updated state BEFORE exiting each iteration.
+When the goal is complete, set status: "complete" in the state file.
+If you cannot achieve the goal, set status: "failed" with an explanation.
 
 RESILIENCE:
 - If the state file is missing or corrupted, reconstruct from active tasks
@@ -322,4 +322,27 @@ ${delegationSection}
 ${constraintsSection}`;
 
   return { systemPrompt, userPrompt, operationalContract };
+}
+
+/**
+ * Build the goal-aware eval prompt for the agent evaluator in agent eval mode.
+ *
+ * DECISION: Goal is wrapped in XML-style delimiter tags (<goal>…</goal>) to
+ * prevent prompt injection — a user-supplied goal cannot escape the delimiters
+ * and alter the evaluator's instructions.
+ *
+ * ARCHITECTURE: Extracted from OrchestrationManagerService.createOrchestration()
+ * so all prompt construction lives in this module (SRP).
+ */
+export function buildGoalEvalPrompt(goal: string): string {
+  return `You are evaluating whether an orchestration goal has been achieved.
+
+<goal>${goal}</goal>
+
+Review the orchestrator's output from this iteration. Consider:
+- Did the orchestrator indicate the goal is complete?
+- Are there remaining tasks or unresolved issues mentioned?
+- Does the output suggest all planned work has been done?
+
+PASS if the goal appears achieved. FAIL if work remains.`;
 }

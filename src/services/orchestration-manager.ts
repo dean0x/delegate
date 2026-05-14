@@ -33,7 +33,7 @@ import {
 } from '../core/orchestrator-state.js';
 import { err, ok, type Result } from '../core/result.js';
 import { validatePath } from '../utils/validation.js';
-import { buildOrchestratorPrompt } from './orchestrator-prompt.js';
+import { buildGoalEvalPrompt, buildOrchestratorPrompt } from './orchestrator-prompt.js';
 
 export interface OrchestrationManagerServiceDeps {
   readonly eventBus: EventBus;
@@ -229,22 +229,13 @@ export class OrchestrationManagerService implements OrchestrationService {
     const { finalSystemPrompt, finalUserPrompt } = this.buildFinalPrompts(
       request,
       orchestration,
-      '',
+      undefined,
       validatedWorkingDirectory,
       agent,
     );
 
     // Build the goal-aware eval prompt for the agent evaluator.
-    const evalPrompt = `You are evaluating whether an orchestration goal has been achieved.
-
-Goal: "${request.goal}"
-
-Review the orchestrator's output from this iteration. Consider:
-- Did the orchestrator indicate the goal is complete?
-- Are there remaining tasks or unresolved issues mentioned?
-- Does the output suggest all planned work has been done?
-
-PASS if the goal appears achieved. FAIL if work remains.`;
+    const evalPrompt = buildGoalEvalPrompt(request.goal);
 
     const loopResult = await this.loopService.createLoop({
       strategy: LoopStrategy.RETRY,
