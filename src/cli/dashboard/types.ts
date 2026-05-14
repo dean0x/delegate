@@ -35,7 +35,7 @@ import type {
 import type { Liveness } from '../../services/orchestration-liveness.js';
 
 /**
- * Mutation services passed to the dashboard for cancel/delete operations.
+ * Mutation services passed to the dashboard for cancel/delete/pause/resume operations.
  * DECISION (2026-04-10): The dashboard uses full bootstrap (withServices) because
  * manual cancel/delete keybindings need mutation access. Adds ~200-500ms to
  * dashboard startup but acceptable for interactive launch.

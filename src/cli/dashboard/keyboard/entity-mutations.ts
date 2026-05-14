@@ -1,7 +1,7 @@
 /**
- * Unified cancel/delete dispatch for keyboard handlers.
+ * Unified cancel/delete/pause/resume dispatch for keyboard handlers.
  *
- * Extracted to eliminate duplication of entity-kind routing across cancel/delete blocks.
+ * Extracted to eliminate duplication of entity-kind routing across cancel/delete/pause/resume blocks.
  */
 
 import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
@@ -11,7 +11,7 @@ import { TERMINAL_STATUSES } from './constants.js';
 
 /**
  * The entity kind routing key — mirrors ActivityEntry['kind'] but is also used
- * for panel-focused cancel/delete where the kind is derived from PanelId.
+ * for panel-focused cancel/delete/pause/resume where the kind is derived from PanelId.
  */
 export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline';
 
@@ -123,6 +123,7 @@ export async function pauseOrResumeEntity(
   } catch {
     // Best-effort: service errors are logged internally by each service.
     // Swallowing here prevents unhandled rejection from crashing the dashboard TUI.
+    // The next 1Hz poll will refresh the UI with accurate state regardless.
   }
 }
 

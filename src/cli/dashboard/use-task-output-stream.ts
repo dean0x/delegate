@@ -4,7 +4,7 @@
  * Pattern: Custom React hook + exported pure helpers for unit-testability
  *
  * Key exports:
- *  - useTaskOutputStream: React hook (used by App/WorkspaceView)
+ *  - useTaskOutputStream: React hook (used by App)
  *  - buildStreamState: Pure function (exported for testing)
  *  - stripAnsi: Pure function (exported for testing)
  *  - mergeOutputLines: Pure function (exported for testing)
