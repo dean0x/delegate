@@ -181,7 +181,7 @@ function handleLoopNavigation(input: string, key: InkKey, params: KeyHandlerPara
 }
 
 /**
- * 4. D3 orchestration detail: child row navigation + drill-through.
+ * 5. D3 orchestration detail: child row navigation + drill-through.
  *
  *  - ↑/k: move child selection up
  *  - ↓/j: move child selection down
@@ -275,7 +275,7 @@ function handleOrchestrationNavigation(input: string, key: InkKey, params: KeyHa
 }
 
 /**
- * 5. Generic scroll for non-orchestration/non-loop detail views (schedules, pipelines).
+ * 6. Generic scroll for non-orchestration/non-loop detail views (schedules, pipelines).
  *
  *  - ↑/k: scroll detail content up
  *  - ↓/j: scroll detail content down (clamped to detailContentLength - 1)
@@ -342,9 +342,10 @@ function handleGenericScroll(input: string, key: InkKey, params: KeyHandlerParam
  * Key handler ordering:
  *  1. Esc/Backspace → return to previous view
  *  2. Output controls (o/[/]/g/G) → guarded to task/orchestration only
- *  3. Loop entity type → iteration navigation (↑/↓/Enter)
- *  4. Orchestration entity type → child navigation (existing D3 pattern)
- *  5. Generic scroll (↑/↓) → non-orchestration/non-loop detail (schedules, pipelines)
+ *  3. Pause/resume (p) → schedules and loops only
+ *  4. Loop entity type → iteration navigation (↑/↓/Enter)
+ *  5. Orchestration entity type → child navigation (existing D3 pattern)
+ *  6. Generic scroll (↑/↓) → non-orchestration/non-loop detail (schedules, pipelines)
  */
 export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerParams): boolean {
   if (params.view.kind !== 'detail') return false;
