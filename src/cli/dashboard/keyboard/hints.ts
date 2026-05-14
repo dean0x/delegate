@@ -17,8 +17,7 @@ import type { PanelId } from '../types.js';
 export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string {
   const base = 'Tab: panel · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
   if (hasMutations) {
-    const pauseHint =
-      focusedPanel === 'schedules' || focusedPanel === 'loops' ? ' · p pause/resume' : '';
+    const pauseHint = focusedPanel === 'schedules' || focusedPanel === 'loops' ? ' · p pause/resume' : '';
     return `${base} · c cancel · d delete (terminal)${pauseHint}`;
   }
   return base;
