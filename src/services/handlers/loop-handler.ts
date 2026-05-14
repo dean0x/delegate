@@ -1698,13 +1698,23 @@ export class LoopHandler extends BaseEventHandler {
 
     let gitContext = sections.join('\n\n');
 
-    // Cap at MAX_GIT_CONTEXT_BYTES to prevent prompt bloat
+    // Cap at MAX_GIT_CONTEXT_BYTES to prevent prompt bloat.
+    // Uses binary search on lines array for O(n log n) instead of O(n^2).
     if (Buffer.byteLength(gitContext) > MAX_GIT_CONTEXT_BYTES) {
       const lines = gitContext.split('\n');
-      while (lines.length > 0 && Buffer.byteLength(lines.join('\n')) > MAX_GIT_CONTEXT_BYTES) {
-        lines.pop();
+      let lo = 0;
+      let hi = lines.length;
+      // Binary search for the maximum number of lines that fit within the byte budget.
+      // Bounded: at most ceil(log2(lines.length)) iterations.
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >>> 1;
+        if (Buffer.byteLength(lines.slice(0, mid).join('\n')) <= MAX_GIT_CONTEXT_BYTES) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
+        }
       }
-      gitContext = lines.join('\n');
+      gitContext = lines.slice(0, lo).join('\n');
     }
 
     return `${gitContext}\n\n---\n\n${prompt}`;
