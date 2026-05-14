@@ -123,5 +123,43 @@ describe('Footer', () => {
       expect(lastFrame()).not.toContain('1-4 jump');
       expect(lastFrame()).not.toContain('Tab cycle');
     });
+
+    it('contains "p pause" for active schedule in detail view', () => {
+      const { lastFrame } = render(<Footer viewKind="detail" entityType="schedules" entityStatus="active" />);
+      const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
+      expect(frame).toContain('p pause');
+    });
+
+    it('contains "p resume" for paused schedule in detail view', () => {
+      const { lastFrame } = render(<Footer viewKind="detail" entityType="schedules" entityStatus="paused" />);
+      const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
+      expect(frame).toContain('p resume');
+    });
+
+    it('contains "p pause" for running loop in detail view', () => {
+      const { lastFrame } = render(<Footer viewKind="detail" entityType="loops" entityStatus="running" />);
+      const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
+      expect(frame).toContain('p pause');
+    });
+
+    it('contains "p resume" for paused loop in detail view', () => {
+      const { lastFrame } = render(<Footer viewKind="detail" entityType="loops" entityStatus="paused" />);
+      const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
+      expect(frame).toContain('p resume');
+    });
+
+    it('does NOT contain "p pause" or "p resume" for task in detail view', () => {
+      const { lastFrame } = render(<Footer viewKind="detail" entityType="tasks" entityStatus="running" />);
+      const frame = lastFrame() ?? '';
+      expect(frame).not.toContain('p pause');
+      expect(frame).not.toContain('p resume');
+    });
+
+    it('does NOT contain "p pause" or "p resume" when no entityType provided in detail view', () => {
+      const { lastFrame } = render(<Footer viewKind="detail" />);
+      const frame = lastFrame() ?? '';
+      expect(frame).not.toContain('p pause');
+      expect(frame).not.toContain('p resume');
+    });
   });
 });
