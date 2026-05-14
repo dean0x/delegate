@@ -1224,9 +1224,7 @@ export class LoopHandler extends BaseEventHandler {
     // consistently-failing loop would be marked COMPLETED instead of FAILED.
     const isGitLoop = !!(loop.gitBranch || loop.gitStartCommitSha);
     if (isGitLoop) {
-      const successful = all.filter(
-        (it) => it.status === 'pass' || it.status === 'keep' || it.status === 'progress',
-      );
+      const successful = all.filter((it) => it.status === 'pass' || it.status === 'keep' || it.status === 'progress');
       const withGitTracking = successful
         .slice(0, CONVERGENCE_MIN_ITERATIONS)
         .filter((it) => it.preIterationCommitSha !== undefined && it.preIterationCommitSha !== null);
