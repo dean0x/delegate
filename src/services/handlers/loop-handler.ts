@@ -1188,6 +1188,82 @@ export class LoopHandler extends BaseEventHandler {
       return true;
     }
 
+    // Convergence detection: check if the loop has stopped making meaningful progress
+    if (await this.checkConvergence(loop)) return true;
+
+    return false;
+  }
+
+  /**
+   * Check whether the loop has converged (stopped making progress).
+   *
+   * Two convergence signals:
+   * 1. Git diff convergence: last CONVERGENCE_MIN_ITERATIONS completed iterations all produced
+   *    fewer than CONVERGENCE_MAX_CHANGED_LINES changed lines in their git diff summaries.
+   * 2. Score plateau (OPTIMIZE only): last CONVERGENCE_MIN_ITERATIONS completed iterations
+   *    all scored identically — the optimizer is stuck.
+   *
+   * DECISION: Uses CONVERGENCE_WINDOW to query iterations and CONVERGENCE_MIN_ITERATIONS
+   * as the minimum required sample. This avoids premature termination on sparse history.
+   *
+   * @returns true if convergence was detected (and loop was completed), false otherwise
+   */
+  private async checkConvergence(loop: Loop): Promise<boolean> {
+    const iterationsResult = await this.loopRepo.getIterations(loop.id, CONVERGENCE_WINDOW, 0);
+    if (!iterationsResult.ok) return false;
+
+    // Only consider non-running, non-cancelled completed iterations
+    const completed = iterationsResult.value.filter((it) => it.status !== 'running' && it.status !== 'cancelled');
+    if (completed.length < CONVERGENCE_MIN_ITERATIONS) return false;
+
+    // Take the most recent CONVERGENCE_MIN_ITERATIONS completed iterations
+    const recent = completed.slice(0, CONVERGENCE_MIN_ITERATIONS);
+
+    // Signal 1: Git diff convergence — all recent iterations produced fewer than threshold changed lines.
+    // Only applies to git-enabled loops (gitBranch or gitStartCommitSha set). In that case, each
+    // iteration with preIterationCommitSha set participated in git tracking; missing gitDiffSummary
+    // means the diff captured nothing (0 changed lines), which still counts toward convergence.
+    // Skips entirely for non-git loops (no preIterationCommitSha on any iteration).
+    const isGitLoop = !!(loop.gitBranch || loop.gitStartCommitSha);
+    if (isGitLoop) {
+      const iterationsWithGitTracking = recent.filter(
+        (it) => it.preIterationCommitSha !== undefined && it.preIterationCommitSha !== null,
+      );
+      if (iterationsWithGitTracking.length >= CONVERGENCE_MIN_ITERATIONS) {
+        const changedLines = iterationsWithGitTracking.map((it) => parseGitDiffChangedLines(it.gitDiffSummary));
+        if (changedLines.every((lines) => lines < CONVERGENCE_MAX_CHANGED_LINES)) {
+          const iterNums = iterationsWithGitTracking.map((it) => it.iterationNumber);
+          const reason = `Convergence detected: iterations ${iterNums[iterNums.length - 1]}-${iterNums[0]} produced ${[...changedLines].reverse().join(', ')} changed lines (threshold: ${CONVERGENCE_MAX_CHANGED_LINES})`;
+          this.logger.info('Git diff convergence detected', {
+            loopId: loop.id,
+            iterationNumbers: iterNums,
+            changedLines,
+          });
+          await this.completeLoop(loop, LoopStatus.COMPLETED, reason);
+          return true;
+        }
+      }
+    }
+
+    // Signal 2: Score plateau (OPTIMIZE only) — all recent iterations scored identically
+    if (loop.strategy === LoopStrategy.OPTIMIZE) {
+      const scores = recent.map((it) => it.score).filter((s): s is number => s !== undefined);
+      if (scores.length >= CONVERGENCE_MIN_ITERATIONS) {
+        const allSame = scores.every((s) => s === scores[0]);
+        if (allSame) {
+          const iterNums = recent.map((it) => it.iterationNumber);
+          const reason = `Convergence detected: iterations ${iterNums[iterNums.length - 1]}-${iterNums[0]} all scored ${scores[0]} (plateau)`;
+          this.logger.info('Score plateau convergence detected', {
+            loopId: loop.id,
+            iterationNumbers: iterNums,
+            score: scores[0],
+          });
+          await this.completeLoop(loop, LoopStatus.COMPLETED, reason);
+          return true;
+        }
+      }
+    }
+
     return false;
   }
 

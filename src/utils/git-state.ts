@@ -285,11 +285,10 @@ export async function getRecentGitLog(
   } catch (error) {
     if (isTimeoutError(error)) {
       return err(
-        new AutobeatError(
-          ErrorCode.SYSTEM_ERROR,
-          `Failed to get recent git log: command timed out`,
-          { workingDirectory, count },
-        ),
+        new AutobeatError(ErrorCode.SYSTEM_ERROR, `Failed to get recent git log: command timed out`, {
+          workingDirectory,
+          count,
+        }),
       );
     }
     // Not a git repo or other non-timeout error — return null (not an error)
@@ -312,11 +311,9 @@ export async function getRecentGitDiffStat(
 ): Promise<Result<string | null, AutobeatError>> {
   if (!Number.isInteger(commitCount) || commitCount <= 0) {
     return err(
-      new AutobeatError(
-        ErrorCode.INVALID_INPUT,
-        `commitCount must be a positive integer, got: ${commitCount}`,
-        { commitCount },
-      ),
+      new AutobeatError(ErrorCode.INVALID_INPUT, `commitCount must be a positive integer, got: ${commitCount}`, {
+        commitCount,
+      }),
     );
   }
   try {
@@ -330,11 +327,10 @@ export async function getRecentGitDiffStat(
   } catch (error) {
     if (isTimeoutError(error)) {
       return err(
-        new AutobeatError(
-          ErrorCode.SYSTEM_ERROR,
-          `Failed to get recent git diff stat: command timed out`,
-          { workingDirectory, commitCount },
-        ),
+        new AutobeatError(ErrorCode.SYSTEM_ERROR, `Failed to get recent git diff stat: command timed out`, {
+          workingDirectory,
+          commitCount,
+        }),
       );
     }
     // Not a git repo, not enough commits, or other non-timeout error — return null

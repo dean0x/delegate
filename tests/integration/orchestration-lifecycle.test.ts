@@ -15,7 +15,6 @@ vi.mock('../../src/utils/git-state.js', () => ({
 
 import { existsSync, unlinkSync } from 'fs';
 import { LoopId, LoopStatus, OrchestratorId, OrchestratorStatus, updateLoop } from '../../src/core/domain.js';
-import { readStateFile } from '../../src/core/orchestrator-state.js';
 import { Database } from '../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../src/implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from '../../src/implementations/orchestration-repository.js';
@@ -94,8 +93,8 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
     db.close();
   });
 
-  describe('Create orchestration -> verify loop + state file', () => {
-    it('should create orchestration with associated loop and state file', async () => {
+  describe('Create orchestration -> verify loop + agent eval mode', () => {
+    it('should create orchestration with associated loop using agent eval mode (no state file)', async () => {
       const result = await orchService.createOrchestration({
         goal: 'Build a complete REST API',
         maxWorkers: 3,
@@ -113,21 +112,19 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
       expect(orch.maxWorkers).toBe(3);
       expect(orch.maxDepth).toBe(2);
 
-      // Verify state file was created
-      expect(existsSync(orch.stateFilePath)).toBe(true);
-      const stateResult = readStateFile(orch.stateFilePath);
-      expect(stateResult.ok).toBe(true);
-      if (!stateResult.ok) return;
-      expect(stateResult.value.goal).toBe('Build a complete REST API');
-      expect(stateResult.value.status).toBe('planning');
+      // Agent eval mode: no state file is created
+      expect(orch.stateFilePath).toBe('');
+      expect(existsSync(orch.stateFilePath)).toBe(false);
 
-      // Verify loop was created
+      // Verify loop was created with agent eval mode
       const loopResult = await loopRepo.findById(orch.loopId!);
       expect(loopResult.ok).toBe(true);
       if (!loopResult.ok) return;
       expect(loopResult.value).not.toBeNull();
       expect(loopResult.value?.freshContext).toBe(true);
       expect(loopResult.value?.maxConsecutiveFailures).toBe(5);
+      expect(loopResult.value?.evalMode).toBe('agent');
+      expect(loopResult.value?.evalPrompt).toContain('Build a complete REST API');
 
       // Verify events
       const orchEvents = eventBus.getEmittedEvents('OrchestrationCreated');
@@ -177,9 +174,8 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
       if (!loopResult.ok) return;
       expect(loopResult.value).not.toBeNull();
 
-      // State file should exist
-      expect(existsSync(orch.stateFilePath)).toBe(true);
-      if (orch.stateFilePath) createdStateFiles.push(orch.stateFilePath);
+      // Agent eval mode: no state file is created
+      expect(orch.stateFilePath).toBe('');
     });
 
     it('loop creation fails: orch row marked FAILED, state file removed', async () => {

@@ -18,9 +18,17 @@ vi.mock('../../../../src/utils/git-state.js', () => ({
   resetToCommit: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
   getCurrentCommitSha: vi.fn().mockResolvedValue({ ok: true, value: 'def4567890abcdef1234567890abcdef1234567890' }),
   createAndCheckoutBranch: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
-  captureGitDiff: vi.fn().mockResolvedValue({ ok: true, value: ' src/main.ts | 5 +++--\n 1 file changed' }),
+  // Default returns significant changes (> CONVERGENCE_MAX_CHANGED_LINES=10) so existing tests
+  // do not accidentally trigger convergence detection. Tests that need convergence
+  // override this mock to return low-change diffs.
+  captureGitDiff: vi.fn().mockResolvedValue({
+    ok: true,
+    value: ' src/main.ts | 50 ++++++++++----\n 1 file changed, 35 insertions(+), 15 deletions(-)',
+  }),
   getRecentGitLog: vi.fn().mockResolvedValue({ ok: true, value: 'abc1234 feat: add auth\ndef5678 fix: login bug' }),
-  getRecentGitDiffStat: vi.fn().mockResolvedValue({ ok: true, value: ' src/auth.ts | 5 +++++\n 1 file changed, 5 insertions(+)' }),
+  getRecentGitDiffStat: vi
+    .fn()
+    .mockResolvedValue({ ok: true, value: ' src/auth.ts | 5 +++++\n 1 file changed, 5 insertions(+)' }),
 }));
 
 import type { Loop, LoopIteration } from '../../../../src/core/domain.js';
@@ -38,8 +46,9 @@ import type { ExitConditionEvaluator } from '../../../../src/core/interfaces.js'
 import { Database } from '../../../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../../../src/implementations/loop-repository.js';
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository.js';
-import { LoopHandler } from '../../../../src/services/handlers/loop-handler.js';
+import { LoopHandler, parseGitDiffChangedLines } from '../../../../src/services/handlers/loop-handler.js';
 import {
+  captureGitDiff,
   commitAllChanges,
   createAndCheckoutBranch,
   getCurrentCommitSha,
@@ -47,7 +56,6 @@ import {
   getRecentGitLog,
   resetToCommit,
 } from '../../../../src/utils/git-state.js';
-import { parseGitDiffChangedLines } from '../../../../src/services/handlers/loop-handler.js';
 import { createTestConfiguration } from '../../../fixtures/factories.js';
 import { TestLogger } from '../../../fixtures/test-doubles.js';
 import { flushEventLoop } from '../../../utils/event-helpers.js';
@@ -2415,7 +2423,8 @@ describe('LoopHandler - Behavioral Tests', () => {
     });
 
     it('handles multi-line diff stat — extracts from last line', () => {
-      const multiLine = ' src/auth.ts | 10 ++++++----\n src/user.ts | 5 +++++\n 2 files changed, 12 insertions(+), 3 deletions(-)';
+      const multiLine =
+        ' src/auth.ts | 10 ++++++----\n src/user.ts | 5 +++++\n 2 files changed, 12 insertions(+), 3 deletions(-)';
       expect(parseGitDiffChangedLines(multiLine)).toBe(15);
     });
 
@@ -2583,6 +2592,162 @@ describe('LoopHandler - Behavioral Tests', () => {
       if (!task2) return;
       expect(task2.prompt).not.toContain('Iteration');
       expect(task2.prompt).toContain('Run the tests');
+    });
+  });
+
+  describe('Convergence detection', () => {
+    beforeEach(() => {
+      // Reset captureGitDiff to the default high-change mock between convergence tests
+      vi.mocked(captureGitDiff).mockResolvedValue({
+        ok: true,
+        value: ' src/main.ts | 50 ++++++++++----\n 1 file changed, 35 insertions(+), 15 deletions(-)',
+      });
+    });
+
+    it('should complete loop when 3 consecutive iterations have zero-change git diffs', async () => {
+      // Override captureGitDiff to return zero-change diff (< CONVERGENCE_MAX_CHANGED_LINES=10)
+      vi.mocked(captureGitDiff).mockResolvedValue({ ok: true, value: null }); // null = no diff summary
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10, // High so consecutive failures don't trigger first
+        gitBranch: 'feat/convergence-test', // Enable git tracking so preIterationCommitSha is set
+      });
+
+      // Run 3 failing iterations — each has null gitDiffSummary (0 changed lines)
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // After 3 iterations with zero-change diffs, convergence should be detected
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.COMPLETED);
+    });
+
+    it('should NOT converge when iterations have meaningful changes (> 10 lines each)', async () => {
+      // Default mock returns 50 changed lines — no convergence
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+        gitBranch: 'feat/convergence-test', // Enable git tracking so convergence signal runs
+      });
+
+      // Run 3 failing iterations with significant changes
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Loop should still be running (no convergence with big diffs)
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+    });
+
+    it('should NOT converge with fewer than 3 completed iterations', async () => {
+      vi.mocked(captureGitDiff).mockResolvedValue({ ok: true, value: null }); // zero-change
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+        gitBranch: 'feat/convergence-test', // Enable git tracking so convergence signal is active
+      });
+
+      // Only 2 iterations
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // With only 2 iterations, convergence cannot be triggered (min 3)
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+    });
+
+    it('should complete OPTIMIZE loop when last 3 iterations have identical scores (plateau)', async () => {
+      // All iterations score 75 — plateau
+      mockEvaluator.evaluate.mockResolvedValue({ passed: true, score: 75, exitCode: 0 });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.OPTIMIZE,
+        evalDirection: OptimizeDirection.MAXIMIZE,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+      });
+
+      // Run 3 iterations all scoring 75
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // After 3 identical scores, score plateau convergence should fire
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.COMPLETED);
+    });
+
+    it('should NOT plateau when OPTIMIZE scores differ', async () => {
+      // Scores change each iteration — no plateau
+      let callCount = 0;
+      const scores = [50, 75, 85];
+      mockEvaluator.evaluate.mockImplementation(() => {
+        const score = scores[callCount++ % scores.length];
+        return Promise.resolve({ passed: true, score, exitCode: 0 });
+      });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.OPTIMIZE,
+        evalDirection: OptimizeDirection.MAXIMIZE,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+      });
+
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Different scores — loop still running
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
     });
   });
 });
