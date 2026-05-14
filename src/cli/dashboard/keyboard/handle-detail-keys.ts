@@ -111,12 +111,12 @@ function handlePauseResume(input: string, params: KeyHandlerParams): boolean {
   if (view.entityType === 'schedules') {
     const schedule = dataRef.current?.schedules.find((s) => s.id === view.entityId);
     if (schedule) {
-      void pauseOrResumeEntity('schedule', schedule.id, schedule.status, mutations, refreshNow);
+      void pauseOrResumeEntity('schedule', view.entityId, schedule.status, mutations, refreshNow);
     }
   } else if (view.entityType === 'loops') {
     const loop = dataRef.current?.loops.find((l) => l.id === view.entityId);
     if (loop) {
-      void pauseOrResumeEntity('loop', loop.id, loop.status, mutations, refreshNow);
+      void pauseOrResumeEntity('loop', view.entityId, loop.status, mutations, refreshNow);
     }
   }
   return true;
