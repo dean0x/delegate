@@ -5,7 +5,7 @@
  */
 
 import { Box, useApp } from 'ink';
-import React, { useCallback, useEffect, useReducer } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer } from 'react';
 import type { TaskId } from '../../core/domain.js';
 import type { OutputRepository, ResourceMonitor } from '../../core/interfaces.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
@@ -144,6 +144,19 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
     entityBrowserViewportHeight: Math.max(4, metricsLayout.bottomRowHeight - 4),
   });
 
+  // Resolve the status of the entity currently shown in detail view.
+  // Used by Footer to select the correct pause vs resume hint.
+  const detailEntityStatus = useMemo(() => {
+    if (view.kind !== 'detail') return undefined;
+    if (view.entityType === 'schedules') {
+      return data?.schedules.find((s) => s.id === view.entityId)?.status;
+    }
+    if (view.entityType === 'loops') {
+      return data?.loops.find((l) => l.id === view.entityId)?.status;
+    }
+    return undefined;
+  }, [view, data?.schedules, data?.loops]);
+
   // View dispatcher
   const renderView = (): React.ReactNode => {
     if (view.kind === 'main') {
@@ -201,15 +214,8 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
         viewKind={view.kind}
         hasMutations={mutations !== undefined}
         entityType={view.kind === 'detail' ? view.entityType : undefined}
-        entityStatus={
-          view.kind === 'detail'
-            ? view.entityType === 'schedules'
-              ? data?.schedules.find((s) => s.id === view.entityId)?.status
-              : view.entityType === 'loops'
-                ? data?.loops.find((l) => l.id === view.entityId)?.status
-                : undefined
-            : undefined
-        }
+        entityStatus={detailEntityStatus}
+        focusedPanel={view.kind === 'main' ? nav.focusedPanel : undefined}
       />
     </Box>
   );

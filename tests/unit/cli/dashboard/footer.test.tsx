@@ -75,6 +75,36 @@ describe('Footer', () => {
       const { lastFrame } = render(<Footer viewKind="main" hasMutations />);
       expect(lastFrame()).not.toContain('Tab cycle');
     });
+
+    it('does NOT contain "p pause/resume" when focusedPanel is tasks (not pauseable)', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="tasks" />);
+      expect(lastFrame()).not.toContain('p pause/resume');
+    });
+
+    it('does NOT contain "p pause/resume" when focusedPanel is orchestrations (not pauseable)', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="orchestrations" />);
+      expect(lastFrame()).not.toContain('p pause/resume');
+    });
+
+    it('does NOT contain "p pause/resume" when focusedPanel is pipelines (not pauseable)', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="pipelines" />);
+      expect(lastFrame()).not.toContain('p pause/resume');
+    });
+
+    it('contains "p pause/resume" when focusedPanel is schedules', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="schedules" />);
+      expect(lastFrame()).toContain('p pause/resume');
+    });
+
+    it('contains "p pause/resume" when focusedPanel is loops', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="loops" />);
+      expect(lastFrame()).toContain('p pause/resume');
+    });
+
+    it('does NOT contain "p pause/resume" when focusedPanel is undefined', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations />);
+      expect(lastFrame()).not.toContain('p pause/resume');
+    });
   });
 
   describe('viewKind="detail"', () => {

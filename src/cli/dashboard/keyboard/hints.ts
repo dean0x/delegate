@@ -6,14 +6,20 @@
  * any keyboard refactor only needs to update this one file.
  */
 
+import type { PanelId } from '../types.js';
+
 /**
  * Return the footer hint string for the main panel view.
  * Includes panel-jump hint (1-5) and optionally c/d/p mutation hints.
+ * The pause/resume hint is only shown when the focused panel supports it
+ * (schedules and loops); p is a no-op for tasks, orchestrations, and pipelines.
  */
-export function mainHints(hasMutations: boolean): string {
+export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string {
   const base = 'Tab: panel · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
   if (hasMutations) {
-    return `${base} · c cancel · d delete (terminal) · p pause/resume`;
+    const pauseHint =
+      focusedPanel === 'schedules' || focusedPanel === 'loops' ? ' · p pause/resume' : '';
+    return `${base} · c cancel · d delete (terminal)${pauseHint}`;
   }
   return base;
 }
@@ -22,15 +28,16 @@ export function mainHints(hasMutations: boolean): string {
  * Return the footer hint string for the detail view.
  * Output controls (o/[/]/g/G) apply to task and orchestration detail only.
  * Pause/resume hint is conditional on entity type and status.
+ * entityStatus values are compared directly — ScheduleStatus and LoopStatus
+ * are already lowercase ('active', 'running', 'paused').
  */
-export function detailHints(entityType?: string, entityStatus?: string): string {
+export function detailHints(entityType?: PanelId, entityStatus?: string): string {
   const base = 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
   if (entityType === 'schedules' || entityType === 'loops') {
-    const lower = entityStatus?.toLowerCase();
-    if (lower === 'active' || lower === 'running') {
+    if (entityStatus === 'active' || entityStatus === 'running') {
       return `${base} · p pause`;
     }
-    if (lower === 'paused') {
+    if (entityStatus === 'paused') {
       return `${base} · p resume`;
     }
   }
@@ -43,12 +50,13 @@ export function detailHints(entityType?: string, entityStatus?: string): string 
 export function getHints(
   viewKind: 'main' | 'detail',
   hasMutations: boolean,
-  entityType?: string,
+  entityType?: PanelId,
   entityStatus?: string,
+  focusedPanel?: PanelId,
 ): string {
   switch (viewKind) {
     case 'main':
-      return mainHints(hasMutations);
+      return mainHints(hasMutations, focusedPanel);
     case 'detail':
       return detailHints(entityType, entityStatus);
   }
