@@ -460,6 +460,11 @@ const CreateLoopSchema = z.object({
    * Gemini GEMINI_SYSTEM_MD (combined with base).
    */
   systemPrompt: z.string().optional().describe('System prompt injected into each iteration task agent'),
+  convergenceEnabled: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Enable automatic convergence detection to stop stuck loops (default: true)'),
 });
 
 const LoopStatusSchema = z.object({
@@ -2692,6 +2697,7 @@ export class MCPAdapter {
       judgeAgent: data.judgeAgent as AgentProvider | undefined,
       judgePrompt: data.judgePrompt,
       systemPrompt: data.systemPrompt,
+      convergenceEnabled: data.convergenceEnabled,
     };
 
     const result = await this.loopService.createLoop(request);

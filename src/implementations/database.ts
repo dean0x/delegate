@@ -1057,6 +1057,15 @@ export class Database implements TransactionRunner {
           );
         },
       },
+      {
+        version: 27,
+        description: 'Add convergence_enabled column to loops table for opt-out convergence detection (v1.5.3)',
+        up: (db) => {
+          // Nullable INTEGER with default 1 — existing rows get convergence enabled (backward compat).
+          // convergenceEnabled=false opts a loop out of checkConvergence entirely.
+          db.exec(`ALTER TABLE loops ADD COLUMN convergence_enabled INTEGER NOT NULL DEFAULT 1`);
+        },
+      },
     ];
   }
 

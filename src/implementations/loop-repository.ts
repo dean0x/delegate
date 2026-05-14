@@ -68,6 +68,8 @@ const LoopRowSchema = z.object({
   eval_type: z.enum(['feedforward', 'judge', 'schema']).nullable().optional(),
   judge_agent: z.enum(AGENT_PROVIDERS_TUPLE).nullable().optional(),
   judge_prompt: z.string().nullable().optional(),
+  // Convergence opt-out (v1.5.3) — added by migration v27; defaults to 1 (enabled) for existing rows.
+  convergence_enabled: z.number().optional(), // SQLite boolean: 0 or 1
 });
 
 const LoopIterationRowSchema = z.object({
@@ -229,7 +231,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         current_iteration, best_score, best_iteration_id, best_iteration_commit_sha,
         consecutive_failures, created_at, updated_at, completed_at,
         git_branch, git_base_branch, git_start_commit_sha, schedule_id,
-        eval_type, judge_agent, judge_prompt
+        eval_type, judge_agent, judge_prompt, convergence_enabled
       ) VALUES (
         @id, @strategy, @taskTemplate, @pipelineSteps, @exitCondition,
         @evalDirection, @evalTimeout, @evalMode, @evalPrompt, @workingDirectory, @maxIterations,
@@ -237,7 +239,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         @currentIteration, @bestScore, @bestIterationId, @bestIterationCommitSha,
         @consecutiveFailures, @createdAt, @updatedAt, @completedAt,
         @gitBranch, @gitBaseBranch, @gitStartCommitSha, @scheduleId,
-        @evalType, @judgeAgent, @judgePrompt
+        @evalType, @judgeAgent, @judgePrompt, @convergenceEnabled
       )
     `);
 
@@ -270,7 +272,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         schedule_id = @scheduleId,
         eval_type = @evalType,
         judge_agent = @judgeAgent,
-        judge_prompt = @judgePrompt
+        judge_prompt = @judgePrompt,
+        convergence_enabled = @convergenceEnabled
       WHERE id = @id
     `);
 
@@ -641,6 +644,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       evalType: loop.evalType ?? null,
       judgeAgent: loop.judgeAgent ?? null,
       judgePrompt: loop.judgePrompt ?? null,
+      // Convergence opt-out (v1.5.3)
+      convergenceEnabled: loop.convergenceEnabled ? 1 : 0,
     };
   }
 
@@ -702,6 +707,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       evalType: data.eval_type ?? undefined,
       judgeAgent: data.judge_agent ?? undefined,
       judgePrompt: data.judge_prompt ?? undefined,
+      // convergence_enabled added by migration v27; defaults to 1 (true) when absent or NULL.
+      convergenceEnabled: data.convergence_enabled !== 0,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
       completedAt: data.completed_at ?? undefined,

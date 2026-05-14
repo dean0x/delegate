@@ -62,6 +62,8 @@ const CONVERGENCE_MIN_ITERATIONS = 3;
 const CONVERGENCE_MAX_CHANGED_LINES = 10;
 /** Maximum byte size of git context to prepend to freshContext iteration prompts. */
 const MAX_GIT_CONTEXT_BYTES = 4096;
+/** Tolerance for floating-point score equality in plateau convergence detection. */
+const SCORE_EPSILON = 1e-9;
 
 /**
  * Parse the total changed lines (insertions + deletions) from a git diff --stat summary string.
@@ -1209,6 +1211,8 @@ export class LoopHandler extends BaseEventHandler {
    * @returns true if convergence was detected (and loop was completed), false otherwise
    */
   private async checkConvergence(loop: Loop): Promise<boolean> {
+    if (loop.convergenceEnabled === false) return false;
+
     const iterationsResult = await this.loopRepo.getIterations(loop.id, CONVERGENCE_WINDOW, 0);
     if (!iterationsResult.ok) return false;
 
@@ -1249,7 +1253,7 @@ export class LoopHandler extends BaseEventHandler {
     if (loop.strategy === LoopStrategy.OPTIMIZE) {
       const scores = recent.map((it) => it.score).filter((s): s is number => s !== undefined);
       if (scores.length >= CONVERGENCE_MIN_ITERATIONS) {
-        const allSame = scores.every((s) => s === scores[0]);
+        const allSame = scores.every((s) => Math.abs(s - scores[0]!) < SCORE_EPSILON);
         if (allSame) {
           const iterNums = recent.map((it) => it.iterationNumber);
           const reason = `Convergence detected: iterations ${iterNums[iterNums.length - 1]}-${iterNums[0]} all scored ${scores[0]} (plateau)`;
@@ -1683,8 +1687,10 @@ export class LoopHandler extends BaseEventHandler {
    * original prompt unchanged.
    */
   private async enrichPromptWithGitContext(loop: Loop, iterationNumber: number, prompt: string): Promise<string> {
-    const gitLogResult = await getRecentGitLog(loop.workingDirectory, 15);
-    const gitDiffStatResult = await getRecentGitDiffStat(loop.workingDirectory, 5);
+    const [gitLogResult, gitDiffStatResult] = await Promise.all([
+      getRecentGitLog(loop.workingDirectory, 15),
+      getRecentGitDiffStat(loop.workingDirectory, 5),
+    ]);
 
     const gitLog = gitLogResult.ok ? gitLogResult.value : null;
     const gitDiffStat = gitDiffStatResult.ok ? gitDiffStatResult.value : null;
@@ -1715,6 +1721,9 @@ export class LoopHandler extends BaseEventHandler {
         }
       }
       gitContext = lines.slice(0, lo).join('\n');
+      // Guard: binary search may yield lo=0 when every line exceeds the budget.
+      // In that edge case skip enrichment rather than prepending a bare separator.
+      if (!gitContext) return prompt;
     }
 
     return `${gitContext}\n\n---\n\n${prompt}`;

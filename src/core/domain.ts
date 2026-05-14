@@ -638,6 +638,7 @@ export interface Loop {
   readonly evalType?: EvalType; // Agent eval sub-strategy (default: feedforward)
   readonly judgeAgent?: AgentProvider; // Agent provider for judge mode (judge evalType only)
   readonly judgePrompt?: string; // Custom prompt for judge agent (judge evalType only)
+  readonly convergenceEnabled: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly completedAt?: number;
@@ -699,6 +700,7 @@ export interface LoopCreateRequest {
   readonly judgePrompt?: string; // Custom prompt for judge agent (judge evalType only)
   // System prompt override: injected into iteration task agent via per-agent mechanism
   readonly systemPrompt?: string;
+  readonly convergenceEnabled?: boolean;
 }
 
 /**
@@ -740,6 +742,7 @@ export const createLoop = (request: LoopCreateRequest, workingDirectory: string,
     evalType: request.evalType,
     judgeAgent: request.judgeAgent,
     judgePrompt: request.judgePrompt,
+    convergenceEnabled: request.convergenceEnabled ?? true,
     createdAt: now,
     updatedAt: now,
   });

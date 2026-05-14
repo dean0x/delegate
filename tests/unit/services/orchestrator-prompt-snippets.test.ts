@@ -81,8 +81,7 @@ describe('buildStateManagementInstructions', () => {
   });
 
   it('returns empty string when stateFilePath is undefined (optional)', () => {
-    // TypeScript: stateFilePath is optional after the change
-    const result = buildStateManagementInstructions({ stateFilePath: undefined as unknown as string });
+    const result = buildStateManagementInstructions({ stateFilePath: undefined });
     expect(result).toBe('');
   });
 

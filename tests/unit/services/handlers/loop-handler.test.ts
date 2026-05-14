@@ -2830,5 +2830,37 @@ describe('LoopHandler - Behavioral Tests', () => {
       const updatedLoop = await getLoop(loop.id);
       expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
     });
+
+    it('should NOT converge when convergenceEnabled=false even with zero-change git diffs', async () => {
+      // Zero-change diffs that would normally trigger convergence after 3 iterations
+      vi.mocked(captureGitDiff).mockResolvedValue({ ok: true, value: null });
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      // Git loop with convergence explicitly disabled
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+        gitBranch: 'feat/convergence-test', // git tracking active
+        convergenceEnabled: false, // opt-out
+      });
+
+      // Run 3 iterations with zero-change diffs — convergence would normally fire here
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // convergenceEnabled=false: checkConvergence returns false immediately, loop stays RUNNING
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+    });
   });
 });
