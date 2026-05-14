@@ -31,8 +31,7 @@ export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string
  * Pause/resume hint is conditional on entity type and status.
  */
 export function detailHints(entityType?: PanelId, entityStatus?: string): string {
-  const baseWithOutput =
-    'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
+  const baseWithOutput = 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
   const baseNoOutput = 'Esc back · ↑↓ select · Enter detail · r refresh · q quit';
 
   if (entityType === 'schedules' || entityType === 'loops') {
