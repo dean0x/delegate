@@ -152,13 +152,13 @@ describe('getHints()', () => {
   });
 
   it('routes to detail hints by viewKind', () => {
-    expect(getHints('detail', false, 'schedules', 'active')).toContain('p pause');
+    expect(getHints('detail', true, 'schedules', 'active')).toContain('p pause');
     expect(getHints('detail', false)).toContain('Esc back');
   });
 
-  it('ignores hasMutations in detail view — hints are driven by entityType/entityStatus', () => {
-    const withMutations = getHints('detail', true, 'tasks', 'running');
-    const withoutMutations = getHints('detail', false, 'tasks', 'running');
-    expect(withMutations).toEqual(withoutMutations);
+  it('suppresses pause/resume hints in read-only detail view', () => {
+    expect(getHints('detail', false, 'schedules', 'active')).not.toContain('p pause');
+    expect(getHints('detail', false, 'loops', 'running')).not.toContain('p pause');
+    expect(getHints('detail', false, 'schedules', 'paused')).not.toContain('p resume');
   });
 });

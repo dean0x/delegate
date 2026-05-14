@@ -99,25 +99,29 @@ describe('Footer', () => {
     });
 
     it('contains "p pause" for active schedule in detail view', () => {
-      const { lastFrame } = render(<Footer viewKind="detail" entityType="schedules" entityStatus="active" />);
+      const { lastFrame } = render(
+        <Footer viewKind="detail" hasMutations entityType="schedules" entityStatus="active" />,
+      );
       const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
       expect(frame).toContain('p pause');
     });
 
     it('contains "p resume" for paused schedule in detail view', () => {
-      const { lastFrame } = render(<Footer viewKind="detail" entityType="schedules" entityStatus="paused" />);
+      const { lastFrame } = render(
+        <Footer viewKind="detail" hasMutations entityType="schedules" entityStatus="paused" />,
+      );
       const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
       expect(frame).toContain('p resume');
     });
 
     it('contains "p pause" for running loop in detail view', () => {
-      const { lastFrame } = render(<Footer viewKind="detail" entityType="loops" entityStatus="running" />);
+      const { lastFrame } = render(<Footer viewKind="detail" hasMutations entityType="loops" entityStatus="running" />);
       const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
       expect(frame).toContain('p pause');
     });
 
     it('contains "p resume" for paused loop in detail view', () => {
-      const { lastFrame } = render(<Footer viewKind="detail" entityType="loops" entityStatus="paused" />);
+      const { lastFrame } = render(<Footer viewKind="detail" hasMutations entityType="loops" entityStatus="paused" />);
       const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
       expect(frame).toContain('p resume');
     });

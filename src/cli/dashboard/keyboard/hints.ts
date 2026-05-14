@@ -30,15 +30,15 @@ export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string
  * schedules and loops have no output stream, so those hints are omitted.
  * Pause/resume hint is conditional on entity type and status.
  */
-export function detailHints(entityType?: PanelId, entityStatus?: string): string {
+export function detailHints(entityType?: PanelId, entityStatus?: string, hasMutations = true): string {
   const baseWithOutput = 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
   const baseNoOutput = 'Esc back · ↑↓ select · Enter detail · r refresh · q quit';
 
   if (entityType === 'schedules' || entityType === 'loops') {
-    if (entityStatus === ScheduleStatus.ACTIVE || entityStatus === LoopStatus.RUNNING) {
+    if (hasMutations && (entityStatus === ScheduleStatus.ACTIVE || entityStatus === LoopStatus.RUNNING)) {
       return `${baseNoOutput} · p pause`;
     }
-    if (entityStatus === ScheduleStatus.PAUSED || entityStatus === LoopStatus.PAUSED) {
+    if (hasMutations && (entityStatus === ScheduleStatus.PAUSED || entityStatus === LoopStatus.PAUSED)) {
       return `${baseNoOutput} · p resume`;
     }
     return baseNoOutput;
@@ -60,6 +60,6 @@ export function getHints(
     case 'main':
       return mainHints(hasMutations, focusedPanel);
     case 'detail':
-      return detailHints(entityType, entityStatus);
+      return detailHints(entityType, entityStatus, hasMutations);
   }
 }
