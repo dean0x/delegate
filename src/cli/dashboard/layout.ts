@@ -2,10 +2,6 @@
  * Dashboard layout computation — pure functions, no React imports
  * ARCHITECTURE: Functional core — deterministic layout math from terminal dimensions
  * Pattern: Pure functions, trivially unit-testable
- *
- * Two exported functions:
- *  - computeMetricsLayout: tile row + panel row height distribution
- *  - computeWorkspaceLayout: nav/grid/panel dimension allocation
  */
 
 // ============================================================================
@@ -20,19 +16,6 @@ export interface MetricsLayout {
   readonly bottomRowHeight: number;
   readonly tileCount: 2 | 3 | 4;
   readonly mode: 'full' | 'narrow' | 'too-small';
-}
-
-export interface WorkspaceLayout {
-  readonly mode: 'nav+grid' | 'grid-only' | 'too-small';
-  readonly navWidth: number;
-  readonly gridCols: 1 | 2 | 3 | 4;
-  readonly maxGridRows: 3 | 4;
-  readonly visibleSlots: number;
-  readonly panelWidth: number;
-  readonly panelHeight: number;
-  readonly outputViewportHeight: number;
-  readonly compactPanel: boolean;
-  readonly displayedGridRows: number;
 }
 
 // ============================================================================
@@ -124,84 +107,4 @@ export function computeDetailOutputLayout(args: { rows: number; metadataHeight: 
   const available = args.rows - args.metadataHeight - chrome;
   if (available < 5) return { outputViewportHeight: 0, tooSmall: true };
   return { outputViewportHeight: available, tooSmall: false };
-}
-
-// ============================================================================
-// computeWorkspaceLayout
-// ============================================================================
-
-/**
- * Compute the workspace view layout from terminal dimensions and child count.
- *
- * Layout structure:
- *   - nav+grid: left navigation panel + task grid
- *   - grid-only: task grid only (no nav — used when columns too narrow for nav)
- *   - too-small: fallback message (columns < 50 or rows < 15)
- *
- * The header (2 rows) and footer (1 row) are subtracted from available grid height.
- */
-export function computeWorkspaceLayout(args: { columns: number; rows: number; childCount: number }): WorkspaceLayout {
-  const { columns, rows, childCount } = args;
-
-  const headerHeight = 2;
-  const footerHeight = 1;
-
-  // Degraded modes — return minimal layout
-  if (columns < 50 || rows < 15) {
-    return {
-      mode: 'too-small',
-      navWidth: 0,
-      gridCols: 1,
-      maxGridRows: 3,
-      visibleSlots: 3,
-      panelWidth: 0,
-      panelHeight: 0,
-      outputViewportHeight: 0,
-      compactPanel: true,
-      displayedGridRows: 1,
-    };
-  }
-
-  const mode: 'nav+grid' | 'grid-only' = columns < 60 ? 'grid-only' : 'nav+grid';
-
-  const navWidth = mode === 'nav+grid' ? clamp(Math.round(columns * 0.2), 20, 32) : 0;
-  const gridWidth = columns - navWidth;
-
-  // Grid columns based on grid width
-  let gridCols: 1 | 2 | 3 | 4;
-  if (gridWidth < 80) {
-    gridCols = 1;
-  } else if (gridWidth < 120) {
-    gridCols = 2;
-  } else if (gridWidth < 160) {
-    gridCols = 3;
-  } else {
-    gridCols = 4;
-  }
-
-  const maxGridRows: 3 | 4 = rows >= 50 ? 4 : 3;
-  const visibleSlots = gridCols * maxGridRows;
-
-  const displayedGridRows = clamp(Math.ceil(Math.max(childCount, 1) / gridCols), 1, maxGridRows);
-
-  // Grid area height = rows minus header/footer
-  const gridAreaHeight = rows - headerHeight - footerHeight;
-
-  const panelWidth = Math.floor(gridWidth / gridCols) - 1;
-  const panelHeight = Math.floor(gridAreaHeight / displayedGridRows) - 1;
-  const outputViewportHeight = panelHeight - 3;
-  const compactPanel = panelWidth < 20 || panelHeight < 6;
-
-  return {
-    mode,
-    navWidth,
-    gridCols,
-    maxGridRows,
-    visibleSlots,
-    panelWidth,
-    panelHeight,
-    outputViewportHeight,
-    compactPanel,
-    displayedGridRows,
-  };
 }

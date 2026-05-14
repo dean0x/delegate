@@ -8,6 +8,7 @@
  */
 
 import { ORCHESTRATION_CHILDREN_PAGE_SIZE } from '../views/orchestration-detail.js';
+import { pauseOrResumeEntity } from './entity-mutations.js';
 import { resolveChildIndex, resolveIterationIndex } from './helpers.js';
 import type { InkKey, KeyHandlerParams } from './types.js';
 
@@ -17,7 +18,7 @@ import type { InkKey, KeyHandlerParams } from './types.js';
  * 1. Esc/Backspace — return to the view that opened this detail.
  *
  * D3 drill-through Esc: return to the parent orchestration or loop detail.
- * Otherwise: return to workspace or main.
+ * Otherwise: return to main.
  */
 function handleEscReturn(key: InkKey, params: KeyHandlerParams): boolean {
   const { view, setView } = params;
@@ -41,8 +42,6 @@ function handleEscReturn(key: InkKey, params: KeyHandlerParams): boolean {
       entityId: returnTo.entityId,
       returnTo: returnTo.originalReturnTo,
     });
-  } else if (returnTo === 'workspace') {
-    setView({ kind: 'workspace' });
   } else {
     setView({ kind: 'main' });
   }
@@ -99,7 +98,32 @@ function handleOutputControls(input: string, params: KeyHandlerParams): boolean 
 }
 
 /**
- * 3. Loop detail: iteration row navigation (#168).
+ * 3. Pause/resume toggle for schedules and loops.
+ *
+ *  - p: pause (active schedule / running loop) or resume (paused schedule / loop)
+ *  - Silently consumed for non-pauseable entity types.
+ */
+function handlePauseResume(input: string, params: KeyHandlerParams): boolean {
+  if (input !== 'p') return false;
+  const { view, mutations, refreshNow, dataRef } = params;
+  if (view.kind !== 'detail' || !mutations) return true;
+
+  if (view.entityType === 'schedules') {
+    const schedule = dataRef.current?.schedules.find((s) => s.id === view.entityId);
+    if (schedule) {
+      void pauseOrResumeEntity('schedule', view.entityId, schedule.status, mutations, refreshNow);
+    }
+  } else if (view.entityType === 'loops') {
+    const loop = dataRef.current?.loops.find((l) => l.id === view.entityId);
+    if (loop) {
+      void pauseOrResumeEntity('loop', view.entityId, loop.status, mutations, refreshNow);
+    }
+  }
+  return true;
+}
+
+/**
+ * 4. Loop detail: iteration row navigation (#168).
  *
  *  - ↑/k: move selection up
  *  - ↓/j: move selection down
@@ -139,7 +163,6 @@ function handleLoopNavigation(input: string, key: InkKey, params: KeyHandlerPara
     const selectedIdx = resolveIterationIndex(nav.loopIterationSelectedNumber, iterations);
     const iter = iterations[selectedIdx];
     if (!iter || !iter.taskId) return true; // guard: no taskId means nothing to drill into
-    const originalReturnTo: 'main' | 'workspace' = view.returnTo === 'workspace' ? 'workspace' : 'main';
     setView({
       kind: 'detail',
       entityType: 'tasks',
@@ -147,7 +170,7 @@ function handleLoopNavigation(input: string, key: InkKey, params: KeyHandlerPara
       returnTo: {
         kind: 'loops',
         entityId: view.entityId,
-        originalReturnTo,
+        originalReturnTo: 'main',
       },
     });
     return true;
@@ -158,7 +181,7 @@ function handleLoopNavigation(input: string, key: InkKey, params: KeyHandlerPara
 }
 
 /**
- * 4. D3 orchestration detail: child row navigation + drill-through.
+ * 5. D3 orchestration detail: child row navigation + drill-through.
  *
  *  - ↑/k: move child selection up
  *  - ↓/j: move child selection down
@@ -210,7 +233,6 @@ function handleOrchestrationNavigation(input: string, key: InkKey, params: KeyHa
     if (children.length === 0) return true;
     const child = children[resolveChildIndex(nav.orchestrationChildSelectedTaskId, children)];
     if (!child) return true;
-    const originalReturnTo: 'main' | 'workspace' = view.returnTo === 'workspace' ? 'workspace' : 'main';
     setView({
       kind: 'detail',
       entityType: 'tasks',
@@ -218,7 +240,7 @@ function handleOrchestrationNavigation(input: string, key: InkKey, params: KeyHa
       returnTo: {
         kind: 'orchestrations',
         entityId: view.entityId,
-        originalReturnTo,
+        originalReturnTo: 'main',
       },
     });
     return true;
@@ -253,7 +275,7 @@ function handleOrchestrationNavigation(input: string, key: InkKey, params: KeyHa
 }
 
 /**
- * 5. Generic scroll for non-orchestration/non-loop detail views (schedules, pipelines).
+ * 6. Generic scroll for non-orchestration/non-loop detail views (schedules, pipelines).
  *
  *  - ↑/k: scroll detail content up
  *  - ↓/j: scroll detail content down (clamped to detailContentLength - 1)
@@ -301,12 +323,12 @@ function handleGenericScroll(input: string, key: InkKey, params: KeyHandlerParam
  *  - Orchestration detail: ↑/↓/j/k move child row selection (by taskId)
  *  - Enter: drill into selected child's task detail (returnTo = orchestration object)
  *  - PgUp/PgDn: navigate pages of children (resets selection to first row on page)
- *  - Esc/Backspace: returns to the view encoded in returnTo (main, workspace, or orchestration)
+ *  - Esc/Backspace: returns to the view encoded in returnTo (main or orchestration)
  *
  * Loop iteration navigation (#168):
  *  - Loop detail: ↑/↓/j/k move iteration selection (by iterationNumber)
  *  - Enter: drill into selected iteration's task detail (returnTo = loop object)
- *  - Esc: returns to the view encoded in returnTo (main, workspace, or loop)
+ *  - Esc: returns to the view encoded in returnTo (main or loop)
  *
  * Output controls (#165 — task/orchestration only):
  *  - o: toggle output stream panel visibility
@@ -320,9 +342,10 @@ function handleGenericScroll(input: string, key: InkKey, params: KeyHandlerParam
  * Key handler ordering:
  *  1. Esc/Backspace → return to previous view
  *  2. Output controls (o/[/]/g/G) → guarded to task/orchestration only
- *  3. Loop entity type → iteration navigation (↑/↓/Enter)
- *  4. Orchestration entity type → child navigation (existing D3 pattern)
- *  5. Generic scroll (↑/↓) → non-orchestration/non-loop detail (schedules, pipelines)
+ *  3. Pause/resume (p) → schedules and loops only
+ *  4. Loop entity type → iteration navigation (↑/↓/Enter)
+ *  5. Orchestration entity type → child navigation (existing D3 pattern)
+ *  6. Generic scroll (↑/↓) → non-orchestration/non-loop detail (schedules, pipelines)
  */
 export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerParams): boolean {
   if (params.view.kind !== 'detail') return false;
@@ -330,6 +353,7 @@ export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerP
   return (
     handleEscReturn(key, params) ||
     handleOutputControls(input, params) ||
+    handlePauseResume(input, params) ||
     handleLoopNavigation(input, key, params) ||
     handleOrchestrationNavigation(input, key, params) ||
     handleGenericScroll(input, key, params)

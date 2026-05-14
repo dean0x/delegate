@@ -885,7 +885,7 @@ export interface TaskUsage {
 /**
  * A task attributed to an orchestration, discovered via direct attribution
  * (tasks.orchestrator_id) or the loop iteration chain.
- * ARCHITECTURE: Read-only projection used by workspace view.
+ * ARCHITECTURE: Read-only projection used by orchestration detail view.
  */
 export interface OrchestratorChild {
   readonly taskId: TaskId;

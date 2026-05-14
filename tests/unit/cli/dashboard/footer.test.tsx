@@ -12,16 +12,6 @@ import { Footer } from '../../../../src/cli/dashboard/components/footer';
 
 describe('Footer', () => {
   describe('viewKind="main" (metrics view)', () => {
-    it('does NOT contain "1-4 jump" hint (pre-redesign grid artifact)', () => {
-      const { lastFrame } = render(<Footer viewKind="main" />);
-      expect(lastFrame()).not.toContain('1-4 jump');
-    });
-
-    it('does NOT contain "Tab cycle" hint (pre-redesign wording)', () => {
-      const { lastFrame } = render(<Footer viewKind="main" />);
-      expect(lastFrame()).not.toContain('Tab cycle');
-    });
-
     it('contains "Tab: panel" hint describing panel cycling', () => {
       const { lastFrame } = render(<Footer viewKind="main" />);
       expect(lastFrame()).toContain('Tab: panel');
@@ -66,26 +56,34 @@ describe('Footer', () => {
       expect(lastFrame()).toContain('d delete (terminal)');
     });
 
-    it('does NOT contain "1-4 jump" even with mutations', () => {
+    it('does NOT contain "p pause/resume" when focusedPanel is tasks (not pauseable)', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="tasks" />);
+      expect(lastFrame()).not.toContain('p pause/resume');
+    });
+
+    it('does NOT contain "p pause/resume" when focusedPanel is orchestrations (not pauseable)', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="orchestrations" />);
+      expect(lastFrame()).not.toContain('p pause/resume');
+    });
+
+    it('does NOT contain "p pause/resume" when focusedPanel is pipelines (not pauseable)', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="pipelines" />);
+      expect(lastFrame()).not.toContain('p pause/resume');
+    });
+
+    it('contains "p pause/resume" when focusedPanel is schedules', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="schedules" />);
+      expect(lastFrame()).toContain('p pause/resume');
+    });
+
+    it('contains "p pause/resume" when focusedPanel is loops', () => {
+      const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="loops" />);
+      expect(lastFrame()).toContain('p pause/resume');
+    });
+
+    it('does NOT contain "p pause/resume" when focusedPanel is undefined', () => {
       const { lastFrame } = render(<Footer viewKind="main" hasMutations />);
-      expect(lastFrame()).not.toContain('1-4 jump');
-    });
-
-    it('does NOT contain "Tab cycle" even with mutations', () => {
-      const { lastFrame } = render(<Footer viewKind="main" hasMutations />);
-      expect(lastFrame()).not.toContain('Tab cycle');
-    });
-  });
-
-  describe('viewKind="workspace"', () => {
-    it('contains "fullscreen" hint', () => {
-      const { lastFrame } = render(<Footer viewKind="workspace" />);
-      expect(lastFrame()).toContain('fullscreen');
-    });
-
-    it('does not contain main-view "1-4 jump"', () => {
-      const { lastFrame } = render(<Footer viewKind="workspace" />);
-      expect(lastFrame()).not.toContain('1-4 jump');
+      expect(lastFrame()).not.toContain('p pause/resume');
     });
   });
 
@@ -100,10 +98,46 @@ describe('Footer', () => {
       expect(lastFrame()).toContain('↑↓ select');
     });
 
-    it('does not render main-view hints', () => {
+    it('contains "p pause" for active schedule in detail view', () => {
+      const { lastFrame } = render(
+        <Footer viewKind="detail" hasMutations entityType="schedules" entityStatus="active" />,
+      );
+      const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
+      expect(frame).toContain('p pause');
+    });
+
+    it('contains "p resume" for paused schedule in detail view', () => {
+      const { lastFrame } = render(
+        <Footer viewKind="detail" hasMutations entityType="schedules" entityStatus="paused" />,
+      );
+      const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
+      expect(frame).toContain('p resume');
+    });
+
+    it('contains "p pause" for running loop in detail view', () => {
+      const { lastFrame } = render(<Footer viewKind="detail" hasMutations entityType="loops" entityStatus="running" />);
+      const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
+      expect(frame).toContain('p pause');
+    });
+
+    it('contains "p resume" for paused loop in detail view', () => {
+      const { lastFrame } = render(<Footer viewKind="detail" hasMutations entityType="loops" entityStatus="paused" />);
+      const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
+      expect(frame).toContain('p resume');
+    });
+
+    it('does NOT contain "p pause" or "p resume" for task in detail view', () => {
+      const { lastFrame } = render(<Footer viewKind="detail" entityType="tasks" entityStatus="running" />);
+      const frame = lastFrame() ?? '';
+      expect(frame).not.toContain('p pause');
+      expect(frame).not.toContain('p resume');
+    });
+
+    it('does NOT contain "p pause" or "p resume" when no entityType provided in detail view', () => {
       const { lastFrame } = render(<Footer viewKind="detail" />);
-      expect(lastFrame()).not.toContain('1-4 jump');
-      expect(lastFrame()).not.toContain('Tab cycle');
+      const frame = lastFrame() ?? '';
+      expect(frame).not.toContain('p pause');
+      expect(frame).not.toContain('p resume');
     });
   });
 });

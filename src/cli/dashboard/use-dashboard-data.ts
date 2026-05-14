@@ -12,9 +12,8 @@
  *  - LIVENESS_CACHE_TTL_MS: TTL constant (exported for testing)
  *  - LivenessCacheEntry: Interface (exported for testing)
  *
- * Per-view poll cadence (Phase B):
+ * Per-view poll cadence:
  *  - main:      1 000 ms — summary metrics update once per second
- *  - workspace:   750 ms — live task output needs snappier refresh
  *  - detail:    2 000 ms — single-entity view; slower cadence reduces DB pressure
  */
 
@@ -53,14 +52,11 @@ export const FETCH_LIMIT = 50;
 
 /**
  * Per-view poll interval in milliseconds.
- * DECISION (Phase B): Different views have different freshness requirements.
  *  - main: 1 000 ms — summary metrics; one-second granularity is sufficient
- *  - workspace: 750 ms — live task output benefits from snappier refresh
  *  - detail: 2 000 ms — single-entity view; slower cadence reduces DB pressure
  */
-export const POLL_INTERVAL_BY_VIEW: Readonly<Record<'main' | 'workspace' | 'detail', number>> = {
+export const POLL_INTERVAL_BY_VIEW: Readonly<Record<'main' | 'detail', number>> = {
   main: 1_000,
-  workspace: 750,
   detail: 2_000,
 };
 
@@ -297,13 +293,6 @@ export async function fetchAllData(
     metricsExtras = await fetchMetricsExtras(ctx);
   }
 
-  // Workspace-view extras — fetched when viewing workspace
-  let workspaceExtras: Pick<DashboardData, 'workspaceData'> = {};
-
-  if (viewState.kind === 'workspace') {
-    workspaceExtras = await fetchWorkspaceExtras(ctx, viewState.orchestrationId, orchestrations);
-  }
-
   return ok({
     tasks,
     loops,
@@ -318,7 +307,6 @@ export async function fetchAllData(
     orchestrationLiveness,
     ...detailExtra,
     ...metricsExtras,
-    ...workspaceExtras,
   });
 }
 
@@ -369,80 +357,6 @@ async function fetchMetricsExtras(
     throughputStats: throughputResult.ok ? throughputResult.value : undefined,
     activityFeed,
   };
-}
-
-/**
- * Fetch workspace-view extras: children of focused orchestration + cost aggregate.
- * Best-effort — errors yield undefined for workspaceData.
- *
- * Orchestration resolution order:
- * 1. explicit orchestrationId from view state (if set and found)
- * 2. first running orchestration by updated_at DESC (already sorted by findAll)
- */
-async function fetchWorkspaceExtras(
-  ctx: ReadOnlyContext,
-  explicitOrchId: string | undefined,
-  orchestrations: readonly import('../../core/domain.js').Orchestration[],
-): Promise<Pick<DashboardData, 'workspaceData'>> {
-  try {
-    // Resolve focused orchestration
-    let focusedOrchestration: import('../../core/domain.js').Orchestration | undefined;
-
-    if (explicitOrchId) {
-      focusedOrchestration = orchestrations.find((o) => o.id === explicitOrchId);
-    }
-
-    if (!focusedOrchestration) {
-      // Fall back to first running orchestration, then first orchestration
-      focusedOrchestration = orchestrations.find((o) => o.status === OrchestratorStatus.RUNNING) ?? orchestrations[0];
-    }
-
-    if (!focusedOrchestration) {
-      return {}; // No orchestrations — workspaceData undefined
-    }
-
-    const orchId = focusedOrchestration.id;
-
-    // Fetch children and cost aggregate in parallel
-    const [childrenResult, costResult] = await Promise.all([
-      ctx.orchestrationRepository.getOrchestratorChildren(orchId, 20),
-      ctx.usageRepository.sumByOrchestrationId(orchId),
-    ]);
-
-    if (!childrenResult.ok) {
-      return {}; // Degrade gracefully
-    }
-
-    const children = childrenResult.value;
-    const childTaskIds = children.map((c) => c.taskId);
-    const childTaskStatuses = new Map<(typeof children)[number]['taskId'], string>(
-      children.map((c) => [c.taskId, c.status] as [typeof c.taskId, string]),
-    );
-
-    const ZERO_USAGE = {
-      taskId: TaskId(''),
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheCreationInputTokens: 0,
-      cacheReadInputTokens: 0,
-      totalCostUsd: 0,
-      capturedAt: 0,
-    };
-
-    const costAggregate = costResult.ok ? costResult.value : ZERO_USAGE;
-
-    return {
-      workspaceData: {
-        focusedOrchestration,
-        children,
-        childTaskIds,
-        childTaskStatuses,
-        costAggregate,
-      },
-    };
-  } catch {
-    return {}; // Best-effort — dashboard degrades without crashing
-  }
 }
 
 /**
@@ -525,7 +439,7 @@ async function fetchDetailExtra(
  *
  * Phase B (per-view cadence): The poll interval is derived from POLL_INTERVAL_BY_VIEW
  * keyed on viewState.kind. When the view changes, the effect re-runs and sets up a
- * new interval with the appropriate cadence (750ms workspace, 1s main, 2s detail).
+ * new interval with the appropriate cadence (1s main, 2s detail).
  */
 export function useDashboardData(
   ctx: ReadOnlyContext,

@@ -249,15 +249,6 @@ describe('Header — viewKind breadcrumb', () => {
     expect(lastFrame()).toContain('Metrics');
   });
 
-  it('renders [W] Workspace when viewKind is workspace', () => {
-    const view: ViewState = { kind: 'workspace' };
-    const { lastFrame } = render(
-      <Header version="1.0.0" data={null} refreshedAt={null} error={null} viewKind={view.kind} />,
-    );
-    expect(lastFrame()).toContain('[W]');
-    expect(lastFrame()).toContain('Workspace');
-  });
-
   it('renders [D] Detail when viewKind is detail', () => {
     const view: ViewState = { kind: 'main' }; // use 'main' but pass 'detail' manually
     const { lastFrame } = render(

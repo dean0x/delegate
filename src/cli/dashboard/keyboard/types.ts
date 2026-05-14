@@ -2,16 +2,15 @@
  * Shared keyboard handler types.
  *
  * These types are shared across all handler modules (handleDetailKeys,
- * handleWorkspaceKeys, handleMainKeys) so each handler is independently
- * importable without cross-calling the others. Placing them here avoids
- * circular imports and lets entity-mutations.ts reference DashboardMutationContext
+ * handleMainKeys) so each handler is independently importable without
+ * cross-calling the others. Placing them here avoids circular imports
+ * and lets entity-mutations.ts reference DashboardMutationContext
  * without pulling in handler logic.
  */
 
 import { useInput } from 'ink';
 import type React from 'react';
 import type { DashboardData, DashboardMutationContext, NavState, ViewState } from '../types.js';
-import type { WorkspaceNavState } from '../workspace-types.js';
 
 /**
  * Minimal shape required for navigation — id and status are the only fields
@@ -47,12 +46,6 @@ export interface UseKeyboardParams {
    * Unified UX across all four panels (loops, tasks, schedules, orchestrations).
    */
   readonly mutations?: DashboardMutationContext;
-  /**
-   * Phase E: workspace navigation state.
-   * When provided, enables handleWorkspaceKeys when view.kind === 'workspace'.
-   */
-  readonly workspaceNav?: WorkspaceNavState;
-  readonly setWorkspaceNav?: React.Dispatch<React.SetStateAction<WorkspaceNavState>>;
   readonly entityBrowserViewportHeight?: number;
 }
 
@@ -71,8 +64,6 @@ export interface KeyHandlerParams {
   readonly detailContentLength: number;
   readonly mutations?: DashboardMutationContext;
   readonly refreshNow: () => void;
-  readonly workspaceNav?: WorkspaceNavState;
-  readonly setWorkspaceNav?: React.Dispatch<React.SetStateAction<WorkspaceNavState>>;
   readonly entityBrowserViewportHeight: number;
 }
 

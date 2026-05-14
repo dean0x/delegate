@@ -126,11 +126,7 @@ const MAIN_VIEW: ViewState = { kind: 'main' };
 // ============================================================================
 
 describe('POLL_INTERVAL_BY_VIEW', () => {
-  it('workspace polls faster than main, which polls faster than detail', () => {
-    // Ordering contract: workspace < main < detail
-    // workspace: snappier refresh for live task output
-    // detail: slower cadence reduces DB pressure for single-entity view
-    expect(POLL_INTERVAL_BY_VIEW.workspace).toBeLessThan(POLL_INTERVAL_BY_VIEW.main);
+  it('main polls faster than detail', () => {
     expect(POLL_INTERVAL_BY_VIEW.main).toBeLessThan(POLL_INTERVAL_BY_VIEW.detail);
   });
 });

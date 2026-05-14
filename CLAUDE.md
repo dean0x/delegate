@@ -294,7 +294,6 @@ Quick reference for common operations:
 | Migrate command | `src/cli/commands/migrate.ts` |
 | Agent skill content | `skills/autobeat/` |
 | Metrics view | `src/cli/dashboard/views/metrics-view.tsx` |
-| Workspace view | `src/cli/dashboard/views/workspace-view.tsx` |
 | Terminal size hook | `src/cli/dashboard/use-terminal-size.ts` |
 | Responsive layout | `src/cli/dashboard/layout.ts` |
 | Output streaming hook | `src/cli/dashboard/use-task-output-stream.ts` |

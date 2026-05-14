@@ -35,7 +35,7 @@ import type {
 import type { Liveness } from '../../services/orchestration-liveness.js';
 
 /**
- * Mutation services passed to the dashboard for cancel/delete operations.
+ * Mutation services passed to the dashboard for cancel/delete/pause/resume operations.
  * DECISION (2026-04-10): The dashboard uses full bootstrap (withServices) because
  * manual cancel/delete keybindings need mutation access. Adds ~200-500ms to
  * dashboard startup but acceptable for interactive launch.
@@ -57,45 +57,41 @@ export type PanelId = 'tasks' | 'loops' | 'schedules' | 'orchestrations' | 'pipe
 
 /**
  * Return target for task detail view.
- * Plain strings: return to main or workspace views.
- * Object variant: return to a specific orchestration detail (for D3 drill-through).
+ * Plain string: return to main view.
+ * Object variant: return to a specific orchestration or loop detail (for D3 drill-through).
  *
  * D3 drill-through: Enter on a child row in orchestration detail opens the child's
  * task detail with returnTo = { kind: 'orchestrations', entityId, originalReturnTo }.
  * Esc from that task detail returns to the same orchestration detail, which in turn
- * returns to main or workspace per originalReturnTo.
+ * returns to main per originalReturnTo.
  */
 export type DetailReturnTarget =
   | 'main'
-  | 'workspace'
   | {
       readonly kind: 'orchestrations';
       readonly entityId: OrchestratorId;
-      readonly originalReturnTo: 'main' | 'workspace';
+      readonly originalReturnTo: 'main';
     }
   | {
       readonly kind: 'loops';
       readonly entityId: LoopId;
-      readonly originalReturnTo: 'main' | 'workspace';
+      readonly originalReturnTo: 'main';
     };
 
 /**
- * Top-level view state — main overview, workspace, or entity detail drill-down.
+ * Top-level view state — main overview or entity detail drill-down.
  * Each detail variant carries the branded ID for its entity type, making
  * illegal cross-type ID usage unrepresentable at compile time.
  *
- * returnTo field on detail: Esc returns to the correct view.
- * Defaults to 'main' for callers that don't pass it (backward compat).
  * Tasks variant uses DetailReturnTarget to support D3 drill-through.
  */
 export type ViewState =
   | { readonly kind: 'main' }
-  | { readonly kind: 'workspace'; readonly orchestrationId?: OrchestratorId }
   | {
       readonly kind: 'detail';
       readonly entityType: 'loops';
       readonly entityId: LoopId;
-      readonly returnTo: 'main' | 'workspace';
+      readonly returnTo: 'main';
     }
   | {
       readonly kind: 'detail';
@@ -107,19 +103,19 @@ export type ViewState =
       readonly kind: 'detail';
       readonly entityType: 'schedules';
       readonly entityId: ScheduleId;
-      readonly returnTo: 'main' | 'workspace';
+      readonly returnTo: 'main';
     }
   | {
       readonly kind: 'detail';
       readonly entityType: 'orchestrations';
       readonly entityId: OrchestratorId;
-      readonly returnTo: 'main' | 'workspace';
+      readonly returnTo: 'main';
     }
   | {
       readonly kind: 'detail';
       readonly entityType: 'pipelines';
       readonly entityId: PipelineId;
-      readonly returnTo: 'main' | 'workspace';
+      readonly returnTo: 'main';
     };
 
 /**
@@ -219,15 +215,6 @@ export interface DashboardData {
   readonly activityFeed?: readonly ActivityEntry[];
   /** Step tasks fetched by ID for pipeline detail (bypasses FETCH_LIMIT) */
   readonly pipelineStepTasks?: readonly (Task | null)[];
-
-  // Workspace view data (v1.3.0 Phase D)
-  readonly workspaceData?: {
-    readonly focusedOrchestration: Orchestration;
-    readonly children: readonly OrchestratorChild[];
-    readonly childTaskIds: readonly TaskId[];
-    readonly childTaskStatuses: ReadonlyMap<TaskId, string>;
-    readonly costAggregate: TaskUsage;
-  };
 }
 
 /**

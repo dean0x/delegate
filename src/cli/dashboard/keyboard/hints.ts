@@ -6,44 +6,60 @@
  * any keyboard refactor only needs to update this one file.
  */
 
+import { LoopStatus, ScheduleStatus } from '../../../core/domain.js';
+import type { PanelId } from '../types.js';
+
 /**
  * Return the footer hint string for the main panel view.
- * Includes panel-jump hint (1-5) and optionally c/d mutation hints.
+ * Includes panel-jump hint (1-5) and optionally c/d/p mutation hints.
+ * The pause/resume hint is only shown when the focused panel supports it
+ * (schedules and loops); p is a no-op for tasks, orchestrations, and pipelines.
  */
-export function mainHints(hasMutations: boolean): string {
-  const base = 'v: workspace · Tab: panel · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
+export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string {
+  const base = 'Tab: panel · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
   if (hasMutations) {
-    return `${base} · c cancel · d delete (terminal)`;
+    const pauseHint = focusedPanel === 'schedules' || focusedPanel === 'loops' ? ' · p pause/resume' : '';
+    return `${base} · c cancel · d delete (terminal)${pauseHint}`;
   }
   return base;
 }
 
 /**
- * Return the footer hint string for the workspace view (grid mode in OrchestrationDetail).
- * DECISION (Phase C): Workspace is now orchestration detail in grid mode — hints reflect grid navigation.
- */
-export function workspaceHints(): string {
-  return 'v metrics · ↑↓ orch · Enter grid · Tab panel · f fullscreen · [/] scroll · G tail · c/d · Esc back';
-}
-
-/**
  * Return the footer hint string for the detail view.
- * Output controls (o/[/]/g/G) apply to task and orchestration detail only.
+ * Output controls (o/[/]/G) apply to task and orchestration detail only —
+ * schedules and loops have no output stream, so those hints are omitted.
+ * Pause/resume hint is conditional on entity type and status.
  */
-export function detailHints(): string {
-  return 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
+export function detailHints(entityType?: PanelId, entityStatus?: string, hasMutations = true): string {
+  const baseWithOutput = 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
+  const baseNoOutput = 'Esc back · ↑↓ select · Enter detail · r refresh · q quit';
+
+  if (entityType === 'schedules' || entityType === 'loops') {
+    if (hasMutations && (entityStatus === ScheduleStatus.ACTIVE || entityStatus === LoopStatus.RUNNING)) {
+      return `${baseNoOutput} · p pause`;
+    }
+    if (hasMutations && (entityStatus === ScheduleStatus.PAUSED || entityStatus === LoopStatus.PAUSED)) {
+      return `${baseNoOutput} · p resume`;
+    }
+    return baseNoOutput;
+  }
+  return baseWithOutput;
 }
 
 /**
  * Return the appropriate hint string for the current view kind.
  */
-export function getHints(viewKind: 'main' | 'workspace' | 'detail', hasMutations: boolean): string {
+export function getHints(
+  viewKind: 'main' | 'detail',
+  hasMutations: boolean,
+  entityType?: PanelId,
+  entityStatus?: string,
+  focusedPanel?: PanelId,
+): string {
   switch (viewKind) {
     case 'main':
-      return mainHints(hasMutations);
-    case 'workspace':
-      return workspaceHints();
+      return mainHints(hasMutations, focusedPanel);
     case 'detail':
-      return detailHints();
+      return detailHints(entityType, entityStatus, hasMutations);
   }
 }

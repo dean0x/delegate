@@ -11,7 +11,6 @@ import {
   dashboardReducer,
 } from '../../../../src/cli/dashboard/nav-reducer.js';
 import type { NavState, ViewState } from '../../../../src/cli/dashboard/types.js';
-import { createInitialWorkspaceNavState } from '../../../../src/cli/dashboard/workspace-types.js';
 
 // ============================================================================
 // Fixtures
@@ -34,7 +33,6 @@ function makeState(overrides: Partial<DashboardState> = {}): DashboardState {
   return {
     view: { kind: 'main' },
     nav: INITIAL_NAV,
-    workspaceNav: createInitialWorkspaceNavState(),
     animFrame: 0,
     ...overrides,
   };
@@ -45,12 +43,6 @@ function makeState(overrides: Partial<DashboardState> = {}): DashboardState {
 // ============================================================================
 
 describe('SET_VIEW', () => {
-  it('transitions view to workspace', () => {
-    const state = makeState();
-    const next = dashboardReducer(state, { type: 'SET_VIEW', view: { kind: 'workspace' } });
-    expect(next.view).toEqual({ kind: 'workspace' });
-  });
-
   it('transitions view to detail', () => {
     const state = makeState();
     const next = dashboardReducer(state, {
@@ -62,8 +54,11 @@ describe('SET_VIEW', () => {
 
   it('does not mutate other state slices', () => {
     const state = makeState();
-    const next = dashboardReducer(state, { type: 'SET_VIEW', view: { kind: 'workspace' } });
-    expect(next.nav).toBe(state.nav); // referential equality — not re-created
+    const next = dashboardReducer(state, {
+      type: 'SET_VIEW',
+      view: { kind: 'detail', entityType: 'tasks', entityId: 'task-abc' as never, returnTo: 'main' },
+    });
+    expect(next.nav).toBe(state.nav);
     expect(next.animFrame).toBe(state.animFrame);
   });
 });
@@ -80,11 +75,10 @@ describe('SET_NAV', () => {
     expect(next.nav.focusedPanel).toBe('tasks');
   });
 
-  it('does not mutate view or workspaceNav', () => {
-    const state = makeState({ view: { kind: 'workspace' } });
+  it('does not mutate view', () => {
+    const state = makeState();
     const next = dashboardReducer(state, { type: 'SET_NAV', nav: { ...INITIAL_NAV, focusedPanel: 'schedules' } });
     expect(next.view).toBe(state.view);
-    expect(next.workspaceNav).toBe(state.workspaceNav);
   });
 });
 
@@ -113,34 +107,6 @@ describe('UPDATE_NAV', () => {
 });
 
 // ============================================================================
-// SET_WORKSPACE_NAV
-// ============================================================================
-
-describe('SET_WORKSPACE_NAV', () => {
-  it('replaces workspaceNav', () => {
-    const state = makeState();
-    const newWsNav = { ...createInitialWorkspaceNavState(), focusedPanelIndex: 2 };
-    const next = dashboardReducer(state, { type: 'SET_WORKSPACE_NAV', workspaceNav: newWsNav });
-    expect(next.workspaceNav.focusedPanelIndex).toBe(2);
-  });
-});
-
-// ============================================================================
-// UPDATE_WORKSPACE_NAV
-// ============================================================================
-
-describe('UPDATE_WORKSPACE_NAV', () => {
-  it('applies updater function to current workspaceNav', () => {
-    const state = makeState();
-    const next = dashboardReducer(state, {
-      type: 'UPDATE_WORKSPACE_NAV',
-      updater: (prev) => ({ ...prev, gridPage: 3 }),
-    });
-    expect(next.workspaceNav.gridPage).toBe(3);
-  });
-});
-
-// ============================================================================
 // TICK_ANIM
 // ============================================================================
 
@@ -156,7 +122,6 @@ describe('TICK_ANIM', () => {
     const next = dashboardReducer(state, { type: 'TICK_ANIM' });
     expect(next.view).toBe(state.view);
     expect(next.nav).toBe(state.nav);
-    expect(next.workspaceNav).toBe(state.workspaceNav);
   });
 
   it('accumulates over multiple ticks', () => {
@@ -182,9 +147,7 @@ describe('immutability', () => {
   it('preserves reference for unchanged slices (structural sharing)', () => {
     const state = makeState();
     const next = dashboardReducer(state, { type: 'TICK_ANIM' });
-    // Only animFrame changed — nav and workspaceNav should be same reference
     expect(next.nav).toBe(state.nav);
-    expect(next.workspaceNav).toBe(state.workspaceNav);
   });
 });
 
@@ -194,8 +157,6 @@ describe('immutability', () => {
 
 describe('NavState — new output + iteration fields', () => {
   it('SET_VIEW to detail does NOT reset detailOutputVisible', () => {
-    // DECISION: Reducers must NOT reset nav state on SET_VIEW so that Esc-return
-    // from a drilled-through detail preserves the user's previous output state.
     const state = makeState({
       nav: { ...INITIAL_NAV, detailOutputVisible: false, detailOutputAutoTail: false },
     });
@@ -228,7 +189,7 @@ describe('NavState — new output + iteration fields', () => {
     };
     const state = makeState({ nav: customNav });
     const next = dashboardReducer(state, { type: 'SET_VIEW', view: { kind: 'main' } });
-    expect(next.nav).toBe(customNav); // referential equality — same object
+    expect(next.nav).toBe(customNav);
   });
 
   it('UPDATE_NAV can update detailOutputVisible', () => {

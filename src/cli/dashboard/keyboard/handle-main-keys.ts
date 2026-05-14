@@ -11,7 +11,7 @@
 
 import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
 import { FILTER_CYCLES, PANEL_JUMP_KEYS, PANEL_ORDER } from './constants.js';
-import { cancelEntity, deleteEntity } from './entity-mutations.js';
+import { cancelEntity, deleteEntity, pauseOrResumeEntity } from './entity-mutations.js';
 import { clamp, filteredLength, getFocusedPanelItem, getPanelItems, panelToEntityKind } from './helpers.js';
 import type { InkKey, KeyHandlerParams } from './types.js';
 
@@ -159,6 +159,21 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
         params.mutations,
         params.refreshNow,
         params.dataRef.current,
+      );
+    }
+    return true;
+  }
+
+  // p — pause/resume focused entity (schedules and loops only)
+  if (input === 'p' && params.mutations) {
+    const item = getFocusedPanelItem(nav, params.dataRef.current);
+    if (item) {
+      void pauseOrResumeEntity(
+        panelToEntityKind(nav.focusedPanel),
+        item.id,
+        item.status,
+        params.mutations,
+        params.refreshNow,
       );
     }
     return true;

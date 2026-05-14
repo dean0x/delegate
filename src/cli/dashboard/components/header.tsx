@@ -17,7 +17,7 @@ interface HeaderProps {
    * Phase E: current view kind — drives the breadcrumb label in the header bar.
    * Optional for backward compatibility with tests that don't pass it.
    */
-  readonly viewKind?: 'main' | 'workspace' | 'detail';
+  readonly viewKind?: 'main' | 'detail';
   /**
    * Phase C: which entity type is being viewed in detail mode.
    * Used to build entity-specific breadcrumb trails.
@@ -95,16 +95,10 @@ const ENTITY_LABEL: Record<PanelId, string> = {
  *   "Metrics · Task a1b2c3d4ef12"
  * Returns a short label that fits in the header row.
  */
-function buildBreadcrumb(
-  viewKind: 'main' | 'workspace' | 'detail' | undefined,
-  entityType?: PanelId,
-  entityId?: string,
-): string {
+function buildBreadcrumb(viewKind: 'main' | 'detail' | undefined, entityType?: PanelId, entityId?: string): string {
   switch (viewKind) {
     case 'main':
       return '[M] Metrics';
-    case 'workspace':
-      return '[W] Workspace';
     case 'detail': {
       if (entityType !== undefined && entityId !== undefined) {
         const label = ENTITY_LABEL[entityType];

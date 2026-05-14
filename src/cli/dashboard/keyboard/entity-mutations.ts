@@ -1,8 +1,7 @@
 /**
- * Unified cancel/delete dispatch for keyboard handlers.
+ * Unified cancel/delete/pause/resume dispatch for keyboard handlers.
  *
- * Extracted to eliminate the 3x duplication of entity-kind routing that existed
- * across activity focus, main panel, and workspace cancel/delete blocks.
+ * Extracted to eliminate duplication of entity-kind routing across cancel/delete/pause/resume blocks.
  */
 
 import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
@@ -12,7 +11,7 @@ import { TERMINAL_STATUSES } from './constants.js';
 
 /**
  * The entity kind routing key — mirrors ActivityEntry['kind'] but is also used
- * for panel-focused cancel/delete where the kind is derived from PanelId.
+ * for panel-focused cancel/delete/pause/resume where the kind is derived from PanelId.
  */
 export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline';
 
@@ -22,8 +21,7 @@ export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipel
  * Design decision: orchestration cancels always cascade (cancelAttributedTasks: true)
  * and loop cancels always cascade (cancelTasks: true). This provides consistent UX
  * across all dashboard views — cancelling an orchestration always stops its child tasks.
- * Previously, main panel cancel did not cascade while activity/workspace did;
- * unified to always-cascade per PR #133 review resolution.
+ * Unified to always-cascade per PR #133 review resolution.
  *
  * Does nothing if the entity is already in a terminal status (no double-cancel).
  */
@@ -76,6 +74,51 @@ export async function cancelEntity(
         }
         break;
       }
+    }
+  } catch {
+    // Best-effort: service errors are logged internally by each service.
+    // Swallowing here prevents unhandled rejection from crashing the dashboard TUI.
+    // The next 1Hz poll will refresh the UI with accurate state regardless.
+  }
+}
+
+/**
+ * Dispatches pause or resume to the appropriate service based on entity kind and status.
+ *
+ * Only schedules and loops support pause/resume. Other entity kinds are silently ignored.
+ * Schedule: ACTIVE → pause, PAUSED → resume.
+ * Loop: RUNNING → pause, PAUSED → resume.
+ * Terminal statuses and non-pauseable kinds are no-ops.
+ */
+export async function pauseOrResumeEntity(
+  kind: EntityKind,
+  entityId: string,
+  entityStatus: string,
+  mutations: DashboardMutationContext,
+  refreshNow: () => void,
+): Promise<void> {
+  try {
+    switch (kind) {
+      case 'schedule':
+        if (entityStatus === ScheduleStatus.ACTIVE) {
+          await mutations.scheduleService.pauseSchedule(entityId as ScheduleId);
+          refreshNow();
+        } else if (entityStatus === ScheduleStatus.PAUSED) {
+          await mutations.scheduleService.resumeSchedule(entityId as ScheduleId);
+          refreshNow();
+        }
+        break;
+      case 'loop':
+        if (entityStatus === LoopStatus.RUNNING) {
+          await mutations.loopService.pauseLoop(entityId as LoopId);
+          refreshNow();
+        } else if (entityStatus === LoopStatus.PAUSED) {
+          await mutations.loopService.resumeLoop(entityId as LoopId);
+          refreshNow();
+        }
+        break;
+      default:
+        break;
     }
   } catch {
     // Best-effort: service errors are logged internally by each service.

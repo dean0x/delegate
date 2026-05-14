@@ -333,7 +333,7 @@ Last Updated: May 2026 (2026-05-08)
 - `beat agents config reset <agent>`: Clear stored config
 
 ### Dashboard (v1.2.0+)
-- `beat dashboard` / `beat dash`: Interactive terminal UI with metrics and workspace views
+- `beat dashboard` / `beat dash`: Interactive terminal UI with metrics and detail views
 
 ### Configuration
 - **NPM Package**: Global installation support
