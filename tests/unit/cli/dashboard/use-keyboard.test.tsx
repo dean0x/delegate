@@ -244,6 +244,27 @@ async function press(stdin: { write: (s: string) => void }, key: string): Promis
   await Promise.resolve();
 }
 
+/**
+ * Wait for a fire-and-forget async mutation to settle before asserting on mocks.
+ *
+ * Keyboard handlers call `void cancelEntity(...)` / `void pauseOrResumeEntity(...)` /
+ * `void deleteEntity(...)`. These are fire-and-forget: the `void` call starts the
+ * async function but the `await` inside it (the service/repo call) is a separate
+ * microtask continuation that has not yet run when `press()` returns.
+ *
+ * `press()` already flushes the React scheduler (microtask → macrotask → microtask).
+ * The additional macrotask here lets the started-but-not-yet-awaited async chain
+ * complete before we assert on mock call counts. Keeping this separate from `press()`
+ * makes it explicit which tests need to wait for side-effects vs. just UI state.
+ *
+ * 20ms is intentional: it must exceed ink's 10ms escape-sequence debounce window
+ * (already consumed by `press()`) so no extra delay is actually incurred in practice
+ * — we're just yielding control once more to the event loop.
+ */
+async function flushAsyncMutation(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+}
+
 // ============================================================================
 // Tab / panel cycling
 // ============================================================================
@@ -617,7 +638,7 @@ describe('useKeyboard — c: cancel keybinding', () => {
 
     await press(stdin, 'c');
     // Allow async handler to complete
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     // Behavioral change (PR #133): main panel cancel now always cascades (cancelAttributedTasks: true)
     // consistent UX across all dashboard contexts.
@@ -636,7 +657,7 @@ describe('useKeyboard — c: cancel keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} mutations={mutations} />);
 
     await press(stdin, 'c');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(cancelLoop).toHaveBeenCalledWith('loop-1', 'User cancelled via dashboard', true);
   });
@@ -652,7 +673,7 @@ describe('useKeyboard — c: cancel keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
 
     await press(stdin, 'c');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(cancelTask).toHaveBeenCalledWith('task-1', 'User cancelled via dashboard');
   });
@@ -668,7 +689,7 @@ describe('useKeyboard — c: cancel keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
 
     await press(stdin, 'c');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(cancelSchedule).toHaveBeenCalledWith('sched-1', 'User cancelled via dashboard');
   });
@@ -684,7 +705,7 @@ describe('useKeyboard — c: cancel keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
 
     await press(stdin, 'c');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(cancelOrchestration).not.toHaveBeenCalled();
   });
@@ -714,7 +735,7 @@ describe('useKeyboard — d: delete terminal entity keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
 
     await press(stdin, 'd');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(deleteOrchestration).toHaveBeenCalledWith('orch-done');
   });
@@ -730,7 +751,7 @@ describe('useKeyboard — d: delete terminal entity keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
 
     await press(stdin, 'd');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(deleteOrchestration).not.toHaveBeenCalled();
   });
@@ -746,7 +767,7 @@ describe('useKeyboard — d: delete terminal entity keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} mutations={mutations} />);
 
     await press(stdin, 'd');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(deleteLoop).toHaveBeenCalledWith('loop-done');
   });
@@ -762,7 +783,7 @@ describe('useKeyboard — d: delete terminal entity keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
 
     await press(stdin, 'd');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(deleteTask).toHaveBeenCalledWith('task-done');
   });
@@ -778,7 +799,7 @@ describe('useKeyboard — d: delete terminal entity keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
 
     await press(stdin, 'd');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(deleteSchedule).toHaveBeenCalledWith('sched-done');
   });
@@ -800,7 +821,7 @@ describe('useKeyboard — p: pause/resume keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
 
     await press(stdin, 'p');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(pauseSchedule).toHaveBeenCalledWith('sched-active');
   });
@@ -816,7 +837,7 @@ describe('useKeyboard — p: pause/resume keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
 
     await press(stdin, 'p');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(resumeSchedule).toHaveBeenCalledWith('sched-paused');
   });
@@ -831,7 +852,7 @@ describe('useKeyboard — p: pause/resume keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} mutations={mutations} />);
 
     await press(stdin, 'p');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(pauseLoop).toHaveBeenCalledWith('loop-run');
   });
@@ -846,7 +867,7 @@ describe('useKeyboard — p: pause/resume keybinding', () => {
     const { stdin } = render(<KeyboardWrapper initialData={data} mutations={mutations} />);
 
     await press(stdin, 'p');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(resumeLoop).toHaveBeenCalledWith('loop-paused');
   });
@@ -871,7 +892,7 @@ describe('useKeyboard — p: pause/resume keybinding', () => {
     );
 
     await press(stdin, 'p');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(pauseSchedule).toHaveBeenCalledWith('sched-detail');
   });
@@ -896,7 +917,7 @@ describe('useKeyboard — p: pause/resume keybinding', () => {
     );
 
     await press(stdin, 'p');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(resumeSchedule).toHaveBeenCalledWith('sched-detail-p');
   });
@@ -921,7 +942,7 @@ describe('useKeyboard — p: pause/resume keybinding', () => {
     );
 
     await press(stdin, 'p');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(pauseLoop).toHaveBeenCalledWith('loop-detail-run');
   });
@@ -946,7 +967,7 @@ describe('useKeyboard — p: pause/resume keybinding', () => {
     );
 
     await press(stdin, 'p');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(resumeLoop).toHaveBeenCalledWith('loop-detail-p');
   });
@@ -969,7 +990,7 @@ describe('useKeyboard — p: pause/resume keybinding', () => {
     );
 
     await press(stdin, 'p');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await flushAsyncMutation();
 
     expect(pauseSchedule).not.toHaveBeenCalled();
     expect(resumeSchedule).not.toHaveBeenCalled();
