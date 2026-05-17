@@ -71,8 +71,8 @@ function makeWatchMock(): {
 } {
   let sentinelCallback: ((event: string, filename: string | null) => void) | null = null;
   let messageCallback: ((event: string, filename: string | null) => void) | null = null;
-  const sentinelWatcher = { close: vi.fn() };
-  const messageWatcher = { close: vi.fn() };
+  const sentinelWatcher = { close: vi.fn(), on: vi.fn() };
+  const messageWatcher = { close: vi.fn(), on: vi.fn() };
 
   let callCount = 0;
 
@@ -397,6 +397,54 @@ describe('TmuxConnector — sentinel detection', () => {
 
     // The callback fires synchronously — assert that it was called, not how fast
     expect(onExit).toHaveBeenCalled();
+  });
+});
+
+describe('TmuxConnector — watcher error handler', () => {
+  it('logs a warning when the sentinel watcher emits an error event', async () => {
+    const logger = makeLogger();
+
+    // Build a watch mock where the sentinel watcher captures its .on('error') handler
+    // so the test can trigger it directly.
+    let sentinelErrorHandler: ((err: Error) => void) | null = null;
+    let callCount = 0;
+    const watch = vi.fn().mockImplementation(
+      (_watchPath: string, _opts: unknown, _callback: (event: string, f: string | null) => void) => {
+        callCount++;
+        if (callCount === 1) {
+          // First call = sentinel watcher
+          return {
+            close: vi.fn(),
+            on: vi.fn().mockImplementation((event: string, handler: (err: Error) => void) => {
+              if (event === 'error') sentinelErrorHandler = handler;
+            }),
+          };
+        }
+        // Second call = messages watcher
+        return { close: vi.fn(), on: vi.fn() };
+      },
+    ) as unknown as TmuxConnectorDeps['watch'];
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger,
+      watch,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+
+    // Simulate the sentinel watcher emitting an error
+    expect(sentinelErrorHandler).not.toBeNull();
+    sentinelErrorHandler!(new Error('ENOSPC: no space left on device'));
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Sentinel watcher error'),
+      expect.objectContaining({ taskId: BASE_CONFIG.taskId }),
+    );
+
+    connector.dispose();
   });
 });
 
@@ -1032,6 +1080,38 @@ describe('TmuxConnector — staleness detection', () => {
     vi.useRealTimers();
   });
 
+  it('alive session resets lastAliveCheck and does NOT fire STALE', async () => {
+    vi.useFakeTimers();
+    const { watch } = makeWatchMock();
+    const onExit = vi.fn();
+
+    const sessionManager = makeValidSessionManager();
+    // listSessions returns the session as alive on every tick
+    (sessionManager.listSessions as ReturnType<typeof vi.fn>).mockReturnValue(
+      ok([{ name: `beat-task-abc` }]),
+    );
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    await connector.spawn(
+      { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 500 } },
+      { onOutput: vi.fn(), onExit },
+    );
+
+    // Advance well past maxSilenceMs — session is alive every tick so STALE must not fire
+    vi.advanceTimersByTime(10000);
+
+    expect(onExit).not.toHaveBeenCalled();
+    connector.dispose();
+    vi.useRealTimers();
+  });
+
   it('staleness timer stops after exit — no double-fire', async () => {
     vi.useFakeTimers();
     const { watch, fireSentinel } = makeWatchMock();
@@ -1149,6 +1229,25 @@ describe('TmuxConnector.destroy()', () => {
     expect(sessionManager.destroySession).toHaveBeenCalled();
   });
 
+  it('calls hooks.cleanup with taskId and sessionsDir on destroy', async () => {
+    const { watch } = makeWatchMock();
+    const hooks = makeValidHooks();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger: makeLogger(),
+      watch,
+    });
+
+    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) return;
+    connector.destroy(spawnResult.value);
+
+    expect(hooks.cleanup).toHaveBeenCalledWith(BASE_CONFIG.taskId, BASE_CONFIG.sessionsDir);
+  });
+
   it('destroy is idempotent — calling twice does not throw', async () => {
     const { watch } = makeWatchMock();
 
@@ -1216,6 +1315,24 @@ describe('TmuxConnector.dispose()', () => {
       expect.stringContaining('dispose: failed to destroy session'),
       expect.objectContaining({ sessionName: expect.any(String) }),
     );
+  });
+
+  it('calls hooks.cleanup with taskId and sessionsDir on dispose', async () => {
+    const { watch } = makeWatchMock();
+    const hooks = makeValidHooks();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger: makeLogger(),
+      watch,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.dispose();
+
+    expect(hooks.cleanup).toHaveBeenCalledWith(BASE_CONFIG.taskId, BASE_CONFIG.sessionsDir);
   });
 
   it('dispose cleans up all active handles', async () => {
