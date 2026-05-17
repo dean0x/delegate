@@ -154,7 +154,7 @@ describe('TmuxHooks integration — wrapper script generation', () => {
       agent: 'claude',
       sessionsDir,
       agentCommand: 'printf',
-      agentArgs: ["'%s\\n'", '\'he said "hello"\''],
+      agentArgs: ['%s\\n', 'he said "hello"'],
     };
 
     const result = hooks.generateWrapper(config);
@@ -179,7 +179,7 @@ describe('TmuxHooks integration — wrapper script generation', () => {
       agent: 'claude',
       sessionsDir,
       agentCommand: 'printf',
-      agentArgs: ["'%s\\n'", "'path\\to\\file'"],
+      agentArgs: ['%s\\n', 'path\\to\\file'],
     };
 
     const result = hooks.generateWrapper(config);
@@ -204,7 +204,7 @@ describe('TmuxHooks integration — wrapper script generation', () => {
       agent: 'claude',
       sessionsDir,
       agentCommand: 'printf',
-      agentArgs: ["'%s\\n'", "$'col1\\tcol2'"],
+      agentArgs: ['%s\\n', 'col1\tcol2'],
     };
 
     const result = hooks.generateWrapper(config);
@@ -229,7 +229,7 @@ describe('TmuxHooks integration — wrapper script generation', () => {
       agent: 'claude',
       sessionsDir,
       agentCommand: 'printf',
-      agentArgs: ["'%s\\n'", '$\'"q" and \\\\b and \\t\''],
+      agentArgs: ['%s\\n', '"q" and \\b and \t'],
     };
 
     const result = hooks.generateWrapper(config);
