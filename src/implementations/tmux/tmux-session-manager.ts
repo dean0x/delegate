@@ -15,7 +15,7 @@ import { tmuxSendKeysFailed, tmuxSessionFailed } from '../../core/errors.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import type { ExecFn, TmuxSessionConfig, TmuxSessionInfo, TmuxSessionManager, TmuxSessionResult } from './types.js';
-import { MAX_CONCURRENT_SESSIONS, SESSION_NAME_REGEX } from './types.js';
+import { MAX_CONCURRENT_SESSIONS, SAFE_PATH_REGEX, SESSION_NAME_REGEX } from './types.js';
 
 /**
  * Dependencies for DefaultTmuxSessionManager.
@@ -93,6 +93,16 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     const height = config.height ?? DEFAULT_HEIGHT;
     if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
       return err(tmuxSessionFailed('create', `Invalid dimensions: ${width}x${height}`, { width, height }));
+    }
+
+    // Defense-in-depth: validate cwd against SAFE_PATH_REGEX before embedding
+    // in a shell command — same check applied to sessionsDir in tmux-hooks.ts.
+    if (config.cwd !== undefined && !SAFE_PATH_REGEX.test(config.cwd)) {
+      return err(
+        tmuxSessionFailed('create', `unsafe cwd path: ${config.cwd}`, {
+          cwd: config.cwd,
+        }),
+      );
     }
     const cwdFlag = config.cwd ? ` -c '${escapeSingleQuoted(config.cwd)}'` : '';
 

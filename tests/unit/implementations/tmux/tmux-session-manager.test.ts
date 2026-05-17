@@ -221,15 +221,25 @@ describe('TmuxSessionManager', () => {
     expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
   });
 
-  it('escapes single quotes in cwd to prevent shell injection', () => {
-    manager.createSession({ ...validConfig, cwd: "/home/user/it's a path" });
+  it('rejects cwd containing a single quote (unsafe path — SAFE_PATH_REGEX)', () => {
+    // A path with a single quote is unsafe for shell embedding.
+    // SAFE_PATH_REGEX rejects it before the command is constructed.
+    const result = manager.createSession({ ...validConfig, cwd: "/home/user/it's a path" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    // No tmux new-session command must have been spawned
     const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
-    const newSession = calls.find((c) => c.includes('new-session'));
-    expect(newSession).toBeDefined();
-    // Single quote in cwd must be escaped as '\'' (POSIX shell escaping)
-    expect(newSession).toContain("-c '/home/user/it'\\''s a path'");
-    // Raw single quote must not appear inside the -c argument unescaped
-    expect(newSession).not.toMatch(/-c '[^']*'[^\\]/);
+    expect(calls.find((c) => c.includes('new-session'))).toBeUndefined();
+  });
+
+  it('rejects cwd containing path traversal sequence (SAFE_PATH_REGEX)', () => {
+    const result = manager.createSession({ ...validConfig, cwd: '/tmp/../etc/passwd' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    expect(calls.find((c) => c.includes('new-session'))).toBeUndefined();
   });
 
   // ─── sendKeys ────────────────────────────────────────────────────────────────
