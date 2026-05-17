@@ -96,7 +96,7 @@ export class TmuxSessionManager {
 
     const width = config.width ?? DEFAULT_WIDTH;
     const height = config.height ?? DEFAULT_HEIGHT;
-    const cwdFlag = config.cwd ? ` -c '${config.cwd}'` : '';
+    const cwdFlag = config.cwd ? ` -c '${config.cwd.replace(/'/g, "'\\''")}'` : '';
 
     const spawnResult = this.deps.exec(
       `tmux new-session -d -s ${config.name} -x ${width} -y ${height}${cwdFlag} '${escapeSendKeys(config.command)}'`,
@@ -172,6 +172,9 @@ export class TmuxSessionManager {
    * Uses `-l` (literal mode) to prevent tmux key binding interpretation.
    */
   sendKeys(name: string, keys: string): Result<void, AutobeatError> {
+    const nameCheck = validateSessionName(name, 'sendKeys');
+    if (!nameCheck.ok) return nameCheck;
+
     const escaped = escapeSendKeys(keys);
     const result = this.deps.exec(`tmux send-keys -t ${name} -l '${escaped}'`);
 
@@ -186,6 +189,9 @@ export class TmuxSessionManager {
    * Returns true if the session is alive (tmux has-session exit 0).
    */
   isAlive(name: string): Result<boolean, AutobeatError> {
+    const nameCheck = validateSessionName(name, 'isAlive');
+    if (!nameCheck.ok) return nameCheck;
+
     const result = this.deps.exec(`tmux has-session -t ${name}`);
     return ok(result.status === 0);
   }
@@ -241,6 +247,16 @@ export class TmuxSessionManager {
    * Returns undefined if the variable is not set.
    */
   getSessionEnvironment(name: string, varName: string): Result<string | undefined, AutobeatError> {
+    const nameCheck = validateSessionName(name, 'getSessionEnvironment');
+    if (!nameCheck.ok) return nameCheck;
+
+    // Validate varName: must be a valid POSIX environment variable name
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(varName)) {
+      return err(
+        tmuxSessionFailed('getSessionEnvironment', `Invalid environment variable name "${varName}"`, { varName }),
+      );
+    }
+
     const result = this.deps.exec(`tmux show-environment -t ${name} ${varName}`);
 
     if (result.status !== 0) {

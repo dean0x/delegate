@@ -13,8 +13,8 @@ export interface TmuxSessionConfig {
   name: string;
   /** Command to run inside the session */
   command: string;
-  /** Working directory for the session */
-  cwd: string;
+  /** Working directory for the session (optional — omit to use tmux default) */
+  cwd?: string;
   /** Optional environment variables to inject */
   env?: Record<string, string>;
   /** Terminal width in columns (default: 220) */
@@ -166,6 +166,49 @@ export interface ExecResult {
  * Synchronous — wraps spawnSync or equivalent
  */
 export type ExecFn = (cmd: string) => ExecResult;
+
+// ─── Dependency interfaces ────────────────────────────────────────────────────
+
+/**
+ * Interface for session lifecycle operations.
+ * TmuxSessionManager satisfies this structurally; alternative implementations
+ * (test doubles, future adapters) only need to implement these methods.
+ */
+export interface ITmuxSessionManager {
+  createSession(
+    config: TmuxSessionConfig,
+  ): import('../../core/result.js').Result<TmuxHandle, import('../../core/errors.js').AutobeatError>;
+  destroySession(
+    name: string,
+  ): import('../../core/result.js').Result<void, import('../../core/errors.js').AutobeatError>;
+  sendKeys(
+    name: string,
+    keys: string,
+  ): import('../../core/result.js').Result<void, import('../../core/errors.js').AutobeatError>;
+  isAlive(name: string): import('../../core/result.js').Result<boolean, import('../../core/errors.js').AutobeatError>;
+}
+
+/**
+ * Interface for wrapper script generation and session directory lifecycle.
+ * TmuxHooks satisfies this structurally.
+ */
+export interface ITmuxHooks {
+  generateWrapper(
+    config: WrapperConfig,
+  ): import('../../core/result.js').Result<WrapperManifest, import('../../core/errors.js').AutobeatError>;
+  cleanup(
+    taskId: string,
+    sessionsDir: string,
+  ): import('../../core/result.js').Result<void, import('../../core/errors.js').AutobeatError>;
+}
+
+/**
+ * Interface for tmux installation validation.
+ * TmuxValidator satisfies this structurally.
+ */
+export interface ITmuxValidator {
+  validate(): import('../../core/result.js').Result<TmuxInfo, import('../../core/errors.js').AutobeatError>;
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

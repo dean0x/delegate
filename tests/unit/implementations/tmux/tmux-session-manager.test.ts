@@ -163,6 +163,17 @@ describe('TmuxSessionManager', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('escapes single quotes in cwd to prevent shell injection', () => {
+    manager.createSession({ ...validConfig, cwd: "/home/user/it's a path" });
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const newSession = calls.find((c) => c.includes('new-session'));
+    expect(newSession).toBeDefined();
+    // Single quote in cwd must be escaped as '\'' (POSIX shell escaping)
+    expect(newSession).toContain("-c '/home/user/it'\\''s a path'");
+    // Raw single quote must not appear inside the -c argument unescaped
+    expect(newSession).not.toMatch(/-c '[^']*'[^\\]/);
+  });
+
   // ─── sendKeys ────────────────────────────────────────────────────────────────
 
   it('sendKeys uses -l (literal mode) flag', () => {
@@ -192,6 +203,13 @@ describe('TmuxSessionManager', () => {
     expect(result.error.code).toBe(ErrorCode.TMUX_SEND_KEYS_FAILED);
   });
 
+  it('sendKeys rejects invalid session names', () => {
+    const result = manager.sendKeys('../../etc/passwd', 'hello');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
   // ─── isAlive ─────────────────────────────────────────────────────────────────
 
   it('isAlive returns ok(true) when has-session exits 0', () => {
@@ -208,6 +226,13 @@ describe('TmuxSessionManager', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value).toBe(false);
+  });
+
+  it('isAlive rejects invalid session names', () => {
+    const result = manager.isAlive('evil; rm -rf /');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
   });
 
   // ─── listSessions ─────────────────────────────────────────────────────────────
@@ -277,5 +302,19 @@ describe('TmuxSessionManager', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value).toBeUndefined();
+  });
+
+  it('getSessionEnvironment rejects invalid session names', () => {
+    const result = manager.getSessionEnvironment('bad session name', 'MY_VAR');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('getSessionEnvironment rejects invalid env var names', () => {
+    const result = manager.getSessionEnvironment('beat-task-123', '$(echo injected)');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
   });
 });
