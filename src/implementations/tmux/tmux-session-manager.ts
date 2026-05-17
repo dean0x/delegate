@@ -87,6 +87,9 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
 
     const width = config.width ?? DEFAULT_WIDTH;
     const height = config.height ?? DEFAULT_HEIGHT;
+    if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
+      return err(tmuxSessionFailed('create', `Invalid dimensions: ${width}x${height}`, { width, height }));
+    }
     const cwdFlag = config.cwd ? ` -c '${escapeSingleQuoted(config.cwd)}'` : '';
 
     const spawnResult = this.deps.exec(
@@ -102,15 +105,31 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
       );
     }
 
-    // Auto-inject task identity variables so workers can identify their session
     const taskId = config.name.replace(/^beat-/, '');
+    this.injectEnvironment(config.name, taskId, config.env);
+
+    return ok({ sessionName: config.name, taskId });
+  }
+
+  /**
+   * Injects environment variables into an existing session.
+   * Auto-vars (AUTOBEAT_TASK_ID, AUTOBEAT_SPAWN_TIME) win on conflict with
+   * caller-supplied env. Invalid POSIX key names are silently skipped.
+   * Best-effort — does not roll back the session on failure.
+   */
+  private injectEnvironment(
+    sessionName: string,
+    taskId: string,
+    callerEnv: Record<string, string> | undefined,
+  ): void {
+    // Auto-inject task identity variables so workers can identify their session
     const autoVars: Record<string, string> = {
       AUTOBEAT_TASK_ID: taskId,
       AUTOBEAT_SPAWN_TIME: new Date().toISOString(),
     };
 
     // Inject caller-provided env vars, then the auto vars (auto vars win on conflict)
-    const allEnv: Record<string, string> = { ...(config.env ?? {}), ...autoVars };
+    const allEnv: Record<string, string> = { ...(callerEnv ?? {}), ...autoVars };
 
     // Filter to valid POSIX env var keys and build a batched command to avoid N+1 spawns
     const validEntries = Object.entries(allEnv).filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key));
@@ -118,14 +137,12 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     if (validEntries.length > 0) {
       const commands = validEntries
         .map(([key, value]) => {
-          return `tmux set-environment -t ${config.name} ${key} '${escapeSingleQuoted(value)}'`;
+          return `tmux set-environment -t ${sessionName} ${key} '${escapeSingleQuoted(value)}'`;
         })
         .join(' && ');
       // Best-effort: session is created; don't roll back for env var failures
       this.deps.exec(commands);
     }
-
-    return ok({ sessionName: config.name, taskId });
   }
 
   /**
@@ -218,12 +235,17 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
       // Filter to only beat-* sessions
       if (!SESSION_NAME_REGEX.test(name)) continue;
 
+      const created = parseInt(createdStr, 10);
+      const width = parseInt(widthStr, 10);
+      const height = parseInt(heightStr, 10);
+      if (isNaN(created) || isNaN(width) || isNaN(height)) continue;
+
       sessions.push({
         name,
-        created: parseInt(createdStr, 10),
+        created,
         attached: attachedStr === '1',
-        width: parseInt(widthStr, 10),
-        height: parseInt(heightStr, 10),
+        width,
+        height,
       });
     }
 
