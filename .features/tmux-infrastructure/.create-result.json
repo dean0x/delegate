@@ -1,0 +1,12 @@
+{
+  "referencedFiles": [
+    "src/implementations/tmux/types.ts",
+    "src/implementations/tmux/tmux-connector.ts",
+    "src/implementations/tmux/tmux-hooks.ts",
+    "src/implementations/tmux/tmux-session-manager.ts",
+    "src/implementations/tmux/tmux-validator.ts",
+    "src/implementations/tmux/index.ts",
+    "src/core/errors.ts"
+  ],
+  "description": "Use when working on the tmux abstraction layer (Phase 1 of the tmux migration epic), diagnosing known bugs in completion detection or output delivery, extending agent support in WrapperConfig, or wiring TmuxConnector into WorkerPool. Keywords: tmux, abstraction, connector, hooks, session manager, validator, sentinel, debounce, agent type, jq, wrapper script, known issues."
+}

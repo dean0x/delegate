@@ -23,7 +23,7 @@
     },
     "tmux-infrastructure": {
       "name": "Tmux Abstraction Layer",
-      "description": "Use when working on the tmux abstraction layer (Phase 1 of the tmux migration epic), wiring TmuxConnector into agent adapters (Phase 2) or WorkerPool (Phase 3), or extending agent support in WrapperConfig. Keywords: tmux, abstraction, connector, hooks, session manager, validator, sentinel, debounce, flush, agent type, jq, wrapper script.",
+      "description": "Use when working on the tmux abstraction layer (Phase 1 of the tmux migration epic), wiring TmuxConnector into agent adapters (Phase 2) or WorkerPool (Phase 3), or extending agent support in WrapperConfig. Keywords: tmux, abstraction, connector, hooks, session manager, validator, sentinel, debounce, flush, agent type, jq, wrapper script, sequence ordering.",
       "directories": [
         "src/implementations/tmux",
         "tests/unit/implementations/tmux",
@@ -38,7 +38,7 @@
         "src/implementations/tmux/index.ts",
         "src/core/errors.ts"
       ],
-      "lastUpdated": "2026-05-17T11:21:05.083Z",
+      "lastUpdated": "2026-05-17T13:40:09.400Z",
       "createdBy": "devflow-knowledge"
     }
   }
