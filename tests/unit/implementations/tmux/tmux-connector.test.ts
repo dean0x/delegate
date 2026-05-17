@@ -57,6 +57,7 @@ const BASE_CONFIG: TmuxSpawnConfig = {
   cwd: '/tmp',
   taskId: 'task-abc',
   sessionsDir: '/tmp/sessions',
+  agent: 'claude',
 };
 
 /**
@@ -169,6 +170,7 @@ function makeValidSessionManager(taskId = 'task-abc'): TmuxSessionManager {
     sendKeys: vi.fn().mockReturnValue(ok(undefined)),
     isAlive: vi.fn().mockReturnValue(ok(true)),
     listSessions: vi.fn().mockReturnValue(ok([])),
+    getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
   } as unknown as TmuxSessionManager;
 }
 
@@ -179,13 +181,14 @@ function makeFailingSessionManager(code = ErrorCode.TMUX_SESSION_FAILED): TmuxSe
     sendKeys: vi.fn().mockReturnValue(ok(undefined)),
     isAlive: vi.fn().mockReturnValue(ok(false)),
     listSessions: vi.fn().mockReturnValue(ok([])),
+    getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
   } as unknown as TmuxSessionManager;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('TmuxConnector.spawn()', () => {
-  it('validates tmux before doing anything else — validator error → no session created', async () => {
+  it('validates tmux before doing anything else — validator error → no session created', () => {
     const validator = makeFailingValidator();
     const sessionManager = makeValidSessionManager();
     const hooks = makeValidHooks();
@@ -199,12 +202,12 @@ describe('TmuxConnector.spawn()', () => {
       watch,
     });
 
-    const result = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const result = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     expect(result.ok).toBe(false);
     expect(sessionManager.createSession).not.toHaveBeenCalled();
   });
 
-  it('calls hooks.generateWrapper before creating the session', async () => {
+  it('calls hooks.generateWrapper before creating the session', () => {
     const hooks = makeValidHooks();
     const sessionManager = makeValidSessionManager();
     const { watch } = makeWatchMock();
@@ -217,11 +220,11 @@ describe('TmuxConnector.spawn()', () => {
       watch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     expect(hooks.generateWrapper).toHaveBeenCalled();
   });
 
-  it('creates session with the wrapper script as the command', async () => {
+  it('creates session with the wrapper script as the command', () => {
     const sessionManager = makeValidSessionManager();
     const { watch } = makeWatchMock();
 
@@ -233,12 +236,12 @@ describe('TmuxConnector.spawn()', () => {
       watch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     const createCall = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
     expect(createCall?.command).toContain('wrapper.sh');
   });
 
-  it('starts a sentinel watcher (fs.watch called at least once)', async () => {
+  it('starts a sentinel watcher (fs.watch called at least once)', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -249,11 +252,11 @@ describe('TmuxConnector.spawn()', () => {
       watch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     expect(watch).toHaveBeenCalled();
   });
 
-  it('starts a messages watcher (fs.watch called at least twice)', async () => {
+  it('starts a messages watcher (fs.watch called at least twice)', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -264,11 +267,11 @@ describe('TmuxConnector.spawn()', () => {
       watch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     expect(watch).toHaveBeenCalledTimes(2);
   });
 
-  it('starts staleness timer (setInterval is called)', async () => {
+  it('starts staleness timer (setInterval is called)', () => {
     vi.useFakeTimers();
     const { watch } = makeWatchMock();
 
@@ -280,14 +283,14 @@ describe('TmuxConnector.spawn()', () => {
       watch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     // If no error was thrown and spawn succeeded, staleness timer is running
     // We clean up to avoid timer leaks
     connector.dispose();
     vi.useRealTimers();
   });
 
-  it('returns ok(TmuxHandle) on success', async () => {
+  it('returns ok(TmuxHandle) on success', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -298,13 +301,13 @@ describe('TmuxConnector.spawn()', () => {
       watch,
     });
 
-    const result = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const result = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.taskId).toBe('task-abc');
   });
 
-  it('returns hook error when generateWrapper fails', async () => {
+  it('returns hook error when generateWrapper fails', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -315,13 +318,13 @@ describe('TmuxConnector.spawn()', () => {
       watch,
     });
 
-    const result = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const result = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
   });
 
-  it('spawn succeeds even when the messages watcher throws (graceful degradation)', async () => {
+  it('spawn succeeds even when the messages watcher throws (graceful degradation)', () => {
     // The 2nd watch call (messages watcher) throws; spawn must still return ok
     let callCount = 0;
     const watch = vi.fn().mockImplementation((..._args: unknown[]) => {
@@ -344,7 +347,7 @@ describe('TmuxConnector.spawn()', () => {
       watch,
     });
 
-    const result = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const result = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
 
     // spawn must succeed despite the messages watcher failure
     expect(result.ok).toBe(true);
@@ -356,7 +359,7 @@ describe('TmuxConnector.spawn()', () => {
     connector.dispose();
   });
 
-  it('returns session error when createSession fails, and does not register the handle', async () => {
+  it('returns session error when createSession fails, and does not register the handle', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -367,14 +370,14 @@ describe('TmuxConnector.spawn()', () => {
       watch,
     });
 
-    const result = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const result = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     expect(result.ok).toBe(false);
     expect(connector.getActiveHandles()).toHaveLength(0);
   });
 });
 
 describe('TmuxConnector — sentinel detection', () => {
-  it('.done sentinel fires onExit with code 0', async () => {
+  it('.done sentinel fires onExit with code 0', () => {
     const { watch, fireSentinel } = makeWatchMock();
     const onExit = vi.fn();
     const readFileSync = vi.fn().mockReturnValue('0');
@@ -388,13 +391,13 @@ describe('TmuxConnector — sentinel detection', () => {
       readFileSync,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
     fireSentinel('.done');
 
     expect(onExit).toHaveBeenCalledWith(0, undefined);
   });
 
-  it('.exit sentinel fires onExit with non-zero code', async () => {
+  it('.exit sentinel fires onExit with non-zero code', () => {
     const { watch, fireSentinel } = makeWatchMock();
     const onExit = vi.fn();
     const readFileSync = vi.fn().mockReturnValue('1');
@@ -408,13 +411,13 @@ describe('TmuxConnector — sentinel detection', () => {
       readFileSync,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
     fireSentinel('.exit');
 
     expect(onExit).toHaveBeenCalledWith(1, undefined);
   });
 
-  it('sentinel fires onExit synchronously when the sentinel file appears', async () => {
+  it('sentinel fires onExit synchronously when the sentinel file appears', () => {
     const { watch, fireSentinel } = makeWatchMock();
     const onExit = vi.fn();
     const readFileSync = vi.fn().mockReturnValue('0');
@@ -428,7 +431,7 @@ describe('TmuxConnector — sentinel detection', () => {
       readFileSync,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
     fireSentinel('.done');
 
     // The callback fires synchronously — assert that it was called, not how fast
@@ -438,7 +441,7 @@ describe('TmuxConnector — sentinel detection', () => {
 
 // B1: handleSentinel edge cases
 describe('TmuxConnector — handleSentinel edge cases', () => {
-  it('.exit sentinel with unreadable file defaults to exit code 1', async () => {
+  it('.exit sentinel with unreadable file defaults to exit code 1', () => {
     const { watch, fireSentinel } = makeWatchMock();
     const onExit = vi.fn();
     const readFileSync = vi.fn().mockImplementation(() => {
@@ -460,7 +463,7 @@ describe('TmuxConnector — handleSentinel edge cases', () => {
     expect(onExit).toHaveBeenCalledWith(1, undefined);
   });
 
-  it('.exit sentinel with non-numeric file content defaults to exit code 1', async () => {
+  it('.exit sentinel with non-numeric file content defaults to exit code 1', () => {
     const { watch, fireSentinel } = makeWatchMock();
     const onExit = vi.fn();
     const readFileSync = vi.fn().mockReturnValue('not-a-number');
@@ -480,7 +483,7 @@ describe('TmuxConnector — handleSentinel edge cases', () => {
     expect(onExit).toHaveBeenCalledWith(1, undefined);
   });
 
-  it('.done sentinel with unreadable file defaults to exit code 0', async () => {
+  it('.done sentinel with unreadable file defaults to exit code 0', () => {
     const { watch, fireSentinel } = makeWatchMock();
     const onExit = vi.fn();
     const readFileSync = vi.fn().mockImplementation(() => {
@@ -580,7 +583,7 @@ describe('TmuxConnector — handleMessageFile readFile rejection', () => {
 });
 
 describe('TmuxConnector — watcher error handler', () => {
-  it('logs a warning when the sentinel watcher emits an error event', async () => {
+  it('logs a warning when the sentinel watcher emits an error event', () => {
     const logger = makeLogger();
     const { watch, triggerError } = makeWatchWithErrorCapture(1);
 
@@ -592,7 +595,7 @@ describe('TmuxConnector — watcher error handler', () => {
       watch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     triggerError(new Error('ENOSPC: no space left on device'));
 
     expect(logger.warn).toHaveBeenCalledWith(
@@ -603,7 +606,7 @@ describe('TmuxConnector — watcher error handler', () => {
     connector.dispose();
   });
 
-  it('logs a warning when the messages watcher emits an error event', async () => {
+  it('logs a warning when the messages watcher emits an error event', () => {
     const logger = makeLogger();
     const { watch, triggerError } = makeWatchWithErrorCapture(2);
 
@@ -615,7 +618,7 @@ describe('TmuxConnector — watcher error handler', () => {
       watch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     triggerError(new Error('ENOSPC: no space left on device'));
 
     expect(logger.warn).toHaveBeenCalledWith(
@@ -648,7 +651,7 @@ describe('TmuxConnector — output handling', () => {
       readFile,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
     fireMessage('00001-stdout.json');
 
     // Allow debounce timer and async readFile to resolve
@@ -669,7 +672,7 @@ describe('TmuxConnector — output handling', () => {
       watch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
     fireMessage('00001-stdout.json.tmp');
 
     await sleep(100);
@@ -699,7 +702,7 @@ describe('TmuxConnector — output handling', () => {
       readFile,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
     fireMessage('00001-stdout.json');
 
     await sleep(200);
@@ -723,7 +726,7 @@ describe('TmuxConnector — output handling', () => {
       readFile,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
     fireMessage('00001-stdout.json');
 
     await sleep(200);
@@ -759,7 +762,7 @@ describe('TmuxConnector — output handling', () => {
       readFile,
     });
 
-    await connector.spawn(BASE_CONFIG, {
+    connector.spawn(BASE_CONFIG, {
       onOutput: (m) => received.push(m),
       onExit: vi.fn(),
     });
@@ -792,7 +795,7 @@ describe('TmuxConnector — output handling', () => {
       readFile,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
     fireMessage('00001-stdout.json');
     fireMessage('00001-stdout.json'); // double-fire within 50ms
 
@@ -836,7 +839,7 @@ describe('TmuxConnector — output handling', () => {
       readFile,
     });
 
-    await connector.spawn(BASE_CONFIG, {
+    connector.spawn(BASE_CONFIG, {
       onOutput: (m) => received.push(m),
       onExit: vi.fn(),
     });
@@ -880,7 +883,7 @@ describe('TmuxConnector — flush before exit', () => {
     });
   }
 
-  it('delivers debounced messages before onExit when sentinel fires during debounce window', async () => {
+  it('delivers debounced messages before onExit when sentinel fires during debounce window', () => {
     const msgs: Record<string, OutputMessage> = {
       '00001-stdout.json': buildOutputMsg(1),
       '00002-stdout.json': buildOutputMsg(2),
@@ -901,7 +904,7 @@ describe('TmuxConnector — flush before exit', () => {
       readdirSync,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput, onExit });
+    connector.spawn(BASE_CONFIG, { onOutput, onExit });
 
     // Fire two messages — they enter 50ms debounce, not yet delivered
     fireMessage('00001-stdout.json');
@@ -944,7 +947,7 @@ describe('TmuxConnector — flush before exit', () => {
       readdirSync,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput, onExit });
+    connector.spawn(BASE_CONFIG, { onOutput, onExit });
 
     // Deliver msg1 normally via debounce
     fireMessage('00001-stdout.json');
@@ -960,7 +963,7 @@ describe('TmuxConnector — flush before exit', () => {
     expect(onOutput.mock.calls[1]![0].sequence).toBe(2);
   });
 
-  it('dispose flushes pending messages before closing', async () => {
+  it('dispose flushes pending messages before closing', () => {
     const msgs: Record<string, OutputMessage> = {
       '00001-stdout.json': buildOutputMsg(1),
     };
@@ -980,7 +983,7 @@ describe('TmuxConnector — flush before exit', () => {
       readdirSync,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput, onExit });
+    connector.spawn(BASE_CONFIG, { onOutput, onExit });
 
     // Fire message — enters debounce window
     fireMessage('00001-stdout.json');
@@ -993,7 +996,7 @@ describe('TmuxConnector — flush before exit', () => {
     expect(onExit).toHaveBeenCalledWith(null, 'SHUTDOWN');
   });
 
-  it('destroy flushes pending messages before closing', async () => {
+  it('destroy flushes pending messages before closing', () => {
     const msgs: Record<string, OutputMessage> = {
       '00001-stdout.json': buildOutputMsg(1),
     };
@@ -1013,7 +1016,7 @@ describe('TmuxConnector — flush before exit', () => {
       readdirSync,
     });
 
-    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput, onExit });
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput, onExit });
     if (!spawnResult.ok) return;
 
     // Fire message — enters debounce window
@@ -1026,7 +1029,7 @@ describe('TmuxConnector — flush before exit', () => {
     expect(onExit).not.toHaveBeenCalled();
   });
 
-  it('flush delivers all messages with sequence gaps ([1, 3, 5])', async () => {
+  it('flush delivers all messages with sequence gaps ([1, 3, 5])', () => {
     const msgs: Record<string, OutputMessage> = {
       '00001-stdout.json': buildOutputMsg(1),
       '00003-stdout.json': buildOutputMsg(3),
@@ -1048,7 +1051,7 @@ describe('TmuxConnector — flush before exit', () => {
       readdirSync,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: (m) => received.push(m), onExit });
+    connector.spawn(BASE_CONFIG, { onOutput: (m) => received.push(m), onExit });
 
     fireSentinel('.done');
 
@@ -1083,7 +1086,7 @@ describe('TmuxConnector — flush before exit', () => {
       readdirSync,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: (m) => received.push(m), onExit });
+    connector.spawn(BASE_CONFIG, { onOutput: (m) => received.push(m), onExit });
 
     // Deliver msg 1 normally via debounce
     fireMessage('00001-stdout.json');
@@ -1097,7 +1100,7 @@ describe('TmuxConnector — flush before exit', () => {
     expect(received.map((m) => m.sequence)).toEqual([1, 3, 5]);
   });
 
-  it('flush is re-entrancy safe — onOutput calling destroy does not loop', async () => {
+  it('flush is re-entrancy safe — onOutput calling destroy does not loop', () => {
     const msgs: Record<string, OutputMessage> = {
       '00001-stdout.json': buildOutputMsg(1),
     };
@@ -1124,7 +1127,7 @@ describe('TmuxConnector — flush before exit', () => {
       readdirSync,
     });
 
-    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput, onExit });
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput, onExit });
     if (!spawnResult.ok) return;
     handle = spawnResult.value;
 
@@ -1133,7 +1136,7 @@ describe('TmuxConnector — flush before exit', () => {
     expect(onOutput).toHaveBeenCalledTimes(1);
   });
 
-  it('flush handles missing messagesDir gracefully', async () => {
+  it('flush handles missing messagesDir gracefully', () => {
     const readFileSync = vi.fn().mockReturnValue('0');
     const readdirSync = vi.fn().mockImplementation(() => {
       const e = new Error('ENOENT') as NodeJS.ErrnoException;
@@ -1153,7 +1156,7 @@ describe('TmuxConnector — flush before exit', () => {
       readdirSync,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
 
     // Sentinel fires with missing messages dir — should not throw
     expect(() => fireSentinel('.done')).not.toThrow();
@@ -1162,7 +1165,7 @@ describe('TmuxConnector — flush before exit', () => {
 });
 
 describe('TmuxConnector — MIN_CHECK_INTERVAL_MS floor clamp', () => {
-  it('clamps checkIntervalMs below 1000ms to 1000ms', async () => {
+  it('clamps checkIntervalMs below 1000ms to 1000ms', () => {
     vi.useFakeTimers();
     const { watch } = makeWatchMock();
     const onExit = vi.fn();
@@ -1178,7 +1181,7 @@ describe('TmuxConnector — MIN_CHECK_INTERVAL_MS floor clamp', () => {
       watch,
     });
 
-    await connector.spawn(
+    connector.spawn(
       { ...BASE_CONFIG, staleness: { checkIntervalMs: 100, maxSilenceMs: 0 } },
       { onOutput: vi.fn(), onExit },
     );
@@ -1196,7 +1199,7 @@ describe('TmuxConnector — MIN_CHECK_INTERVAL_MS floor clamp', () => {
 });
 
 describe('TmuxConnector — staleness detection', () => {
-  it('fires onExit(null, STALE) when session is dead for maxSilenceMs', async () => {
+  it('fires onExit(null, STALE) when session is dead for maxSilenceMs', () => {
     vi.useFakeTimers();
     const { watch } = makeWatchMock();
     const onExit = vi.fn();
@@ -1213,7 +1216,7 @@ describe('TmuxConnector — staleness detection', () => {
       watch,
     });
 
-    await connector.spawn(
+    connector.spawn(
       { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 500 } },
       { onOutput: vi.fn(), onExit },
     );
@@ -1225,7 +1228,7 @@ describe('TmuxConnector — staleness detection', () => {
     vi.useRealTimers();
   });
 
-  it('staleness timer uses the configured checkIntervalMs', async () => {
+  it('staleness timer uses the configured checkIntervalMs', () => {
     vi.useFakeTimers();
     const { watch } = makeWatchMock();
     // listSessions returns [] by default — session is absent, triggers STALE after maxSilenceMs
@@ -1240,7 +1243,7 @@ describe('TmuxConnector — staleness detection', () => {
       watch,
     });
 
-    await connector.spawn(
+    connector.spawn(
       { ...BASE_CONFIG, staleness: { checkIntervalMs: 5000, maxSilenceMs: 1000 } },
       { onOutput: vi.fn(), onExit },
     );
@@ -1255,7 +1258,7 @@ describe('TmuxConnector — staleness detection', () => {
     vi.useRealTimers();
   });
 
-  it('staleness timer logs warning and does NOT fire onExit when listSessions returns err', async () => {
+  it('staleness timer logs warning and does NOT fire onExit when listSessions returns err', () => {
     vi.useFakeTimers();
     const { watch } = makeWatchMock();
     const onExit = vi.fn();
@@ -1275,7 +1278,7 @@ describe('TmuxConnector — staleness detection', () => {
       watch,
     });
 
-    await connector.spawn(
+    connector.spawn(
       { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 500 } },
       { onOutput: vi.fn(), onExit },
     );
@@ -1294,7 +1297,7 @@ describe('TmuxConnector — staleness detection', () => {
     vi.useRealTimers();
   });
 
-  it('alive session resets lastAliveCheck and does NOT fire STALE', async () => {
+  it('alive session resets lastAliveCheck and does NOT fire STALE', () => {
     vi.useFakeTimers();
     const { watch } = makeWatchMock();
     const onExit = vi.fn();
@@ -1311,7 +1314,7 @@ describe('TmuxConnector — staleness detection', () => {
       watch,
     });
 
-    await connector.spawn(
+    connector.spawn(
       { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 500 } },
       { onOutput: vi.fn(), onExit },
     );
@@ -1324,7 +1327,7 @@ describe('TmuxConnector — staleness detection', () => {
     vi.useRealTimers();
   });
 
-  it('staleness timer stops after exit — no double-fire', async () => {
+  it('staleness timer stops after exit — no double-fire', () => {
     vi.useFakeTimers();
     const { watch, fireSentinel } = makeWatchMock();
     const onExit = vi.fn();
@@ -1339,7 +1342,7 @@ describe('TmuxConnector — staleness detection', () => {
       readFileSync,
     });
 
-    await connector.spawn(
+    connector.spawn(
       { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 500 } },
       { onOutput: vi.fn(), onExit },
     );
@@ -1356,7 +1359,7 @@ describe('TmuxConnector — staleness detection', () => {
 });
 
 describe('TmuxConnector.destroy()', () => {
-  it('closes sentinel watcher on destroy', async () => {
+  it('closes sentinel watcher on destroy', () => {
     const { watch, sentinelWatcher } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -1367,14 +1370,14 @@ describe('TmuxConnector.destroy()', () => {
       watch,
     });
 
-    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     if (!spawnResult.ok) return;
     connector.destroy(spawnResult.value);
 
     expect(sentinelWatcher.close).toHaveBeenCalled();
   });
 
-  it('closes messages watcher on destroy', async () => {
+  it('closes messages watcher on destroy', () => {
     const { watch, messageWatcher } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -1385,14 +1388,14 @@ describe('TmuxConnector.destroy()', () => {
       watch,
     });
 
-    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     if (!spawnResult.ok) return;
     connector.destroy(spawnResult.value);
 
     expect(messageWatcher.close).toHaveBeenCalled();
   });
 
-  it('clears staleness timer on destroy', async () => {
+  it('clears staleness timer on destroy', () => {
     vi.useFakeTimers();
     const { watch } = makeWatchMock();
     const onExit = vi.fn();
@@ -1405,7 +1408,7 @@ describe('TmuxConnector.destroy()', () => {
       watch,
     });
 
-    const spawnResult = await connector.spawn(
+    const spawnResult = connector.spawn(
       { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 500 } },
       { onOutput: vi.fn(), onExit },
     );
@@ -1422,7 +1425,7 @@ describe('TmuxConnector.destroy()', () => {
     vi.useRealTimers();
   });
 
-  it('calls sessionManager.destroySession with the session name', async () => {
+  it('calls sessionManager.destroySession with the session name', () => {
     const { watch } = makeWatchMock();
     const sessionManager = makeValidSessionManager();
 
@@ -1434,14 +1437,14 @@ describe('TmuxConnector.destroy()', () => {
       watch,
     });
 
-    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     if (!spawnResult.ok) return;
     connector.destroy(spawnResult.value);
 
     expect(sessionManager.destroySession).toHaveBeenCalled();
   });
 
-  it('calls hooks.cleanup with taskId and sessionsDir on destroy', async () => {
+  it('calls hooks.cleanup with taskId and sessionsDir on destroy', () => {
     const { watch } = makeWatchMock();
     const hooks = makeValidHooks();
 
@@ -1453,14 +1456,14 @@ describe('TmuxConnector.destroy()', () => {
       watch,
     });
 
-    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     if (!spawnResult.ok) return;
     connector.destroy(spawnResult.value);
 
     expect(hooks.cleanup).toHaveBeenCalledWith(BASE_CONFIG.taskId, BASE_CONFIG.sessionsDir);
   });
 
-  it('destroy is idempotent — calling twice does not throw', async () => {
+  it('destroy is idempotent — calling twice does not throw', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -1471,7 +1474,7 @@ describe('TmuxConnector.destroy()', () => {
       watch,
     });
 
-    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     if (!spawnResult.ok) return;
 
     expect(() => {
@@ -1482,7 +1485,7 @@ describe('TmuxConnector.destroy()', () => {
 });
 
 describe('TmuxConnector.sendKeys() / isAlive()', () => {
-  it('sendKeys delegates to sessionManager.sendKeys', async () => {
+  it('sendKeys delegates to sessionManager.sendKeys', () => {
     const { watch } = makeWatchMock();
     const sessionManager = makeValidSessionManager();
 
@@ -1494,7 +1497,7 @@ describe('TmuxConnector.sendKeys() / isAlive()', () => {
       watch,
     });
 
-    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     if (!spawnResult.ok) return;
 
     connector.sendKeys(spawnResult.value, 'hello');
@@ -1503,7 +1506,7 @@ describe('TmuxConnector.sendKeys() / isAlive()', () => {
 });
 
 describe('TmuxConnector.dispose()', () => {
-  it('logs warning when destroySession returns err during dispose()', async () => {
+  it('logs warning when destroySession returns err during dispose()', () => {
     const { watch } = makeWatchMock();
     const logger = makeLogger();
 
@@ -1520,7 +1523,7 @@ describe('TmuxConnector.dispose()', () => {
       watch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     connector.dispose();
 
     expect(logger.warn).toHaveBeenCalledWith(
@@ -1529,7 +1532,7 @@ describe('TmuxConnector.dispose()', () => {
     );
   });
 
-  it('calls hooks.cleanup with taskId and sessionsDir on dispose', async () => {
+  it('calls hooks.cleanup with taskId and sessionsDir on dispose', () => {
     const { watch } = makeWatchMock();
     const hooks = makeValidHooks();
 
@@ -1541,13 +1544,13 @@ describe('TmuxConnector.dispose()', () => {
       watch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     connector.dispose();
 
     expect(hooks.cleanup).toHaveBeenCalledWith(BASE_CONFIG.taskId, BASE_CONFIG.sessionsDir);
   });
 
-  it('dispose cleans up all active handles', async () => {
+  it('dispose cleans up all active handles', () => {
     const { watch: watch1 } = makeWatchMock();
     const { watch: watch2 } = makeWatchMock();
 
@@ -1582,8 +1585,8 @@ describe('TmuxConnector.dispose()', () => {
       watch: combinedWatch,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
-    await connector.spawn(
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(
       { ...BASE_CONFIG, name: 'beat-task-def', taskId: 'task-def' },
       { onOutput: vi.fn(), onExit: vi.fn() },
     );
@@ -1596,7 +1599,7 @@ describe('TmuxConnector.dispose()', () => {
 });
 
 describe('TmuxConnector.getActiveHandles()', () => {
-  it('returns all currently active session handles', async () => {
+  it('returns all currently active session handles', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -1609,7 +1612,7 @@ describe('TmuxConnector.getActiveHandles()', () => {
 
     expect(connector.getActiveHandles()).toHaveLength(0);
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     expect(connector.getActiveHandles()).toHaveLength(1);
 
     connector.dispose();
@@ -1624,7 +1627,7 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
     } as unknown as TmuxHooks;
   }
 
-  it('logs warning when hooks.cleanup fails during spawn rollback (createSession fails)', async () => {
+  it('logs warning when hooks.cleanup fails during spawn rollback (createSession fails)', () => {
     const { watch } = makeWatchMock();
     const logger = makeLogger();
     const hooks = makeCleanupFailingHooks();
@@ -1638,7 +1641,7 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
     });
 
     // createSession fails → spawn rolls back → loggedCleanup is called → cleanup returns err
-    const result = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const result = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     expect(result.ok).toBe(false);
 
     expect(logger.warn).toHaveBeenCalledWith(
@@ -1647,7 +1650,7 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
     );
   });
 
-  it('logs warning when hooks.cleanup fails during destroy()', async () => {
+  it('logs warning when hooks.cleanup fails during destroy()', () => {
     const { watch } = makeWatchMock();
     const logger = makeLogger();
     const hooks = makeCleanupFailingHooks();
@@ -1660,7 +1663,7 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
       watch,
     });
 
-    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     if (!spawnResult.ok) return;
 
     // spawn calls cleanup and logs a warning, reset so we can assert cleanly on destroy
@@ -1674,7 +1677,7 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
     );
   });
 
-  it('logs warning when hooks.cleanup fails during triggerExit (sentinel fires)', async () => {
+  it('logs warning when hooks.cleanup fails during triggerExit (sentinel fires)', () => {
     const { watch, fireSentinel } = makeWatchMock();
     const logger = makeLogger();
     const hooks = makeCleanupFailingHooks();
@@ -1689,7 +1692,7 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
       readFileSync,
     });
 
-    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
 
     // spawn calls cleanup and logs a warning, reset so we can assert cleanly on exit
     (logger.warn as ReturnType<typeof vi.fn>).mockClear();

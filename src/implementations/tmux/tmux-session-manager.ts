@@ -117,11 +117,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
    * caller-supplied env. Invalid POSIX key names are silently skipped.
    * Best-effort — does not roll back the session on failure.
    */
-  private injectEnvironment(
-    sessionName: string,
-    taskId: string,
-    callerEnv: Record<string, string> | undefined,
-  ): void {
+  private injectEnvironment(sessionName: string, taskId: string, callerEnv: Record<string, string> | undefined): void {
     // Auto-inject task identity variables so workers can identify their session
     const autoVars: Record<string, string> = {
       AUTOBEAT_TASK_ID: taskId,
