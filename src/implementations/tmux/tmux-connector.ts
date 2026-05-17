@@ -41,6 +41,9 @@ const DEBOUNCE_MS = 50;
 /** Maximum number of pending out-of-order messages before forcing delivery */
 const MAX_PENDING_MESSAGES = 100;
 
+/** Minimum allowed checkIntervalMs to prevent tight-loop setInterval */
+const MIN_CHECK_INTERVAL_MS = 1000;
+
 /** Valid literal values for OutputMessage.type */
 const VALID_OUTPUT_TYPES = new Set<string>(['stdout', 'stderr', 'result']);
 
@@ -145,31 +148,8 @@ export class TmuxConnector {
     if (!manifestResult.ok) return manifestResult;
     const manifest = manifestResult.value;
 
-    const stalenessConfig: StalenessConfig = {
-      ...DEFAULT_STALENESS_CONFIG,
-      ...config.staleness,
-    };
-
     // Build the internal session state (before launching, to set up watchers first)
-    const session: ActiveSession = {
-      handle: {
-        sessionName: config.name,
-        taskId: config.taskId,
-        sessionsDir: config.sessionsDir,
-      },
-      sentinelWatcher: null,
-      messagesWatcher: null,
-      stalenessConfig,
-      lastAliveCheck: Date.now(),
-      exited: false,
-      lastDeliveredSeq: 0,
-      pendingMessages: new Map(),
-      nextExpectedSeq: 1,
-      debounceTimers: new Map(),
-      messagesDir: manifest.messagesDir,
-      callbacks,
-      flushing: false,
-    };
+    const session = this.buildActiveSession(config, manifest.messagesDir, callbacks);
 
     // 3. Start fs.watch watchers (BEFORE session launch to avoid race)
     this.startWatchers(session, manifest.sessionDir);
@@ -182,7 +162,13 @@ export class TmuxConnector {
     if (!sessionResult.ok) {
       // Clean up watchers and generated session directory on failure
       this.closeSession(session);
-      this.deps.hooks.cleanup(config.taskId, config.sessionsDir);
+      const cleanupResult = this.deps.hooks.cleanup(config.taskId, config.sessionsDir);
+      if (!cleanupResult.ok) {
+        this.deps.logger.warn('spawn: hooks.cleanup failed', {
+          taskId: config.taskId,
+          error: cleanupResult.error.message,
+        });
+      }
       return sessionResult;
     }
 
@@ -214,8 +200,14 @@ export class TmuxConnector {
       this.flushPendingFiles(session);
       this.closeSession(session);
       this.activeSessions.delete(handle.taskId);
-      this.stopSharedStalenessTimerIfEmpty();
-      this.deps.hooks.cleanup(handle.taskId, handle.sessionsDir);
+      this.restartSharedStalenessTimer();
+      const cleanupResult = this.deps.hooks.cleanup(handle.taskId, handle.sessionsDir);
+      if (!cleanupResult.ok) {
+        this.deps.logger.warn('destroy: hooks.cleanup failed', {
+          taskId: handle.taskId,
+          error: cleanupResult.error.message,
+        });
+      }
     }
     return this.deps.sessionManager.destroySession(handle.sessionName);
   }
@@ -252,21 +244,68 @@ export class TmuxConnector {
           error: result.error.message,
         });
       }
-      this.deps.hooks.cleanup(session.handle.taskId, session.handle.sessionsDir);
+      const cleanupResult = this.deps.hooks.cleanup(session.handle.taskId, session.handle.sessionsDir);
+      if (!cleanupResult.ok) {
+        this.deps.logger.warn('dispose: hooks.cleanup failed', {
+          taskId: session.handle.taskId,
+          error: cleanupResult.error.message,
+        });
+      }
     }
   }
 
   // ─── Private helpers ────────────────────────────────────────────────────────
 
   /**
+   * Constructs the initial ActiveSession state object.
+   * Extracted from spawn() to keep spawn() under 50 lines.
+   */
+  private buildActiveSession(
+    config: TmuxSpawnConfig,
+    messagesDir: string,
+    callbacks: SpawnCallbacks,
+  ): ActiveSession {
+    const stalenessConfig: StalenessConfig = {
+      ...DEFAULT_STALENESS_CONFIG,
+      ...config.staleness,
+    };
+    return {
+      handle: {
+        sessionName: config.name,
+        taskId: config.taskId,
+        sessionsDir: config.sessionsDir,
+      },
+      sentinelWatcher: null,
+      messagesWatcher: null,
+      stalenessConfig,
+      lastAliveCheck: Date.now(),
+      exited: false,
+      lastDeliveredSeq: 0,
+      pendingMessages: new Map(),
+      nextExpectedSeq: 1,
+      debounceTimers: new Map(),
+      messagesDir,
+      callbacks,
+      flushing: false,
+    };
+  }
+
+  /**
    * Starts the sentinel and messages fs.watch watchers for a session.
    * Called BEFORE session launch so we never miss events from a fast-exiting agent.
    */
   private startWatchers(session: ActiveSession, sessionDir: string): void {
-    const { taskId } = session.handle;
-    const { messagesDir, callbacks } = session;
+    this.startSentinelWatcher(session, sessionDir);
+    this.startMessagesWatcher(session);
+  }
 
-    // Sentinel watcher — detects .done / .exit files written by the wrapper
+  /**
+   * Starts the sentinel watcher that detects .done / .exit files written by the wrapper.
+   * Errors are logged but do not throw — staleness detection handles the degraded path.
+   */
+  private startSentinelWatcher(session: ActiveSession, sessionDir: string): void {
+    const { taskId } = session.handle;
+    const { callbacks } = session;
     try {
       session.sentinelWatcher = this.deps.watch(
         sessionDir,
@@ -290,8 +329,16 @@ export class TmuxConnector {
       // Directory may not exist yet — sentinel detection degrades gracefully
       this.deps.logger.warn('Failed to start sentinel watcher', { taskId, sessionDir });
     }
+  }
 
-    // Messages watcher — picks up output message JSON files
+  /**
+   * Starts the messages watcher that picks up output message JSON files.
+   * Applies a debounce window to suppress platform double-fire events.
+   * Errors are logged but do not throw — staleness detection handles the degraded path.
+   */
+  private startMessagesWatcher(session: ActiveSession): void {
+    const { taskId } = session.handle;
+    const { messagesDir, callbacks } = session;
     try {
       session.messagesWatcher = this.deps.watch(
         messagesDir,
@@ -307,7 +354,15 @@ export class TmuxConnector {
           if (existing) clearTimeout(existing);
           const timer = setTimeout(() => {
             session.debounceTimers.delete(filename);
-            this.handleMessageFile(path.join(messagesDir, filename), session, callbacks);
+            this.handleMessageFile(path.join(messagesDir, filename), session, callbacks).catch(
+              (err: unknown) => {
+                this.deps.logger.warn('handleMessageFile threw unexpectedly', {
+                  taskId,
+                  filename,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              },
+            );
           }, DEBOUNCE_MS);
           session.debounceTimers.set(filename, timer);
         },
@@ -339,13 +394,15 @@ export class TmuxConnector {
     this.stopSharedStalenessTimer();
     if (this.activeSessions.size === 0) return;
 
-    // Use the minimum checkIntervalMs so all sessions are checked on time
+    // Use the minimum checkIntervalMs so all sessions are checked on time.
+    // Clamp to MIN_CHECK_INTERVAL_MS to prevent tight-loop setInterval.
     let minInterval = Infinity;
     for (const s of this.activeSessions.values()) {
       if (s.stalenessConfig.checkIntervalMs < minInterval) {
         minInterval = s.stalenessConfig.checkIntervalMs;
       }
     }
+    minInterval = Math.max(minInterval, MIN_CHECK_INTERVAL_MS);
 
     this.sharedStalenessTimer = setInterval(() => {
       this.runSharedStalenessCheck();
@@ -372,6 +429,10 @@ export class TmuxConnector {
     const aliveSessions = new Set<string>(listResult.value.map((s: TmuxSessionInfo) => s.name));
     const now = Date.now();
 
+    // Collect stale sessions first so triggerExit does not mutate activeSessions
+    // while we are still iterating it.
+    const staleEntries: Array<[string, ActiveSession]> = [];
+
     for (const [taskId, session] of this.activeSessions) {
       if (session.exited) continue;
 
@@ -386,9 +447,13 @@ export class TmuxConnector {
             sessionName: session.handle.sessionName,
             silentMs,
           });
-          this.triggerExit(taskId, session, null, 'STALE', session.callbacks);
+          staleEntries.push([taskId, session]);
         }
       }
+    }
+
+    for (const [taskId, session] of staleEntries) {
+      this.triggerExit(taskId, session, null, 'STALE', session.callbacks);
     }
   }
 
@@ -396,16 +461,6 @@ export class TmuxConnector {
     if (this.sharedStalenessTimer !== null) {
       clearInterval(this.sharedStalenessTimer);
       this.sharedStalenessTimer = null;
-    }
-  }
-
-  /**
-   * Stops the shared timer only when there are no more active sessions.
-   * Called after removing a session from activeSessions.
-   */
-  private stopSharedStalenessTimerIfEmpty(): void {
-    if (this.activeSessions.size === 0) {
-      this.stopSharedStalenessTimer();
     }
   }
 
@@ -457,15 +512,22 @@ export class TmuxConnector {
       this.deliverPendingMessages(session, session.callbacks);
 
       // Force-deliver any remaining out-of-order messages (no more will arrive)
-      if (session.pendingMessages.size > 0) {
-        const sorted = Array.from(session.pendingMessages.entries()).sort(([a], [b]) => a - b);
-        for (const [, msg] of sorted) {
-          session.pendingMessages.delete(msg.sequence);
-          this.deliverSingle(msg, session, session.callbacks);
-        }
-      }
+      this.forceDeliverRemaining(session);
     } finally {
       session.flushing = false;
+    }
+  }
+
+  /**
+   * Force-delivers all remaining pending messages in sequence order, bypassing
+   * the gap-filling logic. Used at flush time when no further messages will arrive.
+   */
+  private forceDeliverRemaining(session: ActiveSession): void {
+    if (session.pendingMessages.size === 0) return;
+    const sorted = Array.from(session.pendingMessages.entries()).sort(([a], [b]) => a - b);
+    for (const [, msg] of sorted) {
+      session.pendingMessages.delete(msg.sequence);
+      this.deliverSingle(msg, session, session.callbacks);
     }
   }
 
@@ -572,8 +634,16 @@ export class TmuxConnector {
     this.flushPendingFiles(session);
     this.closeSession(session);
     this.activeSessions.delete(taskId);
-    this.stopSharedStalenessTimerIfEmpty();
-    this.deps.hooks.cleanup(session.handle.taskId, session.handle.sessionsDir);
+    // Restart (or stop) the shared timer so remaining sessions are still checked
+    // at the correct minimum interval now that this session has been removed.
+    this.restartSharedStalenessTimer();
+    const cleanupResult = this.deps.hooks.cleanup(session.handle.taskId, session.handle.sessionsDir);
+    if (!cleanupResult.ok) {
+      this.deps.logger.warn('triggerExit: hooks.cleanup failed', {
+        taskId,
+        error: cleanupResult.error.message,
+      });
+    }
     callbacks.onExit(code, signal);
   }
 
