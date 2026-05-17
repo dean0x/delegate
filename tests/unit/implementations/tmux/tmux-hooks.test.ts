@@ -106,11 +106,12 @@ describe('TmuxHooks.generateWrapper()', () => {
     expect(content).toContain('/usr/bin/claude');
   });
 
-  it('wrapper script contains agent args', () => {
+  it('wrapper script contains agent args single-quoted', () => {
     hooks.generateWrapper(validConfig);
     const [, content] = writeFile.mock.calls[0] as [string, string];
-    expect(content).toContain('--prompt');
-    expect(content).toContain('do stuff');
+    // Each arg is individually single-quoted for shell safety
+    expect(content).toContain("'--prompt'");
+    expect(content).toContain("'do stuff'");
   });
 
   it('wrapper captures stdout via while IFS= read -r loop', () => {
@@ -292,6 +293,53 @@ describe('TmuxHooks.generateWrapper()', () => {
     hooks.generateWrapper(validConfig);
     const [, content] = writeFile.mock.calls[0] as [string, string];
     expect(content).toContain("SESSIONS_DIR='/tmp/sessions/task-abc'");
+  });
+
+  // SECURITY: Issue 1 — agentCommand must be validated before embedding in the wrapper script
+  it('returns TMUX_HOOK_FAILED for agentCommand containing shell metacharacters', () => {
+    const result = hooks.generateWrapper({ ...validConfig, agentCommand: '/usr/bin/claude;rm -rf /' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  it('returns TMUX_HOOK_FAILED for agentCommand containing path traversal', () => {
+    const result = hooks.generateWrapper({ ...validConfig, agentCommand: '/usr/../bin/claude' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  it('returns TMUX_HOOK_FAILED for agentCommand with single quote injection', () => {
+    const result = hooks.generateWrapper({ ...validConfig, agentCommand: "/usr/bin/claude'injected" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  it('accepts valid agentCommand as an absolute path', () => {
+    const result = hooks.generateWrapper({ ...validConfig, agentCommand: '/usr/local/bin/claude' });
+    expect(result.ok).toBe(true);
+  });
+
+  // SECURITY: Issue 2 — agentArgs must be individually single-quoted
+  it('wrapper script single-quotes args containing spaces', () => {
+    hooks.generateWrapper({ ...validConfig, agentArgs: ['--system', 'do the thing'] });
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    expect(content).toContain("'do the thing'");
+  });
+
+  it('wrapper script escapes single quotes inside args using the end-quote technique', () => {
+    // Arg "it's" must become 'it'\''s' in the script
+    hooks.generateWrapper({ ...validConfig, agentArgs: ["it's"] });
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    expect(content).toContain("'it'\\''s'");
+  });
+
+  it('wrapper script single-quotes args containing dollar signs', () => {
+    hooks.generateWrapper({ ...validConfig, agentArgs: ['--env', '$SECRET'] });
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    expect(content).toContain("'$SECRET'");
   });
 
   it('returns TMUX_HOOK_FAILED when writeFile throws', () => {

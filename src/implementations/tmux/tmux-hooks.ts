@@ -7,10 +7,12 @@
  * a sentinel (.done or .exit) when done — enabling push-based completion
  * detection via fs.watch without polling.
  *
- * SECURITY: All paths embedded in the generated script are single-quoted to
- * prevent word splitting and glob expansion. The agentCommand and agentArgs
- * are embedded as-is; callers are responsible for ensuring these values come
- * from trusted configuration, not user input.
+ * SECURITY: All paths and command values embedded in the generated script are
+ * validated or single-quoted to prevent word splitting and glob expansion.
+ * agentCommand is validated against SAFE_PATH_REGEX (reject-bad-input) before
+ * embedding. agentArgs are individually single-quote-escaped so arguments
+ * containing spaces or special characters are passed verbatim to the agent
+ * without shell interpretation.
  */
 
 import * as path from 'path';
@@ -19,7 +21,25 @@ import { tmuxHookFailed } from '../../core/errors.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import type { TmuxHooks, WrapperConfig, WrapperManifest } from './types.js';
-import { SAFE_PATH_REGEX, SENTINEL_DONE, SENTINEL_EXIT, SESSION_NAME_REGEX, TASK_ID_REGEX } from './types.js';
+import {
+  SAFE_PATH_REGEX,
+  SENTINEL_DONE,
+  SENTINEL_EXIT,
+  SESSION_NAME_REGEX,
+  TASK_ID_REGEX,
+} from './types.js';
+
+/**
+ * Escapes a string for safe embedding inside a bash single-quoted string.
+ * The standard shell technique is to end the single-quoted segment, insert an
+ * escaped single quote, then re-open the single-quoted segment:
+ *   original: it's
+ *   embedded:  'it'\''s'
+ * Returns the full single-quoted token: '<escaped-content>'.
+ */
+function shellSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
 
 /** Octal permission bits for session directories and scripts (owner read/write/execute only) */
 const FILE_MODE = 0o700;
@@ -87,7 +107,9 @@ next_seq() {
  */
 function buildWrapperScript(config: WrapperConfig): string {
   const sessionDir = path.join(config.sessionsDir, config.taskId);
-  const agentArgs = config.agentArgs.join(' ');
+  // SECURITY: Each argument is individually single-quoted to prevent word
+  // splitting, glob expansion, and injection of shell metacharacters.
+  const agentArgs = config.agentArgs.map(shellSingleQuote).join(' ');
   const communicationBlock = buildCommunicationBlock(config);
 
   return `#!/bin/bash
@@ -167,6 +189,18 @@ export class DefaultTmuxHooks implements TmuxHooks {
         tmuxHookFailed('generateWrapper', `unsafe sessionsDir path: ${config.sessionsDir}`, {
           taskId: config.taskId,
           sessionsDir: config.sessionsDir,
+        }),
+      );
+    }
+    // SECURITY: Validate agentCommand against SAFE_PATH_REGEX before embedding
+    // in the generated script. Reject-bad-input is preferred over escaping for
+    // command paths — a command with shell metacharacters is almost certainly a
+    // misconfiguration rather than a legitimate path.
+    if (!SAFE_PATH_REGEX.test(config.agentCommand)) {
+      return err(
+        tmuxHookFailed('generateWrapper', `unsafe agentCommand: ${config.agentCommand}`, {
+          taskId: config.taskId,
+          agentCommand: config.agentCommand,
         }),
       );
     }
