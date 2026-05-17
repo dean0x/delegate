@@ -375,6 +375,32 @@ describe('TmuxConnector.spawn()', () => {
     expect(result.ok).toBe(false);
     expect(connector.getActiveHandles()).toHaveLength(0);
   });
+
+  // test-conn-1: duplicate taskId guard
+  it('rejects a second spawn() for an already-active taskId with an error message containing "already exists"', () => {
+    const { watch } = makeWatchMock();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    const first = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    expect(first.ok).toBe(true);
+
+    // Spawn the same taskId a second time — must be rejected
+    const second = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    expect(second.ok).toBe(false);
+    if (second.ok) return;
+    expect(second.error.message).toContain('already exists');
+
+    // The first session must still be registered
+    expect(connector.getActiveHandles()).toHaveLength(1);
+    connector.dispose();
+  });
 });
 
 describe('TmuxConnector — sentinel detection', () => {
@@ -437,6 +463,81 @@ describe('TmuxConnector — sentinel detection', () => {
 
     // The callback fires synchronously — assert that it was called, not how fast
     expect(onExit).toHaveBeenCalled();
+  });
+});
+
+// test-conn-4: null filename guard in watcher callbacks
+describe('TmuxConnector — null filename guard (macOS fs.watch edge case)', () => {
+  it('sentinel watcher ignores null filename — no crash and onExit not called', () => {
+    // Capture the sentinel watcher callback directly so we can fire null
+    let sentinelCallback: ((event: string, filename: string | null) => void) | null = null;
+    let watchCallCount = 0;
+    const watch = vi
+      .fn()
+      .mockImplementation((_path: string, _opts: unknown, cb: (event: string, f: string | null) => void) => {
+        watchCallCount++;
+        if (watchCallCount === 1) sentinelCallback = cb;
+        return { close: vi.fn(), on: vi.fn() };
+      }) as unknown as TmuxConnectorDeps['watch'];
+
+    const onExit = vi.fn();
+    const onOutput = vi.fn();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput, onExit });
+
+    // Fire the sentinel watcher with null filename (macOS edge case)
+    expect(() => sentinelCallback?.('change', null)).not.toThrow();
+
+    // No exit or output callbacks must have been triggered
+    expect(onExit).not.toHaveBeenCalled();
+    expect(onOutput).not.toHaveBeenCalled();
+
+    connector.dispose();
+  });
+
+  it('messages watcher ignores null filename — no crash and onOutput not called', async () => {
+    // Capture the messages watcher callback so we can fire null
+    let messageCallback: ((event: string, filename: string | null) => void) | null = null;
+    let watchCallCount = 0;
+    const watch = vi
+      .fn()
+      .mockImplementation((_path: string, _opts: unknown, cb: (event: string, f: string | null) => void) => {
+        watchCallCount++;
+        if (watchCallCount === 2) messageCallback = cb;
+        return { close: vi.fn(), on: vi.fn() };
+      }) as unknown as TmuxConnectorDeps['watch'];
+
+    const readFile = vi.fn();
+    const onOutput = vi.fn();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFile,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+
+    // Fire messages watcher with null filename
+    expect(() => messageCallback?.('change', null)).not.toThrow();
+
+    // No debounce timer should have been scheduled (readFile never called)
+    await new Promise((r) => setTimeout(r, 100));
+    expect(readFile).not.toHaveBeenCalled();
+    expect(onOutput).not.toHaveBeenCalled();
+
+    connector.dispose();
   });
 });
 
@@ -781,6 +882,11 @@ describe('TmuxConnector — output handling', () => {
   });
 
   it('debounces double-fire — same file fired twice in 50ms fires onOutput once', async () => {
+    // test-conn-5: use fake timers instead of real sleep() to avoid CI timing fragility.
+    // The debounce window is DEBOUNCE_MS=50ms. Advance by 60ms to fire the timer,
+    // then flush the microtask queue so the async readFile promise resolves.
+    vi.useFakeTimers();
+
     const msg = buildOutputMsg(1);
     // readFile is used by the hot-path message handler (async)
     const readFile = vi.fn().mockResolvedValue(JSON.stringify(msg));
@@ -798,11 +904,18 @@ describe('TmuxConnector — output handling', () => {
 
     connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
     fireMessage('00001-stdout.json');
-    fireMessage('00001-stdout.json'); // double-fire within 50ms
+    fireMessage('00001-stdout.json'); // double-fire within the debounce window
 
-    await sleep(200);
+    // Advance past the 50ms debounce window — the debounce timer fires once
+    vi.advanceTimersByTime(60);
+
+    // Flush microtasks so the async readFile promise chain resolves
+    await Promise.resolve();
+    await Promise.resolve();
+
     expect(onOutput).toHaveBeenCalledTimes(1);
     connector.dispose();
+    vi.useRealTimers();
   });
 
   it('drops messages and warns when pending buffer exceeds MAX_PENDING_MESSAGES (100)', async () => {
@@ -1328,6 +1441,72 @@ describe('TmuxConnector — staleness detection', () => {
     vi.useRealTimers();
   });
 
+  // test-conn-3: shared timer uses minimum checkIntervalMs across all active sessions
+  it('shared staleness timer fires at the minimum checkIntervalMs when two sessions have different intervals', () => {
+    vi.useFakeTimers();
+
+    // Watch mock that can handle 4 watch calls (2 sessions × 2 watchers each)
+    const watch = vi.fn().mockImplementation(() => ({ close: vi.fn(), on: vi.fn() })) as unknown as TmuxConnectorDeps['watch'];
+
+    const sessionManager: TmuxSessionManager = {
+      createSession: vi
+        .fn()
+        .mockReturnValueOnce(ok(makeSessionResult('task-fast', 'beat-task-fast')))
+        .mockReturnValueOnce(ok(makeSessionResult('task-slow', 'beat-task-slow'))),
+      destroySession: vi.fn().mockReturnValue(ok(undefined)),
+      sendKeys: vi.fn().mockReturnValue(ok(undefined)),
+      isAlive: vi.fn().mockReturnValue(ok(true)),
+      // listSessions is called once per shared timer tick — count calls to verify interval
+      listSessions: vi.fn().mockReturnValue(ok([
+        { name: 'beat-task-fast' },
+        { name: 'beat-task-slow' },
+      ])),
+      getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
+    } as unknown as TmuxSessionManager;
+
+    const hooks: TmuxHooks = {
+      generateWrapper: vi
+        .fn()
+        .mockReturnValueOnce(ok(makeManifest('task-fast')))
+        .mockReturnValueOnce(ok(makeManifest('task-slow'))),
+      cleanup: vi.fn().mockReturnValue(ok(undefined)),
+    } as unknown as TmuxHooks;
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks,
+      logger: makeLogger(),
+      watch,
+    });
+
+    // Session A: checkIntervalMs=2000, Session B: checkIntervalMs=5000
+    // The shared timer must use 2000ms (the minimum)
+    connector.spawn(
+      { ...BASE_CONFIG, taskId: 'task-fast', name: 'beat-task-fast', staleness: { checkIntervalMs: 2000, maxSilenceMs: 999999 } },
+      { onOutput: vi.fn(), onExit: vi.fn() },
+    );
+    connector.spawn(
+      { ...BASE_CONFIG, taskId: 'task-slow', name: 'beat-task-slow', staleness: { checkIntervalMs: 5000, maxSilenceMs: 999999 } },
+      { onOutput: vi.fn(), onExit: vi.fn() },
+    );
+
+    // At 1999ms — no tick yet (minimum interval is 2000ms)
+    vi.advanceTimersByTime(1999);
+    expect(sessionManager.listSessions).not.toHaveBeenCalled();
+
+    // At 2001ms — first tick fires at the minimum interval (2000ms)
+    vi.advanceTimersByTime(2);
+    expect(sessionManager.listSessions).toHaveBeenCalledTimes(1);
+
+    // At 4001ms — second tick fires (still at 2000ms interval, not 5000ms)
+    vi.advanceTimersByTime(2000);
+    expect(sessionManager.listSessions).toHaveBeenCalledTimes(2);
+
+    connector.dispose();
+    vi.useRealTimers();
+  });
+
   it('staleness timer stops after exit — no double-fire', () => {
     vi.useFakeTimers();
     const { watch, fireSentinel } = makeWatchMock();
@@ -1503,6 +1682,40 @@ describe('TmuxConnector.sendKeys() / isAlive()', () => {
 
     connector.sendKeys(spawnResult.value, 'hello');
     expect(sessionManager.sendKeys).toHaveBeenCalledWith(spawnResult.value.sessionName, 'hello');
+  });
+});
+
+// test-conn-2: triggerExit destroySession failure logging
+describe('TmuxConnector — triggerExit destroySession failure', () => {
+  it('logs warning with "triggerExit: failed to destroy session" when sentinel fires and destroySession fails', () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const logger = makeLogger();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const sessionManager = makeValidSessionManager();
+    // destroySession fails — simulates a session that could not be cleaned up
+    (sessionManager.destroySession as ReturnType<typeof vi.fn>).mockReturnValue(
+      err(new AutobeatError(ErrorCode.TMUX_SESSION_FAILED, 'destroy failed')),
+    );
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger,
+      watch,
+      readFileSync,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+
+    // Fire the .done sentinel — triggers triggerExit → destroySession fails → warn
+    fireSentinel('.done');
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('triggerExit: failed to destroy session'),
+      expect.objectContaining({ taskId: BASE_CONFIG.taskId }),
+    );
   });
 });
 
