@@ -8,10 +8,18 @@ import { ErrorCode } from '../../../../src/core/errors.js';
 import { DefaultTmuxValidator } from '../../../../src/implementations/tmux/tmux-validator.js';
 import type { ExecFn, ExecResult } from '../../../../src/implementations/tmux/types.js';
 
-function makeExec(stdout: string, status = 0, jqPath = '/usr/bin/jq'): ExecFn {
+function makeExec(
+  stdout: string,
+  status = 0,
+  jqPath = '/usr/bin/jq',
+  tmuxPath = '/usr/bin/tmux',
+): ExecFn {
   return vi.fn().mockImplementation((cmd: string) => {
     if (cmd.includes('jq')) {
       return { stdout: jqPath, stderr: '', status: 0 } satisfies ExecResult;
+    }
+    if (cmd === 'command -v tmux') {
+      return { stdout: tmuxPath, stderr: '', status: 0 } satisfies ExecResult;
     }
     return { stdout, stderr: '', status } satisfies ExecResult;
   });
@@ -67,7 +75,7 @@ describe('TmuxValidator', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.version).toBe('3.4');
-    expect(result.value.path).toBe('tmux');
+    expect(result.value.path).toBe('/usr/bin/tmux');
     expect(result.value.jqPath).toBe('/usr/bin/jq');
   });
 
@@ -112,7 +120,7 @@ describe('TmuxValidator', () => {
     expect(r39.value.version).toBe('3.9');
   });
 
-  it('caches validation result — exec is called only twice (tmux + jq) across multiple validate() calls', () => {
+  it('caches validation result — exec is called only 3 times (tmux -V + command -v jq + command -v tmux) across multiple validate() calls', () => {
     const exec = makeExec('tmux 3.4');
     const validator = new DefaultTmuxValidator({ exec });
 
@@ -120,7 +128,7 @@ describe('TmuxValidator', () => {
     validator.validate();
     validator.validate();
 
-    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec).toHaveBeenCalledTimes(3);
   });
 
   // ─── jq validation ──────────────────────────────────────────────────────────
@@ -149,7 +157,7 @@ describe('TmuxValidator', () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it('caches jq result along with tmux — both checks run only on first validate()', () => {
+  it('caches jq result along with tmux — all 3 checks run only on first validate()', () => {
     const exec = makeExec('tmux 3.4');
     const validator = new DefaultTmuxValidator({ exec });
 
@@ -157,7 +165,7 @@ describe('TmuxValidator', () => {
     validator.validate();
     validator.validate();
 
-    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec).toHaveBeenCalledTimes(3);
   });
 
   it('error message for missing jq includes install guidance', () => {

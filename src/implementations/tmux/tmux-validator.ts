@@ -101,9 +101,12 @@ export class DefaultTmuxValidator implements TmuxValidator {
       );
     }
 
+    const tmuxPathResult = this.deps.exec('command -v tmux');
+    const tmuxPath = tmuxPathResult.status === 0 ? tmuxPathResult.stdout.trim() : 'tmux';
+
     return ok({
       version: `${major}.${minor}`,
-      path: 'tmux',
+      path: tmuxPath,
       jqPath: jqResult.stdout.trim(),
     });
   }
