@@ -11,6 +11,7 @@ export { TmuxConnector } from './tmux-connector.js';
 export type { TmuxHooksDeps } from './tmux-hooks.js';
 export { DefaultTmuxHooks } from './tmux-hooks.js';
 export { DefaultTmuxSessionManager } from './tmux-session-manager.js';
+export type { TmuxValidatorDeps } from './tmux-validator.js';
 export { DefaultTmuxValidator } from './tmux-validator.js';
 // Types (type-only re-exports to avoid unnecessary runtime imports)
 export type {

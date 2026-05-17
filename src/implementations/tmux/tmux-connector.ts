@@ -24,6 +24,8 @@ import {
   DEFAULT_STALENESS_CONFIG,
   OutputMessage,
   StalenessConfig,
+  SpawnCallbacks,
+  TmuxConnectorPort,
   TmuxHandle,
   TmuxHooks,
   TmuxSessionInfo,
@@ -31,6 +33,8 @@ import {
   TmuxSpawnConfig,
   TmuxValidator,
 } from './types.js';
+
+export type { SpawnCallbacks } from './types.js';
 
 /** fs.watch callback signature */
 type WatchFn = typeof fs.watch;
@@ -77,11 +81,6 @@ export interface TmuxConnectorDeps {
   readdirSync?: (dirPath: string) => string[];
 }
 
-export interface SpawnCallbacks {
-  onOutput: (msg: OutputMessage) => void;
-  onExit: (code: number | null, signal?: string) => void;
-}
-
 /**
  * Internal state for a single managed session
  */
@@ -110,7 +109,7 @@ interface ActiveSession {
   flushing: boolean;
 }
 
-export class TmuxConnector {
+export class TmuxConnector implements TmuxConnectorPort {
   private readonly activeSessions = new Map<string, ActiveSession>();
   private readonly readFileSyncFn: (path: string, encoding: BufferEncoding) => string;
   private readonly readFileFn: (path: string, encoding: BufferEncoding) => Promise<string>;

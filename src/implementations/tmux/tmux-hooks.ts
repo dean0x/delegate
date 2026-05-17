@@ -14,18 +14,18 @@
  */
 
 import * as path from 'path';
-import { AutobeatError, tmuxHookFailed } from '../../core/errors.js';
-import { err, ok, Result } from '../../core/result.js';
+import type { AutobeatError } from '../../core/errors.js';
+import { tmuxHookFailed } from '../../core/errors.js';
+import { err, ok } from '../../core/result.js';
+import type { Result } from '../../core/result.js';
 import {
   SAFE_PATH_REGEX,
   SENTINEL_DONE,
   SENTINEL_EXIT,
   SESSION_NAME_REGEX,
   TASK_ID_REGEX,
-  TmuxHooks,
-  WrapperConfig,
-  WrapperManifest,
 } from './types.js';
+import type { TmuxHooks, WrapperConfig, WrapperManifest } from './types.js';
 
 /** Octal permission bits for session directories and scripts (owner read/write/execute only) */
 const FILE_MODE = 0o700;

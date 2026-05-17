@@ -6,9 +6,11 @@
  * while a process is running.
  */
 
-import { AutobeatError, tmuxValidationFailed } from '../../core/errors.js';
-import { err, ok, Result } from '../../core/result.js';
-import { ExecFn, TmuxInfo, TmuxValidator } from './types.js';
+import type { AutobeatError } from '../../core/errors.js';
+import { tmuxValidationFailed } from '../../core/errors.js';
+import { err, ok } from '../../core/result.js';
+import type { Result } from '../../core/result.js';
+import type { ExecFn, TmuxInfo, TmuxValidator } from './types.js';
 
 /** Minimum required tmux version */
 const MIN_MAJOR = 3;
@@ -34,14 +36,20 @@ function isVersionSufficient(major: number, minor: number): boolean {
   return major > MIN_MAJOR || (major === MIN_MAJOR && minor >= MIN_MINOR);
 }
 
+export interface TmuxValidatorDeps {
+  exec: ExecFn;
+}
+
 export class DefaultTmuxValidator implements TmuxValidator {
   private cached: Result<TmuxInfo, AutobeatError> | null = null;
 
-  constructor(private readonly deps: { exec: ExecFn }) {}
+  constructor(private readonly deps: TmuxValidatorDeps) {}
 
   /**
    * Validates that tmux is installed and meets the minimum version requirement.
-   * Result is cached for the process lifetime.
+   * Only success results are cached for the process lifetime — failures are
+   * returned immediately so a transient startup error (e.g. PATH not yet set)
+   * does not permanently poison the validator.
    */
   validate(): Result<TmuxInfo, AutobeatError> {
     if (this.cached !== null) {
@@ -49,7 +57,7 @@ export class DefaultTmuxValidator implements TmuxValidator {
     }
 
     const result = this.runValidation();
-    this.cached = result;
+    if (result.ok) this.cached = result;
     return result;
   }
 

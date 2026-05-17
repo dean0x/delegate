@@ -214,10 +214,15 @@ export const tmuxHookFailed = (operation: string, reason: string, context?: Reco
     ...context,
   });
 
-export const tmuxSendKeysFailed = (sessionName: string, reason: string): AutobeatError =>
+export const tmuxSendKeysFailed = (
+  sessionName: string,
+  reason: string,
+  context?: Record<string, unknown>,
+): AutobeatError =>
   new AutobeatError(ErrorCode.TMUX_SEND_KEYS_FAILED, `Failed to send keys to session '${sessionName}': ${reason}`, {
     sessionName,
     reason,
+    ...context,
   });
 
 /**

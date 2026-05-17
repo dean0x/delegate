@@ -3,8 +3,15 @@
  * Pure type definitions — no runtime logic
  */
 
+import type { AgentProvider } from '../../core/agents.js';
 import type { AutobeatError } from '../../core/errors.js';
 import type { Result } from '../../core/result.js';
+
+/**
+ * Agent types supported by the tmux abstraction layer.
+ * Gemini is excluded because it does not have a tmux wrapper implementation.
+ */
+export type TmuxAgentType = Extract<AgentProvider, 'claude' | 'codex'>;
 
 // ─── Session configuration ───────────────────────────────────────────────────
 
@@ -35,7 +42,7 @@ export interface TmuxSpawnConfig extends TmuxSessionConfig {
   /** Base directory where all session data lives */
   sessionsDir: string;
   /** Agent type to wrap — must match a supported WrapperConfig agent value */
-  agent: 'claude' | 'codex';
+  agent: TmuxAgentType;
   /** Staleness detection configuration */
   staleness?: Partial<StalenessConfig>;
 }
@@ -90,7 +97,7 @@ export interface WrapperConfig {
   /** Task identifier */
   taskId: string;
   /** Agent type being wrapped */
-  agent: 'claude' | 'codex';
+  agent: TmuxAgentType;
   /** Base directory for session data */
   sessionsDir: string;
   /** Agent executable path or name */
@@ -216,6 +223,34 @@ export interface TmuxValidator {
   validate(): Result<TmuxInfo, AutobeatError>;
 }
 
+/**
+ * Callbacks passed to TmuxConnectorPort.spawn() for push-based event delivery.
+ * onOutput fires for each ordered OutputMessage; onExit fires once when the
+ * agent process terminates (or is declared stale/shut down).
+ */
+export interface SpawnCallbacks {
+  onOutput: (msg: OutputMessage) => void;
+  onExit: (code: number | null, signal?: string) => void;
+}
+
+/**
+ * Port interface for the high-level managed session lifecycle.
+ * TmuxConnector is the canonical implementation; alternative implementations
+ * (test doubles, future adapters) only need to implement these methods.
+ *
+ * DESIGN DECISION: TmuxConnectorPort is kept narrow — it exposes only the
+ * methods that consumers outside the tmux package need. Internal helpers
+ * (buildActiveSession, startWatchers, etc.) remain in TmuxConnector.
+ */
+export interface TmuxConnectorPort {
+  spawn(config: TmuxSpawnConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError>;
+  destroy(handle: TmuxHandle): Result<void, AutobeatError>;
+  sendKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError>;
+  isAlive(handle: TmuxHandle): Result<boolean, AutobeatError>;
+  getActiveHandles(): TmuxHandle[];
+  dispose(): void;
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** All Autobeat-managed tmux sessions carry this prefix */
@@ -235,9 +270,10 @@ export const TASK_ID_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
  * Regex that validates a sessions base directory path is safe to embed in a
  * bash single-quoted string. The path may contain alphanumeric characters,
  * forward slashes, hyphens, underscores, and dots — no single quotes or other
- * shell metacharacters.
+ * shell metacharacters. The negative lookahead rejects path traversal sequences
+ * (e.g. /tmp/../etc/passwd) that the character class alone cannot prevent.
  */
-export const SAFE_PATH_REGEX = /^[a-zA-Z0-9/_.\-]+$/;
+export const SAFE_PATH_REGEX = /^(?!.*\.\.)([a-zA-Z0-9/_.\-]+)$/;
 
 /** Filename of the success sentinel (exit code 0) */
 export const SENTINEL_DONE = '.done' as const;
