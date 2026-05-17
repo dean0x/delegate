@@ -176,10 +176,10 @@ import type { Result } from '../../core/result.js';
 
 /**
  * Interface for session lifecycle operations.
- * TmuxSessionManager satisfies this structurally; alternative implementations
- * (test doubles, future adapters) only need to implement these methods.
+ * DefaultTmuxSessionManager is the canonical implementation; alternative
+ * implementations (test doubles, future adapters) only need to implement these methods.
  */
-export interface ITmuxSessionManager {
+export interface TmuxSessionManager {
   createSession(config: TmuxSessionConfig): Result<TmuxHandle, AutobeatError>;
   destroySession(name: string): Result<void, AutobeatError>;
   sendKeys(name: string, keys: string): Result<void, AutobeatError>;
@@ -188,18 +188,18 @@ export interface ITmuxSessionManager {
 
 /**
  * Interface for wrapper script generation and session directory lifecycle.
- * TmuxHooks satisfies this structurally.
+ * DefaultTmuxHooks is the canonical implementation.
  */
-export interface ITmuxHooks {
+export interface TmuxHooks {
   generateWrapper(config: WrapperConfig): Result<WrapperManifest, AutobeatError>;
   cleanup(taskId: string, sessionsDir: string): Result<void, AutobeatError>;
 }
 
 /**
  * Interface for tmux installation validation.
- * TmuxValidator satisfies this structurally.
+ * DefaultTmuxValidator is the canonical implementation.
  */
-export interface ITmuxValidator {
+export interface TmuxValidator {
   validate(): Result<TmuxInfo, AutobeatError>;
 }
 

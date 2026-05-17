@@ -16,7 +16,7 @@
 import * as path from 'path';
 import { AutobeatError, tmuxHookFailed } from '../../core/errors.js';
 import { err, ok, Result } from '../../core/result.js';
-import { SENTINEL_DONE, SENTINEL_EXIT, SESSION_NAME_REGEX, WrapperConfig, WrapperManifest } from './types.js';
+import { SENTINEL_DONE, SENTINEL_EXIT, SESSION_NAME_REGEX, TmuxHooks, WrapperConfig, WrapperManifest } from './types.js';
 
 /** Octal permission bits for session directories and scripts (owner read/write/execute only) */
 const FILE_MODE = 0o700;
@@ -111,7 +111,7 @@ exit $EXIT_CODE
 `;
 }
 
-export class TmuxHooks {
+export class DefaultTmuxHooks implements TmuxHooks {
   constructor(private readonly deps: TmuxHooksDeps) {}
 
   /**

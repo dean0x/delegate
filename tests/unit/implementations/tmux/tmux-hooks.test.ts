@@ -5,7 +5,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorCode } from '../../../../src/core/errors.js';
-import { TmuxHooks, type TmuxHooksDeps } from '../../../../src/implementations/tmux/tmux-hooks.js';
+import { DefaultTmuxHooks, type TmuxHooksDeps } from '../../../../src/implementations/tmux/tmux-hooks.js';
 import type { WrapperConfig } from '../../../../src/implementations/tmux/types.js';
 
 const validConfig: WrapperConfig = {
@@ -37,14 +37,14 @@ describe('TmuxHooks.generateWrapper()', () => {
   let writeFile: ReturnType<typeof vi.fn>;
   let mkdirSync: ReturnType<typeof vi.fn>;
   let rmSync: ReturnType<typeof vi.fn>;
-  let hooks: TmuxHooks;
+  let hooks: DefaultTmuxHooks;
 
   beforeEach(() => {
     const m = makeDeps();
     writeFile = m.writeFile;
     mkdirSync = m.mkdirSync;
     rmSync = m.rmSync;
-    hooks = new TmuxHooks(m.deps);
+    hooks = new DefaultTmuxHooks(m.deps);
   });
 
   it('creates session directory with mode 0o700', () => {
@@ -230,7 +230,7 @@ describe('TmuxHooks.generateWrapper()', () => {
 describe('TmuxHooks — wrapper script jq handling', () => {
   it('does not contain printf fallback pattern', () => {
     const { deps, writeFile } = makeDeps();
-    const hooks = new TmuxHooks(deps);
+    const hooks = new DefaultTmuxHooks(deps);
     hooks.generateWrapper(validConfig);
     const [, content] = writeFile.mock.calls[0] as [string, string];
     expect(content).not.toContain('printf \'%"');
@@ -239,7 +239,7 @@ describe('TmuxHooks — wrapper script jq handling', () => {
 
   it('contains command -v jq defense-in-depth guard', () => {
     const { deps, writeFile } = makeDeps();
-    const hooks = new TmuxHooks(deps);
+    const hooks = new DefaultTmuxHooks(deps);
     hooks.generateWrapper(validConfig);
     const [, content] = writeFile.mock.calls[0] as [string, string];
     expect(content).toContain('command -v jq');
@@ -248,7 +248,7 @@ describe('TmuxHooks — wrapper script jq handling', () => {
 
   it('uses jq -Rs . for escaping without fallback', () => {
     const { deps, writeFile } = makeDeps();
-    const hooks = new TmuxHooks(deps);
+    const hooks = new DefaultTmuxHooks(deps);
     hooks.generateWrapper(validConfig);
     const [, content] = writeFile.mock.calls[0] as [string, string];
     expect(content).toContain('jq -Rs .');
@@ -258,7 +258,7 @@ describe('TmuxHooks — wrapper script jq handling', () => {
 describe('TmuxHooks.cleanup()', () => {
   it('removes session directory recursively', () => {
     const { deps, rmSync } = makeDeps();
-    const hooks = new TmuxHooks(deps);
+    const hooks = new DefaultTmuxHooks(deps);
     hooks.cleanup('task-abc', '/tmp/sessions');
     expect(rmSync).toHaveBeenCalledOnce();
     const [dirPath, opts] = rmSync.mock.calls[0] as [string, { recursive: boolean; force: boolean }];

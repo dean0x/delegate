@@ -8,7 +8,7 @@
 
 import { AutobeatError, tmuxValidationFailed } from '../../core/errors.js';
 import { err, ok, Result } from '../../core/result.js';
-import { ExecFn, TmuxInfo } from './types.js';
+import { ExecFn, TmuxInfo, TmuxValidator } from './types.js';
 
 /** Minimum required tmux version */
 const MIN_MAJOR = 3;
@@ -34,7 +34,7 @@ function isVersionSufficient(major: number, minor: number): boolean {
   return major > MIN_MAJOR || (major === MIN_MAJOR && minor >= MIN_MINOR);
 }
 
-export class TmuxValidator {
+export class DefaultTmuxValidator implements TmuxValidator {
   private cached: Result<TmuxInfo, AutobeatError> | null = null;
 
   constructor(private readonly deps: { exec: ExecFn }) {}

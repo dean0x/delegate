@@ -5,7 +5,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { ErrorCode } from '../../../../src/core/errors.js';
-import { TmuxValidator } from '../../../../src/implementations/tmux/tmux-validator.js';
+import { DefaultTmuxValidator } from '../../../../src/implementations/tmux/tmux-validator.js';
 import type { ExecFn, ExecResult } from '../../../../src/implementations/tmux/types.js';
 
 function makeExec(stdout: string, status = 0, jqPath = '/usr/bin/jq'): ExecFn {
@@ -36,7 +36,7 @@ function makeExecWithJqMissing(tmuxStdout: string): ExecFn {
 
 describe('TmuxValidator', () => {
   it('returns TMUX_VALIDATION_FAILED when tmux is not installed (status 127)', () => {
-    const validator = new TmuxValidator({ exec: makeFailingExec(127) });
+    const validator = new DefaultTmuxValidator({ exec: makeFailingExec(127) });
     const result = validator.validate();
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -44,7 +44,7 @@ describe('TmuxValidator', () => {
   });
 
   it('returns TMUX_VALIDATION_FAILED when version is too old ("tmux 2.9")', () => {
-    const validator = new TmuxValidator({ exec: makeExec('tmux 2.9') });
+    const validator = new DefaultTmuxValidator({ exec: makeExec('tmux 2.9') });
     const result = validator.validate();
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -54,7 +54,7 @@ describe('TmuxValidator', () => {
   });
 
   it('returns TMUX_VALIDATION_FAILED when version output is unparseable', () => {
-    const validator = new TmuxValidator({ exec: makeExec('something completely unexpected') });
+    const validator = new DefaultTmuxValidator({ exec: makeExec('something completely unexpected') });
     const result = validator.validate();
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -62,7 +62,7 @@ describe('TmuxValidator', () => {
   });
 
   it('returns ok for valid tmux 3.4 with jqPath', () => {
-    const validator = new TmuxValidator({ exec: makeExec('tmux 3.4') });
+    const validator = new DefaultTmuxValidator({ exec: makeExec('tmux 3.4') });
     const result = validator.validate();
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -72,7 +72,7 @@ describe('TmuxValidator', () => {
   });
 
   it('strips version suffix — "tmux 3.4a" → version "3.4"', () => {
-    const validator = new TmuxValidator({ exec: makeExec('tmux 3.4a') });
+    const validator = new DefaultTmuxValidator({ exec: makeExec('tmux 3.4a') });
     const result = validator.validate();
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -80,7 +80,7 @@ describe('TmuxValidator', () => {
   });
 
   it('handles pre-release format "tmux next-3.5" → version "3.5"', () => {
-    const validator = new TmuxValidator({ exec: makeExec('tmux next-3.5') });
+    const validator = new DefaultTmuxValidator({ exec: makeExec('tmux next-3.5') });
     const result = validator.validate();
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -88,7 +88,7 @@ describe('TmuxValidator', () => {
   });
 
   it('accepts the exact minimum version "tmux 3.0"', () => {
-    const validator = new TmuxValidator({ exec: makeExec('tmux 3.0') });
+    const validator = new DefaultTmuxValidator({ exec: makeExec('tmux 3.0') });
     const result = validator.validate();
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -96,8 +96,8 @@ describe('TmuxValidator', () => {
   });
 
   it('correctly handles multi-digit minor — "tmux 3.10" is greater than "tmux 3.9"', () => {
-    const v310 = new TmuxValidator({ exec: makeExec('tmux 3.10') });
-    const v39 = new TmuxValidator({ exec: makeExec('tmux 3.9') });
+    const v310 = new DefaultTmuxValidator({ exec: makeExec('tmux 3.10') });
+    const v39 = new DefaultTmuxValidator({ exec: makeExec('tmux 3.9') });
 
     const r310 = v310.validate();
     const r39 = v39.validate();
@@ -114,7 +114,7 @@ describe('TmuxValidator', () => {
 
   it('caches validation result — exec is called only twice (tmux + jq) across multiple validate() calls', () => {
     const exec = makeExec('tmux 3.4');
-    const validator = new TmuxValidator({ exec });
+    const validator = new DefaultTmuxValidator({ exec });
 
     validator.validate();
     validator.validate();
@@ -126,7 +126,7 @@ describe('TmuxValidator', () => {
   // ─── jq validation ──────────────────────────────────────────────────────────
 
   it('returns TMUX_VALIDATION_FAILED when jq is not installed', () => {
-    const validator = new TmuxValidator({ exec: makeExecWithJqMissing('tmux 3.4') });
+    const validator = new DefaultTmuxValidator({ exec: makeExecWithJqMissing('tmux 3.4') });
     const result = validator.validate();
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -135,7 +135,7 @@ describe('TmuxValidator', () => {
   });
 
   it('returns ok with jqPath when both tmux and jq are present', () => {
-    const validator = new TmuxValidator({ exec: makeExec('tmux 3.4', 0, '/opt/homebrew/bin/jq') });
+    const validator = new DefaultTmuxValidator({ exec: makeExec('tmux 3.4', 0, '/opt/homebrew/bin/jq') });
     const result = validator.validate();
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -144,14 +144,14 @@ describe('TmuxValidator', () => {
 
   it('tmux failure short-circuits — jq check never runs', () => {
     const exec = makeFailingExec(127);
-    const validator = new TmuxValidator({ exec });
+    const validator = new DefaultTmuxValidator({ exec });
     validator.validate();
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
   it('caches jq result along with tmux — both checks run only on first validate()', () => {
     const exec = makeExec('tmux 3.4');
-    const validator = new TmuxValidator({ exec });
+    const validator = new DefaultTmuxValidator({ exec });
 
     validator.validate();
     validator.validate();
@@ -161,7 +161,7 @@ describe('TmuxValidator', () => {
   });
 
   it('error message for missing jq includes install guidance', () => {
-    const validator = new TmuxValidator({ exec: makeExecWithJqMissing('tmux 3.4') });
+    const validator = new DefaultTmuxValidator({ exec: makeExecWithJqMissing('tmux 3.4') });
     const result = validator.validate();
     expect(result.ok).toBe(false);
     if (result.ok) return;

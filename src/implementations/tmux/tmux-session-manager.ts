@@ -19,6 +19,7 @@ import {
   TmuxHandle,
   TmuxSessionConfig,
   TmuxSessionInfo,
+  TmuxSessionManager,
 } from './types.js';
 
 /** Default terminal dimensions if not specified */
@@ -66,7 +67,7 @@ function validateSessionName(name: string, operation: string): Result<void, Auto
   return ok(undefined);
 }
 
-export class TmuxSessionManager {
+export class DefaultTmuxSessionManager implements TmuxSessionManager {
   private readonly maxConcurrentSessions: number;
 
   constructor(private readonly deps: { exec: ExecFn; maxConcurrentSessions?: number }) {
@@ -120,13 +121,20 @@ export class TmuxSessionManager {
 
     // Inject caller-provided env vars, then the auto vars (auto vars win on conflict)
     const allEnv: Record<string, string> = { ...(config.env ?? {}), ...autoVars };
-    for (const [key, value] of Object.entries(allEnv)) {
-      // Validate env var key: must be alphanumeric + underscores (POSIX portable)
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-      // Quote the value to prevent shell interpretation
-      const quotedValue = `'${value.replace(/'/g, "'\\''")}'`;
+
+    // Filter to valid POSIX env var keys and build a batched command to avoid N+1 spawns
+    const validEntries = Object.entries(allEnv).filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key));
+
+    if (validEntries.length > 0) {
+      // Escape value: backslashes first, then single quotes (prevents quoting context breaks)
+      const commands = validEntries
+        .map(([key, value]) => {
+          const escaped = value.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
+          return `tmux set-environment -t ${config.name} ${key} '${escaped}'`;
+        })
+        .join(' && ');
       // Best-effort: session is created; don't roll back for env var failures
-      this.deps.exec(`tmux set-environment -t ${config.name} ${key} ${quotedValue}`);
+      this.deps.exec(commands);
     }
 
     return ok({ sessionName: config.name, taskId, sessionsDir: '' });

@@ -9,9 +9,9 @@
 export type { SpawnCallbacks, TmuxConnectorDeps } from './tmux-connector.js';
 export { TmuxConnector } from './tmux-connector.js';
 export type { TmuxHooksDeps } from './tmux-hooks.js';
-export { TmuxHooks } from './tmux-hooks.js';
-export { TmuxSessionManager } from './tmux-session-manager.js';
-export { TmuxValidator } from './tmux-validator.js';
+export { DefaultTmuxHooks } from './tmux-hooks.js';
+export { DefaultTmuxSessionManager } from './tmux-session-manager.js';
+export { DefaultTmuxValidator } from './tmux-validator.js';
 // Types (type-only re-exports to avoid unnecessary runtime imports)
 export type {
   CommunicationMode,
@@ -20,10 +20,13 @@ export type {
   OutputMessage,
   StalenessConfig,
   TmuxHandle,
+  TmuxHooks,
   TmuxInfo,
   TmuxSessionConfig,
   TmuxSessionInfo,
+  TmuxSessionManager,
   TmuxSpawnConfig,
+  TmuxValidator,
   WrapperConfig,
   WrapperManifest,
 } from './types.js';

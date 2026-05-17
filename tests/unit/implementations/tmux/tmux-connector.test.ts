@@ -9,13 +9,13 @@ import { AutobeatError, ErrorCode } from '../../../../src/core/errors.js';
 import type { Logger } from '../../../../src/core/interfaces.js';
 import { err, ok } from '../../../../src/core/result.js';
 import { TmuxConnector, type TmuxConnectorDeps } from '../../../../src/implementations/tmux/tmux-connector.js';
-import { TmuxHooks } from '../../../../src/implementations/tmux/tmux-hooks.js';
-import { TmuxSessionManager } from '../../../../src/implementations/tmux/tmux-session-manager.js';
-import { TmuxValidator } from '../../../../src/implementations/tmux/tmux-validator.js';
 import type {
   OutputMessage,
   TmuxHandle,
+  TmuxHooks,
+  TmuxSessionManager,
   TmuxSpawnConfig,
+  TmuxValidator,
   WrapperManifest,
 } from '../../../../src/implementations/tmux/types.js';
 

@@ -20,13 +20,13 @@ import type { Logger } from '../../core/interfaces.js';
 import { ok, Result } from '../../core/result.js';
 import {
   DEFAULT_STALENESS_CONFIG,
-  ITmuxHooks,
-  ITmuxSessionManager,
-  ITmuxValidator,
   OutputMessage,
   StalenessConfig,
   TmuxHandle,
+  TmuxHooks,
+  TmuxSessionManager,
   TmuxSpawnConfig,
+  TmuxValidator,
 } from './types.js';
 
 /** fs.watch callback signature */
@@ -38,10 +38,29 @@ const DEBOUNCE_MS = 50;
 /** Maximum number of pending out-of-order messages before forcing delivery */
 const MAX_PENDING_MESSAGES = 100;
 
+/** Valid literal values for OutputMessage.type */
+const VALID_OUTPUT_TYPES = new Set<string>(['stdout', 'stderr', 'result']);
+
+/**
+ * Type guard for OutputMessage. Validates all required fields including the
+ * 'type' literal union so that the unsafe `as OutputMessage` cast is safe.
+ */
+function isOutputMessage(value: unknown): value is OutputMessage {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.sequence === 'number' &&
+    typeof v.timestamp === 'string' &&
+    typeof v.type === 'string' &&
+    VALID_OUTPUT_TYPES.has(v.type) &&
+    typeof v.content === 'string'
+  );
+}
+
 export interface TmuxConnectorDeps {
-  sessionManager: ITmuxSessionManager;
-  hooks: ITmuxHooks;
-  validator: ITmuxValidator;
+  sessionManager: TmuxSessionManager;
+  hooks: TmuxHooks;
+  validator: TmuxValidator;
   logger: Logger;
   watch: WatchFn;
   /** Injectable readFileSync — defaults to fs.readFileSync; injected in tests */
@@ -98,7 +117,7 @@ export class TmuxConnector {
    * 4. Creates the tmux session running the wrapper
    * 5. Starts the staleness timer
    */
-  async spawn(config: TmuxSpawnConfig, callbacks: SpawnCallbacks): Promise<Result<TmuxHandle, AutobeatError>> {
+  spawn(config: TmuxSpawnConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
     // 1. Validate tmux
     const validationResult = this.deps.validator.validate();
     if (!validationResult.ok) return validationResult;
@@ -113,8 +132,6 @@ export class TmuxConnector {
     });
     if (!manifestResult.ok) return manifestResult;
     const manifest = manifestResult.value;
-
-    const sessionDir = manifest.sessionsDir;
 
     // Build the internal session state (before launching, to set up watchers first)
     const session: ActiveSession = {
@@ -136,57 +153,10 @@ export class TmuxConnector {
       flushing: false,
     };
 
-    // 3a. Start sentinel watcher (BEFORE session launch)
-    try {
-      session.sentinelWatcher = this.deps.watch(
-        sessionDir,
-        { persistent: false },
-        (_eventType: string, filename: string | null) => {
-          if (!filename) return;
-          if (filename === '.done' || filename === '.exit') {
-            this.handleSentinel(config.taskId, sessionDir, filename, callbacks);
-          }
-        },
-      );
-    } catch {
-      // Directory may not exist yet — sentinel detection degrades gracefully
-      this.deps.logger.warn('Failed to start sentinel watcher', { taskId: config.taskId, sessionDir });
-    }
-
-    // 3b. Start messages watcher
-    try {
-      session.messagesWatcher = this.deps.watch(
-        manifest.messagesDir,
-        { persistent: false },
-        (_eventType: string, filename: string | null) => {
-          if (!filename) return;
-          // Ignore temp files
-          if (filename.endsWith('.tmp')) return;
-          if (!filename.endsWith('.json')) return;
-
-          // Debounce double-fires for the same file
-          const existing = session.debounceTimers.get(filename);
-          if (existing) clearTimeout(existing);
-          const timer = setTimeout(() => {
-            session.debounceTimers.delete(filename);
-            this.handleMessageFile(path.join(manifest.messagesDir, filename), session, callbacks);
-          }, DEBOUNCE_MS);
-          session.debounceTimers.set(filename, timer);
-        },
-      );
-    } catch {
-      this.deps.logger.warn('Failed to start messages watcher', {
-        taskId: config.taskId,
-        messagesDir: manifest.messagesDir,
-      });
-    }
+    // 3. Start fs.watch watchers (BEFORE session launch to avoid race)
+    this.startWatchers(session, config.taskId, manifest.sessionsDir, manifest.messagesDir, callbacks);
 
     // 4. Create tmux session running the wrapper
-    const stalenessConfig: StalenessConfig = {
-      ...DEFAULT_STALENESS_CONFIG,
-      ...config.staleness,
-    };
-
     const sessionResult = this.deps.sessionManager.createSession({
       ...config,
       command: manifest.wrapperPath,
@@ -205,6 +175,133 @@ export class TmuxConnector {
     };
 
     // 5. Start staleness timer
+    const stalenessConfig: StalenessConfig = {
+      ...DEFAULT_STALENESS_CONFIG,
+      ...config.staleness,
+    };
+    this.startStalenessTimer(session, config.taskId, stalenessConfig, callbacks);
+
+    this.activeSessions.set(config.taskId, session);
+    return ok(session.handle);
+  }
+
+  /**
+   * Destroys a session and cleans up all watchers and timers.
+   * Idempotent.
+   */
+  destroy(handle: TmuxHandle): Result<void, AutobeatError> {
+    const session = this.activeSessions.get(handle.taskId);
+    if (session) {
+      // Set exited before flush so late staleness timer ticks cannot trigger
+      // onExit after we have already destroyed the session.
+      session.exited = true;
+      this.flushPendingFiles(session);
+      this.closeSession(session);
+      this.activeSessions.delete(handle.taskId);
+    }
+    return this.deps.sessionManager.destroySession(handle.sessionName);
+  }
+
+  sendKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError> {
+    return this.deps.sessionManager.sendKeys(handle.sessionName, keys);
+  }
+
+  isAlive(handle: TmuxHandle): Result<boolean, AutobeatError> {
+    return this.deps.sessionManager.isAlive(handle.sessionName);
+  }
+
+  getActiveHandles(): TmuxHandle[] {
+    return Array.from(this.activeSessions.values()).map((s) => s.handle);
+  }
+
+  /**
+   * Cleans up ALL active sessions. Call on process shutdown.
+   */
+  dispose(): void {
+    const sessions = Array.from(this.activeSessions.values());
+    this.activeSessions.clear();
+    for (const session of sessions) {
+      // Set exited before flush so late staleness timer ticks that fire during
+      // teardown see session.exited = true and return early.
+      session.exited = true;
+      this.flushPendingFiles(session);
+      this.closeSession(session);
+      const result = this.deps.sessionManager.destroySession(session.handle.sessionName);
+      if (!result.ok) {
+        this.deps.logger.warn('dispose: failed to destroy session', {
+          sessionName: session.handle.sessionName,
+          error: result.error.message,
+        });
+      }
+    }
+  }
+
+  // ─── Private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Starts the sentinel and messages fs.watch watchers for a session.
+   * Called BEFORE session launch so we never miss events from a fast-exiting agent.
+   */
+  private startWatchers(
+    session: ActiveSession,
+    taskId: string,
+    sessionDir: string,
+    messagesDir: string,
+    callbacks: SpawnCallbacks,
+  ): void {
+    // Sentinel watcher — detects .done / .exit files written by the wrapper
+    try {
+      session.sentinelWatcher = this.deps.watch(
+        sessionDir,
+        { persistent: false },
+        (_eventType: string, filename: string | null) => {
+          if (!filename) return;
+          if (filename === '.done' || filename === '.exit') {
+            this.handleSentinel(taskId, sessionDir, filename, callbacks);
+          }
+        },
+      );
+    } catch {
+      // Directory may not exist yet — sentinel detection degrades gracefully
+      this.deps.logger.warn('Failed to start sentinel watcher', { taskId, sessionDir });
+    }
+
+    // Messages watcher — picks up output message JSON files
+    try {
+      session.messagesWatcher = this.deps.watch(
+        messagesDir,
+        { persistent: false },
+        (_eventType: string, filename: string | null) => {
+          if (!filename) return;
+          // Ignore temp files and non-JSON
+          if (filename.endsWith('.tmp')) return;
+          if (!filename.endsWith('.json')) return;
+
+          // Debounce double-fires for the same file
+          const existing = session.debounceTimers.get(filename);
+          if (existing) clearTimeout(existing);
+          const timer = setTimeout(() => {
+            session.debounceTimers.delete(filename);
+            this.handleMessageFile(path.join(messagesDir, filename), session, callbacks);
+          }, DEBOUNCE_MS);
+          session.debounceTimers.set(filename, timer);
+        },
+      );
+    } catch {
+      this.deps.logger.warn('Failed to start messages watcher', { taskId, messagesDir });
+    }
+  }
+
+  /**
+   * Starts the staleness detection timer for a session.
+   * Fires onExit(null, 'STALE') when the tmux session disappears without a sentinel.
+   */
+  private startStalenessTimer(
+    session: ActiveSession,
+    taskId: string,
+    stalenessConfig: StalenessConfig,
+    callbacks: SpawnCallbacks,
+  ): void {
     let lastAliveCheck = Date.now();
     session.stalenessTimer = setInterval(() => {
       // closeSession() clears the timer; this guard handles any in-flight tick
@@ -235,54 +332,10 @@ export class TmuxConnector {
           sessionName: session.handle.sessionName,
           silentMs,
         });
-        this.triggerExit(config.taskId, session, null, 'STALE', callbacks);
+        this.triggerExit(taskId, session, null, 'STALE', callbacks);
       }
     }, stalenessConfig.checkIntervalMs);
-
-    this.activeSessions.set(config.taskId, session);
-    return ok(session.handle);
   }
-
-  /**
-   * Destroys a session and cleans up all watchers and timers.
-   * Idempotent.
-   */
-  destroy(handle: TmuxHandle): Result<void, AutobeatError> {
-    const session = this.activeSessions.get(handle.taskId);
-    if (session) {
-      this.flushPendingFiles(session);
-      this.closeSession(session);
-      this.activeSessions.delete(handle.taskId);
-    }
-    return this.deps.sessionManager.destroySession(handle.sessionName);
-  }
-
-  sendKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError> {
-    return this.deps.sessionManager.sendKeys(handle.sessionName, keys);
-  }
-
-  isAlive(handle: TmuxHandle): Result<boolean, AutobeatError> {
-    return this.deps.sessionManager.isAlive(handle.sessionName);
-  }
-
-  getActiveHandles(): TmuxHandle[] {
-    return Array.from(this.activeSessions.values()).map((s) => s.handle);
-  }
-
-  /**
-   * Cleans up ALL active sessions. Call on process shutdown.
-   */
-  dispose(): void {
-    const sessions = Array.from(this.activeSessions.values());
-    this.activeSessions.clear();
-    for (const session of sessions) {
-      this.flushPendingFiles(session);
-      this.closeSession(session);
-      this.deps.sessionManager.destroySession(session.handle.sessionName);
-    }
-  }
-
-  // ─── Private helpers ────────────────────────────────────────────────────────
 
   /**
    * Reads all undelivered message files from disk and delivers them via the
@@ -320,18 +373,11 @@ export class TmuxConnector {
           continue;
         }
 
-        if (
-          typeof parsed !== 'object' ||
-          parsed === null ||
-          typeof (parsed as Record<string, unknown>).sequence !== 'number' ||
-          typeof (parsed as Record<string, unknown>).timestamp !== 'string' ||
-          typeof (parsed as Record<string, unknown>).type !== 'string' ||
-          typeof (parsed as Record<string, unknown>).content !== 'string'
-        ) {
+        if (!isOutputMessage(parsed)) {
           continue;
         }
 
-        const msg = parsed as OutputMessage;
+        const msg = parsed;
         if (msg.sequence <= session.lastDeliveredSeq) continue;
         session.pendingMessages.set(msg.sequence, msg);
       }
@@ -382,19 +428,12 @@ export class TmuxConnector {
       return;
     }
 
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      typeof (parsed as Record<string, unknown>).sequence !== 'number' ||
-      typeof (parsed as Record<string, unknown>).timestamp !== 'string' ||
-      typeof (parsed as Record<string, unknown>).type !== 'string' ||
-      typeof (parsed as Record<string, unknown>).content !== 'string'
-    ) {
+    if (!isOutputMessage(parsed)) {
       this.deps.logger.warn('Output message missing required fields', { filePath });
       return;
     }
 
-    const msg = parsed as OutputMessage;
+    const msg = parsed;
 
     // Buffer for ordered delivery
     session.pendingMessages.set(msg.sequence, msg);
@@ -442,9 +481,11 @@ export class TmuxConnector {
   ): void {
     if (session.exited) return;
 
-    this.flushPendingFiles(session);
-
+    // Set exited BEFORE flushPendingFiles so that any in-flight staleness timer
+    // tick that fires during the flush sees session.exited = true and returns
+    // early, preventing a double onExit call.
     session.exited = true;
+    this.flushPendingFiles(session);
     this.closeSession(session);
     this.activeSessions.delete(taskId);
     callbacks.onExit(code, signal);

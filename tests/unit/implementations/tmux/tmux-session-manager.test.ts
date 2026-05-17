@@ -5,8 +5,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorCode } from '../../../../src/core/errors.js';
-import { TmuxSessionManager } from '../../../../src/implementations/tmux/tmux-session-manager.js';
-import type { ExecFn, ExecResult } from '../../../../src/implementations/tmux/types.js';
+import { DefaultTmuxSessionManager } from '../../../../src/implementations/tmux/tmux-session-manager.js';
+import type { ExecFn, ExecResult, TmuxSessionManager } from '../../../../src/implementations/tmux/types.js';
 
 /** Build an exec mock that returns the given result for any command */
 function mockExec(result: Partial<ExecResult>): ExecFn {
@@ -38,7 +38,7 @@ describe('TmuxSessionManager', () => {
 
   beforeEach(() => {
     exec = vi.fn().mockReturnValue({ stdout: '', stderr: '', status: 0 } satisfies ExecResult);
-    manager = new TmuxSessionManager({ exec: exec as ExecFn });
+    manager = new DefaultTmuxSessionManager({ exec: exec as ExecFn });
   });
 
   // ─── createSession ───────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ describe('TmuxSessionManager', () => {
   });
 
   it('enforces concurrent session limit when max sessions are active', () => {
-    const limitedManager = new TmuxSessionManager({
+    const limitedManager = new DefaultTmuxSessionManager({
       exec: listSessionsExec(20) as ExecFn,
       maxConcurrentSessions: 20,
     });
@@ -126,7 +126,7 @@ describe('TmuxSessionManager', () => {
     const result = manager.createSession(validConfig);
     // The first exec is list-sessions which succeeds; second fails
     // We need list to succeed and new-session to fail
-    const failManager = new TmuxSessionManager({
+    const failManager = new DefaultTmuxSessionManager({
       exec: vi.fn().mockImplementation((cmd: string) => {
         if (cmd.includes('list-sessions')) return { stdout: '', stderr: "can't find session", status: 1 };
         return { stdout: '', stderr: 'duplicate session: beat-task-123', status: 1 };
