@@ -21,6 +21,8 @@ export type {
   ExecResult,
   OutputMessage,
   StalenessConfig,
+  TmuxAgentType,
+  TmuxConnectorPort,
   TmuxHandle,
   TmuxHooks,
   TmuxInfo,
