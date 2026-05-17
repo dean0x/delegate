@@ -8,8 +8,8 @@
 
 import type { AutobeatError } from '../../core/errors.js';
 import { tmuxValidationFailed } from '../../core/errors.js';
-import { err, ok } from '../../core/result.js';
 import type { Result } from '../../core/result.js';
+import { err, ok } from '../../core/result.js';
 import type { ExecFn, TmuxInfo, TmuxValidator } from './types.js';
 
 /** Minimum required tmux version */

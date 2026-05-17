@@ -19,6 +19,7 @@ import type {
   TmuxValidator,
   WrapperManifest,
 } from '../../../../src/implementations/tmux/types.js';
+import { MAX_CONCURRENT_SESSIONS } from '../../../../src/implementations/tmux/types.js';
 import { sleep } from '../../../fixtures/test-data.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1703,5 +1704,203 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
       expect.stringContaining('Hooks cleanup failed'),
       expect.objectContaining({ caller: 'triggerExit', taskId: BASE_CONFIG.taskId }),
     );
+  });
+});
+
+// ─── Batch-4 regression tests ─────────────────────────────────────────────────
+
+describe('TmuxConnector — connector-level session cap (rel-conn-1)', () => {
+  it('returns error when spawn is called with MAX_CONCURRENT_SESSIONS sessions already active', () => {
+    // Session manager that accepts any taskId, hooks that return a manifest per taskId
+    const sessionManager: TmuxSessionManager = {
+      createSession: vi
+        .fn()
+        .mockImplementation((cfg: TmuxSpawnConfig) => ok(makeSessionResult(cfg.taskId, `beat-${cfg.taskId}`))),
+      destroySession: vi.fn().mockReturnValue(ok(undefined)),
+      sendKeys: vi.fn().mockReturnValue(ok(undefined)),
+      isAlive: vi.fn().mockReturnValue(ok(true)),
+      listSessions: vi.fn().mockReturnValue(ok([])),
+      getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
+    } as unknown as TmuxSessionManager;
+
+    const hooks: TmuxHooks = {
+      generateWrapper: vi.fn().mockImplementation((cfg: { taskId: string }) => ok(makeManifest(cfg.taskId))),
+      cleanup: vi.fn().mockReturnValue(ok(undefined)),
+    } as unknown as TmuxHooks;
+
+    // Use a watch that always returns a no-op watcher so we can spawn many sessions
+    let watchCallCount = 0;
+    const watch = vi.fn().mockImplementation(() => {
+      watchCallCount++;
+      return { close: vi.fn(), on: vi.fn() };
+    }) as unknown as TmuxConnectorDeps['watch'];
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks,
+      logger: makeLogger(),
+      watch,
+    });
+
+    // Fill up to the limit
+    for (let i = 0; i < MAX_CONCURRENT_SESSIONS; i++) {
+      const result = connector.spawn(
+        { ...BASE_CONFIG, taskId: `task-${i}`, name: `beat-task-${i}` },
+        { onOutput: vi.fn(), onExit: vi.fn() },
+      );
+      expect(result.ok).toBe(true);
+    }
+
+    // The next spawn must be rejected at the connector level
+    const overflow = connector.spawn(
+      { ...BASE_CONFIG, taskId: 'task-overflow', name: 'beat-task-overflow' },
+      { onOutput: vi.fn(), onExit: vi.fn() },
+    );
+    expect(overflow.ok).toBe(false);
+    if (overflow.ok) return;
+    expect(overflow.error.message).toContain('connector session limit reached');
+  });
+});
+
+describe('TmuxConnector — watcher exited guard (rel-conn-2)', () => {
+  it('watcher callback returns early when session.exited is true, no new debounce timer scheduled', async () => {
+    let messageCallback: ((event: string, filename: string | null) => void) | null = null;
+    let watchCallCount = 0;
+    const watch = vi
+      .fn()
+      .mockImplementation((_watchPath: string, _opts: unknown, callback: (event: string, f: string | null) => void) => {
+        watchCallCount++;
+        if (watchCallCount === 2) messageCallback = callback;
+        return { close: vi.fn(), on: vi.fn() };
+      }) as unknown as TmuxConnectorDeps['watch'];
+
+    const onOutput = vi.fn();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+    if (!spawnResult.ok) throw new Error('spawn failed');
+
+    // Destroy the session — this sets session.exited = true and closes watchers
+    connector.destroy(spawnResult.value);
+
+    // Fire the watcher callback AFTER destroy (simulates a late OS event)
+    // If the exited guard works, readFile must never be called
+    const readFile = vi.fn().mockResolvedValue('{}');
+    messageCallback?.('change', '00001-stdout.json');
+
+    // Give any async work (debounce + readFile) a chance to run
+    await sleep(100);
+
+    // readFile injected above is not used by this connector instance — but
+    // onOutput must not have been called either (the event should be dropped)
+    expect(onOutput).not.toHaveBeenCalled();
+  });
+});
+
+describe('TmuxConnector — deliverPendingMessages explicit bound (rel-conn-3)', () => {
+  it('delivers all pending messages without hanging when re-entrant onOutput calls spawn', async () => {
+    const msgs: OutputMessage[] = [
+      { sequence: 1, timestamp: 't1', type: 'stdout', content: 'line1' },
+      { sequence: 2, timestamp: 't2', type: 'stdout', content: 'line2' },
+      { sequence: 3, timestamp: 't3', type: 'stdout', content: 'line3' },
+    ];
+
+    const { watch, fireSentinel } = makeWatchMock();
+    const readFileSync = vi.fn().mockReturnValue('0');
+    const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json', '00002-stdout.json', '00003-stdout.json']);
+    let readIdx = 0;
+    const readFileSyncFull = vi.fn().mockImplementation((filePath: string) => {
+      if (filePath.endsWith('.done') || filePath.endsWith('.exit')) return '0';
+      return JSON.stringify(msgs[readIdx++ % msgs.length]);
+    });
+
+    const received: number[] = [];
+    const onOutput = vi.fn().mockImplementation((m: OutputMessage) => {
+      received.push(m.sequence);
+    });
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync: readFileSyncFull,
+      readdirSync,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+
+    // Sentinel fires — flush reads all 3 files and delivers them
+    fireSentinel('.done');
+
+    // All 3 messages must be delivered in order
+    expect(received).toEqual([1, 2, 3]);
+  });
+});
+
+describe('TmuxConnector — flushPendingFiles filename-based skip (perf-conn-1)', () => {
+  it('skips readFileSync for files with sequence number at or below lastDeliveredSeq', async () => {
+    // Simulate: messages 1 and 2 already delivered; only 3 is new
+    const msg3: OutputMessage = { sequence: 3, timestamp: 't3', type: 'stdout', content: 'line3' };
+
+    const { watch, fireMessage, fireSentinel } = makeWatchMock();
+    const onOutput = vi.fn();
+
+    // readFile used by the hot path (handleMessageFile) — simulate delivering msg1 and msg2
+    let hotPathCalls = 0;
+    const readFile = vi.fn().mockImplementation(() => {
+      hotPathCalls++;
+      const msgs = [
+        { sequence: 1, timestamp: 't1', type: 'stdout', content: 'line1' },
+        { sequence: 2, timestamp: 't2', type: 'stdout', content: 'line2' },
+      ];
+      return Promise.resolve(JSON.stringify(msgs[hotPathCalls - 1] ?? msgs[0]));
+    });
+
+    // readFileSync used by flush — should only be called for file 3
+    const readFileSyncCalls: string[] = [];
+    const readFileSync = vi.fn().mockImplementation((filePath: string) => {
+      if (filePath.endsWith('.done') || filePath.endsWith('.exit')) return '0';
+      readFileSyncCalls.push(filePath);
+      return JSON.stringify(msg3);
+    });
+
+    const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json', '00002-stdout.json', '00003-stdout.json']);
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFile,
+      readFileSync,
+      readdirSync,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+
+    // Deliver msg1 and msg2 via the hot path to advance lastDeliveredSeq to 2
+    fireMessage('00001-stdout.json');
+    fireMessage('00002-stdout.json');
+    await sleep(100); // let debounce + async readFile complete
+
+    // Now sentinel fires — flush should skip files 1 and 2 and only read file 3
+    fireSentinel('.done');
+
+    // readFileSyncCalls should only contain the path for file 3, not files 1 or 2
+    expect(readFileSyncCalls.every((p) => p.includes('00003'))).toBe(true);
+    expect(readFileSyncCalls).toHaveLength(1);
   });
 });

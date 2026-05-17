@@ -12,13 +12,7 @@
 
 import { AutobeatError, tmuxSendKeysFailed, tmuxSessionFailed } from '../../core/errors.js';
 import { err, ok, Result } from '../../core/result.js';
-import type {
-  ExecFn,
-  TmuxSessionConfig,
-  TmuxSessionInfo,
-  TmuxSessionManager,
-  TmuxSessionResult,
-} from './types.js';
+import type { ExecFn, TmuxSessionConfig, TmuxSessionInfo, TmuxSessionManager, TmuxSessionResult } from './types.js';
 import { MAX_CONCURRENT_SESSIONS, SESSION_NAME_REGEX } from './types.js';
 
 /**
@@ -134,7 +128,11 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
    * batched set-environment command failed (e.g. session exited immediately).
    * Best-effort — does not roll back the session on failure.
    */
-  private injectEnvironment(sessionName: string, taskId: string, callerEnv: Record<string, string> | undefined): boolean {
+  private injectEnvironment(
+    sessionName: string,
+    taskId: string,
+    callerEnv: Record<string, string> | undefined,
+  ): boolean {
     // Auto-inject task identity variables so workers can identify their session
     const autoVars: Record<string, string> = {
       AUTOBEAT_TASK_ID: taskId,

@@ -20,11 +20,10 @@ import * as path from 'path';
 import { AutobeatError, tmuxSessionFailed } from '../../core/errors.js';
 import type { Logger } from '../../core/interfaces.js';
 import { err, ok, Result } from '../../core/result.js';
-import {
-  DEFAULT_STALENESS_CONFIG,
+import type {
   OutputMessage,
-  StalenessConfig,
   SpawnCallbacks,
+  StalenessConfig,
   TmuxConnectorPort,
   TmuxHandle,
   TmuxHooks,
@@ -33,6 +32,7 @@ import {
   TmuxSpawnConfig,
   TmuxValidator,
 } from './types.js';
+import { DEFAULT_STALENESS_CONFIG, MAX_CONCURRENT_SESSIONS } from './types.js';
 
 export type { SpawnCallbacks } from './types.js';
 
@@ -135,6 +135,12 @@ export class TmuxConnector implements TmuxConnectorPort {
     // Guard: reject duplicate taskId to prevent orphaning the first session's watchers/timers
     if (this.activeSessions.has(config.taskId)) {
       return err(tmuxSessionFailed('spawn', `session for taskId '${config.taskId}' already exists`));
+    }
+
+    // Guard: enforce connector-level session cap so injected session managers cannot
+    // bypass the MAX_CONCURRENT_SESSIONS limit enforced at the tmux level.
+    if (this.activeSessions.size >= MAX_CONCURRENT_SESSIONS) {
+      return err(tmuxSessionFailed('spawn', `connector session limit reached (${MAX_CONCURRENT_SESSIONS})`));
     }
 
     // 1. Validate tmux
@@ -342,7 +348,7 @@ export class TmuxConnector implements TmuxConnectorPort {
         messagesDir,
         { persistent: false },
         (_eventType: string, filename: string | null) => {
-          if (!filename) return;
+          if (!filename || session.exited) return;
           // Ignore temp files and non-JSON
           if (filename.endsWith('.tmp')) return;
           if (!filename.endsWith('.json')) return;
@@ -489,6 +495,12 @@ export class TmuxConnector implements TmuxConnectorPort {
       const jsonFiles = files.filter((f) => f.endsWith('.json') && !f.endsWith('.tmp')).sort();
 
       for (const filename of jsonFiles) {
+        // Fast path: skip files whose sequence number (from filename prefix, e.g.
+        // "00001-stdout.json") is already delivered, avoiding the readFileSync call.
+        const seqStr = filename.split('-')[0];
+        const filenameSeq = seqStr !== undefined ? parseInt(seqStr, 10) : NaN;
+        if (!isNaN(filenameSeq) && filenameSeq <= session.lastDeliveredSeq) continue;
+
         const filePath = path.join(session.messagesDir, filename);
         let parsed: unknown;
         try {
@@ -607,13 +619,18 @@ export class TmuxConnector implements TmuxConnectorPort {
   /**
    * Delivers all consecutive pending messages starting from session.nextExpectedSeq.
    * Uses lastDeliveredSeq as a monotonic watermark to prevent duplicate delivery.
+   * The upper bound (pendingMessages.size + 1) prevents unbounded iteration should
+   * the map somehow grow during delivery (e.g. re-entrant onOutput callback).
    */
   private deliverPendingMessages(session: ActiveSession, callbacks: SpawnCallbacks): void {
-    while (session.pendingMessages.has(session.nextExpectedSeq)) {
+    const maxDelivery = session.pendingMessages.size + 1;
+    let delivered = 0;
+    while (delivered < maxDelivery && session.pendingMessages.has(session.nextExpectedSeq)) {
       const msg = session.pendingMessages.get(session.nextExpectedSeq)!;
       session.pendingMessages.delete(session.nextExpectedSeq);
       this.deliverSingle(msg, session, callbacks);
       session.nextExpectedSeq++;
+      delivered++;
     }
   }
 
