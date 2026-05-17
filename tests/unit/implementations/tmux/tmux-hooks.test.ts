@@ -75,6 +75,23 @@ describe('TmuxHooks.generateWrapper()', () => {
     expect(content).toContain('set -euo pipefail');
   });
 
+  // RELIABILITY: rel-pipestatus — set +e must bracket the pipeline so PIPESTATUS
+  // is captured even when the agent exits non-zero, ensuring the sentinel is always written.
+  it('wrapper disables errexit around the pipeline to ensure PIPESTATUS capture', () => {
+    hooks.generateWrapper(validConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    // Use unique markers: the assignment "EXIT_CODE=${PIPESTATUS[0]}" only appears once
+    // (the comment also mentions PIPESTATUS[0] but not with the EXIT_CODE= prefix).
+    const setPlusEIdx = content.indexOf('set +e');
+    const pipelineIdx = content.indexOf('2>&1 | while IFS=');
+    const assignmentIdx = content.indexOf('EXIT_CODE=');
+    const setMinusEIdx = content.indexOf('\nset -e\n'); // standalone set -e line
+    expect(setPlusEIdx).toBeGreaterThan(-1);
+    expect(pipelineIdx).toBeGreaterThan(setPlusEIdx);
+    expect(assignmentIdx).toBeGreaterThan(pipelineIdx);
+    expect(setMinusEIdx).toBeGreaterThan(assignmentIdx);
+  });
+
   it('wrapper script contains the agent command', () => {
     hooks.generateWrapper(validConfig);
     const [, content] = writeFile.mock.calls[0] as [string, string];
@@ -137,6 +154,30 @@ describe('TmuxHooks.generateWrapper()', () => {
     const [, content] = writeFile.mock.calls[0] as [string, string];
     expect(content).toContain('beat-orchestrator-1');
     expect(content).toContain('beat-orchestrator-2');
+  });
+
+  // SECURITY: sec-comm-targets — invalid targets must be filtered before script embedding
+  it('filters out communication targets that do not match SESSION_NAME_REGEX', () => {
+    const configWithBadTargets: WrapperConfig = {
+      ...validConfig,
+      communicationTargets: ['beat-valid', '$(malicious-cmd)', 'UPPERCASE', 'beat-also-valid'],
+    };
+    hooks.generateWrapper(configWithBadTargets);
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    expect(content).toContain('beat-valid');
+    expect(content).toContain('beat-also-valid');
+    expect(content).not.toContain('$(malicious-cmd)');
+    expect(content).not.toContain('UPPERCASE');
+  });
+
+  it('omits communication block entirely when all targets are invalid', () => {
+    const configAllInvalid: WrapperConfig = {
+      ...validConfig,
+      communicationTargets: ['$(evil)', 'invalid_name', ''],
+    };
+    hooks.generateWrapper(configAllInvalid);
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    expect(content).not.toContain('send-keys');
   });
 
   it('sends to all configured targets in broadcast mode', () => {

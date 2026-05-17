@@ -16,7 +16,7 @@
 import * as path from 'path';
 import { AutobeatError, tmuxHookFailed } from '../../core/errors.js';
 import { err, ok, Result } from '../../core/result.js';
-import { SENTINEL_DONE, SENTINEL_EXIT, WrapperConfig, WrapperManifest } from './types.js';
+import { SENTINEL_DONE, SENTINEL_EXIT, SESSION_NAME_REGEX, WrapperConfig, WrapperManifest } from './types.js';
 
 /** Octal permission bits for session directories and scripts (owner read/write/execute only) */
 const FILE_MODE = 0o700;
@@ -30,12 +30,19 @@ export interface TmuxHooksDeps {
 /**
  * Generates the communication block for the wrapper script.
  * When targets are configured, the final JSON message is forwarded to each.
+ *
+ * SECURITY: Targets are validated against SESSION_NAME_REGEX before embedding
+ * in the generated bash script. Invalid targets are silently dropped to prevent
+ * shell injection — callers must ensure target names come from trusted sources.
  */
 function buildCommunicationBlock(config: WrapperConfig): string {
   const { communicationTargets: targets } = config;
   if (!targets || targets.length === 0) return '';
 
-  const sendLines = targets.map((t) => `  tmux send-keys -t "${t}" -l "$PAYLOAD" Enter`).join('\n');
+  const validTargets = targets.filter((t) => SESSION_NAME_REGEX.test(t));
+  if (validTargets.length === 0) return '';
+
+  const sendLines = validTargets.map((t) => `  tmux send-keys -t "${t}" -l "$PAYLOAD" Enter`).join('\n');
 
   return `
 # Send result to communication targets
@@ -71,7 +78,12 @@ next_seq() {
   ) 200>"$SEQ_FILE.lock"
 }
 
-# Launch agent, capture output
+# Launch agent, capture output.
+# set +e disables errexit for the pipeline so that a non-zero agent exit does
+# not terminate the script before PIPESTATUS is captured and the sentinel is
+# written. pipefail remains active (set via -o pipefail above) so PIPESTATUS[0]
+# reflects the agent exit code correctly.
+set +e
 ${config.agentCommand} ${agentArgs} 2>&1 | while IFS= read -r line; do
   SEQ=$(next_seq)
   TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -82,6 +94,7 @@ ${config.agentCommand} ${agentArgs} 2>&1 | while IFS= read -r line; do
 done
 
 EXIT_CODE=\${PIPESTATUS[0]}
+set -e
 
 if [ $EXIT_CODE -eq 0 ]; then
   echo "$EXIT_CODE" > "$SESSIONS_DIR/${SENTINEL_DONE}.tmp"
