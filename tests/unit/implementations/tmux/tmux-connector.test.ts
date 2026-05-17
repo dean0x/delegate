@@ -4,7 +4,7 @@
  * Fake timers are used for staleness testing.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AutobeatError, ErrorCode } from '../../../../src/core/errors.js';
 import type { Logger } from '../../../../src/core/interfaces.js';
 import { err, ok } from '../../../../src/core/result.js';
@@ -19,6 +19,7 @@ import type {
   TmuxValidator,
   WrapperManifest,
 } from '../../../../src/implementations/tmux/types.js';
+import { sleep } from '../../../fixtures/test-data.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -444,7 +445,7 @@ describe('TmuxConnector — output handling', () => {
     await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
     fireMessage('00001-stdout.json.tmp');
 
-    await new Promise((r) => setTimeout(r, 100));
+    await sleep(100);
     expect(onOutput).not.toHaveBeenCalled();
     connector.dispose();
   });
@@ -474,7 +475,7 @@ describe('TmuxConnector — output handling', () => {
     await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
     fireMessage('00001-stdout.json');
 
-    await new Promise((r) => setTimeout(r, 200));
+    await sleep(200);
     expect(onOutput).not.toHaveBeenCalled();
     connector.dispose();
   });
@@ -498,7 +499,7 @@ describe('TmuxConnector — output handling', () => {
     await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
     fireMessage('00001-stdout.json');
 
-    await new Promise((r) => setTimeout(r, 200));
+    await sleep(200);
     expect(onOutput).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalled();
     connector.dispose();
@@ -538,11 +539,11 @@ describe('TmuxConnector — output handling', () => {
 
     // Fire in reverse order — wait for debounce and async read between each
     fireMessage('00003-stdout.json');
-    await new Promise((r) => setTimeout(r, 80));
+    await sleep(80);
     fireMessage('00001-stdout.json');
-    await new Promise((r) => setTimeout(r, 80));
+    await sleep(80);
     fireMessage('00002-stdout.json');
-    await new Promise((r) => setTimeout(r, 80));
+    await sleep(80);
 
     expect(received.map((m) => m.sequence)).toEqual([1, 2, 3]);
     connector.dispose();
@@ -568,7 +569,7 @@ describe('TmuxConnector — output handling', () => {
     fireMessage('00001-stdout.json');
     fireMessage('00001-stdout.json'); // double-fire within 50ms
 
-    await new Promise((r) => setTimeout(r, 200));
+    await sleep(200);
     expect(onOutput).toHaveBeenCalledTimes(1);
     connector.dispose();
   });
@@ -621,7 +622,7 @@ describe('TmuxConnector — output handling', () => {
     }
 
     // Allow debounce timers and async reads to settle
-    await new Promise((r) => setTimeout(r, 300));
+    await sleep(300);
 
     // The overflow warning must have been emitted
     expect(logger.warn).toHaveBeenCalledWith(
@@ -720,7 +721,7 @@ describe('TmuxConnector — flush before exit', () => {
 
     // Deliver msg1 normally via debounce
     fireMessage('00001-stdout.json');
-    await new Promise((r) => setTimeout(r, 200));
+    await sleep(200);
     expect(onOutput).toHaveBeenCalledTimes(1);
 
     // Now fire msg2 + sentinel immediately — flush should deliver msg2 but NOT re-deliver msg1
@@ -858,7 +859,7 @@ describe('TmuxConnector — flush before exit', () => {
 
     // Deliver msg 1 normally via debounce
     fireMessage('00001-stdout.json');
-    await new Promise((r) => setTimeout(r, 200));
+    await sleep(200);
     expect(received).toHaveLength(1);
 
     // Sentinel triggers flush — should deliver only 3 and 5 (not re-deliver 1)
@@ -938,9 +939,9 @@ describe('TmuxConnector — staleness detection', () => {
     const { watch } = makeWatchMock();
     const onExit = vi.fn();
 
+    // listSessions returns [] by default — session is absent from alive set,
+    // so after maxSilenceMs it is marked STALE.
     const sessionManager = makeValidSessionManager();
-    // After first check, session appears dead
-    (sessionManager.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
 
     const connector = new TmuxConnector({
       validator: makeValidValidator(),
@@ -965,8 +966,8 @@ describe('TmuxConnector — staleness detection', () => {
   it('staleness timer uses the configured checkIntervalMs', async () => {
     vi.useFakeTimers();
     const { watch } = makeWatchMock();
+    // listSessions returns [] by default — session is absent, triggers STALE after maxSilenceMs
     const sessionManager = makeValidSessionManager();
-    (sessionManager.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
     const onExit = vi.fn();
 
     const connector = new TmuxConnector({
@@ -1037,12 +1038,9 @@ describe('TmuxConnector — staleness detection', () => {
     const onExit = vi.fn();
     const readFileSync = vi.fn().mockReturnValue('0');
 
-    const sessionManager = makeValidSessionManager();
-    (sessionManager.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
-
     const connector = new TmuxConnector({
       validator: makeValidValidator(),
-      sessionManager,
+      sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
       logger: makeLogger(),
       watch,
@@ -1106,12 +1104,10 @@ describe('TmuxConnector.destroy()', () => {
     vi.useFakeTimers();
     const { watch } = makeWatchMock();
     const onExit = vi.fn();
-    const sessionManager = makeValidSessionManager();
-    (sessionManager.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
 
     const connector = new TmuxConnector({
       validator: makeValidValidator(),
-      sessionManager,
+      sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
       logger: makeLogger(),
       watch,
