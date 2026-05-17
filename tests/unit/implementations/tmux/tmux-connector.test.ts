@@ -408,22 +408,24 @@ describe('TmuxConnector — watcher error handler', () => {
     // so the test can trigger it directly.
     let sentinelErrorHandler: ((err: Error) => void) | null = null;
     let callCount = 0;
-    const watch = vi.fn().mockImplementation(
-      (_watchPath: string, _opts: unknown, _callback: (event: string, f: string | null) => void) => {
-        callCount++;
-        if (callCount === 1) {
-          // First call = sentinel watcher
-          return {
-            close: vi.fn(),
-            on: vi.fn().mockImplementation((event: string, handler: (err: Error) => void) => {
-              if (event === 'error') sentinelErrorHandler = handler;
-            }),
-          };
-        }
-        // Second call = messages watcher
-        return { close: vi.fn(), on: vi.fn() };
-      },
-    ) as unknown as TmuxConnectorDeps['watch'];
+    const watch = vi
+      .fn()
+      .mockImplementation(
+        (_watchPath: string, _opts: unknown, _callback: (event: string, f: string | null) => void) => {
+          callCount++;
+          if (callCount === 1) {
+            // First call = sentinel watcher
+            return {
+              close: vi.fn(),
+              on: vi.fn().mockImplementation((event: string, handler: (err: Error) => void) => {
+                if (event === 'error') sentinelErrorHandler = handler;
+              }),
+            };
+          }
+          // Second call = messages watcher
+          return { close: vi.fn(), on: vi.fn() };
+        },
+      ) as unknown as TmuxConnectorDeps['watch'];
 
     const connector = new TmuxConnector({
       validator: makeValidValidator(),
@@ -1087,9 +1089,7 @@ describe('TmuxConnector — staleness detection', () => {
 
     const sessionManager = makeValidSessionManager();
     // listSessions returns the session as alive on every tick
-    (sessionManager.listSessions as ReturnType<typeof vi.fn>).mockReturnValue(
-      ok([{ name: `beat-task-abc` }]),
-    );
+    (sessionManager.listSessions as ReturnType<typeof vi.fn>).mockReturnValue(ok([{ name: `beat-task-abc` }]));
 
     const connector = new TmuxConnector({
       validator: makeValidValidator(),

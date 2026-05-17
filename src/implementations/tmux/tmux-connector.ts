@@ -260,11 +260,7 @@ export class TmuxConnector {
    * Constructs the initial ActiveSession state object.
    * Extracted from spawn() to keep spawn() under 50 lines.
    */
-  private buildActiveSession(
-    config: TmuxSpawnConfig,
-    messagesDir: string,
-    callbacks: SpawnCallbacks,
-  ): ActiveSession {
+  private buildActiveSession(config: TmuxSpawnConfig, messagesDir: string, callbacks: SpawnCallbacks): ActiveSession {
     const stalenessConfig: StalenessConfig = {
       ...DEFAULT_STALENESS_CONFIG,
       ...config.staleness,
@@ -354,15 +350,13 @@ export class TmuxConnector {
           if (existing) clearTimeout(existing);
           const timer = setTimeout(() => {
             session.debounceTimers.delete(filename);
-            this.handleMessageFile(path.join(messagesDir, filename), session, callbacks).catch(
-              (err: unknown) => {
-                this.deps.logger.warn('handleMessageFile threw unexpectedly', {
-                  taskId,
-                  filename,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              },
-            );
+            this.handleMessageFile(path.join(messagesDir, filename), session, callbacks).catch((err: unknown) => {
+              this.deps.logger.warn('handleMessageFile threw unexpectedly', {
+                taskId,
+                filename,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            });
           }, DEBOUNCE_MS);
           session.debounceTimers.set(filename, timer);
         },
