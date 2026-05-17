@@ -48,6 +48,13 @@ export interface TmuxHandle {
   sessionsDir: string;
 }
 
+/**
+ * Result of TmuxSessionManager.createSession() — omits sessionsDir because
+ * the session manager doesn't know the sessions directory (it's a higher-level
+ * concern owned by TmuxConnector/TmuxSpawnConfig).
+ */
+export type TmuxSessionResult = Omit<TmuxHandle, 'sessionsDir'>;
+
 // ─── Output & messaging ───────────────────────────────────────────────────────
 
 /**
@@ -180,7 +187,7 @@ import type { Result } from '../../core/result.js';
  * implementations (test doubles, future adapters) only need to implement these methods.
  */
 export interface TmuxSessionManager {
-  createSession(config: TmuxSessionConfig): Result<TmuxHandle, AutobeatError>;
+  createSession(config: TmuxSessionConfig): Result<TmuxSessionResult, AutobeatError>;
   destroySession(name: string): Result<void, AutobeatError>;
   sendKeys(name: string, keys: string): Result<void, AutobeatError>;
   isAlive(name: string): Result<boolean, AutobeatError>;

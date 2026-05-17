@@ -25,6 +25,7 @@ export type {
   TmuxSessionConfig,
   TmuxSessionInfo,
   TmuxSessionManager,
+  TmuxSessionResult,
   TmuxSpawnConfig,
   TmuxValidator,
   WrapperConfig,
