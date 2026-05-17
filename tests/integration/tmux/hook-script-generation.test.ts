@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TmuxHooks } from '../../../src/implementations/tmux/tmux-hooks.js';
+import { DefaultTmuxHooks } from '../../../src/implementations/tmux/tmux-hooks.js';
 import type { WrapperConfig } from '../../../src/implementations/tmux/types.js';
 
 let tmpDir = '';
@@ -28,8 +28,8 @@ afterAll(() => {
   }
 });
 
-function makeRealHooks(): TmuxHooks {
-  return new TmuxHooks({
+function makeRealHooks(): DefaultTmuxHooks {
+  return new DefaultTmuxHooks({
     writeFile: (p: string, content: string, opts: { mode: number }) => {
       fs.writeFileSync(p, content, { mode: opts.mode });
     },

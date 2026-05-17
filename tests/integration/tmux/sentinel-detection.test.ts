@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TmuxSessionManager } from '../../../src/implementations/tmux/tmux-session-manager.js';
+import { DefaultTmuxSessionManager } from '../../../src/implementations/tmux/tmux-session-manager.js';
 import type { ExecFn, ExecResult } from '../../../src/implementations/tmux/types.js';
 
 function realExec(cmd: string): ExecResult {
@@ -183,7 +183,7 @@ describe.skipIf(!tmuxAvailable)('Sentinel detection — session lifecycle', () =
   });
 
   it('staleness: session appears dead after external kill', () => {
-    const manager = new TmuxSessionManager({ exec: realExec as ExecFn });
+    const manager = new DefaultTmuxSessionManager({ exec: realExec as ExecFn });
 
     // Clean up any pre-existing session with this name
     realExec(`tmux kill-session -t ${sessionName} 2>/dev/null || true`);
