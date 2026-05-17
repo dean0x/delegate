@@ -448,6 +448,54 @@ describe('TmuxConnector — watcher error handler', () => {
 
     connector.dispose();
   });
+
+  it('logs a warning when the messages watcher emits an error event', async () => {
+    const logger = makeLogger();
+
+    // Build a watch mock where the messages watcher captures its .on('error') handler
+    // so the test can trigger it directly.
+    let messagesErrorHandler: ((err: Error) => void) | null = null;
+    let callCount = 0;
+    const watch = vi
+      .fn()
+      .mockImplementation(
+        (_watchPath: string, _opts: unknown, _callback: (event: string, f: string | null) => void) => {
+          callCount++;
+          if (callCount === 1) {
+            // First call = sentinel watcher
+            return { close: vi.fn(), on: vi.fn() };
+          }
+          // Second call = messages watcher
+          return {
+            close: vi.fn(),
+            on: vi.fn().mockImplementation((event: string, handler: (err: Error) => void) => {
+              if (event === 'error') messagesErrorHandler = handler;
+            }),
+          };
+        },
+      ) as unknown as TmuxConnectorDeps['watch'];
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger,
+      watch,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+
+    // Simulate the messages watcher emitting an error
+    expect(messagesErrorHandler).not.toBeNull();
+    messagesErrorHandler!(new Error('ENOSPC: no space left on device'));
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Messages watcher error'),
+      expect.objectContaining({ taskId: BASE_CONFIG.taskId }),
+    );
+
+    connector.dispose();
+  });
 });
 
 describe('TmuxConnector — output handling', () => {
@@ -983,6 +1031,40 @@ describe('TmuxConnector — flush before exit', () => {
   });
 });
 
+describe('TmuxConnector — MIN_CHECK_INTERVAL_MS floor clamp', () => {
+  it('clamps checkIntervalMs below 1000ms to 1000ms', async () => {
+    vi.useFakeTimers();
+    const { watch } = makeWatchMock();
+    const onExit = vi.fn();
+    const sessionManager = makeValidSessionManager();
+    // listSessions returns [] so the session is considered dead every tick
+    // maxSilenceMs=0 so any tick past the first check triggers STALE
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    await connector.spawn(
+      { ...BASE_CONFIG, staleness: { checkIntervalMs: 100, maxSilenceMs: 0 } },
+      { onOutput: vi.fn(), onExit },
+    );
+
+    // 999ms — still under the 1000ms floor; timer must not have fired yet
+    vi.advanceTimersByTime(999);
+    expect(onExit).not.toHaveBeenCalled();
+
+    // 1001ms — past the 1000ms floor; first tick fires and STALE is triggered
+    vi.advanceTimersByTime(2);
+    expect(onExit).toHaveBeenCalledWith(null, 'STALE');
+
+    vi.useRealTimers();
+  });
+});
+
 describe('TmuxConnector — staleness detection', () => {
   it('fires onExit(null, STALE) when session is dead for maxSilenceMs', async () => {
     vi.useFakeTimers();
@@ -1401,5 +1483,92 @@ describe('TmuxConnector.getActiveHandles()', () => {
     expect(connector.getActiveHandles()).toHaveLength(1);
 
     connector.dispose();
+  });
+});
+
+describe('TmuxConnector — loggedCleanup failure logging', () => {
+  function makeCleanupFailingHooks(taskId = 'task-abc'): TmuxHooks {
+    return {
+      generateWrapper: vi.fn().mockReturnValue(ok(makeManifest(taskId))),
+      cleanup: vi.fn().mockReturnValue(err(new AutobeatError(ErrorCode.TMUX_HOOK_FAILED, 'cleanup error'))),
+    } as unknown as TmuxHooks;
+  }
+
+  it('logs warning when hooks.cleanup fails during spawn rollback (createSession fails)', async () => {
+    const { watch } = makeWatchMock();
+    const logger = makeLogger();
+    const hooks = makeCleanupFailingHooks();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeFailingSessionManager(),
+      hooks,
+      logger,
+      watch,
+    });
+
+    // createSession fails → spawn rolls back → loggedCleanup is called → cleanup returns err
+    const result = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    expect(result.ok).toBe(false);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Hooks cleanup failed'),
+      expect.objectContaining({ caller: 'spawn', taskId: BASE_CONFIG.taskId }),
+    );
+  });
+
+  it('logs warning when hooks.cleanup fails during destroy()', async () => {
+    const { watch } = makeWatchMock();
+    const logger = makeLogger();
+    const hooks = makeCleanupFailingHooks();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger,
+      watch,
+    });
+
+    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) return;
+
+    // spawn calls cleanup and logs a warning, reset so we can assert cleanly on destroy
+    (logger.warn as ReturnType<typeof vi.fn>).mockClear();
+
+    connector.destroy(spawnResult.value);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Hooks cleanup failed'),
+      expect.objectContaining({ caller: 'destroy', taskId: BASE_CONFIG.taskId }),
+    );
+  });
+
+  it('logs warning when hooks.cleanup fails during triggerExit (sentinel fires)', async () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const logger = makeLogger();
+    const hooks = makeCleanupFailingHooks();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger,
+      watch,
+      readFileSync,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+
+    // spawn calls cleanup and logs a warning, reset so we can assert cleanly on exit
+    (logger.warn as ReturnType<typeof vi.fn>).mockClear();
+
+    fireSentinel('.done');
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Hooks cleanup failed'),
+      expect.objectContaining({ caller: 'triggerExit', taskId: BASE_CONFIG.taskId }),
+    );
   });
 });
