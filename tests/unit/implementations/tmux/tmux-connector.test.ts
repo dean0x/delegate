@@ -284,6 +284,41 @@ describe('TmuxConnector.spawn()', () => {
     expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
   });
 
+  it('spawn succeeds even when the messages watcher throws (graceful degradation)', async () => {
+    // The 2nd watch call (messages watcher) throws; spawn must still return ok
+    let callCount = 0;
+    const watch = vi.fn().mockImplementation((..._args: unknown[]) => {
+      callCount++;
+      if (callCount === 1) {
+        // First call = sentinel watcher — succeed
+        return { close: vi.fn(), on: vi.fn() };
+      }
+      // Second call = messages watcher — simulate failure (e.g. dir not ready)
+      throw new Error('ENOENT: messages dir does not exist');
+    }) as unknown as TmuxConnectorDeps['watch'];
+
+    const logger = makeLogger();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger,
+      watch,
+    });
+
+    const result = await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+
+    // spawn must succeed despite the messages watcher failure
+    expect(result.ok).toBe(true);
+    // A warning about the watcher failure must be logged
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to start messages watcher'),
+      expect.any(Object),
+    );
+    connector.dispose();
+  });
+
   it('returns session error when createSession fails, and does not register the handle', async () => {
     const { watch } = makeWatchMock();
 
@@ -410,6 +445,36 @@ describe('TmuxConnector — output handling', () => {
     fireMessage('00001-stdout.json.tmp');
 
     await new Promise((r) => setTimeout(r, 100));
+    expect(onOutput).not.toHaveBeenCalled();
+    connector.dispose();
+  });
+
+  it('silently drops messages with an invalid type field — onOutput not called', async () => {
+    // A structurally valid JSON object whose 'type' is not in ['stdout','stderr','result']
+    const invalidTypeMsg = {
+      sequence: 1,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      type: 'unknown-type',
+      content: 'should be dropped',
+    };
+    const readFile = vi.fn().mockResolvedValue(JSON.stringify(invalidTypeMsg));
+    const { watch, fireMessage } = makeWatchMock();
+    const onOutput = vi.fn();
+    const logger = makeLogger();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger,
+      watch,
+      readFile,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+    fireMessage('00001-stdout.json');
+
+    await new Promise((r) => setTimeout(r, 200));
     expect(onOutput).not.toHaveBeenCalled();
     connector.dispose();
   });
@@ -927,6 +992,45 @@ describe('TmuxConnector — staleness detection', () => {
     vi.useRealTimers();
   });
 
+  it('staleness timer logs warning and does NOT fire onExit when listSessions returns err', async () => {
+    vi.useFakeTimers();
+    const { watch } = makeWatchMock();
+    const onExit = vi.fn();
+    const logger = makeLogger();
+
+    const sessionManager = makeValidSessionManager();
+    // listSessions fails with a transient error every tick
+    (sessionManager.listSessions as ReturnType<typeof vi.fn>).mockReturnValue(
+      err(new AutobeatError(ErrorCode.TMUX_SESSION_FAILED, 'tmux command failed')),
+    );
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger,
+      watch,
+    });
+
+    await connector.spawn(
+      { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 500 } },
+      { onOutput: vi.fn(), onExit },
+    );
+
+    // Advance well past maxSilenceMs — the timer fires but must NOT call onExit
+    vi.advanceTimersByTime(5000);
+
+    // Warning must be logged for each failed tick
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('listSessions failed'),
+      expect.objectContaining({ error: expect.any(String) }),
+    );
+    // onExit must NOT have been triggered
+    expect(onExit).not.toHaveBeenCalled();
+    connector.dispose();
+    vi.useRealTimers();
+  });
+
   it('staleness timer stops after exit — no double-fire', async () => {
     vi.useFakeTimers();
     const { watch, fireSentinel } = makeWatchMock();
@@ -1092,6 +1196,32 @@ describe('TmuxConnector.sendKeys() / isAlive()', () => {
 });
 
 describe('TmuxConnector.dispose()', () => {
+  it('logs warning when destroySession returns err during dispose()', async () => {
+    const { watch } = makeWatchMock();
+    const logger = makeLogger();
+
+    const sessionManager = makeValidSessionManager();
+    (sessionManager.destroySession as ReturnType<typeof vi.fn>).mockReturnValue(
+      err(new AutobeatError(ErrorCode.TMUX_SESSION_FAILED, 'destroy failed')),
+    );
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger,
+      watch,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.dispose();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('dispose: failed to destroy session'),
+      expect.objectContaining({ sessionName: expect.any(String) }),
+    );
+  });
+
   it('dispose cleans up all active handles', async () => {
     const { watch: watch1 } = makeWatchMock();
     const { watch: watch2 } = makeWatchMock();
