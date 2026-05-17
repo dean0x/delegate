@@ -17,9 +17,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { AutobeatError } from '../../core/errors.js';
+import { AutobeatError, tmuxSessionFailed } from '../../core/errors.js';
 import type { Logger } from '../../core/interfaces.js';
-import { ok, Result } from '../../core/result.js';
+import { err, ok, Result } from '../../core/result.js';
 import {
   DEFAULT_STALENESS_CONFIG,
   OutputMessage,
@@ -133,6 +133,11 @@ export class TmuxConnector {
    * 5. Starts (or restarts) the shared staleness timer
    */
   spawn(config: TmuxSpawnConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
+    // Guard: reject duplicate taskId to prevent orphaning the first session's watchers/timers
+    if (this.activeSessions.has(config.taskId)) {
+      return err(tmuxSessionFailed('spawn', `session for taskId '${config.taskId}' already exists`));
+    }
+
     // 1. Validate tmux
     const validationResult = this.deps.validator.validate();
     if (!validationResult.ok) return validationResult;
@@ -140,7 +145,7 @@ export class TmuxConnector {
     // 2. Generate wrapper
     const manifestResult = this.deps.hooks.generateWrapper({
       taskId: config.taskId,
-      agent: 'claude',
+      agent: config.agent,
       sessionsDir: config.sessionsDir,
       agentCommand: config.command,
       agentArgs: [],
@@ -183,21 +188,26 @@ export class TmuxConnector {
 
   /**
    * Destroys a session and cleans up all watchers and timers.
-   * Idempotent.
+   * Idempotent. Returns early when the handle is not tracked to avoid
+   * acting on sessions owned by other connectors.
    */
   destroy(handle: TmuxHandle): Result<void, AutobeatError> {
     const session = this.activeSessions.get(handle.taskId);
-    if (session) {
-      // Set exited before flush so late staleness timer ticks cannot trigger
-      // onExit after we have already destroyed the session.
-      session.exited = true;
-      this.flushPendingFiles(session);
-      this.closeSession(session);
-      this.activeSessions.delete(handle.taskId);
-      this.restartSharedStalenessTimer();
-      this.loggedCleanup('destroy', handle.taskId, handle.sessionsDir);
-    }
-    return this.deps.sessionManager.destroySession(handle.sessionName);
+    if (!session) return ok(undefined);
+
+    // Set exited before flush so late staleness timer ticks cannot trigger
+    // onExit after we have already destroyed the session.
+    session.exited = true;
+    this.flushPendingFiles(session);
+    this.closeSession(session);
+    this.activeSessions.delete(handle.taskId);
+    this.restartSharedStalenessTimer();
+    // Kill the tmux session before removing the directory — the wrapper script
+    // may still be writing when destroy() is called, and rmSync while the
+    // process has open file handles produces I/O errors.
+    const destroyResult = this.deps.sessionManager.destroySession(handle.sessionName);
+    this.loggedCleanup('destroy', handle.taskId, handle.sessionsDir);
+    return destroyResult;
   }
 
   sendKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError> {
@@ -233,6 +243,8 @@ export class TmuxConnector {
         });
       }
       this.loggedCleanup('dispose', session.handle.taskId, session.handle.sessionsDir);
+      // Notify callers so tasks don't remain stuck in RUNNING after shutdown.
+      session.callbacks.onExit(null, 'SHUTDOWN');
     }
   }
 
@@ -629,6 +641,17 @@ export class TmuxConnector {
     // restarts once after all exits to avoid O(N) timer churn.
     if (!skipTimerRestart) {
       this.restartSharedStalenessTimer();
+    }
+    // Kill the tmux session — an agent that is hung (not crashed) won't produce a
+    // sentinel, so the stale path must forcefully terminate it. destroySession is
+    // idempotent when the session no longer exists (already-exited agents).
+    const destroyResult = this.deps.sessionManager.destroySession(session.handle.sessionName);
+    if (!destroyResult.ok) {
+      this.deps.logger.warn('triggerExit: failed to destroy session', {
+        taskId,
+        sessionName: session.handle.sessionName,
+        error: destroyResult.error.message,
+      });
     }
     this.loggedCleanup('triggerExit', taskId, session.handle.sessionsDir);
     callbacks.onExit(code, signal);
