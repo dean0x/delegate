@@ -1136,11 +1136,13 @@ describe('TmuxConnector — flush before exit', () => {
     // Fire message — enters debounce window
     fireMessage('00001-stdout.json');
 
-    // destroy immediately (before debounce settles) — must flush
+    // destroy immediately (before debounce settles) — must flush, then fire onExit
     connector.destroy(spawnResult.value);
 
     expect(onOutput).toHaveBeenCalledTimes(1);
-    expect(onExit).not.toHaveBeenCalled();
+    // destroy() calls onExit(null, 'DESTROYED') for lifecycle completeness so
+    // callers don't leave tasks stuck in RUNNING after an explicit destroy request.
+    expect(onExit).toHaveBeenCalledWith(null, 'DESTROYED');
   });
 
   it('flush delivers all messages with sequence gaps ([1, 3, 5])', () => {
@@ -1586,32 +1588,37 @@ describe('TmuxConnector.destroy()', () => {
 
   it('clears staleness timer on destroy', () => {
     vi.useFakeTimers();
-    const { watch } = makeWatchMock();
-    const onExit = vi.fn();
+    try {
+      const { watch } = makeWatchMock();
+      const onExit = vi.fn();
 
-    const connector = new TmuxConnector({
-      validator: makeValidValidator(),
-      sessionManager: makeValidSessionManager(),
-      hooks: makeValidHooks(),
-      logger: makeLogger(),
-      watch,
-    });
+      const connector = new TmuxConnector({
+        validator: makeValidValidator(),
+        sessionManager: makeValidSessionManager(),
+        hooks: makeValidHooks(),
+        logger: makeLogger(),
+        watch,
+      });
 
-    const spawnResult = connector.spawn(
-      { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 500 } },
-      { onOutput: vi.fn(), onExit },
-    );
-    if (!spawnResult.ok) {
+      const spawnResult = connector.spawn(
+        { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 500 } },
+        { onOutput: vi.fn(), onExit },
+      );
+      if (!spawnResult.ok) return;
+
+      connector.destroy(spawnResult.value);
+
+      // destroy() fires onExit(null, 'DESTROYED') immediately for lifecycle completeness.
+      expect(onExit).toHaveBeenCalledWith(null, 'DESTROYED');
+      expect(onExit).toHaveBeenCalledTimes(1);
+
+      // After destroy, advancing time should NOT fire staleness a second time
+      // because the staleness timer was stopped and the session was removed.
+      vi.advanceTimersByTime(5000);
+      expect(onExit).toHaveBeenCalledTimes(1);
+    } finally {
       vi.useRealTimers();
-      return;
     }
-
-    connector.destroy(spawnResult.value);
-
-    // After destroy, advancing time should NOT fire staleness
-    vi.advanceTimersByTime(5000);
-    expect(onExit).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
   it('calls sessionManager.destroySession with the session name', () => {

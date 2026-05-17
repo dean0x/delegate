@@ -43,14 +43,22 @@ type WatchFn = typeof fs.watch;
 /** Debounce window for suppressing fs.watch double-fires (ms) */
 const DEBOUNCE_MS = 50;
 
-/** Maximum number of pending out-of-order messages before forcing delivery */
+/**
+ * Maximum number of pending out-of-order messages before forcing delivery.
+ *
+ * DESIGN DECISION: The check in handleMessageFile fires AFTER inserting the
+ * new message, so the map can transiently hold MAX_PENDING_MESSAGES + 1 entries
+ * before the gap-skip fires. This one-entry overshoot is intentional — it avoids
+ * a pre-insert size check that would require reading the same value twice and
+ * keeps the hot-path code flat. Memory impact is bounded to one extra message.
+ */
 const MAX_PENDING_MESSAGES = 100;
 
 /** Minimum allowed checkIntervalMs to prevent tight-loop setInterval */
 const MIN_CHECK_INTERVAL_MS = 1000;
 
 /** Valid literal values for OutputMessage.type */
-const VALID_OUTPUT_TYPES = new Set<string>(['stdout', 'stderr', 'result']);
+const VALID_OUTPUT_TYPES = new Set<OutputMessage['type']>(['stdout', 'stderr', 'result']);
 
 /**
  * Type guard for OutputMessage. Validates all required fields including the
@@ -230,13 +238,20 @@ export class TmuxConnector implements TmuxConnectorPort {
     session.exited = true;
     this.flushPendingFiles(session);
     this.closeSession(session);
-    this.activeSessions.delete(handle.taskId);
-    this.restartSharedStalenessTimer();
     // Kill the tmux session before removing the directory — the wrapper script
     // may still be writing when destroy() is called, and rmSync while the
     // process has open file handles produces I/O errors.
     const destroyResult = this.deps.sessionManager.destroySession(handle.sessionName);
+    // Delete from activeSessions AFTER the destroySession attempt so that on
+    // failure the session remains tracked and the caller can retry destroy().
+    // The exited flag prevents watchers and staleness ticks from re-firing.
+    this.activeSessions.delete(handle.taskId);
+    this.restartSharedStalenessTimer();
     this.loggedCleanup('destroy', handle.taskId, handle.sessionsDir);
+    // Notify the caller so the task does not remain stuck in RUNNING after an
+    // explicit destroy request. Use 'DESTROYED' to distinguish from natural
+    // exits ('STALE', 'SHUTDOWN') and sentinel-driven exits.
+    session.callbacks.onExit(null, 'DESTROYED');
     return destroyResult;
   }
 
@@ -260,21 +275,30 @@ export class TmuxConnector implements TmuxConnectorPort {
     this.activeSessions.clear();
     this.stopSharedStalenessTimer();
     for (const session of sessions) {
-      // Set exited before flush so late staleness timer ticks that fire during
-      // teardown see session.exited = true and return early.
-      session.exited = true;
-      this.flushPendingFiles(session);
-      this.closeSession(session);
-      const result = this.deps.sessionManager.destroySession(session.handle.sessionName);
-      if (!result.ok) {
-        this.deps.logger.warn('Dispose: failed to destroy session', {
-          sessionName: session.handle.sessionName,
-          error: result.error.message,
+      // Per-session try/catch ensures one failing teardown does not prevent
+      // the remaining sessions from being cleaned up.
+      try {
+        // Set exited before flush so late staleness timer ticks that fire during
+        // teardown see session.exited = true and return early.
+        session.exited = true;
+        this.flushPendingFiles(session);
+        this.closeSession(session);
+        const result = this.deps.sessionManager.destroySession(session.handle.sessionName);
+        if (!result.ok) {
+          this.deps.logger.warn('Dispose: failed to destroy session', {
+            sessionName: session.handle.sessionName,
+            error: result.error.message,
+          });
+        }
+        this.loggedCleanup('dispose', session.handle.taskId, session.handle.sessionsDir);
+        // Notify callers so tasks don't remain stuck in RUNNING after shutdown.
+        session.callbacks.onExit(null, 'SHUTDOWN');
+      } catch (teardownErr: unknown) {
+        this.deps.logger.error('Dispose: unhandled error during session teardown', {
+          taskId: session.handle.taskId,
+          error: teardownErr instanceof Error ? teardownErr.message : String(teardownErr),
         });
       }
-      this.loggedCleanup('dispose', session.handle.taskId, session.handle.sessionsDir);
-      // Notify callers so tasks don't remain stuck in RUNNING after shutdown.
-      session.callbacks.onExit(null, 'SHUTDOWN');
     }
   }
 
@@ -341,6 +365,11 @@ export class TmuxConnector implements TmuxConnectorPort {
         (_eventType: string, filename: string | null) => {
           if (!filename) return;
           if (filename === '.done' || filename === '.exit') {
+            // No debounce needed here: handleSentinel() reads session.exited
+            // synchronously at the top of the event-loop tick. Because
+            // triggerExit() sets session.exited = true before returning,
+            // any platform double-fire of the same sentinel file is a no-op —
+            // the second callback sees exited = true and returns immediately.
             this.handleSentinel(taskId, sessionDir, filename);
           }
         },
