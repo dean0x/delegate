@@ -1312,7 +1312,7 @@ describe('TmuxConnector.dispose()', () => {
     connector.dispose();
 
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('dispose: failed to destroy session'),
+      expect.stringContaining('Dispose: failed to destroy session'),
       expect.objectContaining({ sessionName: expect.any(String) }),
     );
   });

@@ -148,10 +148,10 @@ export class TmuxConnector {
     if (!manifestResult.ok) return manifestResult;
     const manifest = manifestResult.value;
 
-    // Build the internal session state (before launching, to set up watchers first)
-    const session = this.buildActiveSession(config, manifest.messagesDir, callbacks);
-
-    // 3. Start fs.watch watchers (BEFORE session launch to avoid race)
+    // 3. Start fs.watch watchers (BEFORE session launch to avoid race).
+    // Build a temporary session object with a placeholder sessionName so watchers
+    // can be registered before createSession() returns the real name.
+    const session = this.buildActiveSession(config, config.name, manifest.messagesDir, callbacks);
     this.startWatchers(session, manifest.sessionDir);
 
     // 4. Create tmux session running the wrapper
@@ -162,17 +162,11 @@ export class TmuxConnector {
     if (!sessionResult.ok) {
       // Clean up watchers and generated session directory on failure
       this.closeSession(session);
-      const cleanupResult = this.deps.hooks.cleanup(config.taskId, config.sessionsDir);
-      if (!cleanupResult.ok) {
-        this.deps.logger.warn('spawn: hooks.cleanup failed', {
-          taskId: config.taskId,
-          error: cleanupResult.error.message,
-        });
-      }
+      this.loggedCleanup('spawn', config.taskId, config.sessionsDir);
       return sessionResult;
     }
 
-    // Update handle with the actual session handle details
+    // Overwrite the placeholder sessionName with the real one returned by createSession
     session.handle = {
       ...session.handle,
       sessionName: sessionResult.value.sessionName,
@@ -201,13 +195,7 @@ export class TmuxConnector {
       this.closeSession(session);
       this.activeSessions.delete(handle.taskId);
       this.restartSharedStalenessTimer();
-      const cleanupResult = this.deps.hooks.cleanup(handle.taskId, handle.sessionsDir);
-      if (!cleanupResult.ok) {
-        this.deps.logger.warn('destroy: hooks.cleanup failed', {
-          taskId: handle.taskId,
-          error: cleanupResult.error.message,
-        });
-      }
+      this.loggedCleanup('destroy', handle.taskId, handle.sessionsDir);
     }
     return this.deps.sessionManager.destroySession(handle.sessionName);
   }
@@ -239,18 +227,12 @@ export class TmuxConnector {
       this.closeSession(session);
       const result = this.deps.sessionManager.destroySession(session.handle.sessionName);
       if (!result.ok) {
-        this.deps.logger.warn('dispose: failed to destroy session', {
+        this.deps.logger.warn('Dispose: failed to destroy session', {
           sessionName: session.handle.sessionName,
           error: result.error.message,
         });
       }
-      const cleanupResult = this.deps.hooks.cleanup(session.handle.taskId, session.handle.sessionsDir);
-      if (!cleanupResult.ok) {
-        this.deps.logger.warn('dispose: hooks.cleanup failed', {
-          taskId: session.handle.taskId,
-          error: cleanupResult.error.message,
-        });
-      }
+      this.loggedCleanup('dispose', session.handle.taskId, session.handle.sessionsDir);
     }
   }
 
@@ -259,15 +241,24 @@ export class TmuxConnector {
   /**
    * Constructs the initial ActiveSession state object.
    * Extracted from spawn() to keep spawn() under 50 lines.
+   *
+   * @param sessionName - The tmux session name to embed in the handle. Callers
+   *   may pass a placeholder before createSession() returns the real name, then
+   *   overwrite session.handle.sessionName afterward.
    */
-  private buildActiveSession(config: TmuxSpawnConfig, messagesDir: string, callbacks: SpawnCallbacks): ActiveSession {
+  private buildActiveSession(
+    config: TmuxSpawnConfig,
+    sessionName: string,
+    messagesDir: string,
+    callbacks: SpawnCallbacks,
+  ): ActiveSession {
     const stalenessConfig: StalenessConfig = {
       ...DEFAULT_STALENESS_CONFIG,
       ...config.staleness,
     };
     return {
       handle: {
-        sessionName: config.name,
+        sessionName,
         taskId: config.taskId,
         sessionsDir: config.sessionsDir,
       },
@@ -390,8 +381,15 @@ export class TmuxConnector {
 
     // Use the minimum checkIntervalMs so all sessions are checked on time.
     // Clamp to MIN_CHECK_INTERVAL_MS to prevent tight-loop setInterval.
-    const intervals = Array.from(this.activeSessions.values()).map((s) => s.stalenessConfig.checkIntervalMs);
-    const minInterval = Math.max(Math.min(...intervals), MIN_CHECK_INTERVAL_MS);
+    // A for-loop avoids the intermediate array allocation and the spread-args
+    // stack limit that Math.min(...array) hits on large inputs.
+    let minInterval = Number.MAX_SAFE_INTEGER;
+    for (const s of this.activeSessions.values()) {
+      if (s.stalenessConfig.checkIntervalMs < minInterval) {
+        minInterval = s.stalenessConfig.checkIntervalMs;
+      }
+    }
+    if (minInterval < MIN_CHECK_INTERVAL_MS) minInterval = MIN_CHECK_INTERVAL_MS;
 
     this.sharedStalenessTimer = setInterval(() => {
       this.runSharedStalenessCheck();
@@ -442,7 +440,12 @@ export class TmuxConnector {
     }
 
     for (const [taskId, session] of staleEntries) {
-      this.triggerExit(taskId, session, null, 'STALE', session.callbacks);
+      this.triggerExit(taskId, session, null, 'STALE', session.callbacks, true);
+    }
+    // Restart once after the batch rather than once per stale session to avoid
+    // O(N) timer teardown/recreate churn during batch stale detection.
+    if (staleEntries.length > 0) {
+      this.restartSharedStalenessTimer();
     }
   }
 
@@ -613,6 +616,7 @@ export class TmuxConnector {
     code: number | null,
     signal: string | undefined,
     callbacks: SpawnCallbacks,
+    skipTimerRestart = false,
   ): void {
     if (session.exited) return;
 
@@ -625,15 +629,30 @@ export class TmuxConnector {
     this.activeSessions.delete(taskId);
     // Restart (or stop) the shared timer so remaining sessions are still checked
     // at the correct minimum interval now that this session has been removed.
-    this.restartSharedStalenessTimer();
-    const cleanupResult = this.deps.hooks.cleanup(session.handle.taskId, session.handle.sessionsDir);
+    // skipTimerRestart=true when called from the batch stale loop — the caller
+    // restarts once after all exits to avoid O(N) timer churn.
+    if (!skipTimerRestart) {
+      this.restartSharedStalenessTimer();
+    }
+    this.loggedCleanup('triggerExit', taskId, session.handle.sessionsDir);
+    callbacks.onExit(code, signal);
+  }
+
+  /**
+   * Runs hooks.cleanup and logs a warning if it fails.
+   * Extracted from spawn/destroy/dispose/triggerExit to eliminate the repeated
+   * 5-line cleanup+log pattern. All log messages use sentence case to match the
+   * pre-existing style in this file.
+   */
+  private loggedCleanup(caller: string, taskId: string, sessionsDir: string): void {
+    const cleanupResult = this.deps.hooks.cleanup(taskId, sessionsDir);
     if (!cleanupResult.ok) {
-      this.deps.logger.warn('triggerExit: hooks.cleanup failed', {
+      this.deps.logger.warn('Hooks cleanup failed', {
+        caller,
         taskId,
         error: cleanupResult.error.message,
       });
     }
-    callbacks.onExit(code, signal);
   }
 
   private closeSession(session: ActiveSession): void {
