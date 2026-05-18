@@ -102,7 +102,7 @@ To use with an actual agent CLI (not mock):
 To use with an actual agent CLI (not mock):
 
 1. Remove `"MOCK_MODE": "true"` from config
-2. Ensure your chosen agent CLI is installed (e.g., `claude`, `codex`, `gemini-cli`)
+2. Ensure your chosen agent CLI is installed (e.g., `claude`, `codex`)
 3. Test with real tasks
 3. Test with real tasks
 

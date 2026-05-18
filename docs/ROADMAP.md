@@ -16,7 +16,7 @@ API translation proxy (Anthropic→OpenAI Chat Completions), Ollama runtime inte
 ### v1.4.0 - System Prompts & Custom Orchestrators ✅
 **Status**: **RELEASED** (2026-04-22)
 
-System prompt injection for tasks, loops, and orchestrators across Claude, Codex, and Gemini adapters. Custom orchestrator scaffolding via CLI and MCP tool. Agent configuration documentation. Database migration v23.
+System prompt injection for tasks, loops, and orchestrators across Claude and Codex adapters. Custom orchestrator scaffolding via CLI and MCP tool. Agent configuration documentation. Database migration v23.
 
 ### v1.3.0 - Dashboard Redesign, Eval Redesign & Reliability ✅
 **Status**: **RELEASED** (2026-04-16)
@@ -26,7 +26,7 @@ Two-view dashboard (Metrics + Workspace), live agent output streaming in workspa
 ### v1.2.0 - Terminal Dashboard & Agent Config ✅
 **Status**: **RELEASED** (2026-04-10)
 
-Interactive terminal dashboard (`beat dashboard`) with 4 panels, keyboard navigation, and detail views. Per-agent baseUrl/model configuration for custom API endpoints and model selection across Claude, Codex, and Gemini.
+Interactive terminal dashboard (`beat dashboard`) with 4 panels, keyboard navigation, and detail views. Per-agent baseUrl/model configuration for custom API endpoints and model selection across Claude and Codex.
 
 ### v1.1.0 - Agent Eval Mode & Skill System ✅
 **Status**: **RELEASED** (2026-04-01)
@@ -56,7 +56,7 @@ Hybrid event model, SQLite worker coordination, ReadOnlyContext CLI, scheduled p
 ### v0.5.0 - Multi-Agent Support ✅
 **Status**: **RELEASED** (2026-03-10)
 
-Agent registry with pluggable adapters (Claude, Codex, Gemini), per-task agent selection, `beat init` interactive setup.
+Agent registry with pluggable adapters (Claude, Codex), per-task agent selection, `beat init` interactive setup.
 
 ### v0.4.0 - Scheduling + Resumption ✅
 **Status**: **RELEASED** (2026-03-03)
@@ -106,7 +106,7 @@ The orchestrator is a loop that runs a lead agent whose system prompt gives it a
 - **State File**: Persistent JSON state file with plan, steps, iteration history
 - **Guardrails**: `maxDepth`, `maxWorkers`, `maxIterations` safety limits
 - **Crash Recovery**: Full SQLite persistence with startup recovery
-- **Multi-Agent**: Per-orchestration agent selection (Claude, Codex, Gemini)
+- **Multi-Agent**: Per-orchestration agent selection (Claude, Codex)
 - **Event-Driven**: `OrchestrationCreated`, `OrchestrationCompleted`, `OrchestrationCancelled` events
 - **Test Coverage**: 77 orchestration tests across unit, handler, repository, and integration suites
 
@@ -145,7 +145,7 @@ Multi-server support, shared state (Redis backend), fault tolerance, task affini
 
 - **Smart Task Splitting**: Break large tasks into smaller parallel units
 - **Result Aggregation**: Fan-out same task to multiple agents, compare results
-- **Cost Tracking**: Claude agent cost tracking shipped in v1.3.0; Codex and Gemini cost capture pending
+- **Cost Tracking**: Claude agent cost tracking shipped in v1.3.0; Codex cost capture pending
 - **Docker Sandboxing**: Containerized task execution for isolation
 - **Issue Tracker Integration**: Feed GitHub/Linear issues directly to orchestrator
 
