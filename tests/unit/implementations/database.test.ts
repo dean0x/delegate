@@ -369,4 +369,81 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
       testDb.close();
     });
   });
+
+  describe('migration v28 — judge_agent CHECK constraint removes gemini', () => {
+    it('INSERT with judge_agent=gemini fails after migration', () => {
+      const sqliteDb = db.getDatabase();
+      const now = Date.now();
+
+      expect(() => {
+        sqliteDb
+          .prepare(
+            `INSERT INTO loops (id, strategy, task_template, exit_condition, working_directory, created_at, updated_at, judge_agent)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run('loop-gemini', 'retry', 'template', 'cond', '/tmp', now, now, 'gemini');
+      }).toThrow(/CHECK/);
+    });
+
+    it('INSERT with judge_agent=claude succeeds', () => {
+      const sqliteDb = db.getDatabase();
+      const now = Date.now();
+
+      expect(() => {
+        sqliteDb
+          .prepare(
+            `INSERT INTO loops (id, strategy, task_template, exit_condition, working_directory, created_at, updated_at, judge_agent)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run('loop-claude', 'retry', 'template', 'cond', '/tmp', now, now, 'claude');
+      }).not.toThrow();
+    });
+
+    it('INSERT with judge_agent=codex succeeds', () => {
+      const sqliteDb = db.getDatabase();
+      const now = Date.now();
+
+      expect(() => {
+        sqliteDb
+          .prepare(
+            `INSERT INTO loops (id, strategy, task_template, exit_condition, working_directory, created_at, updated_at, judge_agent)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run('loop-codex', 'retry', 'template', 'cond', '/tmp', now, now, 'codex');
+      }).not.toThrow();
+    });
+
+    it('INSERT with judge_agent=NULL succeeds', () => {
+      const sqliteDb = db.getDatabase();
+      const now = Date.now();
+
+      expect(() => {
+        sqliteDb
+          .prepare(
+            `INSERT INTO loops (id, strategy, task_template, exit_condition, working_directory, created_at, updated_at, judge_agent)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run('loop-null', 'retry', 'template', 'cond', '/tmp', now, now, null);
+      }).not.toThrow();
+    });
+
+    it('loops indexes are recreated after migration', () => {
+      const sqliteDb = db.getDatabase();
+      const indexes = sqliteDb
+        .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='loops'`)
+        .all() as Array<{ name: string }>;
+      const indexNames = indexes.map((idx) => idx.name);
+
+      expect(indexNames).toContain('idx_loops_status');
+      expect(indexNames).toContain('idx_loops_schedule_id');
+      expect(indexNames).toContain('idx_loops_updated_at');
+    });
+
+    it('convergence_enabled column preserved after migration', () => {
+      const sqliteDb = db.getDatabase();
+      const columns = sqliteDb.prepare(`PRAGMA table_info(loops)`).all() as Array<{ name: string }>;
+      const columnNames = columns.map((col) => col.name);
+      expect(columnNames).toContain('convergence_enabled');
+    });
+  });
 });
