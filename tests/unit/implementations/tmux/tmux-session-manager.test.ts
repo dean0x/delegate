@@ -48,7 +48,7 @@ describe('TmuxSessionManager', () => {
     const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
     const newSession = calls.find((c) => c.includes('new-session'));
     expect(newSession).toBeDefined();
-    expect(newSession).toContain('new-session -d -s beat-task-123');
+    expect(newSession).toContain("new-session -d -s 'beat-task-123'");
     expect(newSession).toContain('-x 220 -y 50');
     expect(newSession).toContain('echo hello');
     // cwd must be passed via -c flag
@@ -154,6 +154,21 @@ describe('TmuxSessionManager', () => {
     expect(envStr).not.toContain('my.key');
   });
 
+  it('injectEnvironment silently skips env values exceeding MAX_ENV_VALUE_LENGTH (4096 bytes)', () => {
+    const oversizedValue = 'x'.repeat(4097);
+    manager.createSession({
+      ...validConfig,
+      env: {
+        SMALL_VAR: 'fits',
+        LARGE_VAR: oversizedValue,
+      },
+    });
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const envStr = calls.filter((c) => c.includes('set-environment')).join(' ');
+    expect(envStr).toContain('SMALL_VAR');
+    expect(envStr).not.toContain('LARGE_VAR');
+  });
+
   it('enforces concurrent session limit when max sessions are active', () => {
     const limitedManager = new DefaultTmuxSessionManager({
       exec: listSessionsExec(20) as ExecFn,
@@ -188,7 +203,7 @@ describe('TmuxSessionManager', () => {
   it('destroys session with correct kill-session command', () => {
     manager.destroySession('beat-task-123');
     const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
-    expect(calls.some((c) => c.includes('kill-session -t beat-task-123'))).toBe(true);
+    expect(calls.some((c) => c.includes("kill-session -t 'beat-task-123'"))).toBe(true);
   });
 
   it('rejects non-beat- session names in destroySession', () => {

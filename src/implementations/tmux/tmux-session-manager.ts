@@ -36,6 +36,12 @@ const DEFAULT_HEIGHT = 50;
  */
 const SESSION_NOT_FOUND_PATTERNS = ["can't find session", 'no server running', 'session not found'];
 
+/** Valid POSIX environment variable name: must start with letter or underscore */
+const POSIX_ENV_VAR_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Maximum byte length for an environment variable value — protects against oversized inputs */
+const MAX_ENV_VALUE_LENGTH = 4096;
+
 function isSessionNotFound(output: string): boolean {
   const lower = output.toLowerCase();
   return SESSION_NOT_FOUND_PATTERNS.some((p) => lower.includes(p));
@@ -91,9 +97,8 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
 
     const width = config.width ?? DEFAULT_WIDTH;
     const height = config.height ?? DEFAULT_HEIGHT;
-    if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
-      return err(tmuxSessionFailed('create', `Invalid dimensions: ${width}x${height}`, { width, height }));
-    }
+    const dimensionCheck = this.validateDimensions(width, height);
+    if (!dimensionCheck.ok) return dimensionCheck;
 
     // Defense-in-depth: validate cwd against SAFE_PATH_REGEX before embedding
     // in a shell command — same check applied to sessionsDir in tmux-hooks.ts.
@@ -107,7 +112,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     const cwdFlag = config.cwd ? ` -c '${escapeSingleQuoted(config.cwd)}'` : '';
 
     const spawnResult = this.deps.exec(
-      `tmux new-session -d -s ${config.name} -x ${width} -y ${height}${cwdFlag} '${escapeSingleQuoted(config.command)}'`,
+      `tmux new-session -d -s '${config.name}' -x ${width} -y ${height}${cwdFlag} '${escapeSingleQuoted(config.command)}'`,
     );
 
     if (spawnResult.status !== 0) {
@@ -127,6 +132,14 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     this.injectEnvironment(config.name, taskId, config.env);
 
     return ok({ sessionName: config.name });
+  }
+
+  /** Validates that width and height are positive integers. */
+  private validateDimensions(width: number, height: number): Result<void, AutobeatError> {
+    if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
+      return err(tmuxSessionFailed('create', `Invalid dimensions: ${width}x${height}`, { width, height }));
+    }
+    return ok(undefined);
   }
 
   /**
@@ -151,14 +164,16 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     // Inject caller-provided env vars, then the auto vars (auto vars win on conflict)
     const allEnv: Record<string, string> = { ...(callerEnv ?? {}), ...autoVars };
 
-    // Filter to valid POSIX env var keys and build a batched command to avoid N+1 spawns
-    const validEntries = Object.entries(allEnv).filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key));
+    // Filter to valid POSIX env var keys with value length cap, then batch to avoid N+1 spawns
+    const validEntries = Object.entries(allEnv).filter(
+      ([key, value]) => POSIX_ENV_VAR_REGEX.test(key) && value.length <= MAX_ENV_VALUE_LENGTH,
+    );
 
     if (validEntries.length === 0) return true;
 
     const commands = validEntries
       .map(([key, value]) => {
-        return `tmux set-environment -t ${sessionName} ${key} '${escapeSingleQuoted(value)}'`;
+        return `tmux set-environment -t '${sessionName}' ${key} '${escapeSingleQuoted(value)}'`;
       })
       .join(' && ');
     // Best-effort: session is created; don't roll back for env var failures
@@ -174,7 +189,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     const nameCheck = validateSessionName(name, 'destroy');
     if (!nameCheck.ok) return nameCheck;
 
-    const result = this.deps.exec(`tmux kill-session -t ${name}`);
+    const result = this.deps.exec(`tmux kill-session -t '${name}'`);
 
     if (result.status !== 0) {
       // Treat "session not found" as success (idempotent)
@@ -202,7 +217,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     if (!nameCheck.ok) return nameCheck;
 
     const escaped = escapeSingleQuoted(keys);
-    const result = this.deps.exec(`tmux send-keys -t ${name} -l '${escaped}'`);
+    const result = this.deps.exec(`tmux send-keys -t '${name}' -l '${escaped}'`);
 
     if (result.status !== 0) {
       return err(tmuxSendKeysFailed(name, result.stderr || result.stdout));
@@ -218,7 +233,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     const nameCheck = validateSessionName(name, 'isAlive');
     if (!nameCheck.ok) return nameCheck;
 
-    const result = this.deps.exec(`tmux has-session -t ${name}`);
+    const result = this.deps.exec(`tmux has-session -t '${name}'`);
     return ok(result.status === 0);
   }
 
@@ -245,37 +260,37 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
 
     const sessions: TmuxSessionInfo[] = [];
     for (const line of result.stdout.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      const parts = trimmed.split(':');
-      if (parts.length < 5) continue;
-
-      const name = parts[0];
-      const createdStr = parts[1];
-      const attachedStr = parts[2];
-      const widthStr = parts[3];
-      const heightStr = parts[4];
-      if (!name || !createdStr || !attachedStr || !widthStr || !heightStr) continue;
-
-      // Filter to only beat-* sessions
-      if (!SESSION_NAME_REGEX.test(name)) continue;
-
-      const created = parseInt(createdStr, 10);
-      const width = parseInt(widthStr, 10);
-      const height = parseInt(heightStr, 10);
-      if (isNaN(created) || isNaN(width) || isNaN(height)) continue;
-
-      sessions.push({
-        name,
-        created,
-        attached: attachedStr === '1',
-        width,
-        height,
-      });
+      const parsed = this.parseSessionLine(line);
+      if (parsed !== null) sessions.push(parsed);
     }
 
     return ok(sessions);
+  }
+
+  /**
+   * Parses a single line from `tmux list-sessions` output.
+   * Expected format: `name:created:attached:width:height`
+   * Returns null for empty, malformed, or non-beat-* lines.
+   */
+  private parseSessionLine(line: string): TmuxSessionInfo | null {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+
+    const parts = trimmed.split(':');
+    if (parts.length < 5) return null;
+
+    const [name, createdStr, attachedStr, widthStr, heightStr] = parts;
+    if (!name || !createdStr || !attachedStr || !widthStr || !heightStr) return null;
+
+    // Filter to only beat-* sessions
+    if (!SESSION_NAME_REGEX.test(name)) return null;
+
+    const created = parseInt(createdStr, 10);
+    const width = parseInt(widthStr, 10);
+    const height = parseInt(heightStr, 10);
+    if (isNaN(created) || isNaN(width) || isNaN(height)) return null;
+
+    return { name, created, attached: attachedStr === '1', width, height };
   }
 
   /**
@@ -287,13 +302,13 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     if (!nameCheck.ok) return nameCheck;
 
     // Validate varName: must be a valid POSIX environment variable name
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(varName)) {
+    if (!POSIX_ENV_VAR_REGEX.test(varName)) {
       return err(
         tmuxSessionFailed('getSessionEnvironment', `Invalid environment variable name "${varName}"`, { varName }),
       );
     }
 
-    const result = this.deps.exec(`tmux show-environment -t ${name} ${varName}`);
+    const result = this.deps.exec(`tmux show-environment -t '${name}' ${varName}`);
 
     if (result.status !== 0) {
       // Variable not set in session environment
