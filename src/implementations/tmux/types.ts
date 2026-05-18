@@ -1,11 +1,20 @@
 /**
  * Types and constants for the tmux abstraction layer
  * Pure type definitions — no runtime logic
+ *
+ * DESIGN DECISION: Naming convention — types re-exported for external consumers
+ * (TmuxHandle, TmuxSessionConfig, TmuxSpawnConfig, TmuxSessionInfo, TmuxInfo,
+ * TmuxConnectorPort) carry the "Tmux" prefix to avoid collision at call sites.
+ * Internal or self-documenting types (OutputMessage, CommunicationMode,
+ * StalenessConfig, WrapperConfig, WrapperManifest, SpawnCallbacks) do not carry
+ * the prefix because they are unambiguous in context and live behind the barrel
+ * re-export in index.ts. Do not add the prefix to internal types retroactively.
  */
 
 import type { AgentProvider } from '../../core/agents.js';
 import type { AutobeatError } from '../../core/errors.js';
 import type { Result } from '../../core/result.js';
+import type { TaskId } from '../../core/domain.js';
 
 /**
  * Agent types supported by the tmux abstraction layer.
@@ -20,17 +29,17 @@ export type TmuxAgentType = Extract<AgentProvider, 'claude' | 'codex'>;
  */
 export interface TmuxSessionConfig {
   /** Session name — must match SESSION_NAME_REGEX (beat-* prefix) */
-  name: string;
+  readonly name: string;
   /** Command to run inside the session */
-  command: string;
+  readonly command: string;
   /** Working directory for the session (optional — omit to use tmux default) */
-  cwd?: string;
+  readonly cwd?: string;
   /** Optional environment variables to inject */
-  env?: Record<string, string>;
+  readonly env?: Record<string, string>;
   /** Terminal width in columns (default: 220) */
-  width?: number;
+  readonly width?: number;
   /** Terminal height in rows (default: 50) */
-  height?: number;
+  readonly height?: number;
 }
 
 /**
@@ -38,13 +47,13 @@ export interface TmuxSessionConfig {
  */
 export interface TmuxSpawnConfig extends TmuxSessionConfig {
   /** Task identifier — used to name the session directory */
-  taskId: string;
+  readonly taskId: TaskId;
   /** Base directory where all session data lives */
-  sessionsDir: string;
+  readonly sessionsDir: string;
   /** Agent type to wrap — must match a supported WrapperConfig agent value */
-  agent: TmuxAgentType;
+  readonly agent: TmuxAgentType;
   /** Staleness detection configuration */
-  staleness?: Partial<StalenessConfig>;
+  readonly staleness?: Partial<StalenessConfig>;
 }
 
 /**
@@ -53,11 +62,11 @@ export interface TmuxSpawnConfig extends TmuxSessionConfig {
  */
 export interface TmuxHandle {
   /** Full session name (e.g. "beat-task-abc123") */
-  sessionName: string;
+  readonly sessionName: string;
   /** Task ID that owns this session */
-  taskId: string;
+  readonly taskId: TaskId;
   /** Base directory where session data (sentinel, messages) lives */
-  sessionsDir: string;
+  readonly sessionsDir: string;
 }
 
 /**
@@ -74,13 +83,13 @@ export type TmuxSessionResult = Pick<TmuxHandle, 'sessionName'>;
  */
 export interface OutputMessage {
   /** Monotonically increasing sequence number */
-  sequence: number;
+  readonly sequence: number;
   /** ISO 8601 timestamp */
-  timestamp: string;
+  readonly timestamp: string;
   /** Message type */
-  type: 'stdout' | 'stderr' | 'result';
+  readonly type: 'stdout' | 'stderr' | 'result';
   /** Message content */
-  content: string;
+  readonly content: string;
 }
 
 // ─── Wrapper script ───────────────────────────────────────────────────────────
@@ -95,21 +104,21 @@ export type CommunicationMode = 'unicast' | 'broadcast';
  */
 export interface WrapperConfig {
   /** Task identifier */
-  taskId: string;
+  readonly taskId: TaskId;
   /** Agent type being wrapped */
-  agent: TmuxAgentType;
+  readonly agent: TmuxAgentType;
   /** Base directory for session data */
-  sessionsDir: string;
+  readonly sessionsDir: string;
   /** Agent executable path or name */
-  agentCommand: string;
+  readonly agentCommand: string;
   /** Arguments to pass to the agent */
-  agentArgs: string[];
+  readonly agentArgs: readonly string[];
   /** tmux session names to forward output to */
-  communicationTargets?: string[];
+  readonly communicationTargets?: readonly string[];
   /** How to deliver messages to targets */
-  communicationMode?: CommunicationMode;
+  readonly communicationMode?: CommunicationMode;
   /** Return address session name for result routing */
-  returnAddress?: string;
+  readonly returnAddress?: string;
 }
 
 /**
@@ -117,15 +126,15 @@ export interface WrapperConfig {
  */
 export interface WrapperManifest {
   /** Path to the generated wrapper shell script */
-  wrapperPath: string;
+  readonly wrapperPath: string;
   /** Task-specific session directory (sessionsDir/taskId) */
-  sessionDir: string;
+  readonly sessionDir: string;
   /** Path to the completion sentinel file (.done or .exit) */
-  sentinelPath: string;
+  readonly sentinelPath: string;
   /** Directory where output JSON messages are written */
-  messagesDir: string;
+  readonly messagesDir: string;
   /** Path to the atomic sequence-number file */
-  seqFilePath: string;
+  readonly seqFilePath: string;
 }
 
 // ─── Session info ─────────────────────────────────────────────────────────────
@@ -135,15 +144,15 @@ export interface WrapperManifest {
  */
 export interface TmuxSessionInfo {
   /** Session name */
-  name: string;
+  readonly name: string;
   /** Unix timestamp when the session was created */
-  created: number;
+  readonly created: number;
   /** Whether a client is currently attached */
-  attached: boolean;
+  readonly attached: boolean;
   /** Terminal width in columns */
-  width: number;
+  readonly width: number;
   /** Terminal height in rows */
-  height: number;
+  readonly height: number;
 }
 
 /**
@@ -151,11 +160,11 @@ export interface TmuxSessionInfo {
  */
 export interface TmuxInfo {
   /** Parsed version string (e.g. "3.4") */
-  version: string;
+  readonly version: string;
   /** Path to the tmux binary */
-  path: string;
+  readonly path: string;
   /** Path to the jq binary (required for JSON escaping in wrapper scripts) */
-  jqPath: string;
+  readonly jqPath: string;
 }
 
 // ─── Staleness detection ──────────────────────────────────────────────────────
@@ -165,9 +174,9 @@ export interface TmuxInfo {
  */
 export interface StalenessConfig {
   /** How often to poll for staleness (ms) */
-  checkIntervalMs: number;
+  readonly checkIntervalMs: number;
   /** Max silence before marking the session stale (ms) */
-  maxSilenceMs: number;
+  readonly maxSilenceMs: number;
 }
 
 // ─── Dependency injection ─────────────────────────────────────────────────────
@@ -177,9 +186,9 @@ export interface StalenessConfig {
  * Used for dependency injection in tests
  */
 export interface ExecResult {
-  stdout: string;
-  stderr: string;
-  status: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly status: number;
 }
 
 /**
@@ -212,7 +221,7 @@ export interface TmuxSessionManager {
  */
 export interface TmuxHooks {
   generateWrapper(config: WrapperConfig): Result<WrapperManifest, AutobeatError>;
-  cleanup(taskId: string, sessionsDir: string): Result<void, AutobeatError>;
+  cleanup(taskId: TaskId, sessionsDir: string): Result<void, AutobeatError>;
 }
 
 /**
@@ -241,6 +250,13 @@ export interface SpawnCallbacks {
  * DESIGN DECISION: TmuxConnectorPort is kept narrow — it exposes only the
  * methods that consumers outside the tmux package need. Internal helpers
  * (buildActiveSession, startWatchers, etc.) remain in TmuxConnector.
+ *
+ * DESIGN DECISION: TmuxConnectorPort is intentionally co-located with its
+ * implementation types in src/implementations/tmux/types.ts rather than
+ * src/core/interfaces.ts. Phase 1 is purely additive with no external consumers
+ * yet. Moving the port prematurely would be speculative — the correct location
+ * will be clear once Phase 3 (Worker Pool Rewiring) introduces real consumers
+ * and the dependency direction is established by actual use. Move at that point.
  */
 export interface TmuxConnectorPort {
   spawn(config: TmuxSpawnConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError>;

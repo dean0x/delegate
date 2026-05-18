@@ -18,6 +18,7 @@
 import * as path from 'path';
 import type { AutobeatError } from '../../core/errors.js';
 import { tmuxHookFailed } from '../../core/errors.js';
+import type { TaskId } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import type { TmuxHooks, WrapperConfig, WrapperManifest } from './types.js';
@@ -242,7 +243,7 @@ export class DefaultTmuxHooks implements TmuxHooks {
    * in generateWrapper() and ensures cleanup() is safe as a public interface
    * method — callers cannot pass an arbitrary path through this entry point.
    */
-  cleanup(taskId: string, sessionsDir: string): Result<void, AutobeatError> {
+  cleanup(taskId: TaskId, sessionsDir: string): Result<void, AutobeatError> {
     if (!TASK_ID_REGEX.test(taskId)) {
       return err(tmuxHookFailed('cleanup', `invalid taskId: ${taskId}`, { taskId }));
     }

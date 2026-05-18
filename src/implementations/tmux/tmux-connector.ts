@@ -20,6 +20,7 @@ import * as path from 'path';
 import type { AutobeatError } from '../../core/errors.js';
 import { tmuxSessionFailed } from '../../core/errors.js';
 import type { Logger } from '../../core/interfaces.js';
+import type { TaskId } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import type {
@@ -119,7 +120,7 @@ interface ActiveSession {
 }
 
 export class TmuxConnector implements TmuxConnectorPort {
-  private readonly activeSessions = new Map<string, ActiveSession>();
+  private readonly activeSessions = new Map<TaskId, ActiveSession>();
   private readonly readFileSyncFn: (path: string, encoding: BufferEncoding) => string;
   private readonly readFileFn: (path: string, encoding: BufferEncoding) => Promise<string>;
   private readonly readdirSyncFn: (dirPath: string) => string[];
@@ -510,7 +511,7 @@ export class TmuxConnector implements TmuxConnectorPort {
 
     // Collect stale sessions first so triggerExit does not mutate activeSessions
     // while we are still iterating it.
-    const staleEntries: Array<[string, ActiveSession]> = [];
+    const staleEntries: Array<[TaskId, ActiveSession]> = [];
 
     for (const [taskId, session] of this.activeSessions) {
       if (session.exited) continue;
@@ -630,7 +631,7 @@ export class TmuxConnector implements TmuxConnectorPort {
     }
   }
 
-  private handleSentinel(taskId: string, sessionDir: string, filename: string): void {
+  private handleSentinel(taskId: TaskId, sessionDir: string, filename: string): void {
     const session = this.activeSessions.get(taskId);
     if (!session || session.exited) return;
 
@@ -731,7 +732,7 @@ export class TmuxConnector implements TmuxConnectorPort {
   }
 
   private triggerExit(
-    taskId: string,
+    taskId: TaskId,
     session: ActiveSession,
     code: number | null,
     signal: string | undefined,
@@ -782,7 +783,7 @@ export class TmuxConnector implements TmuxConnectorPort {
    * 5-line cleanup+log pattern. All log messages use sentence case to match the
    * pre-existing style in this file.
    */
-  private loggedCleanup(caller: string, taskId: string, sessionsDir: string): void {
+  private loggedCleanup(caller: string, taskId: TaskId, sessionsDir: string): void {
     const cleanupResult = this.deps.hooks.cleanup(taskId, sessionsDir);
     if (!cleanupResult.ok) {
       this.deps.logger.warn('Hooks cleanup failed', {
