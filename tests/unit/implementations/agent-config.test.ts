@@ -99,10 +99,10 @@ describe('Agent Config Storage', () => {
     });
 
     it('should overwrite existing API key', () => {
-      saveAgentConfig('gemini', 'apiKey', 'old-key');
-      saveAgentConfig('gemini', 'apiKey', 'new-key');
+      saveAgentConfig('claude', 'apiKey', 'old-key');
+      saveAgentConfig('claude', 'apiKey', 'new-key');
 
-      expect(loadAgentConfig('gemini').apiKey).toBe('new-key');
+      expect(loadAgentConfig('claude').apiKey).toBe('new-key');
     });
   });
 
@@ -117,7 +117,7 @@ describe('Agent Config Storage', () => {
     });
 
     it('should be idempotent (reset when nothing stored)', () => {
-      const result = resetAgentConfig('gemini');
+      const result = resetAgentConfig('codex');
       expect(result.ok).toBe(true);
     });
 

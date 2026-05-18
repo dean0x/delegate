@@ -18,7 +18,6 @@ import type { Result } from '../../core/result.js';
 
 /**
  * Agent types supported by the tmux abstraction layer.
- * Gemini is excluded because it does not have a tmux wrapper implementation.
  */
 export type TmuxAgentType = Extract<AgentProvider, 'claude' | 'codex'>;
 

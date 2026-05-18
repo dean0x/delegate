@@ -187,7 +187,7 @@ describe('JudgeExitConditionEvaluator', () => {
   it('does not inject jsonSchema for non-Claude judge agent', async () => {
     const loop = createTestLoop({
       evalPrompt: 'Review',
-      judgeAgent: 'gemini',
+      judgeAgent: 'codex',
     });
     const outputRepo = createOutputRepo(['Findings.']);
     const loopRepo = createLoopRepo();

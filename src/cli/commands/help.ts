@@ -28,7 +28,7 @@ ${bold('Task Commands:')}
     -f, --foreground           Stream output and wait for task completion
     -p, --priority P0|P1|P2    Task priority (P0=critical, P1=high, P2=normal)
     -w, --working-directory D  Working directory for task execution
-    -a, --agent AGENT          AI agent to use (claude, codex, gemini)
+    -a, --agent AGENT          AI agent to use (claude, codex)
     -m, --model MODEL          Model override (e.g. claude-sonnet-4-5-20250514)
     --system-prompt TEXT        System prompt to inject into the agent
     --deps TASK_IDS            Comma-separated task IDs this task depends on (alias: --depends-on)
@@ -77,7 +77,7 @@ ${bold('Orchestrate Commands:')}
     -f, --foreground               Block and wait for completion
     -i, --interactive              Launch interactive terminal session
     -w, --working-directory DIR    Working directory for workers
-    -a, --agent AGENT              AI agent to use (claude, codex, gemini)
+    -a, --agent AGENT              AI agent to use (claude, codex)
     -m, --model MODEL              Model override (e.g. claude-opus-4-5)
     --max-depth N                  Max delegation depth (1-10, default: 3)
     --max-workers N                Max concurrent workers (1-20, default: 5)

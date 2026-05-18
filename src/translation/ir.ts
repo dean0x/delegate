@@ -6,7 +6,7 @@
  * these types — codecs parse/serialize to/from IR, never directly to each other.
  *
  * Rationale: Clean separation ensures each codec is independently testable,
- * and adding new codecs (Gemini, etc.) only requires implementing the interface.
+ * and adding new codecs only requires implementing the interface.
  */
 
 // ==========================================

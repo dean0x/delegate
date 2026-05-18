@@ -197,7 +197,6 @@ import { isCommandInPath } from '../../src/core/agents.js';
 import type { Configuration } from '../../src/core/configuration.js';
 import { ClaudeAdapter } from '../../src/implementations/claude-adapter.js';
 import { CodexAdapter } from '../../src/implementations/codex-adapter.js';
-import { GeminiAdapter } from '../../src/implementations/gemini-adapter.js';
 
 const mockSpawn = vi.mocked(spawn);
 const mockIsCommandInPath = vi.mocked(isCommandInPath);
@@ -335,47 +334,6 @@ describe('buildInteractiveArgs - Codex', () => {
     const [, args] = mockSpawn.mock.calls[0];
     expect(args).toContain('--model');
     expect(args).toContain('o3');
-  });
-});
-
-describe('buildInteractiveArgs - Gemini', () => {
-  let adapter: GeminiAdapter;
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockIsCommandInPath.mockReturnValue(true);
-    adapter = new GeminiAdapter(testConfig, 'gemini');
-  });
-  afterEach(() => adapter.dispose());
-
-  it('should omit --prompt flag', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).not.toContain('--prompt');
-  });
-
-  it('should include --yolo', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).toContain('--yolo');
-  });
-
-  it('should include model when provided', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace', model: 'gemini-2.5-pro' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).toContain('--model');
-    expect(args).toContain('gemini-2.5-pro');
   });
 });
 
