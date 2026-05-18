@@ -52,6 +52,8 @@ export interface TmuxSpawnConfig extends TmuxSessionConfig {
   readonly sessionsDir: string;
   /** Agent type to wrap — must match a supported WrapperConfig agent value */
   readonly agent: TmuxAgentType;
+  /** CLI arguments to pass to the agent (populated by adapter's buildTmuxArgs) */
+  readonly agentArgs: readonly string[];
   /** Staleness detection configuration */
   readonly staleness?: Partial<StalenessConfig>;
 }

@@ -26,6 +26,11 @@ export class ClaudeAdapter extends BaseAgentAdapter {
     return [...this.baseArgs, ...modelArgs, ...schemaArgs, '--', prompt];
   }
 
+  protected override buildTmuxArgs(model?: string): readonly string[] {
+    const modelArgs: string[] = model ? ['--model', model] : [];
+    return ['--dangerously-skip-permissions', '--output-format', 'stream-json', ...modelArgs];
+  }
+
   protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
     // DECISION: --dangerously-skip-permissions is intentional for interactive orchestrators.

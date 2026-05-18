@@ -32,8 +32,10 @@ import {
   loadAgentConfig,
   RUNTIME_AGENT_SUPPORT,
 } from '../core/configuration.js';
+import type { TaskId } from '../core/domain.js';
 import { AutobeatError, agentMisconfigured, ErrorCode, processSpawnFailed } from '../core/errors.js';
 import { err, ok, Result, tryCatch } from '../core/result.js';
+import type { TmuxAgentType, TmuxSpawnConfig } from './tmux/types.js';
 
 export abstract class BaseAgentAdapter implements AgentAdapter {
   abstract readonly provider: AgentProvider;
@@ -93,6 +95,50 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    */
   protected transformPrompt(prompt: string): string {
     return prompt;
+  }
+
+  /**
+   * Build CLI args for tmux mode (no prompt — delivered via send-keys).
+   * Each adapter omits headless flags (e.g. --print, --quiet) and prompt.
+   * Default returns empty args; Claude and Codex override.
+   */
+  protected buildTmuxArgs(_model?: string): readonly string[] {
+    return [];
+  }
+
+  /**
+   * Produce a TmuxSpawnConfig + prompt for Phase 3 consumption.
+   * Config is used for session setup; prompt is delivered via send-keys after session is alive.
+   * Does NOT call TmuxConnector — pure config assembly.
+   */
+  buildTmuxCommand(options: SpawnOptions & { sessionsDir: string }): Result<{
+    readonly config: TmuxSpawnConfig;
+    readonly prompt: string;
+  }> {
+    if (this.provider !== 'claude' && this.provider !== 'codex') {
+      return err(agentMisconfigured(this.provider, 'tmux mode is not supported for this agent'));
+    }
+
+    const configResult = this.resolveSpawnConfig(options);
+    if (!configResult.ok) return configResult;
+    const cfg = configResult.value;
+
+    const args = [...this.buildTmuxArgs(cfg.resolvedModel), ...cfg.systemPromptArgs];
+    const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...args] : args;
+
+    return ok({
+      config: {
+        name: `beat-task-${options.taskId}`,
+        command: cfg.command,
+        agentArgs: spawnArgs,
+        cwd: cfg.workingDirectory,
+        env: cfg.env,
+        agent: this.provider as TmuxAgentType,
+        taskId: (options.taskId ?? '') as TaskId,
+        sessionsDir: options.sessionsDir,
+      },
+      prompt: this.transformPrompt(cfg.effectivePrompt),
+    });
   }
 
   /** Auth config for this agent's provider */

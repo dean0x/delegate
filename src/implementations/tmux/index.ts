@@ -12,10 +12,10 @@ export type { TmuxHooksDeps } from './tmux-hooks.js';
 export { TmuxHooks } from './tmux-hooks.js';
 export type { TmuxSessionManagerDeps } from './tmux-session-manager.js';
 export { TmuxSessionManager } from './tmux-session-manager.js';
-export type { TmuxValidatorDeps } from './tmux-validator.js';
-export { TmuxValidator } from './tmux-validator.js';
 // Shell utilities
 export { escapeForSingleQuotes, singleQuoteToken } from './tmux-shell-utils.js';
+export type { TmuxValidatorDeps } from './tmux-validator.js';
+export { TmuxValidator } from './tmux-validator.js';
 // Types (type-only re-exports to avoid unnecessary runtime imports)
 export type {
   CommunicationMode,
