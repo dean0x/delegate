@@ -118,6 +118,13 @@ export class TmuxConnector implements TmuxConnectorPort {
   private readonly activeSessions = new Map<TaskId, ActiveSession>();
   /** Shared staleness timer — started on first spawn, stopped when activeSessions empties */
   private sharedStalenessTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * The interval (ms) the current sharedStalenessTimer was started with.
+   * Used to skip unnecessary teardown/recreate when the minimum checkIntervalMs
+   * across all active sessions has not changed — avoids O(N) timer churn during
+   * batch spawn (e.g. a pipeline launching 10 tasks back-to-back).
+   */
+  private currentTimerIntervalMs: number | null = null;
 
   constructor(private readonly deps: TmuxConnectorDeps) {}
 
@@ -412,8 +419,14 @@ export class TmuxConnector implements TmuxConnectorPort {
         });
       });
     } catch {
-      // Directory may not exist yet — sentinel detection degrades gracefully
-      this.deps.logger.warn('Failed to start sentinel watcher', { taskId, sessionDir });
+      // Directory may not exist yet — degrade gracefully to staleness-only detection.
+      // With no sentinel watcher, the connector relies solely on the shared staleness
+      // timer (maxSilenceMs, default 60s) to detect session exit.
+      this.deps.logger.info('Sentinel watcher unavailable — degrading to staleness-only detection', {
+        taskId,
+        sessionDir,
+        fallbackMaxSilenceMs: session.stalenessConfig.maxSilenceMs,
+      });
     }
   }
 
@@ -484,10 +497,19 @@ export class TmuxConnector implements TmuxConnectorPort {
    * listSessions() returns all live beat-* sessions in one tmux invocation; each
    * session's lastAliveCheck and maxSilenceMs are stored per-session for independent
    * stale detection.
+   *
+   * DESIGN DECISION: Skip-if-same-interval optimisation — when multiple sessions
+   * are spawned back-to-back (e.g. a pipeline launching 10 tasks) with identical
+   * checkIntervalMs, the first spawn starts the timer and subsequent calls see that
+   * the required interval is already running and skip the teardown/recreate. This
+   * avoids O(N) clearInterval+setInterval churn for the common case where all
+   * sessions share the same staleness config.
    */
   private restartSharedStalenessTimer(): void {
-    this.stopSharedStalenessTimer();
-    if (this.activeSessions.size === 0) return;
+    if (this.activeSessions.size === 0) {
+      this.stopSharedStalenessTimer();
+      return;
+    }
 
     // Use the minimum checkIntervalMs across all sessions, clamped to the floor.
     // A for-loop avoids the spread-args stack limit that Math.min(...array) hits on large inputs.
@@ -499,6 +521,11 @@ export class TmuxConnector implements TmuxConnectorPort {
     }
     if (minInterval < MIN_CHECK_INTERVAL_MS) minInterval = MIN_CHECK_INTERVAL_MS;
 
+    // Skip teardown/recreate when the timer is already running at the correct interval.
+    if (this.sharedStalenessTimer !== null && this.currentTimerIntervalMs === minInterval) return;
+
+    this.stopSharedStalenessTimer();
+    this.currentTimerIntervalMs = minInterval;
     this.sharedStalenessTimer = setInterval(() => this.runSharedStalenessCheck(), minInterval);
   }
 
@@ -570,6 +597,7 @@ export class TmuxConnector implements TmuxConnectorPort {
     if (this.sharedStalenessTimer !== null) {
       clearInterval(this.sharedStalenessTimer);
       this.sharedStalenessTimer = null;
+      this.currentTimerIntervalMs = null;
     }
   }
 
@@ -581,6 +609,7 @@ export class TmuxConnector implements TmuxConnectorPort {
   private flushPendingFiles(session: ActiveSession): void {
     if (session.flushing) return;
     session.flushing = true;
+    const flushStart = Date.now();
     try {
       // Clear debounce timers — we'll read files directly instead
       for (const timer of session.debounceTimers.values()) {
@@ -618,6 +647,12 @@ export class TmuxConnector implements TmuxConnectorPort {
 
       // Force-deliver any remaining out-of-order messages (no more will arrive)
       this.forceDeliverRemaining(session);
+
+      this.deps.logger.info('Flush complete', {
+        taskId: session.handle.taskId,
+        fileCount: jsonFiles.length,
+        elapsedMs: Date.now() - flushStart,
+      });
     } finally {
       session.flushing = false;
     }
@@ -703,7 +738,12 @@ export class TmuxConnector implements TmuxConnectorPort {
     this.deliverPendingMessages(session, callbacks);
 
     // Safety cap: if too many pending messages accumulate (gap that won't fill),
-    // skip ahead and deliver what we have to prevent unbounded memory growth
+    // skip ahead and deliver what we have to prevent unbounded memory growth.
+    // DESIGN DECISION: After the gap-skip, we run deliverPendingMessages once to
+    // drain the consecutive run starting at the lowest known sequence. If the map
+    // is still above a lower watermark (half the cap), we force-deliver the
+    // remainder immediately so a pathological arrival pattern that oscillates near
+    // MAX_PENDING_MESSAGES cannot stall delivery indefinitely.
     if (session.pendingMessages.size > MAX_PENDING_MESSAGES) {
       this.deps.logger.warn('Pending message buffer exceeded cap, skipping gap', {
         nextExpectedSeq: session.nextExpectedSeq,
@@ -711,9 +751,16 @@ export class TmuxConnector implements TmuxConnectorPort {
       });
       // Find the lowest pending sequence and deliver from there
       const sortedSeqs = Array.from(session.pendingMessages.keys()).sort((a, b) => a - b);
-      session.nextExpectedSeq = sortedSeqs[0]!;
-      // Re-run the delivery loop after resetting the gap
-      this.deliverPendingMessages(session, callbacks);
+      const lowestSeq = sortedSeqs[0];
+      if (lowestSeq !== undefined) {
+        session.nextExpectedSeq = lowestSeq;
+        // Re-run the delivery loop after resetting the gap
+        this.deliverPendingMessages(session, callbacks);
+      }
+      // Force-drain if still above lower watermark to break any oscillation pattern
+      if (session.pendingMessages.size > MAX_PENDING_MESSAGES / 2) {
+        this.forceDeliverRemaining(session);
+      }
     }
   }
 
@@ -747,7 +794,8 @@ export class TmuxConnector implements TmuxConnectorPort {
     const maxDelivery = session.pendingMessages.size + 1;
     let delivered = 0;
     while (delivered < maxDelivery && session.pendingMessages.has(session.nextExpectedSeq)) {
-      const msg = session.pendingMessages.get(session.nextExpectedSeq)!;
+      const msg = session.pendingMessages.get(session.nextExpectedSeq);
+      if (msg === undefined) break;
       session.pendingMessages.delete(session.nextExpectedSeq);
       this.deliverSingle(msg, session, callbacks);
       session.nextExpectedSeq++;
