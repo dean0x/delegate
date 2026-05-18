@@ -58,7 +58,7 @@ const MAX_PENDING_MESSAGES = 100;
 const MIN_CHECK_INTERVAL_MS = 1000;
 
 /** Valid literal values for OutputMessage.type */
-const VALID_OUTPUT_TYPES = new Set<OutputMessage['type']>(['stdout', 'stderr', 'result']);
+const VALID_OUTPUT_TYPES = new Set<string>(['stdout', 'stderr', 'result']);
 
 /**
  * Type guard for OutputMessage. Validates all required fields including the
@@ -242,16 +242,33 @@ export class TmuxConnector implements TmuxConnectorPort {
     // may still be writing when destroy() is called, and rmSync while the
     // process has open file handles produces I/O errors.
     const destroyResult = this.deps.sessionManager.destroySession(handle.sessionName);
-    // Delete from activeSessions AFTER the destroySession attempt so that on
-    // failure the session remains tracked and the caller can retry destroy().
-    // The exited flag prevents watchers and staleness ticks from re-firing.
+    if (!destroyResult.ok) {
+      // Keep the session in activeSessions so the caller can retry destroy().
+      // The exited flag (set above) prevents watchers and staleness ticks from
+      // re-firing while the session remains tracked.
+      this.deps.logger.warn('destroy: failed to destroy tmux session, keeping tracked for retry', {
+        taskId: handle.taskId,
+        sessionName: handle.sessionName,
+        error: destroyResult.error.message,
+      });
+      return destroyResult;
+    }
+    // Success path: remove tracking, fire cleanup, and notify the caller.
     this.activeSessions.delete(handle.taskId);
     this.restartSharedStalenessTimer();
     this.loggedCleanup('destroy', handle.taskId, handle.sessionsDir);
     // Notify the caller so the task does not remain stuck in RUNNING after an
     // explicit destroy request. Use 'DESTROYED' to distinguish from natural
     // exits ('STALE', 'SHUTDOWN') and sentinel-driven exits.
-    session.callbacks.onExit(null, 'DESTROYED');
+    try {
+      session.callbacks.onExit(null, 'DESTROYED');
+    } catch (cbErr: unknown) {
+      this.deps.logger.error(
+        'destroy: onExit callback threw',
+        cbErr instanceof Error ? cbErr : new Error(String(cbErr)),
+        { taskId: handle.taskId },
+      );
+    }
     return destroyResult;
   }
 
@@ -292,12 +309,21 @@ export class TmuxConnector implements TmuxConnectorPort {
         }
         this.loggedCleanup('dispose', session.handle.taskId, session.handle.sessionsDir);
         // Notify callers so tasks don't remain stuck in RUNNING after shutdown.
-        session.callbacks.onExit(null, 'SHUTDOWN');
+        try {
+          session.callbacks.onExit(null, 'SHUTDOWN');
+        } catch (cbErr: unknown) {
+          this.deps.logger.error(
+            'dispose: onExit callback threw',
+            cbErr instanceof Error ? cbErr : new Error(String(cbErr)),
+            { taskId: session.handle.taskId },
+          );
+        }
       } catch (teardownErr: unknown) {
-        this.deps.logger.error('Dispose: unhandled error during session teardown', {
-          taskId: session.handle.taskId,
-          error: teardownErr instanceof Error ? teardownErr.message : String(teardownErr),
-        });
+        this.deps.logger.error(
+          'Dispose: unhandled error during session teardown',
+          teardownErr instanceof Error ? teardownErr : new Error(String(teardownErr)),
+          { taskId: session.handle.taskId },
+        );
       }
     }
   }
@@ -674,7 +700,15 @@ export class TmuxConnector implements TmuxConnectorPort {
   private deliverSingle(msg: OutputMessage, session: ActiveSession, callbacks: SpawnCallbacks): void {
     if (msg.sequence > session.lastDeliveredSeq) {
       session.lastDeliveredSeq = msg.sequence;
-      callbacks.onOutput(msg);
+      try {
+        callbacks.onOutput(msg);
+      } catch (cbErr: unknown) {
+        this.deps.logger.error(
+          'deliverSingle: onOutput callback threw',
+          cbErr instanceof Error ? cbErr : new Error(String(cbErr)),
+          { taskId: session.handle.taskId, sequence: msg.sequence },
+        );
+      }
     }
   }
 
@@ -731,7 +765,15 @@ export class TmuxConnector implements TmuxConnectorPort {
       });
     }
     this.loggedCleanup('triggerExit', taskId, session.handle.sessionsDir);
-    session.callbacks.onExit(code, signal);
+    try {
+      session.callbacks.onExit(code, signal);
+    } catch (cbErr: unknown) {
+      this.deps.logger.error(
+        'triggerExit: onExit callback threw',
+        cbErr instanceof Error ? cbErr : new Error(String(cbErr)),
+        { taskId },
+      );
+    }
   }
 
   /**
