@@ -1000,7 +1000,10 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
       // This must complete — a deadlock would cause the timeout to fire
       const raceResult = await Promise.race([
-        eventBus.emit('TaskQueued', { taskId: task.id }).then(() => eventBus.flushHandlers()).then(() => 'completed' as const),
+        eventBus
+          .emit('TaskQueued', { taskId: task.id })
+          .then(() => eventBus.flushHandlers())
+          .then(() => 'completed' as const),
         new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2000)),
       ]);
 
