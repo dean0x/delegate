@@ -1,7 +1,7 @@
 import type { EventEmitter } from 'events';
 import { vi } from 'vitest';
 import type { SpawnOptions } from '../../src/core/agents';
-import type { Task, Worker, WorkerOptions } from '../../src/core/domain';
+import type { Task, TaskId, Worker, WorkerOptions } from '../../src/core/domain';
 import type {
   EventBus,
   Logger,
@@ -15,6 +15,7 @@ import type {
 } from '../../src/core/interfaces';
 import type { Result } from '../../src/core/result';
 import { ok } from '../../src/core/result';
+import type { OutputMessage, SpawnCallbacks, TmuxConnectorPort, TmuxHandle } from '../../src/core/tmux-types';
 import { createMockTask, createMockWorker } from './mock-data.js';
 
 export const createMockLogger = (): Logger => ({
