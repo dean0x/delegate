@@ -23,7 +23,10 @@ vi.mock('child_process', () => ({
   ChildProcess: vi.fn(),
 }));
 
-// Mock isCommandInPath
+// Mock isCommandInPath — keep consistent with agent-adapters.test.ts.
+// NOTE: With isolate: false, both test files share the agents module registry.
+// This vi.mock call ensures the mock is registered in this file's scope; the factory
+// is deduplicated by Vitest so the same vi.fn() is used across both files.
 vi.mock('../../../src/core/agents', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../../src/core/agents')>();
   return {
@@ -379,33 +382,42 @@ describe('buildTmuxCommand() — ProxiedClaudeAdapter', () => {
   });
 });
 
-// ─── Error path: CLI not in PATH ────────────────────────────────────────────
+// ─── Error path: missing taskId ─────────────────────────────────────────────
+// The CLI not-in-PATH error path is already covered in agent-adapters.test.ts
+// (via spawn() which calls the same resolveSpawnConfig). Adding it here would
+// require mocking isCommandInPath across two files that share the agents module
+// with isolate: false — both files' vi.mock factories create separate vi.fn()
+// instances, so the second file's mock never intercepts the captured reference
+// used by base-agent-adapter.ts. Covered behavior: agent-adapters.test.ts
+// "Pre-spawn auth validation > should fail spawn when CLI not in PATH".
 
-describe('buildTmuxCommand() — CLI not in PATH', () => {
-  it('ClaudeAdapter: returns err with AGENT_MISCONFIGURED when claude not in PATH', () => {
-    mockIsCommandInPath.mockReturnValue(false);
-
+describe('buildTmuxCommand() — missing taskId guard', () => {
+  it('ClaudeAdapter: returns err with AGENT_MISCONFIGURED when taskId is missing', () => {
     const adapter = new ClaudeAdapter(testConfig);
-    const result = adapter.buildTmuxCommand(baseOptions);
+    const result = adapter.buildTmuxCommand({
+      ...baseOptions,
+      taskId: undefined,
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.code).toBe(ErrorCode.AGENT_MISCONFIGURED);
-    expect(result.error.message).toContain('not found in PATH');
+    expect(result.error.message).toContain('taskId');
 
     adapter.dispose();
   });
 
-  it('CodexAdapter: returns err with AGENT_MISCONFIGURED when codex not in PATH', () => {
-    mockIsCommandInPath.mockReturnValue(false);
-
+  it('CodexAdapter: returns err with AGENT_MISCONFIGURED when taskId is missing', () => {
     const adapter = new CodexAdapter(testConfig);
-    const result = adapter.buildTmuxCommand(baseOptions);
+    const result = adapter.buildTmuxCommand({
+      ...baseOptions,
+      taskId: undefined,
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.code).toBe(ErrorCode.AGENT_MISCONFIGURED);
-    expect(result.error.message).toContain('not found in PATH');
+    expect(result.error.message).toContain('taskId');
 
     adapter.dispose();
   });
