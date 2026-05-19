@@ -1076,6 +1076,46 @@ export class Database implements TransactionRunner {
           // The tasks table has no DB-level CHECK on agent, so a simple UPDATE suffices.
           db.exec(`UPDATE tasks SET agent = NULL WHERE agent = 'gemini'`);
 
+          // Map pipelines.agent='gemini' to NULL — pipeline-repository uses
+          // z.enum(AGENT_PROVIDERS_TUPLE).nullable() which rejects 'gemini' after this migration.
+          db.exec(`UPDATE pipelines SET agent = NULL WHERE agent = 'gemini'`);
+
+          // Map orchestrations.agent='gemini' to NULL — orchestration-repository calls
+          // toAgentProvider() which throws on unknown values, crashing any read.
+          db.exec(`UPDATE orchestrations SET agent = NULL WHERE agent = 'gemini'`);
+
+          // Map workers.agent='gemini' — workers are short-lived but clean up for consistency.
+          // WorkerRowSchema uses z.string() so no Zod crash, but stale rows would be misleading.
+          db.exec(`UPDATE workers SET agent = 'claude' WHERE agent = 'gemini'`);
+
+          // Fix JSON blobs in schedules: task_template, pipeline_steps, loop_config may carry
+          // "agent":"gemini" fields. schedule-repository deserializes all three through
+          // z.enum(AGENT_PROVIDERS_TUPLE).optional() which rejects 'gemini'.
+          // JSON.stringify always produces compact JSON so REPLACE on the exact token is safe.
+          db.exec(`
+            UPDATE schedules
+            SET task_template = REPLACE(task_template, '"agent":"gemini"', '"agent":"claude"')
+            WHERE task_template LIKE '%"agent":"gemini"%'
+          `);
+          db.exec(`
+            UPDATE schedules
+            SET pipeline_steps = REPLACE(pipeline_steps, '"agent":"gemini"', '"agent":"claude"')
+            WHERE pipeline_steps IS NOT NULL AND pipeline_steps LIKE '%"agent":"gemini"%'
+          `);
+          db.exec(`
+            UPDATE schedules
+            SET loop_config = REPLACE(loop_config, '"agent":"gemini"', '"agent":"claude"')
+            WHERE loop_config IS NOT NULL AND loop_config LIKE '%"agent":"gemini"%'
+          `);
+
+          // Fix loops.task_template JSON blob — same Zod validation applies when LoopHandler
+          // re-hydrates the template to dispatch iterations.
+          db.exec(`
+            UPDATE loops
+            SET task_template = REPLACE(task_template, '"agent":"gemini"', '"agent":"claude"')
+            WHERE task_template LIKE '%"agent":"gemini"%'
+          `);
+
           db.exec(`
             CREATE TABLE loops_new (
               id TEXT PRIMARY KEY,
