@@ -157,6 +157,8 @@ export interface WorkerRegistration {
   readonly agent: string;
   readonly startedAt: number;
   readonly lastHeartbeat?: number; // Epoch ms of last heartbeat (undefined = no heartbeat yet)
+  /** Tmux session name — populated for Phase 3+ tmux workers; undefined for legacy process-based workers */
+  readonly sessionName?: string;
 }
 
 export interface SystemResources {
