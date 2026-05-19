@@ -252,6 +252,7 @@ Safety nets that exist in the codebase but are not part of the manual release st
 - `loop_iterations` CHECK constraint updated: adds `progress` to iteration status enum (migration v26)
 - `loops.convergence_enabled` column: nullable INTEGER default 1 for opt-out convergence (migration v27)
 - `loops.judge_agent` CHECK constraint updated: removes 'gemini' from allowed values; `tasks.agent` NULLed for any existing 'gemini' rows (migration v28)
+- `workers.session_name` column: nullable TEXT for tmux session name tracking; index `idx_workers_session_name`; pid=0 sentinel for tmux workers (migration v29)
 
 ### Dependencies
 
