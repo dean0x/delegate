@@ -24,10 +24,29 @@ import type {
   WorkerRepository,
 } from '../core/interfaces.js';
 import { err, ok, type Result } from '../core/result.js';
-import type { OutputMessage, SpawnCallbacks, TmuxConnectorPort, TmuxHandle } from '../core/tmux-types.js';
+import type {
+  OutputMessage,
+  SpawnCallbacks,
+  TmuxConnectorPort,
+  TmuxHandle,
+  TmuxSpawnCoreConfig,
+} from '../core/tmux-types.js';
 
 function toError(e: unknown): Error {
   return e instanceof Error ? e : new Error(String(e));
+}
+
+/**
+ * Options bundle for launchAndRegister — bundles the 6 spawn-time parameters
+ * that were previously positional args to make call sites self-documenting.
+ */
+interface LaunchParams {
+  readonly task: Task;
+  readonly config: TmuxSpawnCoreConfig;
+  readonly prompt: string;
+  readonly callbacks: SpawnCallbacks;
+  readonly agentProvider: string;
+  readonly cleanupFn: ((taskId: string) => void) | undefined;
 }
 
 /**
@@ -147,21 +166,16 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const cleanupFn = task.systemPrompt ? (taskId: string) => adapter.cleanup(taskId) : undefined;
 
     // Steps 6-10: spawn session, register, wire timers, send prompt
-    return this.launchAndRegister(task, config, prompt, callbacks, agentProvider, cleanupFn);
+    return this.launchAndRegister({ task, config, prompt, callbacks, agentProvider, cleanupFn });
   }
 
   /**
    * Steps 6-10 of spawn(): spawn tmux session, register worker in maps + DB, wire timers,
    * and send prompt. Extracted to keep spawn() readable and rollback logic co-located.
    */
-  private launchAndRegister(
-    task: Task,
-    config: unknown,
-    prompt: string,
-    callbacks: SpawnCallbacks,
-    agentProvider: string,
-    cleanupFn: ((taskId: string) => void) | undefined,
-  ): Result<Worker> {
+  private launchAndRegister(params: LaunchParams): Result<Worker> {
+    const { task, config, prompt, callbacks, agentProvider, cleanupFn } = params;
+
     // Step 6: Spawn tmux session
     const spawnResult = this.tmuxConnector.spawn(config, callbacks);
     if (!spawnResult.ok) {
@@ -173,13 +187,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const registerResult = this.registerWorker(task, handle, agentProvider, cleanupFn);
     if (!registerResult.ok) {
       // Rollback: destroy the session we just created
-      const destroyResult = this.tmuxConnector.destroy(handle);
-      if (!destroyResult.ok) {
-        this.logger.warn('Failed to destroy session after registration failure', {
-          sessionName: handle.sessionName,
-          destroyError: destroyResult.error.message,
-        });
-      }
+      this.destroySessionWithWarning(handle, 'registration failure');
       return err(registerResult.error);
     }
     const worker = registerResult.value;
@@ -196,13 +204,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     if (!sendResult.ok) {
       // Rollback: cleanup the worker state + destroy session
       this.cleanupWorkerState(worker.id, task.id);
-      const destroyResult = this.tmuxConnector.destroy(handle);
-      if (!destroyResult.ok) {
-        this.logger.warn('Failed to destroy session after sendKeys failure', {
-          sessionName: handle.sessionName,
-          destroyError: destroyResult.error.message,
-        });
-      }
+      this.destroySessionWithWarning(handle, 'sendKeys failure');
       return err(
         new AutobeatError(
           ErrorCode.WORKER_SPAWN_FAILED,
@@ -219,6 +221,21 @@ export class EventDrivenWorkerPool implements WorkerPool {
     });
 
     return ok(worker);
+  }
+
+  /**
+   * Attempt to destroy a tmux session, logging a warning on failure.
+   * Used for rollback paths in launchAndRegister() where a session was created
+   * but a subsequent step failed and the session must be torn down.
+   */
+  private destroySessionWithWarning(handle: TmuxHandle, context: string): void {
+    const destroyResult = this.tmuxConnector.destroy(handle);
+    if (!destroyResult.ok) {
+      this.logger.warn(`Failed to destroy session after ${context}`, {
+        sessionName: handle.sessionName,
+        destroyError: destroyResult.error.message,
+      });
+    }
   }
 
   async kill(workerId: WorkerId): Promise<Result<void>> {
@@ -331,6 +348,15 @@ export class EventDrivenWorkerPool implements WorkerPool {
 
     // Safety net: dispose catches orphaned sessions
     this.tmuxConnector.dispose();
+
+    if (failureCount > 0) {
+      return err(
+        new AutobeatError(
+          ErrorCode.WORKER_KILL_FAILED,
+          `${failureCount} of ${workerIds.length} workers failed to kill — tmux sessions may be orphaned`,
+        ),
+      );
+    }
 
     return ok(undefined);
   }

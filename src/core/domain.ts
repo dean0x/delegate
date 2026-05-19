@@ -147,7 +147,9 @@ export interface Worker {
  * Worker registration for cross-process coordination
  * ARCHITECTURE: Dedicated type for DB coordination — separate from Worker which has
  * ephemeral per-process fields (cpuUsage, memoryUsage). WorkerRegistration tracks
- * ownerPid and agent for cross-process visibility and PID-based recovery.
+ * ownerPid and agent for cross-process visibility. Supports two recovery modes:
+ * - PID-based recovery: legacy process workers identified by pid + ownerPid
+ * - Session-name-based recovery: Phase 3 tmux workers identified by sessionName (pid=0 sentinel)
  */
 export interface WorkerRegistration {
   readonly workerId: WorkerId;

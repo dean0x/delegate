@@ -508,6 +508,27 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       const result = await pool.killAll();
       expect(result.ok).toBe(true);
     });
+
+    it('returns err(WORKER_KILL_FAILED) when at least one worker fails to kill', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
+
+      // isAlive returns false so gracefulShutdownSession returns immediately (no timer).
+      // Make unregister throw so kill()'s try/catch catches it and returns err(WORKER_KILL_FAILED).
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+      (workerRepository.unregister as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error('DB connection lost');
+      });
+
+      const result = await pool.killAll();
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe(ErrorCode.WORKER_KILL_FAILED);
+        expect(result.error.message).toMatch(/orphaned/);
+      }
+      // dispose() is still called even on partial failure
+      expect(tmuxConnector.dispose).toHaveBeenCalled();
+    });
   });
 
   // ─── EC-3: UNIQUE violation rollback ────────────────────────────────────
