@@ -9,9 +9,8 @@
  */
 
 import { ChildProcess, spawnSync } from 'child_process';
-// TEMPORARY: TmuxSpawnConfig will move to src/core when Phase 3 (WorkerPool rewiring)
-// establishes it as a first-class domain concept. Until then, import as type-only
-// (zero runtime cost, no value-level dependency).
+// TmuxSpawnConfig is an implementation-level type (references TmuxAgentType/TmuxSessionConfig)
+// and stays in src/implementations/tmux/types.ts. Type-only import: zero runtime cost.
 import type { TmuxSpawnConfig } from '../implementations/tmux/types.js';
 import { AutobeatError, ErrorCode } from './errors.js';
 import { err, ok, Result } from './result.js';

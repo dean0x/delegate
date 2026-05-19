@@ -271,6 +271,14 @@ export class TmuxConnector implements TmuxConnectorPort {
     return this.deps.sessionManager.sendKeys(handle.sessionName, keys);
   }
 
+  /**
+   * Delegates sendControlKeys to the session manager.
+   * Used for kill flow (C-c → SIGINT) where tmux key interpretation is required.
+   */
+  sendControlKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError> {
+    return this.deps.sessionManager.sendControlKeys(handle.sessionName, keys);
+  }
+
   isAlive(handle: TmuxHandle): Result<boolean, AutobeatError> {
     return this.deps.sessionManager.isAlive(handle.sessionName);
   }

@@ -308,6 +308,38 @@ describe('TmuxSessionManager', () => {
     expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
   });
 
+  // ─── sendControlKeys ─────────────────────────────────────────────────────────
+
+  it('sendControlKeys sends tmux send-keys WITHOUT -l flag', () => {
+    manager.sendControlKeys('beat-task-123', 'C-c');
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const sendKeys = calls.find((c) => c.includes('send-keys'));
+    expect(sendKeys).toBeDefined();
+    expect(sendKeys).not.toContain('-l');
+    expect(sendKeys).toContain('C-c');
+  });
+
+  it('sendControlKeys returns ok(undefined) on success', () => {
+    exec.mockReturnValue({ stdout: '', stderr: '', status: 0 });
+    const result = manager.sendControlKeys('beat-task-123', 'C-c');
+    expect(result.ok).toBe(true);
+  });
+
+  it('sendControlKeys returns TMUX_SEND_KEYS_FAILED on exec failure', () => {
+    exec.mockReturnValue({ stdout: '', stderr: 'no such session', status: 1 });
+    const result = manager.sendControlKeys('beat-task-123', 'C-c');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SEND_KEYS_FAILED);
+  });
+
+  it('sendControlKeys rejects invalid session names', () => {
+    const result = manager.sendControlKeys('../../evil', 'C-c');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
   // ─── isAlive ─────────────────────────────────────────────────────────────────
 
   it('isAlive returns ok(true) when has-session exits 0', () => {

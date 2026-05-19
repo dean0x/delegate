@@ -183,6 +183,7 @@ function makeValidSessionManager(taskId = 'task-abc'): TmuxSessionManagerPort {
     createSession: vi.fn().mockReturnValue(ok(makeSessionResult(`beat-${taskId}`))),
     destroySession: vi.fn().mockReturnValue(ok(undefined)),
     sendKeys: vi.fn().mockReturnValue(ok(undefined)),
+    sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
     isAlive: vi.fn().mockReturnValue(ok(true)),
     listSessions: vi.fn().mockReturnValue(ok([])),
     getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
@@ -194,6 +195,7 @@ function makeFailingSessionManager(code = ErrorCode.TMUX_SESSION_FAILED): TmuxSe
     createSession: vi.fn().mockReturnValue(err(new AutobeatError(code, 'session create failed'))),
     destroySession: vi.fn().mockReturnValue(ok(undefined)),
     sendKeys: vi.fn().mockReturnValue(ok(undefined)),
+    sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
     isAlive: vi.fn().mockReturnValue(ok(false)),
     listSessions: vi.fn().mockReturnValue(ok([])),
     getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
@@ -1671,6 +1673,7 @@ describe('TmuxConnector — staleness detection', () => {
         .mockReturnValueOnce(ok(makeSessionResult('beat-task-slow'))),
       destroySession: vi.fn().mockReturnValue(ok(undefined)),
       sendKeys: vi.fn().mockReturnValue(ok(undefined)),
+      sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
       isAlive: vi.fn().mockReturnValue(ok(true)),
       // listSessions is called once per shared timer tick — count calls to verify interval
       listSessions: vi.fn().mockReturnValue(ok([{ name: 'beat-task-fast' }, { name: 'beat-task-slow' }])),
@@ -1897,6 +1900,51 @@ describe('TmuxConnector.destroy()', () => {
       connector.destroy(spawnResult.value);
       connector.destroy(spawnResult.value);
     }).not.toThrow();
+  });
+});
+
+describe('TmuxConnector.sendControlKeys()', () => {
+  it('sendControlKeys delegates to sessionManager.sendControlKeys', () => {
+    const { watch } = makeWatchMock();
+    const sessionManager = makeValidSessionManager();
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) return;
+
+    connector.sendControlKeys(spawnResult.value, 'C-c');
+    expect(sessionManager.sendControlKeys).toHaveBeenCalledWith(spawnResult.value.sessionName, 'C-c');
+  });
+
+  it('sendControlKeys returns err when sessionManager.sendControlKeys returns err', () => {
+    const { watch } = makeWatchMock();
+    const sessionManager = makeValidSessionManager();
+    (sessionManager.sendControlKeys as ReturnType<typeof vi.fn>).mockReturnValue(
+      err(new AutobeatError(ErrorCode.TMUX_SEND_KEYS_FAILED, 'failed')),
+    );
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) return;
+
+    const result = connector.sendControlKeys(spawnResult.value, 'C-c');
+    expect(result.ok).toBe(false);
   });
 });
 
@@ -2264,6 +2312,7 @@ describe('TmuxConnector — connector-level session cap (rel-conn-1)', () => {
       createSession: vi.fn().mockImplementation((cfg: TmuxSpawnConfig) => ok(makeSessionResult(`beat-${cfg.taskId}`))),
       destroySession: vi.fn().mockReturnValue(ok(undefined)),
       sendKeys: vi.fn().mockReturnValue(ok(undefined)),
+      sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
       isAlive: vi.fn().mockReturnValue(ok(true)),
       listSessions: vi.fn().mockReturnValue(ok([])),
       getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),

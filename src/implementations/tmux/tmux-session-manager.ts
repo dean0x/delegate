@@ -223,6 +223,29 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
   }
 
   /**
+   * Sends control key sequences to a session WITHOUT -l (literal) mode.
+   * Use for keys that tmux should interpret (e.g. C-c triggers SIGINT).
+   *
+   * SECURITY: Does not use escapeForSingleQuotes because keys like C-c are
+   * tmux binding tokens, not user-controlled strings. Callers must only pass
+   * well-known tmux key names (e.g. 'C-c', 'Enter').
+   */
+  sendControlKeys(name: string, keys: string): Result<void, AutobeatError> {
+    const nameCheck = validateSessionName(name, 'sendControlKeys');
+    if (!nameCheck.ok) return nameCheck;
+
+    // DECISION: No -l flag — allows tmux to interpret key bindings (C-c → SIGINT).
+    // This is intentionally different from sendKeys which uses -l for literal text.
+    const result = this.deps.exec(`tmux send-keys -t '${name}' ${keys}`);
+
+    if (result.status !== 0) {
+      return err(tmuxSendKeysFailed(name, result.stderr || result.stdout));
+    }
+
+    return ok(undefined);
+  }
+
+  /**
    * Returns true if the session is alive (tmux has-session exit 0).
    */
   isAlive(name: string): Result<boolean, AutobeatError> {

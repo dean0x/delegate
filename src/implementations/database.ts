@@ -189,6 +189,11 @@ export class Database implements TransactionRunner {
     return this.db;
   }
 
+  /** Returns the absolute path of the database file. Used by bootstrap to derive sessionsDir. */
+  getPath(): string {
+    return this.dbPath;
+  }
+
   /**
    * Get current schema version from migrations table
    * Returns 0 if no migrations have been applied (fresh database)
