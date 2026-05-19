@@ -2,7 +2,7 @@
 
 This document lists all features that are **currently implemented and working** in Autobeat.
 
-Last Updated: May 2026 (2026-05-08)
+Last Updated: May 2026 (2026-05-19)
 
 ## ✅ Cross-Platform Agents & Interactive Orchestration (v1.5.0)
 

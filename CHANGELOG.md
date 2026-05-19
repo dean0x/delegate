@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Removed
+- **Gemini agent support** (breaking): `AgentProvider` no longer includes `'gemini'`. Tasks submitted with `agent: 'gemini'` fail with an actionable error. (#177)
+- **`beat agents refresh-base-prompt` command** (breaking): Removed CLI command that managed Gemini base prompt files. (#177)
+
+### Database
+- **Migration v28**: Recreates `loops` table with `judge_agent CHECK` constraint narrowed to `('claude', 'codex')`. Existing `judge_agent='gemini'` rows mapped to `NULL` (reverts to loop's own agent).
+
 ---
 
 ## [1.5.2] - 2026-05-12

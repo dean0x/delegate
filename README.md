@@ -58,12 +58,12 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-Restart your MCP client to connect. Autobeat works with Claude Code, Codex, Gemini, Ollama, and any MCP-compatible agent.
+Restart your MCP client to connect. Autobeat works with Claude Code, Codex, Ollama, and any MCP-compatible agent.
 
 ### Prerequisites
 
 - Node.js 20.0.0+
-- At least one coding agent CLI installed (`claude`, `codex`, or `gemini`)
+- At least one coding agent CLI installed (`claude` or `codex`)
 
 ### First Run
 
@@ -223,7 +223,7 @@ beat schedule cancel <id>
 
 ## Agent Configuration
 
-Four agent runtimes are supported: **Claude**, **Codex**, **Gemini**, and **Ollama** (local LLMs). Each agent can be configured with an API key, base URL, default model, proxy, and runtime.
+Two agent runtimes are supported: **Claude** and **Codex**. Both support **Ollama** for local LLM execution. Each agent can be configured with an API key, base URL, default model, proxy, and runtime.
 
 ```bash
 beat agents list                    # Show available agents
@@ -237,7 +237,6 @@ By default, agents use CLI login-based auth (e.g., `claude login`). To use your 
 ```bash
 beat agents config set claude apiKey "sk-ant-your-key"
 beat agents config set codex apiKey "sk-your-openai-key"
-beat agents config set gemini apiKey "your-gemini-key"
 ```
 
 Auth resolution order: **environment variable** > **stored config** > **CLI login**.
@@ -246,7 +245,6 @@ Auth resolution order: **environment variable** > **stored config** > **CLI logi
 |-------|---------------------------|
 | claude | `ANTHROPIC_API_KEY` |
 | codex | `OPENAI_API_KEY` |
-| gemini | `GEMINI_API_KEY` |
 
 ### Model Selection
 
@@ -278,7 +276,6 @@ Or via environment variables (takes precedence over config):
 |-------|---------|
 | claude | `ANTHROPIC_BASE_URL` |
 | codex | `OPENAI_BASE_URL` |
-| gemini | `GEMINI_BASE_URL` |
 
 **Note**: Claude's login-based auth does not work with a custom `baseUrl` — you must also set an `apiKey`. Autobeat warns if `baseUrl` is set without one.
 
@@ -297,8 +294,8 @@ beat agents config set claude apiKey "sk-or-your-key"
 Wrap agent spawns with `ollama launch` for local LLM execution. The runtime manages the Ollama process lifecycle alongside the agent.
 
 ```bash
-beat agents config set gemini runtime ollama
-beat agents config set gemini model "llama3:8b"
+beat agents config set claude runtime ollama
+beat agents config set claude model "llama3:8b"
 ```
 
 Proxy and runtime are mutually exclusive — setting one clears the other.
@@ -428,7 +425,7 @@ Event-driven system with autoscaling workers and SQLite persistence. Components 
 
 **Task Lifecycle**: `Queued` → `Running` → `Completed` / `Failed` / `Cancelled`
 
-Four agent runtimes: Claude, Codex, Gemini, and Ollama (local LLMs). API translation proxy enables cross-platform agent execution. Per-task agent selection. Crash recovery restores all in-flight work on restart.
+Two agent runtimes: Claude and Codex, both with Ollama support for local LLMs. API translation proxy enables cross-platform agent execution. Per-task agent selection. Crash recovery restores all in-flight work on restart.
 
 See **[Architecture Documentation](./docs/architecture/)** for details.
 
