@@ -18,7 +18,7 @@ import type { Result } from '../../core/result.js';
 // Phase 3: Import consumer-facing types from core/tmux-types.ts so they are
 // available within this module (e.g. TmuxHandle in TmuxSessionResult).
 // These are also re-exported below for backward compat with external consumers.
-import type { OutputMessage, SpawnCallbacks, TmuxHandle } from '../../core/tmux-types.js';
+import type { OutputMessage, SpawnCallbacks, TmuxHandle, TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
 
 export type {
   OutputMessage,
@@ -26,6 +26,7 @@ export type {
   TmuxConnectorPort,
   TmuxHandle,
   TmuxSessionManagerCorePort,
+  TmuxSpawnCoreConfig,
 } from '../../core/tmux-types.js';
 
 /**
@@ -54,9 +55,11 @@ export interface TmuxSessionConfig {
 }
 
 /**
- * Extended configuration for spawning a managed agent session
+ * Extended configuration for spawning a managed agent session.
+ * Extends TmuxSpawnCoreConfig (core/tmux-types.ts) — the minimal interface used at
+ * the port boundary — adding implementation-specific fields (agent type, staleness config).
  */
-export interface TmuxSpawnConfig extends TmuxSessionConfig {
+export interface TmuxSpawnConfig extends TmuxSessionConfig, TmuxSpawnCoreConfig {
   /** Task identifier — used to name the session directory */
   readonly taskId: TaskId;
   /** Base directory where all session data lives */
@@ -278,7 +281,7 @@ export const TASK_ID_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
  * are permitted. The negative lookahead rejects path traversal sequences
  * (e.g. /tmp/../etc/passwd) that the character class alone cannot prevent.
  */
-export const SAFE_PATH_REGEX = /^(?!.*\.\.)([a-zA-Z0-9/_.\ \-]+)$/;
+export const SAFE_PATH_REGEX = /^(?!.*\.\.)([a-zA-Z0-9/_. \-]+)$/;
 
 /** Filename of the success sentinel (exit code 0) */
 export const SENTINEL_DONE = '.done' as const;

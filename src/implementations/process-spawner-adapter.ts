@@ -13,7 +13,7 @@ import { AgentAdapter, AgentProvider, type InteractiveSpawnOptions, SpawnOptions
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { ProcessSpawner } from '../core/interfaces.js';
 import { err, Result } from '../core/result.js';
-import type { TmuxSpawnConfig } from './tmux/types.js';
+import type { TmuxSpawnCoreConfig } from '../core/tmux-types.js';
 
 export class ProcessSpawnerAdapter implements AgentAdapter {
   readonly provider: AgentProvider;
@@ -45,7 +45,7 @@ export class ProcessSpawnerAdapter implements AgentAdapter {
 
   buildTmuxCommand(
     _options: SpawnOptions & { sessionsDir: string },
-  ): Result<{ readonly config: TmuxSpawnConfig; readonly prompt: string }> {
+  ): Result<{ readonly config: TmuxSpawnCoreConfig; readonly prompt: string }> {
     return err(new AutobeatError(ErrorCode.INVALID_OPERATION, 'ProcessSpawnerAdapter does not support tmux'));
   }
 

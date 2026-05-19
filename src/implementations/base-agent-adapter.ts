@@ -35,7 +35,8 @@ import {
 import type { TaskId } from '../core/domain.js';
 import { AutobeatError, agentMisconfigured, ErrorCode, processSpawnFailed } from '../core/errors.js';
 import { err, ok, Result, tryCatch } from '../core/result.js';
-import { TASK_ID_REGEX, type TmuxAgentType, type TmuxSpawnConfig } from './tmux/types.js';
+import type { TmuxSpawnCoreConfig } from '../core/tmux-types.js';
+import { TASK_ID_REGEX, type TmuxAgentType } from './tmux/types.js';
 
 export abstract class BaseAgentAdapter implements AgentAdapter {
   abstract readonly provider: AgentProvider;
@@ -114,12 +115,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Produce a TmuxSpawnConfig + prompt for Phase 3 consumption.
+   * Produce a TmuxSpawnCoreConfig + prompt for Phase 3 consumption.
    * Config is used for session setup; prompt is delivered via send-keys after session is alive.
-   * Does NOT call TmuxConnector — pure config assembly.
+   * The returned config is a TmuxSpawnConfig (extends TmuxSpawnCoreConfig) with all implementation
+   * fields populated. Does NOT call TmuxConnector — pure config assembly.
    */
   buildTmuxCommand(options: SpawnOptions & { sessionsDir: string }): Result<{
-    readonly config: TmuxSpawnConfig;
+    readonly config: TmuxSpawnCoreConfig;
     readonly prompt: string;
   }> {
     if (!options.taskId) {

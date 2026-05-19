@@ -22,6 +22,7 @@ import { tmuxSessionFailed } from '../../core/errors.js';
 import type { Logger } from '../../core/interfaces.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
+import type { TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
 import type {
   OutputMessage,
   SpawnCallbacks,
@@ -136,10 +137,10 @@ export class TmuxConnector implements TmuxConnectorPort {
    * 4. Creates the tmux session running the wrapper
    * 5. Starts (or restarts) the shared staleness timer
    */
-  spawn(rawConfig: unknown, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
-    // ARCHITECTURE EXCEPTION: Interface uses `unknown` to break the circular dependency
-    // between core/tmux-types.ts and implementations/tmux/types.ts. The concrete
-    // TmuxConnector asserts the type here at the implementation boundary.
+  spawn(rawConfig: TmuxSpawnCoreConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
+    // TmuxSpawnConfig extends TmuxSpawnCoreConfig (the port interface type) and adds
+    // implementation-specific fields (agent, staleness, cwd, env). Cast here at the
+    // implementation boundary where the full field set is needed.
     const config = rawConfig as TmuxSpawnConfig;
 
     // Guard: reject duplicate taskId to prevent orphaning the first session's watchers/timers

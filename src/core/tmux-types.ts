@@ -9,8 +9,9 @@
  * them so that existing callers that import from tmux/types.ts continue to work.
  *
  * Internal types (WrapperConfig, WrapperManifest, StalenessConfig, ExecFn, WatchFn,
- * TmuxSessionConfig, TmuxSpawnConfig, TmuxAgentType, etc.) remain in
- * src/implementations/tmux/types.ts because they are implementation concerns.
+ * TmuxSessionConfig, TmuxAgentType, etc.) remain in src/implementations/tmux/types.ts
+ * because they are implementation concerns. TmuxSpawnConfig extends TmuxSpawnCoreConfig
+ * defined here — that extension is the only coupling point.
  */
 
 import type { TaskId } from './domain.js';
@@ -54,6 +55,35 @@ export interface SpawnCallbacks {
   onExit: (code: number | null, signal?: string) => void;
 }
 
+// ─── Spawn config ─────────────────────────────────────────────────────────────
+
+/**
+ * Minimal spawn configuration for the TmuxConnectorPort interface.
+ *
+ * DESIGN DECISION: Defined here (core layer) to break the circular dependency
+ * between core/agents.ts (AgentAdapter.buildTmuxCommand return type) and
+ * src/implementations/tmux/types.ts (TmuxSpawnConfig). Only the fields needed
+ * at the port boundary are declared here. Implementation-layer TmuxSpawnConfig
+ * extends this interface and adds agent-specific fields (TmuxAgentType, staleness,
+ * etc.) that are not implementation concerns of the core layer.
+ *
+ * Core-layer consumers (EventDrivenWorkerPool) treat this type opaquely — they
+ * receive it from AgentAdapter.buildTmuxCommand() and pass it directly to
+ * TmuxConnectorPort.spawn() without accessing individual fields.
+ */
+export interface TmuxSpawnCoreConfig {
+  /** Task identifier — used to name the session directory and tmux session */
+  readonly taskId: TaskId;
+  /** Base directory where all session data lives */
+  readonly sessionsDir: string;
+  /** Session name — must match SESSION_NAME_REGEX (beat-* prefix) */
+  readonly name: string;
+  /** Command to run inside the session */
+  readonly command: string;
+  /** CLI arguments to pass to the agent */
+  readonly agentArgs: readonly string[];
+}
+
 // ─── Port interfaces ──────────────────────────────────────────────────────────
 
 /**
@@ -69,6 +99,14 @@ export interface TmuxSessionManagerCorePort {
    * Implementation: tmux send-keys -t '<name>' <keys>  (no -l flag)
    */
   sendControlKeys(name: string, keys: string): Result<void, AutobeatError>;
+  /**
+   * List all active tmux sessions. Used by RecoveryManager to batch liveness
+   * checks at startup — one exec call instead of N sequential has-session calls.
+   * Returns an array of objects with at least a `name` field; on error (e.g.
+   * no tmux server running) returns an empty array rather than propagating the error
+   * so callers can treat the empty result as "no live sessions".
+   */
+  listSessions(): Result<ReadonlyArray<{ readonly name: string }>, AutobeatError>;
 }
 
 /**
@@ -79,18 +117,13 @@ export interface TmuxSessionManagerCorePort {
  * consumers (EventDrivenWorkerPool) can depend on this interface without
  * importing from the implementations layer.
  *
- * spawn() uses `unknown` for config to avoid pulling TmuxSpawnConfig (which
- * depends on TmuxAgentType/TmuxSessionConfig from tmux/types.ts) into core.
- * The concrete TmuxConnector still enforces full typing internally. Callers in
- * the implementations layer import TmuxSpawnConfig from tmux/types.ts directly.
+ * spawn() accepts TmuxSpawnCoreConfig — the minimal core-layer type. The concrete
+ * TmuxConnector casts it to the richer TmuxSpawnConfig (which extends TmuxSpawnCoreConfig)
+ * at the implementation boundary, where the full field set is needed to configure
+ * the tmux session and wrapper script.
  */
 export interface TmuxConnectorPort {
-  // spawn config type is TmuxSpawnConfig from tmux/types.ts; kept as unknown
-  // to avoid pulling implementation details into the core layer.
-  // ARCHITECTURE EXCEPTION: using unknown (not TmuxSpawnConfig) breaks the
-  // circular dependency. The concrete TmuxConnector asserts `config as TmuxSpawnConfig`
-  // at the implementation boundary.
-  spawn(config: unknown, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError>;
+  spawn(config: TmuxSpawnCoreConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError>;
   destroy(handle: TmuxHandle): Result<void, AutobeatError>;
   sendKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError>;
   /**
