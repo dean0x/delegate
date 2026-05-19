@@ -156,7 +156,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     return ok({
       config: {
-        name: `beat-task-${options.taskId}`,
+        name: `beat-task-${options.taskId.replace(/_/g, '-')}`,
         command: cfg.command,
         agentArgs: spawnArgs,
         cwd: cfg.workingDirectory,

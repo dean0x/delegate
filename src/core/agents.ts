@@ -9,12 +9,12 @@
  */
 
 import { ChildProcess, spawnSync } from 'child_process';
-import { AutobeatError, ErrorCode } from './errors.js';
-import { err, ok, Result } from './result.js';
 // TEMPORARY: TmuxSpawnConfig will move to src/core when Phase 3 (WorkerPool rewiring)
 // establishes it as a first-class domain concept. Until then, import as type-only
 // (zero runtime cost, no value-level dependency).
 import type { TmuxSpawnConfig } from '../implementations/tmux/types.js';
+import { AutobeatError, ErrorCode } from './errors.js';
+import { err, ok, Result } from './result.js';
 
 /**
  * Supported agent providers

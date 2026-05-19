@@ -462,9 +462,9 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
       // Run the migration UPDATE SQL
       sqliteDb.exec(`UPDATE pipelines SET agent = NULL WHERE agent = 'gemini'`);
 
-      const migratedRow = sqliteDb
-        .prepare(`SELECT agent FROM pipelines WHERE id = ?`)
-        .get('pipeline-gemini') as { agent: string | null } | undefined;
+      const migratedRow = sqliteDb.prepare(`SELECT agent FROM pipelines WHERE id = ?`).get('pipeline-gemini') as
+        | { agent: string | null }
+        | undefined;
 
       expect(migratedRow?.agent).toBeNull();
     });
@@ -486,9 +486,9 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
 
       sqliteDb.exec(`UPDATE orchestrations SET agent = NULL WHERE agent = 'gemini'`);
 
-      const migratedRow = sqliteDb
-        .prepare(`SELECT agent FROM orchestrations WHERE id = ?`)
-        .get('orch-gemini') as { agent: string | null } | undefined;
+      const migratedRow = sqliteDb.prepare(`SELECT agent FROM orchestrations WHERE id = ?`).get('orch-gemini') as
+        | { agent: string | null }
+        | undefined;
 
       expect(migratedRow?.agent).toBeNull();
     });
@@ -513,9 +513,9 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
 
       sqliteDb.exec(`UPDATE workers SET agent = 'claude' WHERE agent = 'gemini'`);
 
-      const migratedRow = sqliteDb
-        .prepare(`SELECT agent FROM workers WHERE worker_id = ?`)
-        .get('worker-gemini') as { agent: string } | undefined;
+      const migratedRow = sqliteDb.prepare(`SELECT agent FROM workers WHERE worker_id = ?`).get('worker-gemini') as
+        | { agent: string }
+        | undefined;
 
       expect(migratedRow?.agent).toBe('claude');
     });
@@ -542,13 +542,12 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
         WHERE task_template LIKE '%"agent":"gemini"%'
       `);
 
-      const migratedRow = sqliteDb
-        .prepare(`SELECT task_template FROM schedules WHERE id = ?`)
-        .get('sched-gemini') as { task_template: string } | undefined;
+      const migratedRow = sqliteDb.prepare(`SELECT task_template FROM schedules WHERE id = ?`).get('sched-gemini') as
+        | { task_template: string }
+        | undefined;
 
       const parsed = JSON.parse(migratedRow?.task_template ?? '{}') as Record<string, unknown>;
       expect(parsed.agent).toBe('claude');
     });
-
   });
 });
