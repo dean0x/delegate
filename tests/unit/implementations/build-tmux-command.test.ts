@@ -392,27 +392,12 @@ describe('buildTmuxCommand() — ProxiedClaudeAdapter', () => {
 // "Pre-spawn auth validation > should fail spawn when CLI not in PATH".
 
 describe('buildTmuxCommand() — missing taskId guard', () => {
-  it('ClaudeAdapter: returns err with AGENT_MISCONFIGURED when taskId is missing', () => {
-    const adapter = new ClaudeAdapter(testConfig);
-    const result = adapter.buildTmuxCommand({
-      ...baseOptions,
-      taskId: undefined,
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.code).toBe(ErrorCode.AGENT_MISCONFIGURED);
-    expect(result.error.message).toContain('taskId');
-
-    adapter.dispose();
-  });
-
-  it('CodexAdapter: returns err with AGENT_MISCONFIGURED when taskId is missing', () => {
-    const adapter = new CodexAdapter(testConfig);
-    const result = adapter.buildTmuxCommand({
-      ...baseOptions,
-      taskId: undefined,
-    });
+  it.each([
+    ['ClaudeAdapter', () => new ClaudeAdapter(testConfig)],
+    ['CodexAdapter', () => new CodexAdapter(testConfig)],
+  ] as const)('%s: returns err with AGENT_MISCONFIGURED when taskId is missing', (_name, createAdapter) => {
+    const adapter = createAdapter();
+    const result = adapter.buildTmuxCommand({ ...baseOptions, taskId: undefined });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
