@@ -291,13 +291,13 @@ export class EventDrivenWorkerPool implements WorkerPool {
       workerCount: workerIds.length,
     });
 
-    const results = await Promise.allSettled(workerIds.map((workerId) => this.kill(workerId)));
+    const results = await Promise.all(workerIds.map((workerId) => this.kill(workerId)));
 
-    const failures = results.filter((result) => result.status === 'rejected') as PromiseRejectedResult[];
+    const failureCount = results.filter((r) => !r.ok).length;
 
-    if (failures.length > 0) {
+    if (failureCount > 0) {
       this.logger.error('Some workers failed to kill', undefined, {
-        failures: failures.length,
+        failures: failureCount,
         total: workerIds.length,
       });
     }

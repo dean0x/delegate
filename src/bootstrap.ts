@@ -635,14 +635,8 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   // Register recovery manager
   container.registerSingleton('recoveryManager', () => {
-    const repositoryResult = container.get('taskRepository');
-
-    if (!repositoryResult.ok) {
-      throw new Error('TaskRepository required for RecoveryManager');
-    }
-
     return new RecoveryManager({
-      taskRepo: repositoryResult.value as TaskRepository,
+      taskRepo: getFromContainer<TaskRepository>(container, 'taskRepository'),
       queue: getFromContainer<TaskQueue>(container, 'taskQueue'),
       eventBus: getFromContainer<EventBus>(container, 'eventBus'),
       logger: getFromContainer<Logger>(container, 'logger').child({ module: 'Recovery' }),
