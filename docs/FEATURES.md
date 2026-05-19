@@ -2,7 +2,7 @@
 
 This document lists all features that are **currently implemented and working** in Autobeat.
 
-Last Updated: May 2026 (2026-05-08)
+Last Updated: May 2026 (2026-05-19)
 
 ## ✅ Cross-Platform Agents & Interactive Orchestration (v1.5.0)
 
@@ -25,7 +25,7 @@ Last Updated: May 2026 (2026-05-08)
 ## ✅ System Prompts & Custom Orchestrators (v1.4.0)
 
 - **System prompt support**: `--system-prompt` flag on `beat run`, `beat loop`, `beat orchestrate`; `systemPrompt` param on MCP `DelegateTask`, `CreateLoop`, `CreateOrchestrator`, `ScheduleTask`, `SchedulePipeline`, `ScheduleLoop` tools
-- **Per-agent injection**: Claude (`--append-system-prompt`), Codex (`-c developer_instructions`), Gemini (`GEMINI_SYSTEM_MD` env var)
+- **Per-agent injection**: Claude (`--append-system-prompt`), Codex (`-c developer_instructions`)
 - **System prompt persistence**: Stored per-task in database; survives retry/resume — `TaskStatus` returns it via `includeSystemPrompt: true`
 - **Custom orchestrator scaffolding**: `beat orchestrate init <goal>` CLI command and `InitCustomOrchestrator` MCP tool
 - **Generated artifacts**: State file, exit condition script, and system prompt snippets for delegation, state management, and constraint enforcement
@@ -98,7 +98,7 @@ Last Updated: May 2026 (2026-05-08)
 ### Agent BaseUrl & Model
 - Per-agent `baseUrl` and `model` in `~/.autobeat/config.json`
 - `--model` / `-m` flag on `beat run` and `beat orchestrate`
-- Provider env var injection at spawn: `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `GEMINI_BASE_URL`
+- Provider env var injection at spawn: `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`
 - User env vars take precedence over injected values
 - Claude: experimental-betas auto-disabled when custom `baseUrl` is set (prevents proxy failures)
 - Warning printed when `baseUrl` is set on Claude without a detected API key
@@ -125,9 +125,9 @@ Last Updated: May 2026 (2026-05-08)
 
 ### Skill Installer
 - `beat init --install-skills`: install skill files to agent-specific directories
-- `--skills-agents claude,codex,gemini`: target specific agents
+- `--skills-agents claude,codex`: target specific agents
 - Detects existing skills and prompts for update
-- Agent-specific paths: `.claude/skills/autobeat`, `.agents/skills/autobeat`, `.gemini/skills/autobeat`
+- Agent-specific paths: `.claude/skills/autobeat`, `.agents/skills/autobeat`
 
 ### MCP Enhancements
 - **MCP Instructions**: server-side instructions injected into MCP Server for structured agent context
@@ -141,7 +141,7 @@ Last Updated: May 2026 (2026-05-08)
 - **Meta-Agent Architecture**: The orchestrator is a loop running a lead agent whose prompt gives it access to all of Autobeat's CLI commands (`beat run`, `beat status`, `beat loop`, etc.)
 - **Persistent State File**: JSON state file in `~/.autobeat/orchestrator-state/` with plan, step statuses, iteration count, and agent context. Atomic writes (temp + rename) prevent corruption
 - **Crash Recovery**: Orchestrations persisted in SQLite. Recovery manager detects and resumes interrupted orchestrations on startup
-- **Multi-Agent**: Per-orchestration agent selection (Claude, Codex, Gemini)
+- **Multi-Agent**: Per-orchestration agent selection (Claude, Codex)
 
 ### MCP Tools
 - **CreateOrchestrator**: Create and start an orchestration with goal, guardrails, and agent selection
@@ -253,7 +253,7 @@ Last Updated: May 2026 (2026-05-08)
 ## ✅ Process Management
 
 ### Agent Process Management
-- **CLI Spawning**: Spawns agent processes (`claude`, `codex`, `gemini`) with proper arguments
+- **CLI Spawning**: Spawns agent processes (`claude`, `codex`) with proper arguments
 - **Permission Handling**: Agent-specific permission flags (e.g., `--dangerously-skip-permissions` for Claude)
 - **Working Directory**: Supports custom working directories
 - **Process Monitoring**: Tracks PIDs, exit codes, and resource usage
@@ -449,7 +449,7 @@ Last Updated: May 2026 (2026-05-08)
 
 ### Agent Registry
 - **Pluggable Adapters**: Agent registry with adapter pattern for agent lifecycle management
-- **Built-in Agents**: Claude (`claude`), OpenAI Codex (`codex`), Google Gemini (`gemini-cli`)
+- **Built-in Agents**: Claude (`claude`), OpenAI Codex (`codex`)
 - **Per-Task Selection**: Choose which agent runs each task via MCP `agent` field or CLI `--agent` flag
 - **Default Agent**: System-wide default agent configured via `beat init` or `~/.autobeat/config.json`
 - **Auth Checking**: Verify agent CLI tools are installed and authenticated before delegation
@@ -673,7 +673,7 @@ Last Updated: May 2026 (2026-05-08)
 ## 🆕 What's New in v0.5.0
 
 ### Multi-Agent Support
-- **Agent Registry**: Pluggable adapters for Claude, Codex, and Gemini with per-task agent selection
+- **Agent Registry**: Pluggable adapters for Claude and Codex with per-task agent selection
 - **`beat init`**: Interactive first-time setup wizard for selecting default agent
 - **`beat agents list`**: Show registered agents with default marker and auth status
 - **Auth Checking**: Validates agent CLI availability before task delegation

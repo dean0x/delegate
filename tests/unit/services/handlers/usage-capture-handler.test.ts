@@ -143,8 +143,8 @@ describe('UsageCaptureHandler', () => {
       expect(usageResult.value).toBeNull();
     });
 
-    it('skips capture for gemini agent', async () => {
-      const task = createTask({ prompt: 'gemini task', agent: 'gemini' });
+    it('skips capture for codex agent', async () => {
+      const task = createTask({ prompt: 'codex task', agent: 'codex' });
       await taskRepo.save(task);
 
       await eventBus.emit('TaskCompleted', { taskId: task.id, exitCode: 0, duration: 500 });

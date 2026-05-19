@@ -103,7 +103,6 @@ import { CodexAdapter } from './implementations/codex-adapter.js';
 import { Database } from './implementations/database.js';
 import { SQLiteDependencyRepository } from './implementations/dependency-repository.js';
 import { EventDrivenWorkerPool } from './implementations/event-driven-worker-pool.js';
-import { GeminiAdapter } from './implementations/gemini-adapter.js';
 import { ConsoleLogger, LogLevel, StructuredLogger } from './implementations/logger.js';
 import { SQLiteLoopRepository } from './implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from './implementations/orchestration-repository.js';
@@ -452,7 +451,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     // Use ProxiedClaudeAdapter if translation proxy is active
     const claudeAdapter = proxyPort !== undefined ? new ProxiedClaudeAdapter(cfg, proxyPort) : new ClaudeAdapter(cfg);
 
-    const adapters = [claudeAdapter, new CodexAdapter(cfg), new GeminiAdapter(cfg)];
+    const adapters = [claudeAdapter, new CodexAdapter(cfg)];
     return new InMemoryAgentRegistry(adapters);
   });
 

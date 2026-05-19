@@ -54,12 +54,10 @@ export interface InitDeps {
 
 /**
  * Agent-specific skill install directories.
- * Gemini installs to both its own dir and the shared .agents dir.
  */
 export const AGENT_SKILL_DIRS: Readonly<Record<AgentProvider, readonly string[]>> = Object.freeze({
   claude: ['.claude/skills/autobeat'],
   codex: ['.agents/skills/autobeat'],
-  gemini: ['.gemini/skills/autobeat', '.agents/skills/autobeat'],
 });
 
 // ============================================================================
@@ -113,7 +111,7 @@ export function resolveSkillSource(): string {
 
 /**
  * Get all target directories for the given agents in the project root.
- * Deduplicates paths (e.g., codex and gemini both write to .agents/).
+ * Deduplicates paths so multiple agents writing the same dir are idempotent.
  */
 export function getSkillTargetDirs(agents: readonly AgentProvider[], projectRoot: string): readonly string[] {
   const seen = new Set<string>();

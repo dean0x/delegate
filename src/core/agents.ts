@@ -9,6 +9,10 @@
  */
 
 import { ChildProcess, spawnSync } from 'child_process';
+// TEMPORARY: TmuxSpawnConfig will move to src/core when Phase 3 (WorkerPool rewiring)
+// establishes it as a first-class domain concept. Until then, import as type-only
+// (zero runtime cost, no value-level dependency).
+import type { TmuxSpawnConfig } from '../implementations/tmux/types.js';
 import { AutobeatError, ErrorCode } from './errors.js';
 import { err, ok, Result } from './result.js';
 
@@ -16,13 +20,13 @@ import { err, ok, Result } from './result.js';
  * Supported agent providers
  * Each provider corresponds to a CLI-based coding agent
  */
-export type AgentProvider = 'claude' | 'codex' | 'gemini';
+export type AgentProvider = 'claude' | 'codex';
 
 /**
  * All valid agent providers as a Zod-compatible tuple
  * Single source of truth — used by z.enum(), CLI, and iteration
  */
-export const AGENT_PROVIDERS_TUPLE: [AgentProvider, ...AgentProvider[]] = ['claude', 'codex', 'gemini'];
+export const AGENT_PROVIDERS_TUPLE: [AgentProvider, ...AgentProvider[]] = ['claude', 'codex'];
 
 /**
  * All valid agent providers as a readonly array
@@ -78,7 +82,6 @@ export function isAgentProvider(value: string): value is AgentProvider {
 export const AGENT_DESCRIPTIONS: Readonly<Record<AgentProvider, string>> = Object.freeze({
   claude: 'Claude Code (Anthropic)',
   codex: 'Codex CLI (OpenAI)',
-  gemini: 'Gemini CLI (Google)',
 });
 
 /**
@@ -89,7 +92,6 @@ export const AGENT_DESCRIPTIONS: Readonly<Record<AgentProvider, string>> = Objec
 export const AGENT_BASE_URL_ENV: Readonly<Record<AgentProvider, string>> = Object.freeze({
   claude: 'ANTHROPIC_BASE_URL',
   codex: 'OPENAI_BASE_URL',
-  gemini: 'GEMINI_BASE_URL',
 });
 
 /**
@@ -121,12 +123,6 @@ export const AGENT_AUTH: Readonly<Record<AgentProvider, AgentAuthConfig>> = Obje
     command: 'codex',
     loginHint: 'codex auth login',
     apiKeyHint: 'export OPENAI_API_KEY=<key>',
-  },
-  gemini: {
-    envVars: ['GEMINI_API_KEY'],
-    command: 'gemini',
-    loginHint: 'gcloud auth application-default login',
-    apiKeyHint: 'export GEMINI_API_KEY=<key>',
   },
 });
 
@@ -248,7 +244,6 @@ export interface SpawnOptions {
    * Each agent CLI has a different mechanism:
    *   Claude:  --append-system-prompt (appends to default, preserving tool definitions)
    *   Codex:   -c developer_instructions=<text> (appends after default, preserves AGENTS.md)
-   *   Gemini:  GEMINI_SYSTEM_MD env var (combined with base prompt cache)
    */
   readonly systemPrompt?: string;
 }
@@ -316,6 +311,26 @@ export interface AgentAdapter {
    * @param taskId - The task whose resources should be cleaned up
    */
   cleanup(taskId: string): void;
+
+  /**
+   * Produce a tmux session config + prompt for Phase 3 (WorkerPool rewiring) consumption.
+   * Config is used by TmuxConnector to set up the session; prompt is delivered via send-keys.
+   * Does NOT call TmuxConnector — pure config assembly.
+   *
+   * ARCHITECTURE: TmuxSpawnConfig is imported as a type-only reference from the tmux layer
+   * (src/implementations/tmux/types.ts). Type-only imports carry zero runtime cost and do
+   * not create a value-level dependency. The concrete type will move to src/core when
+   * Phase 3 (WorkerPool rewiring) establishes it as a first-class domain concept.
+   *
+   * Adapters that do not support tmux (e.g. ProcessSpawnerAdapter) must return
+   * err with ErrorCode.INVALID_OPERATION. Adapters that support tmux require a
+   * non-empty taskId and must return err with ErrorCode.AGENT_MISCONFIGURED when
+   * taskId is absent or empty.
+   */
+  buildTmuxCommand(options: SpawnOptions & { sessionsDir: string }): Result<{
+    readonly config: TmuxSpawnConfig;
+    readonly prompt: string;
+  }>;
 }
 
 /**

@@ -11,7 +11,6 @@ import {
   agentsConfigShow,
   checkAgents,
   listAgents,
-  refreshBasePrompt,
 } from './cli/commands/agents.js';
 import { cancelTask } from './cli/commands/cancel.js';
 import { configPath, configReset, configSet, configShow } from './cli/commands/config.js';
@@ -202,7 +201,7 @@ if (mainCommand === 'mcp') {
           '  -f, --foreground              Stream output and wait for completion',
           '  -p, --priority P0|P1|P2      Task priority (P0=critical, P1=high, P2=normal)',
           '  -w, --working-directory DIR   Working directory for task execution',
-          '  -a, --agent AGENT            AI agent to use (claude, codex, gemini)',
+          '  -a, --agent AGENT            AI agent to use (claude, codex)',
           '  -m, --model MODEL            Model override (e.g. claude-opus-4-5)',
           '  --system-prompt TEXT          System prompt to inject into the agent',
           '  -t, --timeout MS              Task timeout in milliseconds',
@@ -304,12 +303,9 @@ if (mainCommand === 'mcp') {
       ui.error('Usage: beat agents config <set|show|reset>');
       process.exit(1);
     }
-  } else if (subCommand === 'refresh-base-prompt') {
-    // Optional agent arg — defaults to gemini
-    await refreshBasePrompt(args[2]);
   } else {
     ui.error(`Unknown agents subcommand: ${subCommand}`);
-    process.stderr.write('Valid subcommands: list, check, config, refresh-base-prompt\n');
+    process.stderr.write('Valid subcommands: list, check, config\n');
     process.exit(1);
   }
 } else if (mainCommand === 'resume') {

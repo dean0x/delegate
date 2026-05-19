@@ -72,6 +72,7 @@ const BASE_CONFIG: TmuxSpawnConfig = {
   taskId: 'task-abc',
   sessionsDir: '/tmp/sessions',
   agent: 'claude',
+  agentArgs: [],
 };
 
 /**
@@ -238,6 +239,48 @@ describe('TmuxConnector.spawn()', () => {
 
     connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     expect(hooks.generateWrapper).toHaveBeenCalled();
+  });
+
+  it('passes config.agentArgs to hooks.generateWrapper (not hardcoded [])', () => {
+    const hooks = makeValidHooks();
+    const { watch } = makeWatchMock();
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger: makeLogger(),
+      watch,
+    });
+
+    const configWithArgs = {
+      ...BASE_CONFIG,
+      agentArgs: ['--dangerously-skip-permissions', '--output-format', 'stream-json'],
+    };
+    connector.spawn(configWithArgs, { onOutput: vi.fn(), onExit: vi.fn() });
+    expect(hooks.generateWrapper).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentArgs: ['--dangerously-skip-permissions', '--output-format', 'stream-json'],
+      }),
+    );
+  });
+
+  it('passes empty agentArgs to hooks.generateWrapper when config has empty array', () => {
+    const hooks = makeValidHooks();
+    const { watch } = makeWatchMock();
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger: makeLogger(),
+      watch,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    expect(hooks.generateWrapper).toHaveBeenCalledWith(expect.objectContaining({ agentArgs: [] }));
   });
 
   it('creates session with the wrapper script as the command', () => {
@@ -2218,9 +2261,7 @@ describe('TmuxConnector — connector-level session cap (rel-conn-1)', () => {
   it('returns error when spawn is called with MAX_CONCURRENT_SESSIONS sessions already active', () => {
     // Session manager that accepts any taskId, hooks that return a manifest per taskId
     const sessionManager: TmuxSessionManagerPort = {
-      createSession: vi
-        .fn()
-        .mockImplementation((cfg: TmuxSpawnConfig) => ok(makeSessionResult(`beat-${cfg.taskId}`))),
+      createSession: vi.fn().mockImplementation((cfg: TmuxSpawnConfig) => ok(makeSessionResult(`beat-${cfg.taskId}`))),
       destroySession: vi.fn().mockReturnValue(ok(undefined)),
       sendKeys: vi.fn().mockReturnValue(ok(undefined)),
       isAlive: vi.fn().mockReturnValue(ok(true)),

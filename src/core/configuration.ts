@@ -255,7 +255,6 @@ export type Runtime = (typeof RUNTIME_TARGETS)[number];
 
 /**
  * Which agent providers each runtime supports.
- * Gemini CLI is not supported by 'ollama launch'.
  */
 export const RUNTIME_AGENT_SUPPORT: Readonly<Record<Runtime, readonly AgentProvider[]>> = Object.freeze({
   ollama: ['claude', 'codex'],

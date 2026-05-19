@@ -164,18 +164,12 @@ export class TmuxHooks implements TmuxHooksPort {
    * SECURITY: Both values are embedded in generated scripts or used in recursive
    * filesystem operations; invalid values could cause shell injection or path traversal.
    */
-  private validateBaseInputs(
-    operation: string,
-    taskId: string,
-    sessionsDir: string,
-  ): Result<void, AutobeatError> {
+  private validateBaseInputs(operation: string, taskId: string, sessionsDir: string): Result<void, AutobeatError> {
     if (!TASK_ID_REGEX.test(taskId)) {
       return err(tmuxHookFailed(operation, `invalid taskId: ${taskId}`, { taskId }));
     }
     if (!SAFE_PATH_REGEX.test(sessionsDir)) {
-      return err(
-        tmuxHookFailed(operation, `unsafe sessionsDir path: ${sessionsDir}`, { taskId, sessionsDir }),
-      );
+      return err(tmuxHookFailed(operation, `unsafe sessionsDir path: ${sessionsDir}`, { taskId, sessionsDir }));
     }
     return ok(undefined);
   }

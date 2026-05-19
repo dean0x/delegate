@@ -235,7 +235,7 @@ beat loop "Improve test coverage" --eval-mode agent --strategy optimize --maximi
 | `evalMode` | shell | shell, agent | How to evaluate iterations |
 | `evalPrompt` | (default) | string | Custom eval instructions (agent mode) |
 | `evalType` | feedforward | feedforward, judge, schema | Agent eval sub-strategy (only when evalMode is agent) |
-| `judgeAgent` | loop agent | claude, codex, gemini | Agent for judge decisions (judge evalType only) |
+| `judgeAgent` | loop agent | claude, codex | Agent for judge decisions (judge evalType only) |
 | `judgePrompt` | — | string | Custom judge instructions (judge evalType only) |
 | `evalDirection` | — | minimize, maximize | Score direction (optimize only) |
 | `gitBranch` | — | string | Git branch for iteration tracking |

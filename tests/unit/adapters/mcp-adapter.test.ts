@@ -1018,7 +1018,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
     });
 
     it('should accept all valid agent values', async () => {
-      const agents = ['claude', 'codex', 'gemini'] as const;
+      const agents = ['claude', 'codex'] as const;
 
       for (const agent of agents) {
         mockTaskManager.reset();
@@ -1101,7 +1101,7 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
       const mockRegistry = {
         get: vi.fn(),
         has: vi.fn().mockReturnValue(true),
-        list: vi.fn().mockReturnValue(['claude', 'codex', 'gemini']),
+        list: vi.fn().mockReturnValue(['claude', 'codex']),
         dispose: vi.fn(),
       };
 
@@ -3625,18 +3625,6 @@ describe('ConfigureAgent — runtime + proxy integration via callTool()', () => 
     expect(result.isError).toBeFalsy();
     const response = JSON.parse(result.content[0].text);
     expect(response.success).toBe(true);
-  });
-
-  it('rejects runtime for unsupported agent (gemini)', async () => {
-    const adapter = makeConfigureAgentAdapter();
-    const result = await adapter.callTool('ConfigureAgent', {
-      agent: 'gemini',
-      action: 'set',
-      runtime: 'ollama',
-    });
-    expect(result.isError).toBe(true);
-    const response = JSON.parse(result.content[0].text);
-    expect(response.error).toContain('does not support');
   });
 
   it('clears runtime with empty string', async () => {

@@ -163,7 +163,7 @@ export class TmuxConnector implements TmuxConnectorPort {
       agent: config.agent,
       sessionsDir: config.sessionsDir,
       agentCommand: config.command,
-      agentArgs: [],
+      agentArgs: config.agentArgs,
     });
     if (!manifestResult.ok) return manifestResult;
     const manifest = manifestResult.value;
@@ -835,12 +835,7 @@ export class TmuxConnector implements TmuxConnectorPort {
    * Extracted from destroy/dispose/triggerExit to eliminate the repeated try/catch
    * guard pattern around user-supplied callbacks.
    */
-  private safeCallOnExit(
-    caller: string,
-    session: ActiveSession,
-    code: number | null,
-    signal?: string,
-  ): void {
+  private safeCallOnExit(caller: string, session: ActiveSession, code: number | null, signal?: string): void {
     try {
       session.callbacks.onExit(code, signal);
     } catch (cbErr: unknown) {

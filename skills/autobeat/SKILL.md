@@ -12,7 +12,7 @@ allowed-tools: Read, Grep, Glob
 
 Autobeat lets you delegate work to background AI agent instances, build task pipelines,
 create iterative loops, schedule recurring work, and run autonomous orchestrations.
-Three runtimes supported: Claude, Codex, Gemini.
+Two runtimes supported: Claude, Codex.
 
 ## Iron Law
 
@@ -161,7 +161,6 @@ Inject custom instructions into any agent. Identical mechanics across all tools 
 |-------|-----------|----------|
 | Claude | `--append-system-prompt` | Appends to Claude's built-in system prompt |
 | Codex | `-c developer_instructions` | Sets developer instructions config |
-| Gemini | `GEMINI_SYSTEM_MD` env var | Combined with Gemini's base prompt file |
 
 Supported on: `DelegateTask`, `CreatePipeline` (pipeline + per-step), `CreateLoop`, `ScheduleTask`, `SchedulePipeline` (pipeline + per-step), `ScheduleLoop`, `CreateOrchestrator`.
 
@@ -182,7 +181,7 @@ Model names are opaque to autobeat — validation is the agent CLI's responsibil
 Configure via `ConfigureAgent` (set action):
 
 - **`proxy: "openai"`**: Routes Anthropic API calls through a local proxy that translates to OpenAI-compatible format. Requires `baseUrl` and `apiKey`. Works with all agents.
-- **`runtime: "ollama"`**: Wraps agent spawns with `ollama launch`. Supported agents: claude, codex only (not gemini).
+- **`runtime: "ollama"`**: Wraps agent spawns with `ollama launch`. Supported agents: claude, codex.
 
 Mutually exclusive — `runtime` takes precedence if both are set. Clear with empty string: `proxy: ""` or `runtime: ""`.
 

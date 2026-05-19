@@ -17,9 +17,9 @@ Submit a task to a background AI agent instance.
 | `maxOutputBuffer` | number | No | 10485760 | Max output buffer bytes (1024-1073741824) |
 | `dependsOn` | string[] | No | — | Task IDs this task depends on |
 | `continueFrom` | string | No | — | Task ID to receive checkpoint context from |
-| `agent` | string | No | configured default | claude, codex, or gemini |
+| `agent` | string | No | configured default | claude, codex |
 | `model` | string | No | — | Model override (overrides agent-config default) |
-| `systemPrompt` | string | No | — | System prompt injected into agent (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD) |
+| `systemPrompt` | string | No | — | System prompt injected into agent (Claude: --append-system-prompt, Codex: developer_instructions) |
 | `metadata.orchestratorId` | string | No | — | Orchestration attribution (format: orchestrator-{UUID}, 49 chars exactly) |
 | `jsonSchema` | string | No | — | JSON schema for structured output (Claude only) |
 
@@ -341,7 +341,7 @@ Check auth status, store API key, or reset stored key for an agent.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `agent` | string | Yes | — | Agent provider (claude, codex, gemini) |
+| `agent` | string | Yes | — | Agent provider (claude, codex) |
 | `action` | string | No | check | set, check, or reset |
 | `apiKey` | string | No | — | API key to store (required for set action) |
 | `baseUrl` | string | No | — | Base URL override (set action, e.g. https://proxy.example.com/v1) |
@@ -397,7 +397,7 @@ Cancel a pipeline and optionally its in-flight tasks.
 
 ```
 beat run "<prompt>" [options]
-  --agent, -a <name>       Agent (claude, codex, gemini)
+  --agent, -a <name>       Agent (claude, codex)
   --model, -m <name>       Model override
   --system-prompt "..."    System prompt injected into agent
   --priority, -p <level>   P0, P1, P2
@@ -530,8 +530,6 @@ beat agents check                      Check agent auth status
 beat agents config set <agent> [options]  Set agent config values
 beat agents config show <agent>           Show agent config
 beat agents config reset <agent>          Reset agent config
-beat agents refresh-base-prompt <agent>   Refresh Gemini base prompt
-
 beat config show                   Show configuration
 beat config set <key> <value>      Set configuration value
 beat config reset [key]            Reset config (all or specific key)

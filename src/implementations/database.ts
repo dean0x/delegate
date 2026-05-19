@@ -1066,6 +1066,128 @@ export class Database implements TransactionRunner {
           db.exec(`ALTER TABLE loops ADD COLUMN convergence_enabled INTEGER NOT NULL DEFAULT 1`);
         },
       },
+      {
+        version: 28,
+        description:
+          "Remove 'gemini' from loops.judge_agent CHECK constraint and tasks.agent column (Phase 2, epic #175)",
+        up: (db) => {
+          // Map tasks.agent='gemini' to NULL so existing rows survive Zod's narrowed
+          // z.enum(['claude','codex']).nullable() validation in TaskRowSchema.
+          // The tasks table has no DB-level CHECK on agent, so a simple UPDATE suffices.
+          db.exec(`UPDATE tasks SET agent = NULL WHERE agent = 'gemini'`);
+
+          // Map pipelines.agent='gemini' to NULL — pipeline-repository uses
+          // z.enum(AGENT_PROVIDERS_TUPLE).nullable() which rejects 'gemini' after this migration.
+          db.exec(`UPDATE pipelines SET agent = NULL WHERE agent = 'gemini'`);
+
+          // Map orchestrations.agent='gemini' to NULL — orchestration-repository calls
+          // toAgentProvider() which throws on unknown values, crashing any read.
+          db.exec(`UPDATE orchestrations SET agent = NULL WHERE agent = 'gemini'`);
+
+          // Map workers.agent='gemini' — workers are short-lived but clean up for consistency.
+          // WorkerRowSchema uses z.string() so no Zod crash, but stale rows would be misleading.
+          db.exec(`UPDATE workers SET agent = 'claude' WHERE agent = 'gemini'`);
+
+          // Fix JSON blobs in schedules: task_template, pipeline_steps, loop_config may carry
+          // "agent":"gemini" fields. schedule-repository deserializes all three through
+          // z.enum(AGENT_PROVIDERS_TUPLE).optional() which rejects 'gemini'.
+          // JSON.stringify always produces compact JSON so REPLACE on the exact token is safe.
+          db.exec(`
+            UPDATE schedules
+            SET task_template = REPLACE(task_template, '"agent":"gemini"', '"agent":"claude"')
+            WHERE task_template LIKE '%"agent":"gemini"%'
+          `);
+          db.exec(`
+            UPDATE schedules
+            SET pipeline_steps = REPLACE(pipeline_steps, '"agent":"gemini"', '"agent":"claude"')
+            WHERE pipeline_steps IS NOT NULL AND pipeline_steps LIKE '%"agent":"gemini"%'
+          `);
+          db.exec(`
+            UPDATE schedules
+            SET loop_config = REPLACE(loop_config, '"agent":"gemini"', '"agent":"claude"')
+            WHERE loop_config IS NOT NULL AND loop_config LIKE '%"agent":"gemini"%'
+          `);
+
+          // Fix loops.task_template JSON blob — same Zod validation applies when LoopHandler
+          // re-hydrates the template to dispatch iterations.
+          db.exec(`
+            UPDATE loops
+            SET task_template = REPLACE(task_template, '"agent":"gemini"', '"agent":"claude"')
+            WHERE task_template LIKE '%"agent":"gemini"%'
+          `);
+
+          db.exec(`
+            CREATE TABLE loops_new (
+              id TEXT PRIMARY KEY,
+              strategy TEXT NOT NULL CHECK(strategy IN ('retry', 'optimize')),
+              task_template TEXT NOT NULL,
+              pipeline_steps TEXT,
+              exit_condition TEXT NOT NULL,
+              eval_direction TEXT,
+              eval_timeout INTEGER NOT NULL DEFAULT 60000,
+              eval_mode TEXT NOT NULL DEFAULT 'shell',
+              eval_prompt TEXT,
+              working_directory TEXT NOT NULL,
+              max_iterations INTEGER NOT NULL DEFAULT 10,
+              max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+              cooldown_ms INTEGER NOT NULL DEFAULT 0,
+              fresh_context INTEGER NOT NULL DEFAULT 1,
+              status TEXT NOT NULL DEFAULT 'running'
+                CHECK(status IN ('running', 'paused', 'completed', 'failed', 'cancelled')),
+              current_iteration INTEGER NOT NULL DEFAULT 0,
+              best_score REAL,
+              best_iteration_id INTEGER,
+              best_iteration_commit_sha TEXT,
+              consecutive_failures INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              completed_at INTEGER,
+              git_branch TEXT,
+              git_base_branch TEXT,
+              git_start_commit_sha TEXT,
+              schedule_id TEXT REFERENCES schedules(id) ON DELETE SET NULL,
+              eval_type TEXT DEFAULT 'feedforward'
+                CHECK(eval_type IS NULL OR eval_type IN ('feedforward', 'judge', 'schema')),
+              judge_agent TEXT
+                CHECK(judge_agent IS NULL OR judge_agent IN ('claude', 'codex')),
+              judge_prompt TEXT,
+              convergence_enabled INTEGER NOT NULL DEFAULT 1
+            )
+          `);
+
+          db.exec(`
+            INSERT INTO loops_new (
+              id, strategy, task_template, pipeline_steps, exit_condition,
+              eval_direction, eval_timeout, eval_mode, eval_prompt,
+              working_directory, max_iterations, max_consecutive_failures,
+              cooldown_ms, fresh_context, status, current_iteration,
+              best_score, best_iteration_id, best_iteration_commit_sha,
+              consecutive_failures, created_at, updated_at, completed_at,
+              git_branch, git_base_branch, git_start_commit_sha, schedule_id,
+              eval_type, judge_agent, judge_prompt, convergence_enabled
+            )
+            SELECT
+              id, strategy, task_template, pipeline_steps, exit_condition,
+              eval_direction, eval_timeout, eval_mode, eval_prompt,
+              working_directory, max_iterations, max_consecutive_failures,
+              cooldown_ms, fresh_context, status, current_iteration,
+              best_score, best_iteration_id, best_iteration_commit_sha,
+              consecutive_failures, created_at, updated_at, completed_at,
+              git_branch, git_base_branch, git_start_commit_sha, schedule_id,
+              eval_type,
+              CASE WHEN judge_agent = 'gemini' THEN NULL ELSE judge_agent END,
+              judge_prompt, convergence_enabled
+            FROM loops
+          `);
+
+          db.exec(`DROP TABLE loops`);
+          db.exec(`ALTER TABLE loops_new RENAME TO loops`);
+
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_loops_status ON loops(status)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_loops_schedule_id ON loops(schedule_id)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_loops_updated_at ON loops(updated_at)`);
+        },
+      },
     ];
   }
 

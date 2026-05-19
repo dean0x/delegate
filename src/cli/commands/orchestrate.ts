@@ -681,7 +681,7 @@ export async function handleOrchestrateCommand(
         '  -f, --foreground               Block and wait for completion',
         '  -i, --interactive              Launch interactive terminal session',
         '  -w, --working-directory DIR    Working directory for workers',
-        '  -a, --agent AGENT              AI agent (claude, codex, gemini)',
+        '  -a, --agent AGENT              AI agent (claude, codex)',
         '  -m, --model MODEL              Model override (e.g. claude-opus-4-5)',
         '  --max-depth N                  Max delegation depth (1-10, default: 3)',
         '  --max-workers N                Max concurrent workers (1-20, default: 5)',

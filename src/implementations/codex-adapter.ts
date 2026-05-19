@@ -22,6 +22,11 @@ export class CodexAdapter extends BaseAgentAdapter {
     return ['--quiet', '--full-auto', ...modelArgs, '--', prompt];
   }
 
+  protected override buildTmuxArgs(model?: string): readonly string[] {
+    const modelArgs: string[] = model ? ['--model', model] : [];
+    return ['--full-auto', ...modelArgs];
+  }
+
   protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
     return ['--full-auto', ...modelArgs, '--', prompt];

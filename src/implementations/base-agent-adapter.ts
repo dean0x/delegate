@@ -32,8 +32,10 @@ import {
   loadAgentConfig,
   RUNTIME_AGENT_SUPPORT,
 } from '../core/configuration.js';
+import type { TaskId } from '../core/domain.js';
 import { AutobeatError, agentMisconfigured, ErrorCode, processSpawnFailed } from '../core/errors.js';
 import { err, ok, Result, tryCatch } from '../core/result.js';
+import { TASK_ID_REGEX, type TmuxAgentType, type TmuxSpawnConfig } from './tmux/types.js';
 
 export abstract class BaseAgentAdapter implements AgentAdapter {
   abstract readonly provider: AgentProvider;
@@ -71,14 +73,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    *
    * DECISION: Each agent CLI has a different mechanism for system prompts (inline flag,
    * config override, env var + file). This pattern lets each adapter declare its needs.
-   * Adapters that require a file (e.g. Gemini) must write it inside this method.
+   * Adapters that require a file must write it inside this method.
    * The base class handles prompt prepending when prependToPrompt is true.
    *
    * @param systemPrompt - The system prompt text to inject
    * @param systemPromptPath - Resolved temp file path for adapters that write to disk
    * @returns Injection configuration:
    *   - args: Additional CLI args to append (e.g. ['--append-system-prompt', text])
-   *   - env: Additional env vars to inject (e.g. { GEMINI_SYSTEM_MD: path })
+   *   - env: Additional env vars to inject (e.g. { MY_AGENT_VAR: value })
    *   - prependToPrompt: If true, base class prepends systemPrompt to user prompt instead
    */
   protected abstract getSystemPromptConfig(
@@ -93,6 +95,78 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    */
   protected transformPrompt(prompt: string): string {
     return prompt;
+  }
+
+  /**
+   * Build CLI args for tmux mode (no prompt — delivered via send-keys).
+   * Each adapter omits headless flags (e.g. --print, --quiet) and prompt.
+   * Default returns empty args; Claude and Codex override.
+   *
+   * DECISION: buildTmuxArgs is non-abstract (unlike buildArgs / buildInteractiveArgs)
+   * because ProcessSpawnerAdapter does not extend BaseAgentAdapter — it cannot be
+   * required to implement abstract methods. ProcessSpawnerAdapter returns
+   * INVALID_OPERATION from buildTmuxCommand() before this method is ever reached,
+   * so the guard at buildTmuxCommand line 118 prevents non-tmux adapters from
+   * reaching an empty implementation. New adapters that support tmux should override.
+   */
+  protected buildTmuxArgs(_model?: string): readonly string[] {
+    return [];
+  }
+
+  /**
+   * Produce a TmuxSpawnConfig + prompt for Phase 3 consumption.
+   * Config is used for session setup; prompt is delivered via send-keys after session is alive.
+   * Does NOT call TmuxConnector — pure config assembly.
+   */
+  buildTmuxCommand(options: SpawnOptions & { sessionsDir: string }): Result<{
+    readonly config: TmuxSpawnConfig;
+    readonly prompt: string;
+  }> {
+    if (!options.taskId) {
+      return err(
+        agentMisconfigured(
+          this.provider,
+          'buildTmuxCommand requires a taskId — tmux session name cannot be derived without it',
+        ),
+      );
+    }
+
+    if (this.provider !== 'claude' && this.provider !== 'codex') {
+      return err(agentMisconfigured(this.provider, 'tmux mode is not supported for this agent'));
+    }
+
+    // Defense-in-depth: validate taskId before the expensive resolveSpawnConfig call.
+    // Downstream tmux-hooks.ts validates too, but this surfaces invalid IDs earlier
+    // with a clearer error.
+    if (!TASK_ID_REGEX.test(options.taskId)) {
+      return err(agentMisconfigured(this.provider, `invalid taskId: ${options.taskId}`));
+    }
+
+    // Explicit narrowing — avoids `as TmuxAgentType` cast. If AgentProvider gains a new
+    // value, the guard above will catch it and the assignment below will never be reached
+    // with an unsupported value.
+    const agent: TmuxAgentType = this.provider === 'claude' ? 'claude' : 'codex';
+
+    const configResult = this.resolveSpawnConfig(options);
+    if (!configResult.ok) return configResult;
+    const cfg = configResult.value;
+
+    const args = [...this.buildTmuxArgs(cfg.resolvedModel), ...cfg.systemPromptArgs];
+    const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...args] : args;
+
+    return ok({
+      config: {
+        name: `beat-task-${options.taskId.replace(/_/g, '-')}`,
+        command: cfg.command,
+        agentArgs: spawnArgs,
+        cwd: cfg.workingDirectory,
+        env: cfg.env,
+        agent,
+        taskId: options.taskId as TaskId,
+        sessionsDir: options.sessionsDir,
+      },
+      prompt: this.transformPrompt(cfg.effectivePrompt),
+    });
   }
 
   /** Auth config for this agent's provider */
@@ -235,7 +309,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   ): { effectivePrompt: string; args: readonly string[]; env: Record<string, string> } {
     if (!systemPrompt) return { effectivePrompt: prompt, args: [], env: {} };
 
-    const safeId = taskId ?? crypto.randomUUID().substring(0, 8);
+    const safeId = (taskId ?? crypto.randomUUID().substring(0, 8)).replace(/[^a-z0-9_-]/gi, '');
     const systemPromptPath = path.join(os.homedir(), '.autobeat', 'system-prompts', `${safeId}.md`);
     const config = this.getSystemPromptConfig(systemPrompt, systemPromptPath);
 
@@ -490,7 +564,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Default no-op cleanup. Adapters that write task-scoped files (e.g. Gemini)
+   * Default no-op cleanup. Adapters that write task-scoped files
    * override this to remove them.
    */
   cleanup(_taskId: string): void {

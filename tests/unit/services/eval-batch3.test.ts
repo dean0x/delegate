@@ -277,7 +277,7 @@ describe('LoopManagerService — evalType validation', () => {
       strategy: LoopStrategy.RETRY,
       evalMode: EvalMode.AGENT,
       evalType: EvalType.SCHEMA,
-      agent: 'gemini',
+      agent: 'codex',
     });
 
     expect(result.ok).toBe(false);
