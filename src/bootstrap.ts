@@ -98,7 +98,7 @@ export interface BootstrapOptions {
 import { MCPAdapter } from './adapters/mcp-adapter.js';
 
 // Core
-import { AgentRegistry } from './core/agents.js';
+import type { AgentRegistry } from './core/agents.js';
 import type { TmuxConnectorPort } from './core/tmux-types.js';
 // Implementations
 import { InMemoryAgentRegistry } from './implementations/agent-registry.js';

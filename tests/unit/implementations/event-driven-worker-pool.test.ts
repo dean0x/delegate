@@ -693,35 +693,39 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
   // ─── AC-11: Adapter cleanup delegation ──────────────────────────────────
 
   describe('AC-11: adapter.cleanup() delegation', () => {
-    it('calls adapter.cleanup(taskId) when task with systemPrompt completes', async () => {
-      // Build a registry where adapter.cleanup is a tracked vi.fn()
-      const cleanupFn = vi.fn();
-      const registryWithCleanup = createMockAgentRegistry();
-      const adapterWithCleanup = {
-        provider: 'claude',
-        spawn: vi.fn(),
-        spawnInteractive: vi.fn(),
-        kill: vi.fn(),
-        dispose: vi.fn(),
-        cleanup: cleanupFn,
-        buildTmuxCommand: vi.fn().mockImplementation((options: { taskId?: string; prompt?: string; sessionsDir?: string }) =>
-          ok({
-            config: {
-              name: `beat-${options.taskId ?? 'task-unknown'}`,
-              command: 'claude',
-              cwd: '/tmp',
-              taskId: options.taskId ?? 'task-unknown',
-              sessionsDir: options.sessionsDir ?? '/tmp/sessions',
-              agent: 'claude' as const,
-              agentArgs: [],
-            },
-            prompt: options.prompt ?? 'do stuff',
-          }),
-        ),
-      };
-      (registryWithCleanup.get as ReturnType<typeof vi.fn>).mockReturnValue(ok(adapterWithCleanup));
+    /** Build a pool whose adapter uses the given cleanup function. */
+    function buildPoolWithCleanup(cleanupFn: ReturnType<typeof vi.fn>): EventDrivenWorkerPool {
+      const registry = createMockAgentRegistry();
+      (registry.get as ReturnType<typeof vi.fn>).mockReturnValue(
+        ok({
+          provider: 'claude',
+          spawn: vi.fn(),
+          spawnInteractive: vi.fn(),
+          kill: vi.fn(),
+          dispose: vi.fn(),
+          cleanup: cleanupFn,
+          buildTmuxCommand: vi.fn().mockImplementation((options: { taskId?: string; prompt?: string; sessionsDir?: string }) =>
+            ok({
+              config: {
+                name: `beat-${options.taskId ?? 'task-unknown'}`,
+                command: 'claude',
+                cwd: '/tmp',
+                taskId: options.taskId ?? 'task-unknown',
+                sessionsDir: options.sessionsDir ?? '/tmp/sessions',
+                agent: 'claude' as const,
+                agentArgs: [],
+              },
+              prompt: options.prompt ?? 'do stuff',
+            }),
+          ),
+        }),
+      );
+      return buildPool({ agentRegistry: registry });
+    }
 
-      const poolWithCleanup = buildPool({ agentRegistry: registryWithCleanup });
+    it('calls adapter.cleanup(taskId) when task with systemPrompt completes', async () => {
+      const cleanupFn = vi.fn();
+      const poolWithCleanup = buildPoolWithCleanup(cleanupFn);
 
       // Task with systemPrompt — triggers cleanupFn capture at spawn time
       const task = { ...buildTask(), systemPrompt: 'You are a coding assistant.' };
@@ -735,36 +739,10 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
     });
 
     it('continues worker cleanup even when adapter.cleanup() throws', async () => {
-      // Build a registry where adapter.cleanup throws
       const throwingCleanup = vi.fn().mockImplementation(() => {
         throw new Error('temp file deletion failed');
       });
-      const registryWithThrowingCleanup = createMockAgentRegistry();
-      const adapterWithThrowingCleanup = {
-        provider: 'claude',
-        spawn: vi.fn(),
-        spawnInteractive: vi.fn(),
-        kill: vi.fn(),
-        dispose: vi.fn(),
-        cleanup: throwingCleanup,
-        buildTmuxCommand: vi.fn().mockImplementation((options: { taskId?: string; prompt?: string; sessionsDir?: string }) =>
-          ok({
-            config: {
-              name: `beat-${options.taskId ?? 'task-unknown'}`,
-              command: 'claude',
-              cwd: '/tmp',
-              taskId: options.taskId ?? 'task-unknown',
-              sessionsDir: options.sessionsDir ?? '/tmp/sessions',
-              agent: 'claude' as const,
-              agentArgs: [],
-            },
-            prompt: options.prompt ?? 'do stuff',
-          }),
-        ),
-      };
-      (registryWithThrowingCleanup.get as ReturnType<typeof vi.fn>).mockReturnValue(ok(adapterWithThrowingCleanup));
-
-      const poolWithThrowingCleanup = buildPool({ agentRegistry: registryWithThrowingCleanup });
+      const poolWithThrowingCleanup = buildPoolWithCleanup(throwingCleanup);
 
       const task = { ...buildTask(), systemPrompt: 'You are a coding assistant.' };
       await poolWithThrowingCleanup.spawn(task);

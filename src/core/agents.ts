@@ -8,7 +8,8 @@
  * Rationale: Enables pluggable agent backends without changing core task logic
  */
 
-import { ChildProcess, spawnSync } from 'child_process';
+import type { ChildProcess } from 'child_process';
+import { spawnSync } from 'child_process';
 import { AutobeatError, ErrorCode } from './errors.js';
 import { err, ok, Result } from './result.js';
 import type { TmuxSpawnCoreConfig } from './tmux-types.js';
