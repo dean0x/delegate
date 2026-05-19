@@ -16,62 +16,13 @@ import { AutobeatError, ErrorCode } from '../../../src/core/errors';
 import type { EventBus } from '../../../src/core/events/event-bus';
 import type { Logger, OutputCapture, ResourceMonitor } from '../../../src/core/interfaces';
 import { err, ok } from '../../../src/core/result';
-import type { OutputMessage, SpawnCallbacks, TmuxConnectorPort, TmuxHandle } from '../../../src/core/tmux-types';
+import type { OutputMessage } from '../../../src/core/tmux-types';
 import {
   EventDrivenWorkerPool,
   type EventDrivenWorkerPoolDeps,
 } from '../../../src/implementations/event-driven-worker-pool';
 import { TaskFactory } from '../../fixtures/factories';
-import { createMockLogger, createMockOutputRepository, createMockWorkerRepository } from '../../fixtures/mocks';
-
-// ─── MockTmuxConnector ───────────────────────────────────────────────────────
-
-type SpawnCallbacksMap = Map<string, SpawnCallbacks>; // taskId → callbacks
-
-function createMockTmuxConnector(): TmuxConnectorPort & {
-  _simulateExit(taskId: string, code: number | null): void;
-  _simulateOutput(taskId: string, msg: OutputMessage): void;
-  _getCallbacks(): SpawnCallbacksMap;
-} {
-  const callbacksMap: SpawnCallbacksMap = new Map();
-
-  const connector: ReturnType<typeof createMockTmuxConnector> = {
-    spawn: vi.fn().mockImplementation((config: { taskId: string; sessionsDir: string }, callbacks: SpawnCallbacks) => {
-      const sessionName = `beat-${config.taskId}`;
-      callbacksMap.set(config.taskId, callbacks);
-      const handle: TmuxHandle = {
-        sessionName,
-        taskId: config.taskId as ReturnType<typeof TaskId>,
-        sessionsDir: config.sessionsDir,
-      };
-      return ok(handle);
-    }),
-    destroy: vi.fn().mockReturnValue(ok(undefined)),
-    sendKeys: vi.fn().mockReturnValue(ok(undefined)),
-    sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
-    isAlive: vi.fn().mockReturnValue(ok(true)),
-    getActiveHandles: vi.fn().mockReturnValue([]),
-    dispose: vi.fn(),
-
-    _simulateExit(taskId: string, code: number | null): void {
-      const callbacks = callbacksMap.get(taskId);
-      if (!callbacks) throw new Error(`No callbacks registered for taskId: ${taskId}`);
-      callbacks.onExit(code);
-    },
-
-    _simulateOutput(taskId: string, msg: OutputMessage): void {
-      const callbacks = callbacksMap.get(taskId);
-      if (!callbacks) throw new Error(`No callbacks registered for taskId: ${taskId}`);
-      callbacks.onOutput(msg);
-    },
-
-    _getCallbacks(): SpawnCallbacksMap {
-      return callbacksMap;
-    },
-  };
-
-  return connector;
-}
+import { createMockLogger, createMockOutputRepository, createMockTmuxConnector, createMockWorkerRepository } from '../../fixtures/mocks';
 
 // ─── Mock agent adapter ───────────────────────────────────────────────────────
 
@@ -630,6 +581,86 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       await vi.advanceTimersByTimeAsync(30_000);
 
       expect(pool.getWorkerCount()).toBe(0);
+    });
+  });
+
+  // ─── AC-10: Worker timeout ───────────────────────────────────────────────
+
+  describe('AC-10: handleWorkerTimeout emits TaskTimeout and kills session', () => {
+    it('emits TaskTimeout when task timeout elapses', async () => {
+      const TIMEOUT_MS = 5_000;
+      const task = buildTask((f) => f.withTimeout(TIMEOUT_MS));
+
+      // isAlive returns false so kill's grace-period resolves without destroy
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+
+      await pool.spawn(task);
+
+      // Advance past the task timeout to trigger handleWorkerTimeout
+      await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 100);
+      // Advance past kill()'s internal 3s grace-period setTimeout
+      await vi.advanceTimersByTimeAsync(3_500);
+      // Flush remaining microtasks / async continuations
+      await vi.runAllTimersAsync();
+
+      expect(eventBus.emit).toHaveBeenCalledWith('TaskTimeout', expect.objectContaining({ taskId: task.id }));
+    });
+
+    it('calls kill (sendControlKeys + destroy) when timeout fires', async () => {
+      const TIMEOUT_MS = 3_000;
+      const task = buildTask((f) => f.withTimeout(TIMEOUT_MS));
+
+      // isAlive always true so destroy is invoked after grace period
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(true));
+
+      await pool.spawn(task);
+
+      // Advance past timeout, then past kill grace period
+      await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 6_000);
+
+      expect(tmuxConnector.sendControlKeys).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionName: expect.stringContaining('beat-') }),
+        'C-c',
+      );
+      expect(tmuxConnector.destroy).toHaveBeenCalled();
+    });
+
+    it('does not emit TaskTimeout when task has no timeout set', async () => {
+      // buildTask() by default uses TaskFactory which sets timeout: 30000
+      // Use a task with explicit timeout: undefined to test the guard
+      const task = { ...buildTask(), timeout: undefined };
+
+      await pool.spawn(task);
+
+      // Advance a long time — no timeout should fire
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      const timeoutCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([event]) => event === 'TaskTimeout',
+      );
+      expect(timeoutCalls).toHaveLength(0);
+    });
+
+    it('does not emit TaskFailed after timeout (completionHandled guard)', async () => {
+      const TIMEOUT_MS = 2_000;
+      const task = buildTask((f) => f.withTimeout(TIMEOUT_MS));
+
+      // isAlive returns false so kill completes quickly without destroy
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+
+      await pool.spawn(task);
+
+      // Advance past timeout
+      await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 500);
+
+      // Now simulate the onExit callback firing (as if tmux session ended)
+      tmuxConnector._simulateExit(task.id, 1);
+      await vi.runAllTimersAsync();
+
+      const failedCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([event]) => event === 'TaskFailed',
+      );
+      expect(failedCalls).toHaveLength(0);
     });
   });
 

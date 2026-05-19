@@ -171,12 +171,14 @@ export const createMockTmuxConnector = (opts?: { autoComplete?: boolean }): Mock
 
     _simulateExit(taskId: string, code: number | null): void {
       const callbacks = callbacksMap.get(taskId);
-      if (callbacks) callbacks.onExit(code);
+      if (!callbacks) throw new Error(`No callbacks registered for taskId: ${taskId}`);
+      callbacks.onExit(code);
     },
 
     _simulateOutput(taskId: string, msg: OutputMessage): void {
       const callbacks = callbacksMap.get(taskId);
-      if (callbacks) callbacks.onOutput(msg);
+      if (!callbacks) throw new Error(`No callbacks registered for taskId: ${taskId}`);
+      callbacks.onOutput(msg);
     },
 
     _getCallbacks(): Map<string, SpawnCallbacks> {
