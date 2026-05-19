@@ -63,6 +63,7 @@ Restart your MCP client to connect. Autobeat works with Claude Code, Codex, Olla
 ### Prerequisites
 
 - Node.js 20.0.0+
+- tmux >= 3.0 (required for worker sessions)
 - At least one coding agent CLI installed (`claude` or `codex`)
 
 ### First Run
