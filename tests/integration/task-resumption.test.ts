@@ -47,7 +47,7 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
     const result = await bootstrap({
       processSpawner: new NoOpProcessSpawner(),
       resourceMonitor: new TestResourceMonitor(),
-      tmuxConnector: createMockTmuxConnector(),
+      tmuxConnector: createMockTmuxConnector({ autoComplete: true }),
     });
     if (!result.ok) throw new Error(`Bootstrap failed: ${result.error.message}`);
     container = result.value;
