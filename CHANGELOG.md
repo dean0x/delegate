@@ -6,12 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+- **`buildTmuxCommand()` on `AgentAdapter` interface**: All agent adapter implementations must now provide this method. Generates the tmux session spawn command required for interactive-session-based worker execution. (#177)
+
 ### Removed
 - **Gemini agent support** (breaking): `AgentProvider` no longer includes `'gemini'`. Tasks submitted with `agent: 'gemini'` fail with an actionable error. (#177)
 - **`beat agents refresh-base-prompt` command** (breaking): Removed CLI command that managed Gemini base prompt files. (#177)
 
 ### Database
-- **Migration v28**: Recreates `loops` table with `judge_agent CHECK` constraint narrowed to `('claude', 'codex')`. Existing `judge_agent='gemini'` rows mapped to `NULL` (reverts to loop's own agent).
+- **Migration v28**: Recreates `loops` table with `judge_agent CHECK` constraint narrowed to `('claude', 'codex')`. Existing `judge_agent='gemini'` rows mapped to `NULL` (reverts to loop's own agent). Also sets `tasks.agent = NULL` for any existing rows with `agent = 'gemini'` — existing Gemini tasks will use the default agent after upgrade.
 
 ---
 

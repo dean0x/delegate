@@ -11,6 +11,10 @@
 import { ChildProcess, spawnSync } from 'child_process';
 import { AutobeatError, ErrorCode } from './errors.js';
 import { err, ok, Result } from './result.js';
+// TEMPORARY: TmuxSpawnConfig will move to src/core when Phase 3 (WorkerPool rewiring)
+// establishes it as a first-class domain concept. Until then, import as type-only
+// (zero runtime cost, no value-level dependency).
+import type { TmuxSpawnConfig } from '../implementations/tmux/types.js';
 
 /**
  * Supported agent providers
@@ -318,11 +322,13 @@ export interface AgentAdapter {
    * not create a value-level dependency. The concrete type will move to src/core when
    * Phase 3 (WorkerPool rewiring) establishes it as a first-class domain concept.
    *
-   * Adapters that do not support tmux (e.g. ProcessSpawnerAdapter) must return err with
-   * ErrorCode.INVALID_OPERATION. Adapters that support tmux require a non-empty taskId.
+   * Adapters that do not support tmux (e.g. ProcessSpawnerAdapter) must return
+   * err with ErrorCode.INVALID_OPERATION. Adapters that support tmux require a
+   * non-empty taskId and must return err with ErrorCode.AGENT_MISCONFIGURED when
+   * taskId is absent or empty.
    */
   buildTmuxCommand(options: SpawnOptions & { sessionsDir: string }): Result<{
-    readonly config: import('../implementations/tmux/types.js').TmuxSpawnConfig;
+    readonly config: TmuxSpawnConfig;
     readonly prompt: string;
   }>;
 }
