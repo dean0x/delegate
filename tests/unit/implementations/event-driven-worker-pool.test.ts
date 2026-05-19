@@ -704,20 +704,22 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
           kill: vi.fn(),
           dispose: vi.fn(),
           cleanup: cleanupFn,
-          buildTmuxCommand: vi.fn().mockImplementation((options: { taskId?: string; prompt?: string; sessionsDir?: string }) =>
-            ok({
-              config: {
-                name: `beat-${options.taskId ?? 'task-unknown'}`,
-                command: 'claude',
-                cwd: '/tmp',
-                taskId: options.taskId ?? 'task-unknown',
-                sessionsDir: options.sessionsDir ?? '/tmp/sessions',
-                agent: 'claude' as const,
-                agentArgs: [],
-              },
-              prompt: options.prompt ?? 'do stuff',
-            }),
-          ),
+          buildTmuxCommand: vi
+            .fn()
+            .mockImplementation((options: { taskId?: string; prompt?: string; sessionsDir?: string }) =>
+              ok({
+                config: {
+                  name: `beat-${options.taskId ?? 'task-unknown'}`,
+                  command: 'claude',
+                  cwd: '/tmp',
+                  taskId: options.taskId ?? 'task-unknown',
+                  sessionsDir: options.sessionsDir ?? '/tmp/sessions',
+                  agent: 'claude' as const,
+                  agentArgs: [],
+                },
+                prompt: options.prompt ?? 'do stuff',
+              }),
+            ),
         }),
       );
       return buildPool({ agentRegistry: registry });
