@@ -457,17 +457,15 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
 
       // Seed a task with agent='gemini' — valid before gemini was removed (v0.5.0+)
       freshSqlite
-        .prepare(
-          `INSERT INTO tasks (id, prompt, status, priority, created_at, agent) VALUES (?, ?, ?, ?, ?, ?)`,
-        )
+        .prepare(`INSERT INTO tasks (id, prompt, status, priority, created_at, agent) VALUES (?, ?, ?, ?, ?, ?)`)
         .run('pre-migration-gemini', 'prompt', 'queued', 'P1', now, 'gemini');
 
       // Run the migration UPDATE (mirrors migration v28 up function)
       freshSqlite.exec(`UPDATE tasks SET agent = NULL WHERE agent = 'gemini'`);
 
-      const migratedRow = freshSqlite
-        .prepare(`SELECT agent FROM tasks WHERE id = ?`)
-        .get('pre-migration-gemini') as { agent: string | null } | undefined;
+      const migratedRow = freshSqlite.prepare(`SELECT agent FROM tasks WHERE id = ?`).get('pre-migration-gemini') as
+        | { agent: string | null }
+        | undefined;
 
       expect(migratedRow?.agent).toBeNull();
       freshDb.close();
