@@ -28,6 +28,7 @@ import type {
   UsageRepository,
   WorkerRepository,
 } from '../../core/interfaces.js';
+import type { TmuxSessionManagerCorePort } from '../../core/tmux-types.js';
 import { VERSION } from '../../generated/version.js';
 import { DEFAULT_DASHBOARD_LOG_PATH, type DisposableLogger, FileLogger } from '../../implementations/file-logger.js';
 import { LogLevel } from '../../implementations/logger.js';
@@ -119,6 +120,17 @@ export async function startDashboard(): Promise<void> {
   const resourceMonitorResult = container.get<ResourceMonitor>('resourceMonitor');
   const resourceMonitor = resourceMonitorResult.ok ? resourceMonitorResult.value : undefined;
 
+  // Phase 3: Extract tmux session manager for orchestration liveness checks.
+  // Best-effort — dashboard degrades to 'unknown' liveness when unavailable
+  // (e.g., test environments injecting a mock TmuxConnectorPort without a session manager).
+  const tmuxSessionManagerResult = container.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
+  const isTmuxSessionAlive: ((sessionName: string) => boolean) | undefined = tmuxSessionManagerResult.ok
+    ? (sessionName) => {
+        const result = tmuxSessionManagerResult.value.isAlive(sessionName);
+        return result.ok ? result.value : false;
+      }
+    : undefined;
+
   // Extract mutation services for cancel/delete keybindings
   const orchestrationServiceResult = container.get<OrchestrationService>('orchestrationService');
   const loopServiceResult = container.get<LoopService>('loopService');
@@ -196,6 +208,7 @@ export async function startDashboard(): Promise<void> {
       mutations={mutations}
       resourceMonitor={resourceMonitor}
       outputRepository={outputRepository.value}
+      isTmuxSessionAlive={isTmuxSessionAlive}
     />,
     {
       stdin: process.stdin, // Required: Ink needs stdin to establish raw mode + capture keystrokes

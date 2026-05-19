@@ -510,15 +510,18 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status ?? -1 };
   };
 
-  const tmuxSessionManager = options.tmuxConnector ? undefined : new TmuxSessionManager({ exec: tmuxExec });
+  let tmuxSessionManager: TmuxSessionManager | undefined;
 
   if (options.tmuxConnector) {
     container.registerValue('tmuxConnector', options.tmuxConnector);
   } else {
+    tmuxSessionManager = new TmuxSessionManager({ exec: tmuxExec });
+    container.registerValue('tmuxSessionManager', tmuxSessionManager);
+    const sessionManager = tmuxSessionManager;
     container.registerSingleton('tmuxConnector', () => {
       return new TmuxConnector({
         validator: new TmuxValidator({ exec: tmuxExec }),
-        sessionManager: tmuxSessionManager!,
+        sessionManager,
         hooks: new TmuxHooks({
           writeFile: (p, c, opts) => fs.writeFileSync(p, c, { mode: opts.mode }),
           mkdirSync: (p, opts) => fs.mkdirSync(p, opts),

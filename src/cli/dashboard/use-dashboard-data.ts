@@ -193,6 +193,7 @@ export async function fetchAllData(
   viewState: ViewState,
   childPage = 0,
   livenessCache?: Map<string, LivenessCacheEntry>,
+  isTmuxSessionAlive?: (sessionName: string) => boolean,
 ): Promise<Result<DashboardData, string>> {
   const {
     taskRepository,
@@ -280,6 +281,7 @@ export async function fetchAllData(
     taskRepo: taskRepository,
     workerRepo: workerRepository,
     isProcessAlive,
+    isTmuxSessionAlive,
   };
   const orchestrationLiveness = await computeOrchestrationLiveness(orchestrations, cache, livenessDeps);
 
@@ -445,6 +447,7 @@ export function useDashboardData(
   ctx: ReadOnlyContext,
   viewState: ViewState,
   orchestrationChildPage = 0,
+  isTmuxSessionAlive?: (sessionName: string) => boolean,
 ): UseDashboardDataResult {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -468,12 +471,18 @@ export function useDashboardData(
   // TTL is enforced inside fetchAllData; the ref keeps the cache alive across renders.
   const livenessCacheRef = useRef<Map<string, LivenessCacheEntry>>(new Map());
 
-  // Stable fetch function — ctx is the only dep; viewState and childPage are read via refs
+  // Stable fetch function — ctx and isTmuxSessionAlive are deps; viewState and childPage are read via refs
   const doFetch = useCallback(async (): Promise<void> => {
     if (fetching.current) return;
     fetching.current = true;
     try {
-      const result = await fetchAllData(ctx, viewStateRef.current, childPageRef.current, livenessCacheRef.current);
+      const result = await fetchAllData(
+        ctx,
+        viewStateRef.current,
+        childPageRef.current,
+        livenessCacheRef.current,
+        isTmuxSessionAlive,
+      );
 
       if (closing.current) return;
 
@@ -494,7 +503,7 @@ export function useDashboardData(
     } finally {
       fetching.current = false;
     }
-  }, [ctx]);
+  }, [ctx, isTmuxSessionAlive]);
 
   // Per-view poll cadence — derived from POLL_INTERVAL_BY_VIEW keyed on view kind.
   // When the view kind changes the effect re-runs and restarts with the new interval.

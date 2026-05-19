@@ -41,6 +41,13 @@ interface AppProps {
    * Threaded from index.tsx alongside other repositories.
    */
   readonly outputRepository?: OutputRepository;
+  /**
+   * Phase 3: Optional tmux session liveness check.
+   * When provided, RUNNING orchestrations backed by tmux workers report 'live' or 'dead'
+   * instead of conservatively returning 'unknown'. Omitting preserves backward
+   * compatibility with process-based workers.
+   */
+  readonly isTmuxSessionAlive?: (sessionName: string) => boolean;
 }
 
 /** Initial navigation state — focus on tasks panel (most common starting point), no selection, no filters */
@@ -70,154 +77,161 @@ const EMPTY_STATUS_MAP: ReadonlyMap<TaskId, string> = new Map();
  * Root dashboard component.
  * Renders to stderr via the render() call in index.tsx.
  */
-export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, resourceMonitor, outputRepository }) => {
-  const { exit } = useApp();
+export const App: React.FC<AppProps> = React.memo(
+  ({ ctx, version, mutations, resourceMonitor, outputRepository, isTmuxSessionAlive }) => {
+    const { exit } = useApp();
 
-  const [state, dispatch] = useReducer(dashboardReducer, INITIAL_DASHBOARD_STATE);
-  const { view, nav, animFrame } = state;
+    const [state, dispatch] = useReducer(dashboardReducer, INITIAL_DASHBOARD_STATE);
+    const { view, nav, animFrame } = state;
 
-  // Adapter setters — keep keyboard handler signatures stable
-  const setView = useCallback((v: ViewState) => dispatch({ type: 'SET_VIEW', view: v }), []);
-  const setNav = useCallback((updaterOrValue: NavState | ((prev: NavState) => NavState)) => {
-    if (typeof updaterOrValue === 'function') {
-      dispatch({ type: 'UPDATE_NAV', updater: updaterOrValue });
-    } else {
-      dispatch({ type: 'SET_NAV', nav: updaterOrValue });
-    }
-  }, []);
+    // Adapter setters — keep keyboard handler signatures stable
+    const setView = useCallback((v: ViewState) => dispatch({ type: 'SET_VIEW', view: v }), []);
+    const setNav = useCallback((updaterOrValue: NavState | ((prev: NavState) => NavState)) => {
+      if (typeof updaterOrValue === 'function') {
+        dispatch({ type: 'UPDATE_NAV', updater: updaterOrValue });
+      } else {
+        dispatch({ type: 'SET_NAV', nav: updaterOrValue });
+      }
+    }, []);
 
-  // Shared animation frame counter — single interval drives all StatusBadge animations
-  useEffect(() => {
-    const timer = setInterval(() => {
-      dispatch({ type: 'TICK_ANIM' });
-    }, 250);
-    return () => clearInterval(timer);
-  }, []);
+    // Shared animation frame counter — single interval drives all StatusBadge animations
+    useEffect(() => {
+      const timer = setInterval(() => {
+        dispatch({ type: 'TICK_ANIM' });
+      }, 250);
+      return () => clearInterval(timer);
+    }, []);
 
-  // Terminal size + layout for responsive rendering
-  const terminalSize = useTerminalSize();
-  const metricsLayout = computeMetricsLayout(terminalSize);
+    // Terminal size + layout for responsive rendering
+    const terminalSize = useTerminalSize();
+    const metricsLayout = computeMetricsLayout(terminalSize);
 
-  // Resource metrics polling (2s interval)
-  const { resources: resourceMetrics, error: resourceError } = useResourceMetrics(resourceMonitor);
+    // Resource metrics polling (2s interval)
+    const { resources: resourceMetrics, error: resourceError } = useResourceMetrics(resourceMonitor);
 
-  const { data, error, refreshedAt, refreshNow } = useDashboardData(ctx, view, nav.orchestrationChildPage);
+    const { data, error, refreshedAt, refreshNow } = useDashboardData(
+      ctx,
+      view,
+      nav.orchestrationChildPage,
+      isTmuxSessionAlive,
+    );
 
-  // Resolve the task ID(s) to stream in detail mode (#165).
-  // Task detail: the task itself. Orchestration detail: the selected child (if any).
-  const detailStreamTaskId = useMemo((): TaskId | null => {
-    if (view.kind !== 'detail' || !outputRepository) return null;
-    if (view.entityType === 'tasks') return view.entityId as TaskId;
-    if (view.entityType === 'orchestrations' && nav.orchestrationChildSelectedTaskId) {
-      return nav.orchestrationChildSelectedTaskId as TaskId;
-    }
-    return null;
-  }, [view, nav.orchestrationChildSelectedTaskId, outputRepository]);
+    // Resolve the task ID(s) to stream in detail mode (#165).
+    // Task detail: the task itself. Orchestration detail: the selected child (if any).
+    const detailStreamTaskId = useMemo((): TaskId | null => {
+      if (view.kind !== 'detail' || !outputRepository) return null;
+      if (view.entityType === 'tasks') return view.entityId as TaskId;
+      if (view.entityType === 'orchestrations' && nav.orchestrationChildSelectedTaskId) {
+        return nav.orchestrationChildSelectedTaskId as TaskId;
+      }
+      return null;
+    }, [view, nav.orchestrationChildSelectedTaskId, outputRepository]);
 
-  // Live output streaming for task/orchestration detail views
-  const streamingEnabled =
-    outputRepository !== undefined &&
-    view.kind === 'detail' &&
-    detailStreamTaskId !== null &&
-    nav.detailOutputVisible &&
-    (view.entityType === 'tasks' || view.entityType === 'orchestrations');
+    // Live output streaming for task/orchestration detail views
+    const streamingEnabled =
+      outputRepository !== undefined &&
+      view.kind === 'detail' &&
+      detailStreamTaskId !== null &&
+      nav.detailOutputVisible &&
+      (view.entityType === 'tasks' || view.entityType === 'orchestrations');
 
-  const streamTaskIds = detailStreamTaskId !== null ? [detailStreamTaskId] : [];
+    const streamTaskIds = detailStreamTaskId !== null ? [detailStreamTaskId] : [];
 
-  const { streams } = useTaskOutputStream(
-    outputRepository ?? ctx.outputRepository,
-    streamTaskIds,
-    EMPTY_STATUS_MAP,
-    streamingEnabled,
-  );
+    const { streams } = useTaskOutputStream(
+      outputRepository ?? ctx.outputRepository,
+      streamTaskIds,
+      EMPTY_STATUS_MAP,
+      streamingEnabled,
+    );
 
-  useKeyboard({
-    view,
-    nav,
-    data,
-    setView,
-    setNav,
-    refreshNow,
-    exit,
-    mutations,
-    entityBrowserViewportHeight: Math.max(4, metricsLayout.bottomRowHeight - 4),
-  });
+    useKeyboard({
+      view,
+      nav,
+      data,
+      setView,
+      setNav,
+      refreshNow,
+      exit,
+      mutations,
+      entityBrowserViewportHeight: Math.max(4, metricsLayout.bottomRowHeight - 4),
+    });
 
-  // Resolve the status of the entity currently shown in detail view.
-  // Used by Footer to select the correct pause vs resume hint.
-  const detailEntityStatus = useMemo(() => {
-    if (view.kind !== 'detail') return undefined;
-    if (view.entityType === 'schedules') {
-      return data?.schedules.find((s) => s.id === view.entityId)?.status;
-    }
-    if (view.entityType === 'loops') {
-      return data?.loops.find((l) => l.id === view.entityId)?.status;
-    }
-    return undefined;
-  }, [view, data?.schedules, data?.loops]);
+    // Resolve the status of the entity currently shown in detail view.
+    // Used by Footer to select the correct pause vs resume hint.
+    const detailEntityStatus = useMemo(() => {
+      if (view.kind !== 'detail') return undefined;
+      if (view.entityType === 'schedules') {
+        return data?.schedules.find((s) => s.id === view.entityId)?.status;
+      }
+      if (view.entityType === 'loops') {
+        return data?.loops.find((l) => l.id === view.entityId)?.status;
+      }
+      return undefined;
+    }, [view, data?.schedules, data?.loops]);
 
-  // View dispatcher
-  const renderView = (): React.ReactNode => {
-    if (view.kind === 'main') {
-      return (
-        <MetricsView
-          layout={metricsLayout}
+    // View dispatcher
+    const renderView = (): React.ReactNode => {
+      if (view.kind === 'main') {
+        return (
+          <MetricsView
+            layout={metricsLayout}
+            data={data}
+            nav={nav}
+            resourceMetrics={resourceMetrics}
+            resourceError={resourceError}
+          />
+        );
+      }
+
+      if (view.kind === 'detail') {
+        const detailOutputConfig: DetailOutputConfig = {
+          visible: nav.detailOutputVisible,
+          autoTail: nav.detailOutputAutoTail,
+          scrollOffset: nav.detailOutputScrollOffset,
+          terminalRows: terminalSize.rows,
+        };
+        return (
+          <DetailView
+            entityType={view.entityType}
+            entityId={view.entityId}
+            data={data}
+            scrollOffset={nav.scrollOffsets[view.entityType]}
+            animFrame={animFrame}
+            orchestrationChildSelectedTaskId={nav.orchestrationChildSelectedTaskId}
+            orchestrationChildPage={nav.orchestrationChildPage}
+            orchestrationChildrenTotal={data?.orchestrationChildrenTotal}
+            loopIterationSelectedNumber={nav.loopIterationSelectedNumber}
+            taskStreams={streams}
+            detailOutputConfig={detailOutputConfig}
+          />
+        );
+      }
+
+      return null;
+    };
+
+    return (
+      <Box flexDirection="column" width="100%">
+        <Header
+          version={version}
           data={data}
-          nav={nav}
-          resourceMetrics={resourceMetrics}
-          resourceError={resourceError}
+          refreshedAt={refreshedAt}
+          error={error}
+          viewKind={view.kind}
+          entityType={view.kind === 'detail' ? view.entityType : undefined}
+          entityId={view.kind === 'detail' ? view.entityId : undefined}
         />
-      );
-    }
-
-    if (view.kind === 'detail') {
-      const detailOutputConfig: DetailOutputConfig = {
-        visible: nav.detailOutputVisible,
-        autoTail: nav.detailOutputAutoTail,
-        scrollOffset: nav.detailOutputScrollOffset,
-        terminalRows: terminalSize.rows,
-      };
-      return (
-        <DetailView
-          entityType={view.entityType}
-          entityId={view.entityId}
-          data={data}
-          scrollOffset={nav.scrollOffsets[view.entityType]}
-          animFrame={animFrame}
-          orchestrationChildSelectedTaskId={nav.orchestrationChildSelectedTaskId}
-          orchestrationChildPage={nav.orchestrationChildPage}
-          orchestrationChildrenTotal={data?.orchestrationChildrenTotal}
-          loopIterationSelectedNumber={nav.loopIterationSelectedNumber}
-          taskStreams={streams}
-          detailOutputConfig={detailOutputConfig}
+        {renderView()}
+        <Footer
+          viewKind={view.kind}
+          hasMutations={mutations !== undefined}
+          entityType={view.kind === 'detail' ? view.entityType : undefined}
+          entityStatus={detailEntityStatus}
+          focusedPanel={view.kind === 'main' ? nav.focusedPanel : undefined}
         />
-      );
-    }
-
-    return null;
-  };
-
-  return (
-    <Box flexDirection="column" width="100%">
-      <Header
-        version={version}
-        data={data}
-        refreshedAt={refreshedAt}
-        error={error}
-        viewKind={view.kind}
-        entityType={view.kind === 'detail' ? view.entityType : undefined}
-        entityId={view.kind === 'detail' ? view.entityId : undefined}
-      />
-      {renderView()}
-      <Footer
-        viewKind={view.kind}
-        hasMutations={mutations !== undefined}
-        entityType={view.kind === 'detail' ? view.entityType : undefined}
-        entityStatus={detailEntityStatus}
-        focusedPanel={view.kind === 'main' ? nav.focusedPanel : undefined}
-      />
-    </Box>
-  );
-});
+      </Box>
+    );
+  },
+);
 
 App.displayName = 'App';

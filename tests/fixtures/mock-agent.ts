@@ -50,7 +50,7 @@ export function createMockTmuxAgentAdapter(): AgentAdapter {
           prompt: options.prompt ?? 'do stuff',
         }),
       ),
-  } as unknown as AgentAdapter;
+  } satisfies AgentAdapter;
 }
 
 /**

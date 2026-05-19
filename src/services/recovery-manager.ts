@@ -184,12 +184,35 @@ export class RecoveryManager {
     return ok(undefined);
   }
 
+  /**
+   * Build a Set of live tmux session names in a single exec call.
+   * Used by cleanDeadWorkerRegistrations to batch tmux liveness checks at startup
+   * instead of issuing N sequential has-session calls (one per tmux worker).
+   * Returns an empty Set when no session manager is configured or listSessions fails.
+   */
+  private buildLiveSessionSet(): Set<string> {
+    if (!this.tmuxSessionManager) return new Set();
+    const result = this.tmuxSessionManager.listSessions();
+    if (!result.ok) return new Set();
+    return new Set(result.value.map((s) => s.name));
+  }
+
   private async cleanDeadWorkerRegistrations(): Promise<void> {
     const allWorkers = this.workerRepo.findAll();
     if (!allWorkers.ok) return;
 
+    // Phase 3: Batch tmux liveness check — one listSessions() call instead of N
+    // sequential has-session spawnSync calls. For process workers the PID check
+    // remains per-worker (process.kill(pid,0) is in-process and has negligible cost).
+    const liveTmuxSessions = this.buildLiveSessionSet();
+
     for (const reg of allWorkers.value) {
-      if (!this.isWorkerAlive(reg)) {
+      const alive =
+        reg.pid === 0
+          ? reg.sessionName !== undefined && liveTmuxSessions.has(reg.sessionName)
+          : this.isProcessAlive(reg.ownerPid);
+
+      if (!alive) {
         await this.handleDeadWorker(reg);
       } else {
         // Alive — observability only: warn if heartbeat is stale
