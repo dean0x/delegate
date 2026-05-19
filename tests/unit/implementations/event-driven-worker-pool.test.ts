@@ -264,8 +264,8 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
         .mockReturnValue(ok(false)); // poll check → session died, exit loop
 
       const killPromise = pool.kill(spawnResult.value.id);
-      // Advance timers to unblock the first 250ms poll sleep
-      await vi.advanceTimersByTimeAsync(500);
+      // Advance timers past the 3s single grace-period wait
+      await vi.advanceTimersByTimeAsync(3500);
       await killPromise;
 
       expect(tmuxConnector.sendControlKeys).toHaveBeenCalledWith(

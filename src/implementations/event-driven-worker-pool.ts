@@ -11,7 +11,8 @@
  */
 
 import type { AgentRegistry } from '../core/agents.js';
-import type { Task, TaskId, Worker, WorkerId } from '../core/domain.js';
+import type { Task, TaskId, Worker } from '../core/domain.js';
+import { WorkerId } from '../core/domain.js';
 import { AutobeatError, ErrorCode, taskTimeout } from '../core/errors.js';
 import type { EventBus } from '../core/events/event-bus.js';
 import type {
@@ -142,15 +143,31 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Step 5: Create callbacks
     const callbacks = this.createCallbacks(task.id);
 
+    // Capture adapter cleanup at spawn time (P3: same pattern as old process-based pool)
+    const cleanupFn = task.systemPrompt ? (taskId: string) => adapter.cleanup(taskId) : undefined;
+
+    // Steps 6-10: spawn session, register, wire timers, send prompt
+    return this.launchAndRegister(task, config, prompt, callbacks, agentProvider, cleanupFn);
+  }
+
+  /**
+   * Steps 6-10 of spawn(): spawn tmux session, register worker in maps + DB, wire timers,
+   * and send prompt. Extracted to keep spawn() readable and rollback logic co-located.
+   */
+  private launchAndRegister(
+    task: Task,
+    config: unknown,
+    prompt: string,
+    callbacks: SpawnCallbacks,
+    agentProvider: string,
+    cleanupFn: ((taskId: string) => void) | undefined,
+  ): Result<Worker> {
     // Step 6: Spawn tmux session
     const spawnResult = this.tmuxConnector.spawn(config, callbacks);
     if (!spawnResult.ok) {
       return err(spawnResult.error);
     }
     const handle = spawnResult.value;
-
-    // Capture adapter cleanup at spawn time (P3: same pattern as old process-based pool)
-    const cleanupFn = task.systemPrompt ? (taskId: string) => adapter.cleanup(taskId) : undefined;
 
     // Step 7: Register worker in maps + DB
     const registerResult = this.registerWorker(task, handle, agentProvider, cleanupFn);
@@ -223,56 +240,12 @@ export class EventDrivenWorkerPool implements WorkerPool {
       this.stopFlushing(worker);
       await this.flushOutput(worker.taskId);
 
-      // Step 2: Check if session is still alive
-      const aliveResult = this.tmuxConnector.isAlive(worker.handle);
-      const isAlive = aliveResult.ok ? aliveResult.value : false;
-
-      if (!isAlive) {
-        // Session already dead — skip to cleanup
+      // Steps 2-5: graceful shutdown (C-c → wait → force-destroy if needed)
+      const didExit = await this.gracefulShutdownSession(worker, workerId);
+      if (!didExit) {
+        // Session was already dead before we started — cleanup and return
         this.cleanupWorkerState(workerId, worker.taskId);
         return ok(undefined);
-      }
-
-      // Step 3: Send Ctrl+C (graceful interrupt)
-      const ctrlCResult = this.tmuxConnector.sendControlKeys(worker.handle, 'C-c');
-      if (!ctrlCResult.ok) {
-        this.logger.warn('sendControlKeys C-c failed, proceeding to force-destroy', {
-          workerId,
-          error: ctrlCResult.error.message,
-        });
-      }
-
-      // Step 4: Poll isAlive every 250ms for up to 5s (max 20 iterations — bounded loop)
-      const POLL_INTERVAL_MS = 250;
-      const MAX_ITERATIONS = 20;
-      let iteration = 0;
-      let sessionDied = false;
-
-      while (iteration < MAX_ITERATIONS) {
-        await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-        iteration++;
-
-        const checkResult = this.tmuxConnector.isAlive(worker.handle);
-        if (checkResult.ok && !checkResult.value) {
-          sessionDied = true;
-          break;
-        }
-      }
-
-      // Step 5: Force-destroy if still alive after grace period
-      if (!sessionDied) {
-        this.logger.warn('Session still alive after grace period, force-destroying', {
-          workerId,
-          sessionName: worker.handle.sessionName,
-          iterations: iteration,
-        });
-        const destroyResult = this.tmuxConnector.destroy(worker.handle);
-        if (!destroyResult.ok) {
-          this.logger.warn('Force-destroy failed', {
-            workerId,
-            error: destroyResult.error.message,
-          });
-        }
       }
 
       // Step 6: Cleanup worker state
@@ -284,6 +257,56 @@ export class EventDrivenWorkerPool implements WorkerPool {
     }
   }
 
+  /**
+   * Steps 2-5 of kill(): check liveness, send C-c, wait, force-destroy if needed.
+   * Returns false if the session was already dead (caller should skip to cleanup).
+   */
+  private async gracefulShutdownSession(worker: WorkerState, workerId: WorkerId): Promise<boolean> {
+    // Step 2: Check if session is still alive
+    const aliveResult = this.tmuxConnector.isAlive(worker.handle);
+    const isAlive = aliveResult.ok ? aliveResult.value : false;
+
+    if (!isAlive) {
+      return false;
+    }
+
+    // Step 3: Send Ctrl+C (graceful interrupt)
+    const ctrlCResult = this.tmuxConnector.sendControlKeys(worker.handle, 'C-c');
+    if (!ctrlCResult.ok) {
+      this.logger.warn('sendControlKeys C-c failed, proceeding to force-destroy', {
+        workerId,
+        error: ctrlCResult.error.message,
+      });
+    }
+
+    // Step 4: Wait 3s grace period for session to exit after C-c, then check once.
+    // DECISION: single wait + single check instead of 20-iteration poll. Each isAlive()
+    // call is a blocking spawnSync; 20 sequential calls block the event loop for up to 5s.
+    // With killAll(), the original approach serialises N workers × 20 syscalls. A single
+    // 3s await followed by one isAlive() check achieves the same result with 1 syscall.
+    await new Promise<void>((resolve) => setTimeout(resolve, 3_000));
+
+    const checkResult = this.tmuxConnector.isAlive(worker.handle);
+    const sessionDied = checkResult.ok && !checkResult.value;
+
+    // Step 5: Force-destroy if still alive after grace period
+    if (!sessionDied) {
+      this.logger.warn('Session still alive after grace period, force-destroying', {
+        workerId,
+        sessionName: worker.handle.sessionName,
+      });
+      const destroyResult = this.tmuxConnector.destroy(worker.handle);
+      if (!destroyResult.ok) {
+        this.logger.warn('Force-destroy failed', {
+          workerId,
+          error: destroyResult.error.message,
+        });
+      }
+    }
+
+    return true;
+  }
+
   async killAll(): Promise<Result<void>> {
     const workerIds = Array.from(this.workers.keys());
 
@@ -291,6 +314,10 @@ export class EventDrivenWorkerPool implements WorkerPool {
       workerCount: workerIds.length,
     });
 
+    // DECISION: Promise.all (not allSettled) — kill() returns Result<void>, never rejects
+    // (all errors are caught internally and returned as err(...)). Promise.all cannot
+    // short-circuit on rejection here. Using all() over allSettled() keeps the types simpler
+    // while providing the same semantics. Failures are surfaced via failureCount below.
     const results = await Promise.all(workerIds.map((workerId) => this.kill(workerId)));
 
     const failureCount = results.filter((r) => !r.ok).length;
@@ -353,11 +380,20 @@ export class EventDrivenWorkerPool implements WorkerPool {
         // AC-8: stop flushing, final flush, clear, then handle completion
         // EC-8: null code maps to 0
 
-        // Find worker by taskId to stop its flush interval
+        // Stop the flush interval and heartbeat timer BEFORE the async flush gap.
+        // The heartbeat timer (if it fired during the flush) could enter handleWorkerCompletion
+        // concurrently and emit a duplicate event. Clearing it here is defense-in-depth:
+        // completionHandled in handleWorkerCompletion remains the canonical de-duplication gate.
         const workerId = this.taskToWorker.get(taskId);
         if (workerId) {
           const worker = this.workers.get(workerId);
-          if (worker) this.stopFlushing(worker);
+          if (worker) {
+            this.stopFlushing(worker);
+            if (worker.heartbeatTimer) {
+              clearInterval(worker.heartbeatTimer);
+              worker.heartbeatTimer = undefined;
+            }
+          }
         }
 
         this.flushOutput(taskId)
@@ -431,7 +467,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     agentProvider: string,
     cleanupFn?: (taskId: string) => void,
   ): Result<WorkerState> {
-    const workerId: WorkerId = `worker-beat-${task.id}` as WorkerId;
+    const workerId = WorkerId(`worker-beat-${task.id}`);
     const worker: WorkerState = {
       id: workerId,
       taskId: task.id,
@@ -474,6 +510,13 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * Shared by kill() and handleWorkerCompletion().
    */
   private cleanupWorkerState(workerId: WorkerId, taskId: TaskId): void {
+    // IDEMPOTENCY GUARD: return early if already cleaned up.
+    // kill() and onExit/handleWorkerCompletion both call this; without the guard
+    // monitor.decrementWorkerCount() would fire twice causing double-decrement.
+    if (!this.workers.has(workerId)) {
+      return;
+    }
+
     const worker = this.workers.get(workerId);
 
     // Clear all timers before removing from maps
@@ -549,33 +592,22 @@ export class EventDrivenWorkerPool implements WorkerPool {
 
   /**
    * Set up a periodic heartbeat timer.
-   * Phase 3 enhancement: calls isAlive() to detect dead tmux sessions.
    *
-   * DECISION: 30s heartbeat interval, 90s staleness threshold.
-   * Why: balance between write load and detection speed. Session check is additional safety.
+   * DECISION: 30s heartbeat interval writes to DB for crash detection by recovery manager.
+   * Dead session detection is handled by TmuxConnector's shared staleness timer (listSessions
+   * every 30s), which calls onExit when a session disappears. Calling isAlive() here would add
+   * N blocking spawnSync calls per heartbeat tick (one per worker), redundant with the connector.
    * timer.unref() prevents the timer from keeping the Node.js process alive.
    */
   private setupHeartbeatForWorker(worker: WorkerState): void {
     const timer = setInterval(() => {
-      // DB heartbeat update
+      // DB heartbeat update — recovery manager uses this to detect crashed server processes
       const result = this.workerRepository.updateHeartbeat(worker.id);
       if (!result.ok) {
         this.logger.warn('Heartbeat update failed', {
           workerId: worker.id,
           error: result.error.message,
         });
-      }
-
-      // AC-5: session liveness check
-      const aliveResult = this.tmuxConnector.isAlive(worker.handle);
-      if (aliveResult.ok && !aliveResult.value) {
-        this.logger.warn('Heartbeat detected dead tmux session', {
-          workerId: worker.id,
-          taskId: worker.taskId,
-          sessionName: worker.handle.sessionName,
-        });
-        // Trigger completion with exit code 1 (crashed)
-        this.handleWorkerCompletion(worker.taskId, 1);
       }
     }, 30_000);
     timer.unref();
@@ -618,7 +650,11 @@ export class EventDrivenWorkerPool implements WorkerPool {
     this.clearTimeoutForWorker(worker);
     this.cleanupWorkerState(workerId, taskId);
 
-    // Emit appropriate events (fire-and-forget — matches existing pattern)
+    // DECISION: Fire-and-forget emit — this method is called from the .finally() of the
+    // onExit callback chain, which is itself a synchronous callback. Awaiting emit() here
+    // would require making the entire callback chain async, introducing re-ordering risks
+    // between cleanup (synchronous) and event emission (async). Errors are logged; task
+    // completion is not lost — PersistenceHandler independently persists state from events.
     if (exitCode === 0) {
       this.eventBus
         .emit('TaskCompleted', { taskId, exitCode, duration })
@@ -665,6 +701,10 @@ export class EventDrivenWorkerPool implements WorkerPool {
       timeoutMs,
       sessionName: worker.handle.sessionName,
     });
+
+    // Set completionHandled BEFORE kill() so that the onExit callback fired by the
+    // session teardown does not race to emit TaskFailed. Only TaskTimeout is emitted.
+    worker.completionHandled = true;
 
     await this.kill(workerId);
 
