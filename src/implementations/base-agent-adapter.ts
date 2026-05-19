@@ -101,6 +101,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Build CLI args for tmux mode (no prompt — delivered via send-keys).
    * Each adapter omits headless flags (e.g. --print, --quiet) and prompt.
    * Default returns empty args; Claude and Codex override.
+   *
+   * DECISION: buildTmuxArgs is non-abstract (unlike buildArgs / buildInteractiveArgs)
+   * because ProcessSpawnerAdapter does not extend BaseAgentAdapter — it cannot be
+   * required to implement abstract methods. ProcessSpawnerAdapter returns
+   * INVALID_OPERATION from buildTmuxCommand() before this method is ever reached,
+   * so the guard at buildTmuxCommand line 118 prevents non-tmux adapters from
+   * reaching an empty implementation. New adapters that support tmux should override.
    */
   protected buildTmuxArgs(_model?: string): readonly string[] {
     return [];
@@ -115,9 +122,23 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     readonly config: TmuxSpawnConfig;
     readonly prompt: string;
   }> {
+    if (!options.taskId) {
+      return err(
+        agentMisconfigured(
+          this.provider,
+          'buildTmuxCommand requires a taskId — tmux session name cannot be derived without it',
+        ),
+      );
+    }
+
     if (this.provider !== 'claude' && this.provider !== 'codex') {
       return err(agentMisconfigured(this.provider, 'tmux mode is not supported for this agent'));
     }
+
+    // Explicit narrowing — avoids `as TmuxAgentType` cast. If AgentProvider gains a new
+    // value, the guard above will catch it and the assignment below will never be reached
+    // with an unsupported value.
+    const agent: TmuxAgentType = this.provider === 'claude' ? 'claude' : 'codex';
 
     const configResult = this.resolveSpawnConfig(options);
     if (!configResult.ok) return configResult;
@@ -133,8 +154,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         agentArgs: spawnArgs,
         cwd: cfg.workingDirectory,
         env: cfg.env,
-        agent: this.provider as TmuxAgentType,
-        taskId: (options.taskId ?? '') as TaskId,
+        agent,
+        taskId: options.taskId as TaskId,
         sessionsDir: options.sessionsDir,
       },
       prompt: this.transformPrompt(cfg.effectivePrompt),
