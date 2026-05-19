@@ -1,9 +1,13 @@
 /**
  * Event-driven recovery manager for startup task restoration
  * Handles loading tasks from database and emits events for recovery actions
+ *
+ * Phase 3: Supports tmux session-based liveness checks alongside PID-based checks.
+ * Workers with pid=0 (tmux sentinel) are identified by sessionName and checked via
+ * TmuxSessionManagerCorePort.isAlive() when tmuxSessionManager is configured.
  */
 
-import { isTerminalState, OrchestratorStatus, Task, TaskStatus, updateOrchestration } from '../core/domain.js';
+import { isTerminalState, OrchestratorStatus, Task, TaskStatus, updateOrchestration, WorkerRegistration } from '../core/domain.js';
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
 import {
@@ -111,6 +115,18 @@ export class RecoveryManager {
     return result.ok ? result.value : false;
   }
 
+  /**
+   * Unified liveness check for a worker registration.
+   * Dispatches to tmux session check for pid=0 workers, PID check for process workers.
+   * Returns false when the worker type cannot be determined (e.g., tmux worker with no sessionName).
+   */
+  private isWorkerAlive(reg: WorkerRegistration): boolean {
+    if (reg.pid === 0) {
+      return reg.sessionName ? this.isTmuxSessionAlive(reg.sessionName) : false;
+    }
+    return this.isProcessAlive(reg.ownerPid);
+  }
+
   async recover(): Promise<Result<void>> {
     this.logger.info('Starting recovery process');
 
@@ -166,81 +182,12 @@ export class RecoveryManager {
     if (!allWorkers.ok) return;
 
     for (const reg of allWorkers.value) {
-      // Phase 3: Tmux workers use pid=0 as sentinel — PID check is meaningless.
-      // Use session liveness check instead when sessionName is available.
-      const isTmuxWorker = reg.pid === 0;
-      const isAlive = isTmuxWorker
-        ? reg.sessionName
-          ? this.isTmuxSessionAlive(reg.sessionName)
-          : false // No sessionName — treat as dead (incomplete registration)
-        : this.isProcessAlive(reg.ownerPid);
-
-      if (!isAlive) {
-        const unregResult = this.workerRepo.unregister(reg.workerId);
-        if (!unregResult.ok) {
-          this.logger.error('Failed to unregister dead worker', unregResult.error, {
-            workerId: reg.workerId,
-          });
-        }
-
-        // Guard: only update non-terminal tasks
-        const taskResult = await this.taskRepo.findById(reg.taskId);
-        if (!taskResult.ok) {
-          this.logger.error('Failed to look up task for dead worker', taskResult.error, {
-            taskId: reg.taskId,
-          });
-          continue;
-        }
-
-        if (taskResult.value !== null && isTerminalState(taskResult.value.status)) {
-          this.logger.info('Dead worker row cleaned, task already terminal', {
-            workerId: reg.workerId,
-            taskId: reg.taskId,
-            currentStatus: taskResult.value.status,
-            deadPid: reg.ownerPid,
-          });
-          continue;
-        }
-
-        // ARCHITECTURE EXCEPTION: Direct repository write + TaskFailed emit (double-write).
-        // Recovery runs during startup before event handlers are guaranteed to be ready,
-        // so we write status directly rather than relying on PersistenceHandler to handle
-        // TaskFailed. The subsequent emit notifies DependencyHandler to unblock downstream tasks.
-        const updateResult = await this.taskRepo.update(reg.taskId, {
-          status: TaskStatus.FAILED,
-          completedAt: Date.now(),
-          exitCode: -1, // Crash indicator
-        });
-        if (updateResult.ok) {
-          this.logger.info('Cleaned up dead worker and failed its task', {
-            workerId: reg.workerId,
-            taskId: reg.taskId,
-            deadPid: reg.ownerPid,
-            sessionName: reg.sessionName,
-          });
-
-          // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
-          const errorMsg = isTmuxWorker
-            ? 'Tmux session died (dead session detected at startup)'
-            : 'Worker process died (dead PID detected)';
-          const failedEmitResult = await this.eventBus.emit('TaskFailed', {
-            taskId: reg.taskId,
-            error: new AutobeatError(ErrorCode.SYSTEM_ERROR, errorMsg),
-            exitCode: -1,
-          });
-          if (!failedEmitResult.ok) {
-            this.logger.error('Failed to emit TaskFailed event for dead worker task', failedEmitResult.error, {
-              taskId: reg.taskId,
-            });
-          }
-        } else {
-          this.logger.error('Failed to mark dead worker task as failed', updateResult.error, {
-            taskId: reg.taskId,
-          });
-        }
+      if (!this.isWorkerAlive(reg)) {
+        await this.handleDeadWorker(reg);
       } else {
         // Alive — observability only: warn if heartbeat is stale
         if (reg.lastHeartbeat !== undefined && Date.now() - reg.lastHeartbeat > HEARTBEAT_STALENESS_MS) {
+          const isTmuxWorker = reg.pid === 0;
           this.logger.warn(
             isTmuxWorker ? 'Tmux session alive but heartbeat stale' : 'Worker PID alive but heartbeat stale',
             {
@@ -253,6 +200,77 @@ export class RecoveryManager {
           );
         }
       }
+    }
+  }
+
+  /**
+   * Unregister a dead worker, look up its task, and mark the task FAILED if non-terminal.
+   * Emits TaskFailed so DependencyHandler can unblock downstream tasks.
+   */
+  private async handleDeadWorker(reg: WorkerRegistration): Promise<void> {
+    const isTmuxWorker = reg.pid === 0;
+
+    const unregResult = this.workerRepo.unregister(reg.workerId);
+    if (!unregResult.ok) {
+      this.logger.error('Failed to unregister dead worker', unregResult.error, {
+        workerId: reg.workerId,
+      });
+    }
+
+    // Guard: only update non-terminal tasks
+    const taskResult = await this.taskRepo.findById(reg.taskId);
+    if (!taskResult.ok) {
+      this.logger.error('Failed to look up task for dead worker', taskResult.error, {
+        taskId: reg.taskId,
+      });
+      return;
+    }
+
+    if (taskResult.value !== null && isTerminalState(taskResult.value.status)) {
+      this.logger.info('Dead worker row cleaned, task already terminal', {
+        workerId: reg.workerId,
+        taskId: reg.taskId,
+        currentStatus: taskResult.value.status,
+        deadPid: reg.ownerPid,
+      });
+      return;
+    }
+
+    // ARCHITECTURE EXCEPTION: Direct repository write + TaskFailed emit (double-write).
+    // Recovery runs during startup before event handlers are guaranteed to be ready,
+    // so we write status directly rather than relying on PersistenceHandler to handle
+    // TaskFailed. The subsequent emit notifies DependencyHandler to unblock downstream tasks.
+    const updateResult = await this.taskRepo.update(reg.taskId, {
+      status: TaskStatus.FAILED,
+      completedAt: Date.now(),
+      exitCode: -1, // Crash indicator
+    });
+    if (updateResult.ok) {
+      this.logger.info('Cleaned up dead worker and failed its task', {
+        workerId: reg.workerId,
+        taskId: reg.taskId,
+        deadPid: reg.ownerPid,
+        sessionName: reg.sessionName,
+      });
+
+      // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
+      const errorMsg = isTmuxWorker
+        ? 'Tmux session died (dead session detected at startup)'
+        : 'Worker process died (dead PID detected)';
+      const failedEmitResult = await this.eventBus.emit('TaskFailed', {
+        taskId: reg.taskId,
+        error: new AutobeatError(ErrorCode.SYSTEM_ERROR, errorMsg),
+        exitCode: -1,
+      });
+      if (!failedEmitResult.ok) {
+        this.logger.error('Failed to emit TaskFailed event for dead worker task', failedEmitResult.error, {
+          taskId: reg.taskId,
+        });
+      }
+    } else {
+      this.logger.error('Failed to mark dead worker task as failed', updateResult.error, {
+        taskId: reg.taskId,
+      });
     }
   }
 
@@ -286,10 +304,13 @@ export class RecoveryManager {
 
   /**
    * DECISION (2026-04-10): Detect zombies by tracing:
-   * orchestration → loop → most-recent-iteration → task → worker.ownerPid → process.kill(pid, 0).
+   * orchestration → loop → most-recent-iteration → task → worker → liveness check.
    * Conservative: 'unknown' results (broken chain) leave the row alone — false positives
    * marking live orchestrations as zombies would be far worse than false negatives
    * leaving zombies for the user to clean manually via the dashboard.
+   *
+   * Phase 3: isTmuxSessionAlive is passed so tmux-backed workers (pid=0) are correctly
+   * detected as dead when their session has gone away.
    */
   private async failZombieRunningOrchestrations(): Promise<void> {
     if (!this.orchestrationRepo || !this.loopRepo) return;
@@ -305,6 +326,9 @@ export class RecoveryManager {
           taskRepo: this.taskRepo,
           workerRepo: this.workerRepo,
           isProcessAlive: this.isProcessAlive,
+          isTmuxSessionAlive: this.tmuxSessionManager
+            ? (name) => this.isTmuxSessionAlive(name)
+            : undefined,
         });
       } catch (error) {
         // Defensive: skip this orchestration on unexpected error.
@@ -326,7 +350,7 @@ export class RecoveryManager {
 
       const updateResult = await this.orchestrationRepo.update(failed);
       if (updateResult.ok) {
-        this.logger.warn('Marked zombie RUNNING orchestration as FAILED (worker PID dead)', {
+        this.logger.warn('Marked zombie RUNNING orchestration as FAILED (worker dead)', {
           orchestratorId: o.id,
           loopId: o.loopId,
         });
@@ -391,7 +415,7 @@ export class RecoveryManager {
   }
 
   /**
-   * PID-BASED RECOVERY for RUNNING tasks
+   * PID/SESSION-BASED RECOVERY for RUNNING tasks
    *
    * WHY THIS EXISTS:
    * Tasks stuck in RUNNING status are typically from crashed workers or server shutdowns.
@@ -400,16 +424,18 @@ export class RecoveryManager {
    *
    * WHAT IT DOES:
    * - Checks if the task has a worker row in the workers table
-   * - If worker row exists and ownerPid is alive → leave it alone (running in another process)
-   * - If no worker row, or ownerPid is dead → mark FAILED immediately (definitively crashed)
+   * - If worker row exists and worker is alive → leave it alone (worker still running)
+   *   - Process workers: ownerPid liveness check via process.kill(pid, 0)
+   *   - Tmux workers (pid=0): session liveness check via TmuxSessionManagerCorePort.isAlive()
+   * - If no worker row, or worker is dead → mark FAILED immediately (definitively crashed)
    *
    * REPLACES: 30-minute staleness heuristic (pre-v1.0).
-   * PID-based detection is definitive — no false positives from short tasks,
+   * Definitive liveness detection — no false positives from short tasks,
    * no 30-minute wait for long-crashed tasks.
    *
    * INCIDENT REFERENCE: 2025-10-04
    * Removing spawn delay caused 7 stale tasks to spawn simultaneously → system crash
-   * PID-based detection prevents this by marking crashed tasks immediately.
+   * Liveness detection prevents this by marking crashed tasks immediately.
    */
   private async recoverRunningTasks(tasks: readonly Task[]): Promise<number> {
     const now = Date.now();
@@ -420,18 +446,8 @@ export class RecoveryManager {
       const workerRegistration = workerResult.ok ? workerResult.value : null;
 
       if (workerRegistration !== null) {
-        // Phase 3: Tmux workers (pid=0) check session liveness instead of ownerPid.
-        // After a server restart the ownerPid is from the old process (dead), but the
-        // tmux session may still be alive and working. Falling through to isProcessAlive
-        // would incorrectly mark the task as crashed.
-        const isTmuxWorker = workerRegistration.pid === 0;
-        const isWorkerAlive = isTmuxWorker
-          ? workerRegistration.sessionName
-            ? this.isTmuxSessionAlive(workerRegistration.sessionName)
-            : false // No sessionName — treat as dead (incomplete registration)
-          : this.isProcessAlive(workerRegistration.ownerPid);
-
-        if (isWorkerAlive) {
+        if (this.isWorkerAlive(workerRegistration)) {
+          const isTmuxWorker = workerRegistration.pid === 0;
           this.logger.info(
             isTmuxWorker
               ? 'Running task has live tmux session, skipping'
