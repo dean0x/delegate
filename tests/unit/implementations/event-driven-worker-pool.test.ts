@@ -690,6 +690,148 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
     });
   });
 
+  // ─── AC-11: Adapter cleanup delegation ──────────────────────────────────
+
+  describe('AC-11: adapter.cleanup() delegation', () => {
+    it('calls adapter.cleanup(taskId) when task with systemPrompt completes', async () => {
+      // Build a registry where adapter.cleanup is a tracked vi.fn()
+      const cleanupFn = vi.fn();
+      const registryWithCleanup = createMockAgentRegistry();
+      const adapterWithCleanup = {
+        provider: 'claude',
+        spawn: vi.fn(),
+        spawnInteractive: vi.fn(),
+        kill: vi.fn(),
+        dispose: vi.fn(),
+        cleanup: cleanupFn,
+        buildTmuxCommand: vi.fn().mockImplementation((options: { taskId?: string; prompt?: string; sessionsDir?: string }) =>
+          ok({
+            config: {
+              name: `beat-${options.taskId ?? 'task-unknown'}`,
+              command: 'claude',
+              cwd: '/tmp',
+              taskId: options.taskId ?? 'task-unknown',
+              sessionsDir: options.sessionsDir ?? '/tmp/sessions',
+              agent: 'claude' as const,
+              agentArgs: [],
+            },
+            prompt: options.prompt ?? 'do stuff',
+          }),
+        ),
+      };
+      (registryWithCleanup.get as ReturnType<typeof vi.fn>).mockReturnValue(ok(adapterWithCleanup));
+
+      const poolWithCleanup = buildPool({ agentRegistry: registryWithCleanup });
+
+      // Task with systemPrompt — triggers cleanupFn capture at spawn time
+      const task = { ...buildTask(), systemPrompt: 'You are a coding assistant.' };
+      await poolWithCleanup.spawn(task);
+
+      // Simulate successful exit — cleanupWorkerState is called which invokes cleanupFn
+      tmuxConnector._simulateExit(task.id, 0);
+      await vi.runAllTimersAsync();
+
+      expect(cleanupFn).toHaveBeenCalledWith(task.id);
+    });
+
+    it('continues worker cleanup even when adapter.cleanup() throws', async () => {
+      // Build a registry where adapter.cleanup throws
+      const throwingCleanup = vi.fn().mockImplementation(() => {
+        throw new Error('temp file deletion failed');
+      });
+      const registryWithThrowingCleanup = createMockAgentRegistry();
+      const adapterWithThrowingCleanup = {
+        provider: 'claude',
+        spawn: vi.fn(),
+        spawnInteractive: vi.fn(),
+        kill: vi.fn(),
+        dispose: vi.fn(),
+        cleanup: throwingCleanup,
+        buildTmuxCommand: vi.fn().mockImplementation((options: { taskId?: string; prompt?: string; sessionsDir?: string }) =>
+          ok({
+            config: {
+              name: `beat-${options.taskId ?? 'task-unknown'}`,
+              command: 'claude',
+              cwd: '/tmp',
+              taskId: options.taskId ?? 'task-unknown',
+              sessionsDir: options.sessionsDir ?? '/tmp/sessions',
+              agent: 'claude' as const,
+              agentArgs: [],
+            },
+            prompt: options.prompt ?? 'do stuff',
+          }),
+        ),
+      };
+      (registryWithThrowingCleanup.get as ReturnType<typeof vi.fn>).mockReturnValue(ok(adapterWithThrowingCleanup));
+
+      const poolWithThrowingCleanup = buildPool({ agentRegistry: registryWithThrowingCleanup });
+
+      const task = { ...buildTask(), systemPrompt: 'You are a coding assistant.' };
+      await poolWithThrowingCleanup.spawn(task);
+
+      // Simulate exit — cleanupWorkerState must survive adapter.cleanup() throwing
+      tmuxConnector._simulateExit(task.id, 0);
+      await vi.runAllTimersAsync();
+
+      // Worker is removed from pool despite cleanup() throwing
+      expect(poolWithThrowingCleanup.getWorkerCount()).toBe(0);
+      // Warning is logged for the failure
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Adapter cleanup() threw'),
+        expect.objectContaining({ taskId: task.id }),
+      );
+    });
+  });
+
+  // ─── EC-10: Completion after kill (unknown worker guard) ─────────────────
+
+  describe('EC-10: handleWorkerCompletion for already-removed worker', () => {
+    it('logs a warning (not a crash) when onExit fires after worker has been removed', async () => {
+      const task = buildTask();
+      const spawnResult = await pool.spawn(task);
+      expect(spawnResult.ok).toBe(true);
+      if (!spawnResult.ok) return;
+
+      // Kill the worker — removes it from internal maps
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+      await pool.kill(spawnResult.value.id);
+
+      // Now simulate onExit for the already-removed worker
+      // The callbacks are still stored in the connector — calling _simulateExit
+      // exercises the handleWorkerCompletion guard paths (lines 649-658)
+      tmuxConnector._simulateExit(task.id, 0);
+      await vi.runAllTimersAsync();
+
+      // Must log a warning, not throw
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Worker completion for unknown'),
+        expect.objectContaining({ taskId: task.id }),
+      );
+      // And must NOT emit TaskCompleted / TaskFailed for the already-handled task
+      const completionCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([event]) => event === 'TaskCompleted' || event === 'TaskFailed',
+      );
+      expect(completionCalls).toHaveLength(0);
+    });
+  });
+
+  // ─── EC-11: Worker registration contract ─────────────────────────────────
+
+  describe('EC-11: workerRepository.register call shape', () => {
+    it('registers worker with pid: 0 sentinel and sessionName from tmux handle', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
+
+      expect(workerRepository.register).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pid: 0,
+          taskId: task.id,
+          sessionName: `beat-${task.id}`,
+        }),
+      );
+    });
+  });
+
   // ─── API-1: WorkerPool interface unchanged ───────────────────────────────
 
   describe('API-1: WorkerPool interface', () => {
