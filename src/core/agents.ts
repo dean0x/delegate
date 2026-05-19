@@ -307,6 +307,24 @@ export interface AgentAdapter {
    * @param taskId - The task whose resources should be cleaned up
    */
   cleanup(taskId: string): void;
+
+  /**
+   * Produce a tmux session config + prompt for Phase 3 (WorkerPool rewiring) consumption.
+   * Config is used by TmuxConnector to set up the session; prompt is delivered via send-keys.
+   * Does NOT call TmuxConnector — pure config assembly.
+   *
+   * ARCHITECTURE: TmuxSpawnConfig is imported as a type-only reference from the tmux layer
+   * (src/implementations/tmux/types.ts). Type-only imports carry zero runtime cost and do
+   * not create a value-level dependency. The concrete type will move to src/core when
+   * Phase 3 (WorkerPool rewiring) establishes it as a first-class domain concept.
+   *
+   * Adapters that do not support tmux (e.g. ProcessSpawnerAdapter) must return err with
+   * ErrorCode.INVALID_OPERATION. Adapters that support tmux require a non-empty taskId.
+   */
+  buildTmuxCommand(options: SpawnOptions & { sessionsDir: string }): Result<{
+    readonly config: import('../implementations/tmux/types.js').TmuxSpawnConfig;
+    readonly prompt: string;
+  }>;
 }
 
 /**
