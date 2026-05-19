@@ -1068,8 +1068,14 @@ export class Database implements TransactionRunner {
       },
       {
         version: 28,
-        description: "Remove 'gemini' from loops.judge_agent CHECK constraint (Phase 2, epic #175)",
+        description:
+          "Remove 'gemini' from loops.judge_agent CHECK constraint and tasks.agent column (Phase 2, epic #175)",
         up: (db) => {
+          // Map tasks.agent='gemini' to NULL so existing rows survive Zod's narrowed
+          // z.enum(['claude','codex']).nullable() validation in TaskRowSchema.
+          // The tasks table has no DB-level CHECK on agent, so a simple UPDATE suffices.
+          db.exec(`UPDATE tasks SET agent = NULL WHERE agent = 'gemini'`);
+
           db.exec(`
             CREATE TABLE loops_new (
               id TEXT PRIMARY KEY,

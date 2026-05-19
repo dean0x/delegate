@@ -75,8 +75,17 @@ afterEach(() => {
 // ─── Return shape ───────────────────────────────────────────────────────────
 
 describe('buildTmuxCommand() return shape', () => {
+  let adapter: ClaudeAdapter;
+
+  beforeEach(() => {
+    adapter = new ClaudeAdapter(testConfig);
+  });
+
+  afterEach(() => {
+    adapter.dispose();
+  });
+
   it('returns ok with { config: TmuxSpawnConfig, prompt: string }', () => {
-    const adapter = new ClaudeAdapter(testConfig);
     const result = adapter.buildTmuxCommand(baseOptions);
 
     expect(result.ok).toBe(true);
@@ -95,7 +104,6 @@ describe('buildTmuxCommand() return shape', () => {
   });
 
   it('prompt field equals the input prompt', () => {
-    const adapter = new ClaudeAdapter(testConfig);
     const result = adapter.buildTmuxCommand(baseOptions);
 
     expect(result.ok).toBe(true);
@@ -317,6 +325,16 @@ describe('buildTmuxCommand() — CodexAdapter', () => {
     const cIndex = args.indexOf('-c');
     expect(args[cIndex + 1]).toBe('developer_instructions=You are a code reviewer');
   });
+
+  it('with model: config.agentArgs includes --model <value>', () => {
+    const result = adapter.buildTmuxCommand({ ...baseOptions, model: 'gpt-4o' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const args = result.value.config.agentArgs;
+    const modelIndex = args.indexOf('--model');
+    expect(modelIndex).toBeGreaterThanOrEqual(0);
+    expect(args[modelIndex + 1]).toBe('gpt-4o');
+  });
 });
 
 // ─── ProxiedClaudeAdapter ───────────────────────────────────────────────────
@@ -357,6 +375,38 @@ describe('buildTmuxCommand() — ProxiedClaudeAdapter', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.prompt).toBe('Implement the feature');
+    adapter.dispose();
+  });
+});
+
+// ─── Error path: CLI not in PATH ────────────────────────────────────────────
+
+describe('buildTmuxCommand() — CLI not in PATH', () => {
+  it('ClaudeAdapter: returns err with AGENT_MISCONFIGURED when claude not in PATH', () => {
+    mockIsCommandInPath.mockReturnValue(false);
+
+    const adapter = new ClaudeAdapter(testConfig);
+    const result = adapter.buildTmuxCommand(baseOptions);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.AGENT_MISCONFIGURED);
+    expect(result.error.message).toContain('not found in PATH');
+
+    adapter.dispose();
+  });
+
+  it('CodexAdapter: returns err with AGENT_MISCONFIGURED when codex not in PATH', () => {
+    mockIsCommandInPath.mockReturnValue(false);
+
+    const adapter = new CodexAdapter(testConfig);
+    const result = adapter.buildTmuxCommand(baseOptions);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.AGENT_MISCONFIGURED);
+    expect(result.error.message).toContain('not found in PATH');
+
     adapter.dispose();
   });
 });

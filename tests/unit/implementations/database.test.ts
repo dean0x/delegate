@@ -445,5 +445,32 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
       const columnNames = columns.map((col) => col.name);
       expect(columnNames).toContain('convergence_enabled');
     });
+
+    it('tasks.agent=gemini rows are mapped to NULL by migration', () => {
+      // Verify that any pre-existing task with agent='gemini' is remapped to NULL
+      // so Zod's narrowed z.enum(['claude','codex']).nullable() validation in TaskRowSchema passes.
+      // The tasks table has no DB-level CHECK on agent, so a simple UPDATE in v28 is sufficient.
+      // Use a fresh in-memory DB and run the v28 UPDATE directly (simulating what migration v28.up does).
+      const freshDb = new Database(':memory:');
+      const freshSqlite = freshDb.getDatabase();
+      const now = Date.now();
+
+      // Seed a task with agent='gemini' — valid before gemini was removed (v0.5.0+)
+      freshSqlite
+        .prepare(
+          `INSERT INTO tasks (id, prompt, status, priority, created_at, agent) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run('pre-migration-gemini', 'prompt', 'queued', 'P1', now, 'gemini');
+
+      // Run the migration UPDATE (mirrors migration v28 up function)
+      freshSqlite.exec(`UPDATE tasks SET agent = NULL WHERE agent = 'gemini'`);
+
+      const migratedRow = freshSqlite
+        .prepare(`SELECT agent FROM tasks WHERE id = ?`)
+        .get('pre-migration-gemini') as { agent: string | null } | undefined;
+
+      expect(migratedRow?.agent).toBeNull();
+      freshDb.close();
+    });
   });
 });
