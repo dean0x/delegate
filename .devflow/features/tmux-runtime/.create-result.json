@@ -1,0 +1,12 @@
+{
+  "referencedFiles": [
+    "src/implementations/tmux/types.ts",
+    "src/implementations/tmux/tmux-validator.ts",
+    "src/implementations/tmux/tmux-session-manager.ts",
+    "src/implementations/tmux/tmux-hooks.ts",
+    "src/implementations/tmux/tmux-connector.ts",
+    "src/implementations/tmux/index.ts",
+    "src/core/errors.ts"
+  ],
+  "description": "Use when implementing tmux-based worker processes, adding new agent types to the tmux runtime, debugging session lifecycle or output capture, or understanding the fs.watch sentinel completion pattern. Keywords: tmux, session, worker, spawn, wrapper, sentinel, staleness, fs.watch, send-keys, output capture."
+}

@@ -13,9 +13,9 @@
  * src/implementations/tmux/types.ts because they are implementation concerns.
  */
 
+import type { TaskId } from './domain.js';
 import type { AutobeatError } from './errors.js';
 import type { Result } from './result.js';
-import type { TaskId } from './domain.js';
 
 // ─── Handle ───────────────────────────────────────────────────────────────────
 
@@ -85,10 +85,10 @@ export interface TmuxSessionManagerCorePort {
  * the implementations layer import TmuxSpawnConfig from tmux/types.ts directly.
  */
 export interface TmuxConnectorPort {
-  // spawn config type is TmuxSpawnConfig from tmux/types.ts; kept as unknown here
+  // spawn config type is TmuxSpawnConfig from tmux/types.ts; kept as any here
   // to avoid pulling implementation details into the core layer.
-  // ARCHITECTURE EXCEPTION: `unknown` config breaks the circular dependency.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // ARCHITECTURE EXCEPTION: any config breaks the circular dependency.
+  // biome-ignore lint/suspicious/noExplicitAny: circular dependency — TmuxSpawnConfig lives in implementations layer
   spawn(config: any, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError>;
   destroy(handle: TmuxHandle): Result<void, AutobeatError>;
   sendKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError>;

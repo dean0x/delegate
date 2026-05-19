@@ -18,8 +18,15 @@ import type { Result } from '../../core/result.js';
 // Phase 3: Import consumer-facing types from core/tmux-types.ts so they are
 // available within this module (e.g. TmuxHandle in TmuxSessionResult).
 // These are also re-exported below for backward compat with external consumers.
-import type { TmuxHandle, OutputMessage, SpawnCallbacks } from '../../core/tmux-types.js';
-export type { TmuxHandle, OutputMessage, SpawnCallbacks, TmuxConnectorPort, TmuxSessionManagerCorePort } from '../../core/tmux-types.js';
+import type { OutputMessage, SpawnCallbacks, TmuxHandle } from '../../core/tmux-types.js';
+
+export type {
+  OutputMessage,
+  SpawnCallbacks,
+  TmuxConnectorPort,
+  TmuxHandle,
+  TmuxSessionManagerCorePort,
+} from '../../core/tmux-types.js';
 
 /**
  * Agent types supported by the tmux abstraction layer.

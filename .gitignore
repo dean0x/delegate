@@ -57,11 +57,9 @@ temp/
 launch/
 
 # Internal documentation (keep local only)
-.docs/
 .claude/
 .mcp.json
 output/
 .autobeat/
 
 # Local memory/session files
-.memory/

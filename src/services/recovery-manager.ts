@@ -16,6 +16,7 @@ import {
   WorkerRepository,
 } from '../core/interfaces.js';
 import { ok, Result } from '../core/result.js';
+import type { TmuxSessionManagerCorePort } from '../core/tmux-types.js';
 import { checkOrchestrationLiveness, type Liveness } from './orchestration-liveness.js';
 
 export interface RecoveryManagerDeps {
@@ -27,6 +28,12 @@ export interface RecoveryManagerDeps {
   readonly dependencyRepo: DependencyRepository;
   readonly loopRepo?: LoopRepository;
   readonly orchestrationRepo?: OrchestrationRepository;
+  /**
+   * Phase 3: Optional tmux session manager for liveness checks on tmux workers.
+   * When provided, workers with pid=0 (tmux sentinel) are checked via sessionName
+   * instead of PID. Omitting preserves backward compatibility for process-based workers.
+   */
+  readonly tmuxSessionManager?: TmuxSessionManagerCorePort;
 }
 
 /** 7-day retention window for cleanup of terminal tasks, loops, and orchestrations */
@@ -48,6 +55,7 @@ export class RecoveryManager {
   private readonly dependencyRepo: DependencyRepository;
   private readonly loopRepo?: LoopRepository;
   private readonly orchestrationRepo?: OrchestrationRepository;
+  private readonly tmuxSessionManager?: TmuxSessionManagerCorePort;
 
   constructor({
     taskRepo,
@@ -58,6 +66,7 @@ export class RecoveryManager {
     dependencyRepo,
     loopRepo,
     orchestrationRepo,
+    tmuxSessionManager,
   }: RecoveryManagerDeps) {
     this.taskRepo = taskRepo;
     this.queue = queue;
@@ -67,6 +76,7 @@ export class RecoveryManager {
     this.dependencyRepo = dependencyRepo;
     this.loopRepo = loopRepo;
     this.orchestrationRepo = orchestrationRepo;
+    this.tmuxSessionManager = tmuxSessionManager;
   }
 
   /**
@@ -85,6 +95,20 @@ export class RecoveryManager {
       // ESRCH means the process does not exist
       return false;
     }
+  }
+
+  /**
+   * Phase 3: Check if a tmux worker is alive by session name.
+   * Uses TmuxSessionManagerCorePort.isAlive() for session-based liveness.
+   * Falls back to false (dead) when sessionManager is not configured or check fails.
+   *
+   * DECISION: Tmux workers use pid=0 as sentinel — PID check is meaningless.
+   * Session name is the authoritative identity for tmux-backed workers.
+   */
+  private isTmuxSessionAlive(sessionName: string): boolean {
+    if (!this.tmuxSessionManager) return false;
+    const result = this.tmuxSessionManager.isAlive(sessionName);
+    return result.ok ? result.value : false;
   }
 
   async recover(): Promise<Result<void>> {
@@ -142,7 +166,16 @@ export class RecoveryManager {
     if (!allWorkers.ok) return;
 
     for (const reg of allWorkers.value) {
-      if (!this.isProcessAlive(reg.ownerPid)) {
+      // Phase 3: Tmux workers use pid=0 as sentinel — PID check is meaningless.
+      // Use session liveness check instead when sessionName is available.
+      const isTmuxWorker = reg.pid === 0;
+      const isAlive = isTmuxWorker
+        ? reg.sessionName
+          ? this.isTmuxSessionAlive(reg.sessionName)
+          : false // No sessionName — treat as dead (incomplete registration)
+        : this.isProcessAlive(reg.ownerPid);
+
+      if (!isAlive) {
         const unregResult = this.workerRepo.unregister(reg.workerId);
         if (!unregResult.ok) {
           this.logger.error('Failed to unregister dead worker', unregResult.error, {
@@ -183,12 +216,16 @@ export class RecoveryManager {
             workerId: reg.workerId,
             taskId: reg.taskId,
             deadPid: reg.ownerPid,
+            sessionName: reg.sessionName,
           });
 
           // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
+          const errorMsg = isTmuxWorker
+            ? 'Tmux session died (dead session detected at startup)'
+            : 'Worker process died (dead PID detected)';
           const failedEmitResult = await this.eventBus.emit('TaskFailed', {
             taskId: reg.taskId,
-            error: new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Worker process died (dead PID detected)'),
+            error: new AutobeatError(ErrorCode.SYSTEM_ERROR, errorMsg),
             exitCode: -1,
           });
           if (!failedEmitResult.ok) {
@@ -202,14 +239,18 @@ export class RecoveryManager {
           });
         }
       } else {
-        // PID alive — observability only: warn if heartbeat is stale
+        // Alive — observability only: warn if heartbeat is stale
         if (reg.lastHeartbeat !== undefined && Date.now() - reg.lastHeartbeat > HEARTBEAT_STALENESS_MS) {
-          this.logger.warn('Worker PID alive but heartbeat stale', {
-            workerId: reg.workerId,
-            taskId: reg.taskId,
-            ownerPid: reg.ownerPid,
-            lastHeartbeatAgeMs: Date.now() - reg.lastHeartbeat,
-          });
+          this.logger.warn(
+            isTmuxWorker ? 'Tmux session alive but heartbeat stale' : 'Worker PID alive but heartbeat stale',
+            {
+              workerId: reg.workerId,
+              taskId: reg.taskId,
+              ownerPid: reg.ownerPid,
+              sessionName: reg.sessionName,
+              lastHeartbeatAgeMs: Date.now() - reg.lastHeartbeat,
+            },
+          );
         }
       }
     }

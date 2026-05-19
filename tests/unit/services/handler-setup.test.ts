@@ -72,6 +72,16 @@ describe('handler-setup', () => {
 
     // Worker pool with test spawner wrapped in AgentRegistry
     const agentRegistry = new InMemoryAgentRegistry([new ProcessSpawnerAdapter(new TestProcessSpawner())]);
+    // Minimal no-op tmux connector for handler-setup tests (never spawns real sessions)
+    const noopTmuxConnector = {
+      spawn: vi.fn().mockReturnValue(ok({ sessionName: 'beat-test', taskId: 'test', sessionsDir: '/tmp' })),
+      destroy: vi.fn().mockReturnValue(ok(undefined)),
+      sendKeys: vi.fn().mockReturnValue(ok(undefined)),
+      sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
+      isAlive: vi.fn().mockReturnValue(ok(false)),
+      getActiveHandles: vi.fn().mockReturnValue([]),
+      dispose: vi.fn(),
+    };
     const workerPool = new EventDrivenWorkerPool({
       agentRegistry,
       monitor: resourceMonitor,
@@ -80,6 +90,9 @@ describe('handler-setup', () => {
       outputCapture: new BufferedOutputCapture(config.maxOutputBuffer, eventBus),
       workerRepository: mockWorkerRepo,
       outputRepository: createMockOutputRepository(),
+      // biome-ignore lint/suspicious/noExplicitAny: test-only minimal mock
+      tmuxConnector: noopTmuxConnector as any,
+      sessionsDir: '/tmp/test-sessions',
     });
     container.registerValue('workerPool', workerPool);
 

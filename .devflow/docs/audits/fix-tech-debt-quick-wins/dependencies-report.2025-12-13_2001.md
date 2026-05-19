@@ -1,0 +1,157 @@
+# Dependencies Audit Report
+
+**Branch**: fix/tech-debt-quick-wins
+**Base**: main
+**Date**: 2025-12-13 20:01:00
+
+---
+
+## Executive Summary
+
+This branch modifies `package.json` with a script change only (adding `AUTOBEAT_TEST_MODE=true` to integration tests). **No new dependencies were added or removed.** The dependency configuration remains unchanged.
+
+---
+
+## 🔴 Issues in Your Changes (BLOCKING)
+
+**None identified.**
+
+The only change to `package.json` is a test script modification:
+```diff
+-    "test:integration": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/integration --no-file-parallelism",
++    "test:integration": "AUTOBEAT_TEST_MODE=true NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/integration --no-file-parallelism",
+```
+
+This change:
+- Adds an environment variable for test mode detection
+- Does not affect production dependencies
+- Does not introduce security risks
+
+---
+
+## ⚠️ Issues in Code You Touched (Should Fix)
+
+**None identified for this branch.**
+
+The branch does not modify any dependency declarations, lock files, or import statements that would affect the dependency graph.
+
+---
+
+## ℹ️ Pre-existing Issues (Not Blocking)
+
+### 1. Outdated Dependencies
+
+| Package | Current | Wanted | Latest | Severity |
+|---------|---------|--------|--------|----------|
+| `@types/node` | 24.3.0 | 24.10.3 | 25.0.1 | LOW - Type definitions only |
+| `better-sqlite3` | 12.4.1 | 12.5.0 | 12.5.0 | MEDIUM - Patch release |
+| `simple-git` | 3.28.0 | 3.30.0 | 3.30.0 | MEDIUM - Minor release |
+| `tsx` | 4.20.4 | 4.21.0 | 4.21.0 | LOW - Dev only |
+| `typescript` | 5.9.2 | 5.9.3 | 5.9.3 | LOW - Patch release |
+| `vitest` | 3.2.4 | 3.2.4 | 4.0.15 | HIGH - Major version available |
+| `@vitest/coverage-v8` | 3.2.4 | 3.2.4 | 4.0.15 | HIGH - Major version available |
+| `@vitest/ui` | 3.2.4 | 3.2.4 | 4.0.15 | HIGH - Major version available |
+| `zod` | 3.25.76 | 3.25.76 | 4.1.13 | HIGH - Major version available |
+
+**Analysis:**
+
+- **Vitest 4.x**: Major release with potential breaking changes. The caret range `^3.2.4` prevents auto-update. Review migration guide before upgrading.
+- **Zod 4.x**: Major release with API changes. The caret range `^3.25.76` prevents auto-update. Consider migration in separate PR.
+- **better-sqlite3**: Patch update available (12.4.1 -> 12.5.0). Safe to update.
+- **simple-git**: Minor update available (3.28.0 -> 3.30.0). Review changelog before update.
+
+### 2. Potentially Unused Dependencies
+
+Detected by depcheck:
+- `@vitest/coverage-v8`: Listed as potentially unused
+
+**Analysis**: This is a false positive. The package is used via `vitest.config.ts` coverage configuration, which depcheck does not detect.
+
+### 3. Security Vulnerabilities
+
+```
+npm audit result:
+- Critical: 0
+- High: 0  
+- Moderate: 0
+- Low: 0
+- Total: 0 vulnerabilities
+```
+
+**No known vulnerabilities detected.**
+
+### 4. Dependency Count
+
+| Category | Count |
+|----------|-------|
+| Production | 126 (4 direct + transitive) |
+| Development | 164 (8 direct + transitive) |
+| Optional | 48 |
+| Total | 289 |
+
+### 5. Version Pinning Observations
+
+Current approach uses caret ranges (`^`):
+- `"@modelcontextprotocol/sdk": "^1.24.3"` - Latest available, good
+- `"better-sqlite3": "^12.4.1"` - Patch behind, minor issue
+- `"simple-git": "^3.28.0"` - Minor behind, minor issue
+- `"zod": "^3.25.76"` - Major behind but pinned to v3.x
+
+**Recommendation**: Consider using exact versions for production dependencies to ensure reproducible builds.
+
+### 6. License Compatibility
+
+All dependencies use permissive licenses (MIT, Apache-2.0, ISC):
+- No GPL or AGPL dependencies detected
+- Compatible with MIT license of this project
+
+---
+
+## Recommendations
+
+### Immediate (This PR)
+None required. The change is safe to merge.
+
+### Short-term (Separate PR)
+1. Update patch-level dependencies:
+   ```bash
+   npm update better-sqlite3 simple-git typescript tsx
+   ```
+
+2. Consider pinning production dependencies:
+   ```json
+   "dependencies": {
+     "@modelcontextprotocol/sdk": "1.24.3",
+     "better-sqlite3": "12.5.0",
+     "simple-git": "3.30.0",
+     "zod": "3.25.76"
+   }
+   ```
+
+### Medium-term (Planned Work)
+1. **Vitest 4.x Migration**: Review breaking changes and plan upgrade
+2. **Zod 4.x Migration**: Evaluate API changes and migration effort
+3. **Node.js 22+ Compatibility**: `@types/node` 25.x suggests Node 22 types
+
+---
+
+## Summary
+
+| Category | Count |
+|----------|-------|
+| 🔴 BLOCKING in Your Changes | 0 |
+| ⚠️ SHOULD FIX (Code You Touched) | 0 |
+| ℹ️ PRE-EXISTING (Not Blocking) | 9 outdated packages |
+
+**Security Vulnerabilities**: 0
+
+**Dependencies Score**: 8/10
+- Deductions: Major versions behind for vitest and zod (-2)
+
+**Merge Recommendation**: ✅ **APPROVED**
+
+The branch does not introduce any new dependencies or dependency-related issues. Pre-existing outdated packages should be addressed in a separate maintenance PR.
+
+---
+
+*Report generated by Claude Code Dependencies Audit*

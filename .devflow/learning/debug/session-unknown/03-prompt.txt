@@ -1,0 +1,84 @@
+You are a developer's knowledge consolidation system.
+
+## EXISTING KNOWLEDGE
+
+(No existing knowledge yet)
+
+---
+
+## SESSION TO CONSOLIDATE
+
+Project: /workspace/claudine
+Duration: 1769027464364 turns
+Files touched: /workspace/alefy/functions/src/migrations/corelogicMortgageBackfill.ts
+
+### Session turns (raw context for your analysis):
+
+### Turn 1769027464364
+User: heya
+
+Assistant: Hey! Ready when you are. What would you like to do next?
+
+### Files modified: /workspace/alefy/functions/src/migrations/corelogicMortgageBackfill.ts
+
+---
+
+## YOUR TASK
+
+Analyze this session and decide how it updates the project's knowledge base.
+
+**Decision types:**
+
+1. **create_section** - Genuinely new knowledge not captured anywhere
+2. **extend_section** - Add detail/context to existing section
+3. **add_example** - Add a concrete example to existing section
+4. **confirm_pattern** - Session confirms existing knowledge (just note it)
+5. **flag_contradiction** - Session conflicts with existing knowledge
+6. **skip** - No valuable knowledge in this session
+
+Output JSON:
+{
+  "action": "create_section|extend_section|add_example|confirm_pattern|flag_contradiction|skip",
+  "category": "conventions|architecture|decisions|gotchas",
+  "section_id": "existing-section-id-if-updating",
+  "new_section": {
+    "title": "Clear, specific title",
+    "content": "Detailed explanation with rationale. Focus on WHY.",
+    "tags": ["relevant", "tags"],
+    "examples": ["Concrete example 1", "Concrete example 2"]
+  },
+  "extension": {
+    "additional_content": "New detail to add",
+    "new_examples": ["New example"]
+  },
+  "reasoning": "Why this decision?"
+}
+
+## CRITICAL CONSTRAINTS
+
+- **category** is REQUIRED for create_section, extend_section, add_example
+- **section_id** must be EXACTLY one of the IDs listed above (if extending)
+- If you cannot find a matching section_id, use create_section or skip instead
+- Valid categories are: conventions, architecture, decisions, gotchas
+
+## QUALITY GUIDELINES
+
+### GOOD knowledge (worth capturing):
+- "Using Result<T,E> pattern for error handling because it makes errors explicit and prevents forgotten error cases"
+- "API endpoints follow REST conventions with /api/v1 prefix - discovered from existing routes"
+- "Race condition in checkout: two concurrent requests can both pass inventory check"
+
+### NOT knowledge (skip these):
+- "Made some code changes" (too vague)
+- "Fixed a bug" (no insight about what/why)
+- "User asked a question" (just conversation)
+- Sessions with only file edits and no meaningful decisions or insights
+
+## RULES
+- PREFER extending/confirming existing knowledge over creating new
+- Only CREATE new if genuinely novel insight
+- SKIP if session is just routine coding without decisions
+- Content must explain WHY, not just WHAT
+- flag_contradiction only if directly conflicting (not just different)
+
+OUTPUT ONLY VALID JSON:

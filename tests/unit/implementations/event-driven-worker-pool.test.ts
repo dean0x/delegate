@@ -1,50 +1,119 @@
-import { EventEmitter } from 'events';
+/**
+ * Unit tests for EventDrivenWorkerPool (Phase 3: tmux-backed workers)
+ *
+ * Uses MockTmuxConnector with helpers:
+ *   _simulateExit(taskId, code) — triggers onExit callback
+ *   _simulateOutput(taskId, msg) — triggers onOutput callback
+ *
+ * All TmuxConnectorPort methods are vi.fn() returning ok()
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRegistry } from '../../../src/core/agents';
 import type { Task } from '../../../src/core/domain';
 import { TaskId, WorkerId } from '../../../src/core/domain';
 import { AutobeatError, ErrorCode } from '../../../src/core/errors';
 import type { EventBus } from '../../../src/core/events/event-bus';
-import type { Logger, OutputCapture, ProcessSpawner, ResourceMonitor } from '../../../src/core/interfaces';
+import type { Logger, OutputCapture, ResourceMonitor } from '../../../src/core/interfaces';
 import { err, ok } from '../../../src/core/result';
-import { InMemoryAgentRegistry } from '../../../src/implementations/agent-registry';
-import { EventDrivenWorkerPool } from '../../../src/implementations/event-driven-worker-pool';
-import { ProcessSpawnerAdapter } from '../../../src/implementations/process-spawner-adapter';
+import type { OutputMessage, SpawnCallbacks, TmuxConnectorPort, TmuxHandle } from '../../../src/core/tmux-types';
+import {
+  EventDrivenWorkerPool,
+  type EventDrivenWorkerPoolDeps,
+} from '../../../src/implementations/event-driven-worker-pool';
 import { TaskFactory } from '../../fixtures/factories';
 import { createMockLogger, createMockOutputRepository, createMockWorkerRepository } from '../../fixtures/mocks';
 
-// --- Mock Factories ---
+// ─── MockTmuxConnector ───────────────────────────────────────────────────────
 
-const createMockProcess = () => {
-  const proc = new EventEmitter() as EventEmitter & {
-    pid: number;
-    killed: boolean;
-    kill: ReturnType<typeof vi.fn>;
-    stdin: EventEmitter;
-    stdout: EventEmitter;
-    stderr: EventEmitter;
+type SpawnCallbacksMap = Map<string, SpawnCallbacks>; // taskId → callbacks
+
+function createMockTmuxConnector(): TmuxConnectorPort & {
+  _simulateExit(taskId: string, code: number | null): void;
+  _simulateOutput(taskId: string, msg: OutputMessage): void;
+  _getCallbacks(): SpawnCallbacksMap;
+} {
+  const callbacksMap: SpawnCallbacksMap = new Map();
+
+  const connector: ReturnType<typeof createMockTmuxConnector> = {
+    spawn: vi.fn().mockImplementation((config: { taskId: string; sessionsDir: string }, callbacks: SpawnCallbacks) => {
+      const sessionName = `beat-${config.taskId}`;
+      callbacksMap.set(config.taskId, callbacks);
+      const handle: TmuxHandle = {
+        sessionName,
+        taskId: config.taskId as ReturnType<typeof TaskId>,
+        sessionsDir: config.sessionsDir,
+      };
+      return ok(handle);
+    }),
+    destroy: vi.fn().mockReturnValue(ok(undefined)),
+    sendKeys: vi.fn().mockReturnValue(ok(undefined)),
+    sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
+    isAlive: vi.fn().mockReturnValue(ok(true)),
+    getActiveHandles: vi.fn().mockReturnValue([]),
+    dispose: vi.fn(),
+
+    _simulateExit(taskId: string, code: number | null): void {
+      const callbacks = callbacksMap.get(taskId);
+      if (!callbacks) throw new Error(`No callbacks registered for taskId: ${taskId}`);
+      callbacks.onExit(code);
+    },
+
+    _simulateOutput(taskId: string, msg: OutputMessage): void {
+      const callbacks = callbacksMap.get(taskId);
+      if (!callbacks) throw new Error(`No callbacks registered for taskId: ${taskId}`);
+      callbacks.onOutput(msg);
+    },
+
+    _getCallbacks(): SpawnCallbacksMap {
+      return callbacksMap;
+    },
   };
-  proc.pid = 12345;
-  proc.killed = false;
-  proc.kill = vi.fn((signal?: string) => {
-    proc.killed = true;
-  });
-  proc.stdin = new EventEmitter();
-  proc.stdout = new EventEmitter();
-  proc.stderr = new EventEmitter();
-  return proc;
-};
 
-const createMockSpawner = () => {
-  const proc = createMockProcess();
+  return connector;
+}
+
+// ─── Mock agent adapter ───────────────────────────────────────────────────────
+
+function createMockAgentRegistry(
+  opts: {
+    buildTmuxCommandOverride?: (options: { taskId?: string; prompt?: string; sessionsDir?: string }) => unknown;
+  } = {},
+): AgentRegistry {
+  const buildTmuxCommandFn = opts.buildTmuxCommandOverride
+    ? vi.fn().mockImplementation(opts.buildTmuxCommandOverride)
+    : vi.fn().mockImplementation((options: { taskId?: string; prompt?: string; sessionsDir?: string }) =>
+        ok({
+          config: {
+            name: `beat-${options.taskId ?? 'task-unknown'}`,
+            command: 'claude',
+            cwd: '/tmp',
+            taskId: options.taskId ?? 'task-unknown',
+            sessionsDir: options.sessionsDir ?? '/tmp/sessions',
+            agent: 'claude' as const,
+            agentArgs: [],
+          },
+          prompt: options.prompt ?? 'do stuff',
+        }),
+      );
+
   return {
-    spawner: {
-      spawn: vi.fn().mockReturnValue(ok({ process: proc, pid: proc.pid })),
-      kill: vi.fn().mockReturnValue(ok(undefined)),
-    } as unknown as ProcessSpawner,
-    process: proc,
-  };
-};
+    get: vi.fn().mockReturnValue(
+      ok({
+        provider: 'claude',
+        spawn: vi.fn(),
+        spawnInteractive: vi.fn(),
+        kill: vi.fn(),
+        dispose: vi.fn(),
+        cleanup: vi.fn(),
+        buildTmuxCommand: buildTmuxCommandFn,
+      }),
+    ),
+    has: vi.fn().mockReturnValue(true),
+    list: vi.fn().mockReturnValue(['claude']),
+    dispose: vi.fn(),
+  } as unknown as AgentRegistry;
+}
 
 const createMockMonitor = () =>
   ({
@@ -74,22 +143,18 @@ const createTestEventBus = () =>
     dispose: vi.fn(),
   }) as unknown as EventBus;
 
-/**
- * Helper to build a Task object without using withId() (which mutates a frozen object).
- * Spreads the frozen task from the factory into a plain mutable object.
- * Sets agent='claude' by default since worker pool requires task.agent to be set.
- */
 const buildTask = (configure?: (factory: TaskFactory) => void): Task => {
   const factory = new TaskFactory();
   if (configure) configure(factory);
   return { ...factory.build(), agent: 'claude' as const };
 };
 
-describe('EventDrivenWorkerPool', () => {
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
   let pool: EventDrivenWorkerPool;
-  let spawner: ProcessSpawner;
+  let tmuxConnector: ReturnType<typeof createMockTmuxConnector>;
   let agentRegistry: AgentRegistry;
-  let mockProcess: ReturnType<typeof createMockProcess>;
   let monitor: ResourceMonitor;
   let logger: Logger;
   let eventBus: EventBus;
@@ -97,22 +162,10 @@ describe('EventDrivenWorkerPool', () => {
   let workerRepository: ReturnType<typeof createMockWorkerRepository>;
   let outputRepository: ReturnType<typeof createMockOutputRepository>;
 
-  beforeEach(() => {
-    vi.useFakeTimers();
-    const spawnerMock = createMockSpawner();
-    spawner = spawnerMock.spawner;
-    mockProcess = spawnerMock.process;
-    monitor = createMockMonitor();
-    logger = createMockLogger();
-    eventBus = createTestEventBus();
-    outputCapture = createMockOutputCapture();
-    workerRepository = createMockWorkerRepository();
-    outputRepository = createMockOutputRepository();
+  const SESSIONS_DIR = '/tmp/autobeat/sessions';
 
-    // Wrap ProcessSpawner in AgentRegistry for backward compatibility
-    agentRegistry = new InMemoryAgentRegistry([new ProcessSpawnerAdapter(spawner)]);
-
-    pool = new EventDrivenWorkerPool({
+  function buildPool(deps?: Partial<EventDrivenWorkerPoolDeps>): EventDrivenWorkerPool {
+    return new EventDrivenWorkerPool({
       agentRegistry,
       monitor,
       logger,
@@ -120,7 +173,23 @@ describe('EventDrivenWorkerPool', () => {
       outputCapture,
       workerRepository,
       outputRepository,
+      tmuxConnector,
+      sessionsDir: SESSIONS_DIR,
+      ...deps,
     });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    tmuxConnector = createMockTmuxConnector();
+    agentRegistry = createMockAgentRegistry();
+    monitor = createMockMonitor();
+    logger = createMockLogger();
+    eventBus = createTestEventBus();
+    outputCapture = createMockOutputCapture();
+    workerRepository = createMockWorkerRepository();
+    outputRepository = createMockOutputRepository();
+    pool = buildPool();
   });
 
   afterEach(() => {
@@ -128,821 +197,485 @@ describe('EventDrivenWorkerPool', () => {
     vi.clearAllMocks();
   });
 
-  // --- spawn ---
+  // ─── AC-1: Uses TmuxConnectorPort (not ChildProcess/ProcessConnector) ─────
 
-  describe('spawn', () => {
-    it('should return WORKER_SPAWN_FAILED when task has no agent assigned', async () => {
-      const task = { ...buildTask(), agent: undefined } as unknown as Task;
+  describe('AC-1: TmuxConnectorPort usage', () => {
+    it('calls tmuxConnector.spawn on successful spawn', async () => {
+      const task = buildTask((f) => f.withPrompt('do stuff'));
+      await pool.spawn(task);
+      expect(tmuxConnector.spawn).toHaveBeenCalled();
+    });
 
+    it('calls tmuxConnector.sendKeys to deliver prompt after spawn', async () => {
+      const task = buildTask((f) => f.withPrompt('run tests'));
+      await pool.spawn(task);
+      expect(tmuxConnector.sendKeys).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionName: expect.stringContaining('beat-') }),
+        expect.stringContaining('run tests'),
+      );
+    });
+  });
+
+  // ─── AC-2: WorkerState has handle: TmuxHandle ────────────────────────────
+
+  describe('AC-2: Worker fields', () => {
+    it('returns worker with pid=0 (tmux sentinel)', async () => {
+      const task = buildTask();
       const result = await pool.spawn(task);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.pid).toBe(0);
+    });
 
+    it('returns worker with valid startedAt and taskId', async () => {
+      const task = buildTask();
+      const result = await pool.spawn(task);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskId).toBe(task.id);
+      expect(result.value.startedAt).toBeGreaterThan(0);
+    });
+  });
+
+  // ─── AC-3: Worker ID format ───────────────────────────────────────────────
+
+  describe('AC-3: Worker ID format', () => {
+    it('uses worker-beat-{taskId} format', async () => {
+      const task = buildTask();
+      const result = await pool.spawn(task);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.id).toBe(WorkerId(`worker-beat-${task.id}`));
+    });
+  });
+
+  // ─── AC-4: Kill sequence ──────────────────────────────────────────────────
+
+  describe('AC-4: kill() sends C-c then destroy', () => {
+    it('sends C-c via sendControlKeys', async () => {
+      const task = buildTask();
+      const spawnResult = await pool.spawn(task);
+      expect(spawnResult.ok).toBe(true);
+      if (!spawnResult.ok) return;
+
+      // isAlive: true on first call (before C-c), false on subsequent poll checks
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(ok(true)) // initial alive check → enters kill flow
+        .mockReturnValue(ok(false)); // poll check → session died, exit loop
+
+      const killPromise = pool.kill(spawnResult.value.id);
+      // Advance timers to unblock the first 250ms poll sleep
+      await vi.advanceTimersByTimeAsync(500);
+      await killPromise;
+
+      expect(tmuxConnector.sendControlKeys).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionName: expect.any(String) }),
+        'C-c',
+      );
+    });
+
+    it('calls destroy after grace period when isAlive stays true', async () => {
+      const task = buildTask();
+      const spawnResult = await pool.spawn(task);
+      expect(spawnResult.ok).toBe(true);
+      if (!spawnResult.ok) return;
+
+      // isAlive always returns true — force-destroy should be called
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(true));
+
+      const killPromise = pool.kill(spawnResult.value.id);
+      // Advance fake timers past the 5s grace period
+      await vi.advanceTimersByTimeAsync(6000);
+      await killPromise;
+
+      expect(tmuxConnector.destroy).toHaveBeenCalled();
+    });
+
+    it('skips destroy when session is already dead', async () => {
+      const task = buildTask();
+      const spawnResult = await pool.spawn(task);
+      expect(spawnResult.ok).toBe(true);
+      if (!spawnResult.ok) return;
+
+      // isAlive returns false immediately
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+
+      await pool.kill(spawnResult.value.id);
+
+      expect(tmuxConnector.destroy).not.toHaveBeenCalled();
+    });
+
+    it('returns error for unknown worker ID', async () => {
+      const result = await pool.kill(WorkerId('nonexistent-worker'));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect((result.error as AutobeatError).code).toBe(ErrorCode.WORKER_NOT_FOUND);
+    });
+  });
+
+  // ─── AC-5: Heartbeat ─────────────────────────────────────────────────────
+
+  describe('AC-5: Heartbeat calls isAlive every 30s', () => {
+    it('triggers cleanupWorkerState when isAlive returns false', async () => {
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+
+      const task = buildTask();
+      await pool.spawn(task);
+
+      // Advance 30s to trigger heartbeat
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      // Worker should have been cleaned up — getWorkerForTask returns null
+      const workerResult = pool.getWorkerForTask(task.id);
+      expect(workerResult.ok).toBe(true);
+      if (!workerResult.ok) return;
+      expect(workerResult.value).toBeNull();
+    });
+  });
+
+  // ─── AC-6: Spawn flow ────────────────────────────────────────────────────
+
+  describe('AC-6: Spawn flow', () => {
+    it('returns error when task has no agent assigned', async () => {
+      const task = { ...buildTask(), agent: undefined } as unknown as Task;
+      const result = await pool.spawn(task);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect((result.error as AutobeatError).code).toBe(ErrorCode.WORKER_SPAWN_FAILED);
-      expect(result.error.message).toContain('no agent assigned');
     });
 
-    it('should spawn successfully and return worker with correct fields', async () => {
-      const task = buildTask((f) => f.withPrompt('do stuff'));
-
-      const result = await pool.spawn(task);
-
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-
-      const worker = result.value;
-      expect(worker.id).toBe(WorkerId(`worker-${mockProcess.pid}`));
-      expect(worker.taskId).toBe(task.id);
-      expect(worker.pid).toBe(mockProcess.pid);
-      expect(worker.startedAt).toBeGreaterThan(0);
-      expect(worker.cpuUsage).toBe(0);
-      expect(worker.memoryUsage).toBe(0);
-    });
-
-    it('should return error when resources are insufficient (canSpawnWorker returns false)', async () => {
+    it('returns error when resources are insufficient', async () => {
       (monitor.canSpawnWorker as ReturnType<typeof vi.fn>).mockResolvedValue(ok(false));
-      const task = buildTask();
-
-      const result = await pool.spawn(task);
-
+      const result = await pool.spawn(buildTask());
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error).toBeInstanceOf(AutobeatError);
       expect((result.error as AutobeatError).code).toBe(ErrorCode.INSUFFICIENT_RESOURCES);
     });
 
-    it('should return error when canSpawnWorker returns err', async () => {
+    it('returns error when canSpawnWorker returns err', async () => {
       const monitorError = new AutobeatError(ErrorCode.RESOURCE_MONITORING_FAILED, 'monitor broken');
       (monitor.canSpawnWorker as ReturnType<typeof vi.fn>).mockResolvedValue(err(monitorError));
-      const task = buildTask();
-
-      const result = await pool.spawn(task);
-
+      const result = await pool.spawn(buildTask());
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error).toBe(monitorError);
     });
 
-    it('should propagate agent registry errors without wrapping', async () => {
+    it('propagates agent registry errors', async () => {
       const registryError = new AutobeatError(ErrorCode.AGENT_NOT_FOUND, "Agent 'unknown' not found");
-      // Replace registry with one that returns an error
       const failRegistry = {
         get: vi.fn().mockReturnValue(err(registryError)),
         has: vi.fn().mockReturnValue(false),
         list: vi.fn().mockReturnValue([]),
         dispose: vi.fn(),
       } as unknown as AgentRegistry;
-      const failPool = new EventDrivenWorkerPool({
-        agentRegistry: failRegistry,
-        monitor,
-        logger,
-        eventBus,
-        outputCapture,
-        workerRepository,
-        outputRepository,
-      });
-      const task = buildTask();
 
-      const result = await failPool.spawn(task);
-
+      const failPool = buildPool({ agentRegistry: failRegistry });
+      const result = await failPool.spawn(buildTask());
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error).toBe(registryError);
-      expect((result.error as AutobeatError).code).toBe(ErrorCode.AGENT_NOT_FOUND);
     });
 
-    it('should propagate adapter spawn errors without wrapping', async () => {
-      const spawnError = new AutobeatError(
-        ErrorCode.AGENT_MISCONFIGURED,
-        "Agent 'claude' is misconfigured: CLI not found",
-      );
-      const failAdapter = {
-        provider: 'claude' as const,
-        spawn: vi.fn().mockReturnValue(err(spawnError)),
-        kill: vi.fn().mockReturnValue(ok(undefined)),
+    it('returns error when buildTmuxCommand fails', async () => {
+      const buildError = new AutobeatError(ErrorCode.AGENT_MISCONFIGURED, 'No sessionsDir');
+      const badRegistry = {
+        get: vi.fn().mockReturnValue(
+          ok({
+            provider: 'claude',
+            spawn: vi.fn(),
+            spawnInteractive: vi.fn(),
+            kill: vi.fn(),
+            dispose: vi.fn(),
+            cleanup: vi.fn(),
+            buildTmuxCommand: vi.fn().mockReturnValue(err(buildError)),
+          }),
+        ),
+        has: vi.fn().mockReturnValue(true),
+        list: vi.fn().mockReturnValue(['claude']),
         dispose: vi.fn(),
-      };
-      const failRegistry = new InMemoryAgentRegistry([failAdapter]);
-      const failPool = new EventDrivenWorkerPool({
-        agentRegistry: failRegistry,
-        monitor,
-        logger,
-        eventBus,
-        outputCapture,
-        workerRepository,
-        outputRepository,
-      });
-      const task = buildTask();
+      } as unknown as AgentRegistry;
 
-      const result = await failPool.spawn(task);
-
+      const failPool = buildPool({ agentRegistry: badRegistry });
+      const result = await failPool.spawn(buildTask());
       expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.error).toBe(spawnError);
-      expect((result.error as AutobeatError).code).toBe(ErrorCode.AGENT_MISCONFIGURED);
     });
 
-    it('should use task.workingDirectory when provided', async () => {
-      const task = buildTask((f) => f.withWorkingDirectory('/my/project'));
-
-      await pool.spawn(task);
-
-      expect(spawner.spawn as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
-        expect.objectContaining({
-          prompt: task.prompt,
-          workingDirectory: '/my/project',
-          taskId: task.id,
-          model: task.model,
-        }),
+    it('cleans up when sendKeys fails after spawn (step 10 failure)', async () => {
+      (tmuxConnector.sendKeys as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+        err(new AutobeatError(ErrorCode.TMUX_SEND_KEYS_FAILED, 'send failed')),
       );
-    });
 
-    it('should fall back to process.cwd() when no workingDirectory provided', async () => {
-      const task = { ...buildTask(), workingDirectory: undefined } as Task;
-
-      await pool.spawn(task);
-
-      expect(spawner.spawn as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
-        expect.objectContaining({
-          prompt: task.prompt,
-          workingDirectory: process.cwd(),
-          taskId: task.id,
-          model: task.model,
-        }),
-      );
-    });
-
-    it('should increase worker count after successful spawn', async () => {
-      expect(pool.getWorkerCount()).toBe(0);
-
-      const task = buildTask();
-      await pool.spawn(task);
-
-      expect(pool.getWorkerCount()).toBe(1);
-    });
-
-    it('should map task to worker via getWorkerForTask', async () => {
       const task = buildTask();
       const result = await pool.spawn(task);
-      if (!result.ok) return;
-
-      const lookup = pool.getWorkerForTask(task.id);
-      expect(lookup.ok).toBe(true);
-      if (!lookup.ok) return;
-      expect(lookup.value).not.toBeNull();
-      expect(lookup.value!.id).toBe(result.value.id);
-    });
-  });
-
-  // --- kill ---
-
-  describe('kill', () => {
-    it('should skip process.kill but still clean up state when process is already killed', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      expect(spawnResult.ok).toBe(true);
-      if (!spawnResult.ok) return;
-
-      // Simulate process already killed externally
-      mockProcess.killed = true;
-      mockProcess.kill.mockClear();
-
-      await pool.kill(spawnResult.value.id);
-
-      // process.kill should NOT have been called (process.killed was true)
-      expect(mockProcess.kill).not.toHaveBeenCalled();
-      // But state should still be cleaned up
-      expect(pool.getWorkerCount()).toBe(0);
-      expect(monitor.decrementWorkerCount as ReturnType<typeof vi.fn>).toHaveBeenCalled();
-    });
-
-    it('should return error for unknown worker', async () => {
-      const unknownId = WorkerId('worker-nonexistent');
-
-      const result = await pool.kill(unknownId);
 
       expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect((result.error as AutobeatError).code).toBe(ErrorCode.WORKER_NOT_FOUND);
-    });
-
-    it('should kill process with SIGTERM', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      if (!spawnResult.ok) return;
-
-      await pool.kill(spawnResult.value.id);
-
-      expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
-    });
-
-    it('should clean up worker state (removed from getWorker and getWorkerForTask)', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      if (!spawnResult.ok) return;
-      const workerId = spawnResult.value.id;
-
-      await pool.kill(workerId);
-
-      const workerResult = pool.getWorker(workerId);
-      expect(workerResult.ok).toBe(true);
-      if (workerResult.ok) {
-        expect(workerResult.value).toBeNull();
-      }
-
-      const taskWorkerResult = pool.getWorkerForTask(task.id);
-      expect(taskWorkerResult.ok).toBe(true);
-      if (taskWorkerResult.ok) {
-        expect(taskWorkerResult.value).toBeNull();
-      }
-    });
-
-    it('should decrement monitor worker count', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      if (!spawnResult.ok) return;
-
-      await pool.kill(spawnResult.value.id);
-
-      expect(monitor.decrementWorkerCount as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce();
+      // Session should be destroyed on sendKeys failure
+      expect(tmuxConnector.destroy).toHaveBeenCalled();
+      // Worker should not be registered
+      expect(pool.getWorkerCount()).toBe(0);
     });
   });
 
-  // --- killAll ---
+  // ─── AC-7: Output routing ────────────────────────────────────────────────
 
-  describe('killAll', () => {
-    it('should return ok immediately when pool is empty', async () => {
-      expect(pool.getWorkerCount()).toBe(0);
+  describe('AC-7: Output flows via onOutput → OutputCapture', () => {
+    it('routes stdout messages to outputCapture.capture', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
 
-      const result = await pool.killAll();
+      tmuxConnector._simulateOutput(task.id, {
+        sequence: 1,
+        timestamp: new Date().toISOString(),
+        type: 'stdout',
+        content: 'hello world',
+      });
 
-      expect(result.ok).toBe(true);
-      expect(pool.getWorkerCount()).toBe(0);
+      expect(outputCapture.capture).toHaveBeenCalledWith(task.id, 'stdout', 'hello world');
     });
 
-    it('should kill all workers', async () => {
-      const task1 = buildTask();
-      await pool.spawn(task1);
+    it('routes stderr messages to outputCapture.capture', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
 
-      // Create a second mock process for the second spawn
-      const proc2 = createMockProcess();
-      proc2.pid = 99999;
-      (spawner.spawn as ReturnType<typeof vi.fn>).mockReturnValue(ok({ process: proc2, pid: proc2.pid }));
+      tmuxConnector._simulateOutput(task.id, {
+        sequence: 2,
+        timestamp: new Date().toISOString(),
+        type: 'stderr',
+        content: 'error output',
+      });
+
+      expect(outputCapture.capture).toHaveBeenCalledWith(task.id, 'stderr', 'error output');
+    });
+
+    it('routes result messages to stdout (EC-7)', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
+
+      tmuxConnector._simulateOutput(task.id, {
+        sequence: 3,
+        timestamp: new Date().toISOString(),
+        type: 'result',
+        content: '{"ok": true}',
+      });
+
+      expect(outputCapture.capture).toHaveBeenCalledWith(task.id, 'stdout', '{"ok": true}');
+    });
+  });
+
+  // ─── AC-8: onExit callback ───────────────────────────────────────────────
+
+  describe('AC-8: onExit fires → flush → clear → handleWorkerCompletion', () => {
+    it('emits TaskCompleted on exit code 0', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
+
+      tmuxConnector._simulateExit(task.id, 0);
+
+      // Allow async operations to settle
+      await vi.runAllTimersAsync();
+
+      expect(eventBus.emit).toHaveBeenCalledWith('TaskCompleted', expect.objectContaining({ taskId: task.id }));
+    });
+
+    it('emits TaskFailed on non-zero exit code', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
+
+      tmuxConnector._simulateExit(task.id, 1);
+      await vi.runAllTimersAsync();
+
+      expect(eventBus.emit).toHaveBeenCalledWith('TaskFailed', expect.objectContaining({ taskId: task.id }));
+    });
+
+    it('maps null exit code to 0 (EC-8)', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
+
+      tmuxConnector._simulateExit(task.id, null);
+      await vi.runAllTimersAsync();
+
+      expect(eventBus.emit).toHaveBeenCalledWith('TaskCompleted', expect.objectContaining({ taskId: task.id }));
+    });
+
+    it('clears outputCapture after completion', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
+
+      // Simulate non-empty output so flush is triggered
+      (outputCapture.getOutput as ReturnType<typeof vi.fn>).mockReturnValue(
+        ok({ stdout: ['line'], stderr: [], taskId: task.id, totalSize: 10 }),
+      );
+
+      tmuxConnector._simulateExit(task.id, 0);
+      await vi.runAllTimersAsync();
+
+      expect(outputCapture.clear).toHaveBeenCalledWith(task.id);
+    });
+  });
+
+  // ─── EC-1: Double completion guard ──────────────────────────────────────
+
+  describe('EC-1: Double completion guard', () => {
+    it('does not emit TaskCompleted twice if onExit fires twice', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
+
+      tmuxConnector._simulateExit(task.id, 0);
+      tmuxConnector._simulateExit(task.id, 0);
+      await vi.runAllTimersAsync();
+
+      const completedCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([event]) => event === 'TaskCompleted',
+      );
+      expect(completedCalls).toHaveLength(1);
+    });
+  });
+
+  // ─── AC-9: killAll ───────────────────────────────────────────────────────
+
+  describe('AC-9: killAll destroys all sessions + dispose', () => {
+    it('kills all workers and calls connector.dispose()', async () => {
+      const task1 = buildTask();
       const task2 = buildTask();
+      await pool.spawn(task1);
       await pool.spawn(task2);
 
-      expect(pool.getWorkerCount()).toBe(2);
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
 
       const result = await pool.killAll();
-
       expect(result.ok).toBe(true);
-      expect(pool.getWorkerCount()).toBe(0);
+      expect(tmuxConnector.dispose).toHaveBeenCalled();
     });
 
-    it('should return ok even if some kills fail', async () => {
-      const task = buildTask();
-      await pool.spawn(task);
-
-      // Make the process.kill throw to simulate kill failure
-      mockProcess.kill = vi.fn(() => {
-        throw new Error('kill failed');
-      });
-
+    it('returns ok when no workers exist', async () => {
       const result = await pool.killAll();
-
-      // killAll always returns ok (logs failures)
       expect(result.ok).toBe(true);
     });
   });
 
-  // --- Getter methods ---
+  // ─── EC-3: UNIQUE violation rollback ────────────────────────────────────
 
-  describe('getWorker', () => {
-    it('should return null for unknown worker ID', () => {
-      const result = pool.getWorker(WorkerId('worker-unknown'));
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBeNull();
-      }
-    });
-
-    it('should return the worker after spawn', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      if (!spawnResult.ok) return;
-
-      const result = pool.getWorker(spawnResult.value.id);
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).not.toBeNull();
-        expect(result.value!.taskId).toBe(task.id);
-      }
-    });
-  });
-
-  describe('getWorkers', () => {
-    it('should return frozen array', async () => {
-      const task = buildTask();
-      await pool.spawn(task);
-
-      const result = pool.getWorkers();
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(Object.isFrozen(result.value)).toBe(true);
-        expect(result.value.length).toBe(1);
-      }
-    });
-
-    it('should return empty frozen array when no workers', () => {
-      const result = pool.getWorkers();
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(Object.isFrozen(result.value)).toBe(true);
-        expect(result.value.length).toBe(0);
-      }
-    });
-  });
-
-  describe('getWorkerCount', () => {
-    it('should return 0 initially', () => {
-      expect(pool.getWorkerCount()).toBe(0);
-    });
-
-    it('should reflect spawned workers', async () => {
-      const task = buildTask();
-      await pool.spawn(task);
-      expect(pool.getWorkerCount()).toBe(1);
-    });
-  });
-
-  describe('getWorkerForTask', () => {
-    it('should return null for unknown task', () => {
-      const result = pool.getWorkerForTask(TaskId('task-ghost'));
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBeNull();
-      }
-    });
-  });
-
-  // --- Timeout behavior ---
-
-  describe('timeout behavior', () => {
-    it('should not trigger timeout for tasks with undefined timeout', async () => {
-      const task = { ...buildTask(), timeout: undefined } as Task;
-
-      await pool.spawn(task);
-
-      // Advance time well past any reasonable timeout
-      vi.advanceTimersByTime(120_000);
-
-      // Worker should still exist (not killed by timeout)
-      expect(pool.getWorkerCount()).toBe(1);
-    });
-
-    it('should not trigger timeout for tasks with timeout=0', async () => {
-      const task = buildTask((f) => f.withTimeout(0));
-
-      await pool.spawn(task);
-
-      // Advance time significantly
-      vi.advanceTimersByTime(120_000);
-
-      // Worker should still exist
-      expect(pool.getWorkerCount()).toBe(1);
-    });
-
-    it('should trigger timeout and kill worker when timeout expires', async () => {
-      const task = buildTask((f) => f.withTimeout(5000));
-
-      await pool.spawn(task);
-      expect(pool.getWorkerCount()).toBe(1);
-
-      // Advance time past the timeout
-      await vi.advanceTimersByTimeAsync(5001);
-
-      // Worker should be killed
-      expect(pool.getWorkerCount()).toBe(0);
-      expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
-    });
-
-    it('should not crash or double-emit when timeout fires after worker already completed', async () => {
-      const task = buildTask((f) => f.withTimeout(5000));
-
-      const spawnResult = await pool.spawn(task);
-      expect(spawnResult.ok).toBe(true);
-
-      // Process exits before timeout fires
-      mockProcess.emit('exit', 0);
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(pool.getWorkerCount()).toBe(0);
-
-      // Clear emit calls to track only what happens after
-      (eventBus.emit as ReturnType<typeof vi.fn>).mockClear();
-
-      // Advance past the timeout — should be no-op since timeout was cleared on completion
-      await vi.advanceTimersByTimeAsync(5001);
-
-      // Should NOT emit TaskTimeout (timeout was cleared during completion)
-      expect(eventBus.emit as ReturnType<typeof vi.fn>).not.toHaveBeenCalledWith('TaskTimeout', expect.anything());
-    });
-
-    it('should emit TaskTimeout event when timeout triggers', async () => {
-      const task = buildTask((f) => f.withTimeout(3000));
-
-      await pool.spawn(task);
-
-      await vi.advanceTimersByTimeAsync(3001);
-
-      expect(eventBus.emit as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
-        'TaskTimeout',
-        expect.objectContaining({
-          taskId: task.id,
-        }),
+  describe('EC-3: UNIQUE violation on registerWorker', () => {
+    it('returns error and destroys session on UNIQUE violation', async () => {
+      // Make workerRepository.register fail with WORKER_SPAWN_FAILED (UNIQUE violation)
+      (workerRepository.register as ReturnType<typeof vi.fn>).mockReturnValue(
+        err(new AutobeatError(ErrorCode.WORKER_SPAWN_FAILED, 'UNIQUE constraint failed')),
       );
-    });
-  });
-
-  // --- Worker completion (tested via process exit event) ---
-
-  describe('worker completion', () => {
-    it('should log warning and not crash when completion fires for already-removed worker', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      expect(spawnResult.ok).toBe(true);
-      if (!spawnResult.ok) return;
-
-      // Kill the worker first (removes from maps)
-      await pool.kill(spawnResult.value.id);
-
-      // Now simulate process exit (worker already removed from maps by kill)
-      mockProcess.emit('exit', 0);
-      await vi.advanceTimersByTimeAsync(0);
-
-      // Should log warning, not crash
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Worker completion for unknown task',
-        expect.objectContaining({ taskId: task.id }),
-      );
-    });
-
-    it('should emit TaskCompleted event on exit code 0', async () => {
-      const task = buildTask();
-      await pool.spawn(task);
-
-      // Simulate process exit with code 0
-      mockProcess.emit('exit', 0);
-
-      // Allow async handlers to run
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(eventBus.emit as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
-        'TaskCompleted',
-        expect.objectContaining({
-          taskId: task.id,
-          exitCode: 0,
-        }),
-      );
-    });
-
-    it('should emit TaskFailed event on non-zero exit code', async () => {
-      const task = buildTask();
-      await pool.spawn(task);
-
-      // Simulate process exit with non-zero code
-      mockProcess.emit('exit', 1);
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(eventBus.emit as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
-        'TaskFailed',
-        expect.objectContaining({
-          taskId: task.id,
-          exitCode: 1,
-        }),
-      );
-    });
-
-    it('should clean up worker state on completion', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      if (!spawnResult.ok) return;
-
-      mockProcess.emit('exit', 0);
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(pool.getWorkerCount()).toBe(0);
-      const workerResult = pool.getWorker(spawnResult.value.id);
-      expect(workerResult.ok).toBe(true);
-      if (workerResult.ok) {
-        expect(workerResult.value).toBeNull();
-      }
-    });
-
-    it('should decrement monitor worker count on completion', async () => {
-      const task = buildTask();
-      await pool.spawn(task);
-
-      mockProcess.emit('exit', 0);
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(monitor.decrementWorkerCount as ReturnType<typeof vi.fn>).toHaveBeenCalled();
-    });
-  });
-
-  // --- WorkerRepository integration ---
-
-  describe('workerRepository integration', () => {
-    it('should register worker in workerRepository on spawn', async () => {
-      const task = buildTask();
-
-      const result = await pool.spawn(task);
-
-      expect(result.ok).toBe(true);
-      expect(workerRepository.register).toHaveBeenCalledOnce();
-      expect(workerRepository.register).toHaveBeenCalledWith(
-        expect.objectContaining({
-          workerId: WorkerId(`worker-${mockProcess.pid}`),
-          taskId: task.id,
-          pid: mockProcess.pid,
-          ownerPid: process.pid,
-          agent: 'claude',
-        }),
-      );
-    });
-
-    it('should unregister worker from workerRepository on kill', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      if (!spawnResult.ok) return;
-
-      await pool.kill(spawnResult.value.id);
-
-      expect(workerRepository.unregister).toHaveBeenCalledOnce();
-      expect(workerRepository.unregister).toHaveBeenCalledWith(spawnResult.value.id);
-    });
-
-    it('should unregister worker from workerRepository on process exit', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      if (!spawnResult.ok) return;
-
-      mockProcess.emit('exit', 0);
-      // Flush the async onExit chain (flushOutput -> clear -> finally -> handleWorkerCompletion)
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(workerRepository.unregister).toHaveBeenCalledOnce();
-      expect(workerRepository.unregister).toHaveBeenCalledWith(spawnResult.value.id);
-    });
-
-    it('should return error when workerRepository.register fails (UNIQUE constraint)', async () => {
-      const registrationError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'UNIQUE constraint failed: workers.task_id');
-      workerRepository.register.mockReturnValue(err(registrationError));
 
       const task = buildTask();
-
       const result = await pool.spawn(task);
 
       expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.error).toBe(registrationError);
-      // Worker should NOT remain in pool after registration failure
-      expect(pool.getWorkerCount()).toBe(0);
-      // Process should have been killed
-      expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
+      // Session should be destroyed on registration failure
+      expect(tmuxConnector.destroy).toHaveBeenCalled();
     });
   });
 
-  // --- Heartbeat behavior ---
+  // ─── EC-4: Kill on already-dead session ─────────────────────────────────
 
-  describe('heartbeat behavior', () => {
-    it('should start calling updateHeartbeat every 30 seconds after spawn', async () => {
-      // Capture the setInterval callback for the heartbeat timer (30s interval)
-      const setIntervalCalls: { fn: Function; delay: number }[] = [];
-      const origSetInterval = global.setInterval;
-      const setIntervalSpy = vi
-        .spyOn(global, 'setInterval')
-        .mockImplementation((fn: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
-          setIntervalCalls.push({ fn, delay: delay ?? 0 });
-          return origSetInterval(fn, delay, ...args);
-        });
+  describe('EC-4: Kill on already-dead session', () => {
+    it('succeeds without error when session is already dead', async () => {
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+
+      const task = buildTask();
+      const spawnResult = await pool.spawn(task);
+      expect(spawnResult.ok).toBe(true);
+      if (!spawnResult.ok) return;
+
+      const result = await pool.kill(spawnResult.value.id);
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  // ─── EC-5: Periodic flush backpressure ───────────────────────────────────
+
+  describe('EC-5: Periodic flush backpressure guard', () => {
+    it('starts periodic flushing after spawn', async () => {
+      (outputCapture.getOutput as ReturnType<typeof vi.fn>).mockReturnValue(
+        ok({ stdout: ['line1'], stderr: [], taskId: '', totalSize: 10 }),
+      );
 
       const task = buildTask();
       await pool.spawn(task);
 
-      setIntervalSpy.mockRestore();
+      // Advance 1 flush interval
+      await vi.advanceTimersByTimeAsync(1001);
 
-      // Find the 30s heartbeat callback
-      const heartbeatCall = setIntervalCalls.find((c) => c.delay === 30_000);
-      expect(heartbeatCall).toBeDefined();
-
-      // No heartbeat yet
-      expect(workerRepository.updateHeartbeat).not.toHaveBeenCalled();
-
-      // Manually trigger the callback (simulates 30s passing)
-      heartbeatCall!.fn();
-      expect(workerRepository.updateHeartbeat).toHaveBeenCalledTimes(1);
-
-      // Trigger again
-      heartbeatCall!.fn();
-      expect(workerRepository.updateHeartbeat).toHaveBeenCalledTimes(2);
-    });
-
-    it('should set heartbeatTimer on worker and clear it on kill', async () => {
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      if (!spawnResult.ok) return;
-      const workerId = spawnResult.value.id;
-
-      // Worker should have a heartbeat timer after spawn
-      const workerState = (
-        pool as unknown as { workers: Map<string, { heartbeatTimer?: NodeJS.Timeout }> }
-      ).workers.get(workerId);
-      expect(workerState?.heartbeatTimer).toBeDefined();
-
-      // Kill the worker
-      await pool.kill(workerId);
-
-      // Worker is removed from map — verify updateHeartbeat is not called after kill
-      // (We've already verified it was set and then cleared)
-      expect(workerRepository.unregister).toHaveBeenCalledWith(workerId);
-    });
-
-    it('should stop calling updateHeartbeat after worker is killed (via captured callback)', async () => {
-      // Capture the heartbeat callback
-      const setIntervalCalls: { fn: Function; delay: number }[] = [];
-      const origSetInterval = global.setInterval;
-      const setIntervalSpy = vi
-        .spyOn(global, 'setInterval')
-        .mockImplementation((fn: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
-          setIntervalCalls.push({ fn, delay: delay ?? 0 });
-          return origSetInterval(fn, delay, ...args);
-        });
-
-      const task = buildTask();
-      const spawnResult = await pool.spawn(task);
-      if (!spawnResult.ok) return;
-      setIntervalSpy.mockRestore();
-
-      const heartbeatCall = setIntervalCalls.find((c) => c.delay === 30_000);
-      expect(heartbeatCall).toBeDefined();
-
-      // Call heartbeat once (simulates 30s)
-      heartbeatCall!.fn();
-      expect(workerRepository.updateHeartbeat).toHaveBeenCalledTimes(1);
-
-      // Kill the worker
-      await pool.kill(spawnResult.value.id);
-
-      // After kill, clear mock and advance — the real interval timer should be cleared
-      (workerRepository.updateHeartbeat as ReturnType<typeof vi.fn>).mockClear();
-
-      // Advance time — the real interval (captured via origSetInterval) is still running
-      // but the clearInterval in cleanupWorkerState should have stopped it
-      await vi.advanceTimersByTimeAsync(30_000);
-
-      // updateHeartbeat should NOT be called — timer was cleared on kill
-      expect(workerRepository.updateHeartbeat).not.toHaveBeenCalled();
+      expect(outputRepository.save).toHaveBeenCalled();
     });
   });
 
-  // --- Adapter cleanup delegation ---
+  // ─── EC-6: Graceful shutdown with no workers ─────────────────────────────
 
-  describe('adapter cleanup delegation', () => {
-    it('should call cleanup() on the correct adapter when worker with systemPrompt completes', async () => {
-      const cleanupFn = vi.fn();
-      const cleanupAdapter = {
-        provider: 'claude' as const,
-        spawn: vi.fn().mockReturnValue(ok({ process: mockProcess, pid: mockProcess.pid })),
-        kill: vi.fn().mockReturnValue(ok(undefined)),
-        cleanup: cleanupFn,
-        dispose: vi.fn(),
-      };
-      const cleanupRegistry = new InMemoryAgentRegistry([cleanupAdapter]);
-      const cleanupPool = new EventDrivenWorkerPool({
-        agentRegistry: cleanupRegistry,
-        monitor,
-        logger,
-        eventBus,
-        outputCapture,
-        workerRepository,
-        outputRepository,
-      });
+  describe('EC-6: Graceful shutdown with no workers', () => {
+    it('killAll returns ok when pool has no workers', async () => {
+      const result = await pool.killAll();
+      expect(result.ok).toBe(true);
+    });
+  });
 
-      const task = { ...buildTask(), systemPrompt: 'You are a helpful assistant.' } as Task;
-      await cleanupPool.spawn(task);
+  // ─── EC-9: Heartbeat detects dead session ────────────────────────────────
 
-      mockProcess.emit('exit', 0);
-      await vi.advanceTimersByTimeAsync(0);
+  describe('EC-9: Heartbeat detects dead session', () => {
+    it('removes worker from pool when heartbeat detects dead session', async () => {
+      // Set isAlive to return false (dead session)
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
 
-      expect(cleanupFn).toHaveBeenCalledOnce();
-      expect(cleanupFn).toHaveBeenCalledWith(task.id);
+      const task = buildTask();
+      await pool.spawn(task);
+      expect(pool.getWorkerCount()).toBe(1);
+
+      // Advance 30s to trigger heartbeat
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(pool.getWorkerCount()).toBe(0);
+    });
+  });
+
+  // ─── API-1: WorkerPool interface unchanged ───────────────────────────────
+
+  describe('API-1: WorkerPool interface', () => {
+    it('getWorkers returns empty array initially', () => {
+      const result = pool.getWorkers();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toHaveLength(0);
     });
 
-    it('should NOT call cleanup() when worker has no systemPrompt', async () => {
-      const cleanupFn = vi.fn();
-      const cleanupAdapter = {
-        provider: 'claude' as const,
-        spawn: vi.fn().mockReturnValue(ok({ process: mockProcess, pid: mockProcess.pid })),
-        kill: vi.fn().mockReturnValue(ok(undefined)),
-        cleanup: cleanupFn,
-        dispose: vi.fn(),
-      };
-      const cleanupRegistry = new InMemoryAgentRegistry([cleanupAdapter]);
-      const cleanupPool = new EventDrivenWorkerPool({
-        agentRegistry: cleanupRegistry,
-        monitor,
-        logger,
-        eventBus,
-        outputCapture,
-        workerRepository,
-        outputRepository,
-      });
-
-      const task = { ...buildTask(), systemPrompt: undefined } as Task;
-      await cleanupPool.spawn(task);
-
-      mockProcess.emit('exit', 0);
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(cleanupFn).not.toHaveBeenCalled();
+    it('getWorkerCount returns 0 initially', () => {
+      expect(pool.getWorkerCount()).toBe(0);
     });
 
-    it('should still fire cleanup after adapter is deregistered from registry post-spawn', async () => {
-      const cleanupFn = vi.fn();
-      const disposedAdapter = {
-        provider: 'claude' as const,
-        spawn: vi.fn().mockReturnValue(ok({ process: mockProcess, pid: mockProcess.pid })),
-        kill: vi.fn().mockReturnValue(ok(undefined)),
-        cleanup: cleanupFn,
-        dispose: vi.fn(),
-      };
-      const disposedRegistry = new InMemoryAgentRegistry([disposedAdapter]);
-      const disposedPool = new EventDrivenWorkerPool({
-        agentRegistry: disposedRegistry,
-        monitor,
-        logger,
-        eventBus,
-        outputCapture,
-        workerRepository,
-        outputRepository,
-      });
-
-      const task = { ...buildTask(), systemPrompt: 'You are a helpful assistant.' } as Task;
-      await disposedPool.spawn(task);
-
-      // Dispose the registry after spawn — cleanup closure should still fire
-      disposedRegistry.dispose();
-
-      mockProcess.emit('exit', 0);
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(cleanupFn).toHaveBeenCalledOnce();
-      expect(cleanupFn).toHaveBeenCalledWith(task.id);
+    it('getWorkerForTask returns null for unknown task', () => {
+      const result = pool.getWorkerForTask(TaskId('nonexistent'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBeNull();
     });
 
-    it('should complete worker cleanup even if adapter cleanup() throws', async () => {
-      const throwingAdapter = {
-        provider: 'claude' as const,
-        spawn: vi.fn().mockReturnValue(ok({ process: mockProcess, pid: mockProcess.pid })),
-        kill: vi.fn().mockReturnValue(ok(undefined)),
-        cleanup: vi.fn().mockImplementation(() => {
-          throw new Error('cleanup failed unexpectedly');
-        }),
-        dispose: vi.fn(),
-      };
-      const throwingRegistry = new InMemoryAgentRegistry([throwingAdapter]);
-      const throwingPool = new EventDrivenWorkerPool({
-        agentRegistry: throwingRegistry,
-        monitor,
-        logger,
-        eventBus,
-        outputCapture,
-        workerRepository,
-        outputRepository,
-      });
+    it('getWorker returns null for unknown worker', () => {
+      const result = pool.getWorker(WorkerId('nonexistent'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBeNull();
+    });
 
-      const task = { ...buildTask(), systemPrompt: 'You are a helpful assistant.' } as Task;
-      await throwingPool.spawn(task);
+    it('spawn returns worker accessible via getWorkerForTask', async () => {
+      const task = buildTask();
+      await pool.spawn(task);
 
-      // Should not throw — best-effort cleanup
-      mockProcess.emit('exit', 0);
-      await vi.advanceTimersByTimeAsync(0);
+      const result = pool.getWorkerForTask(task.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).not.toBeNull();
+      expect(result.value!.taskId).toBe(task.id);
+    });
 
-      // Worker state must still be cleaned up despite cleanup() throwing
-      expect(throwingPool.getWorkerCount()).toBe(0);
-      expect(monitor.decrementWorkerCount as ReturnType<typeof vi.fn>).toHaveBeenCalled();
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Adapter cleanup() threw — task-scoped resources may not be freed',
-        expect.objectContaining({ taskId: task.id, error: 'cleanup failed unexpectedly' }),
-      );
+    it('getWorkerCount increments after spawn', async () => {
+      await pool.spawn(buildTask());
+      await pool.spawn(buildTask());
+      expect(pool.getWorkerCount()).toBe(2);
     });
   });
 });

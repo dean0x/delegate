@@ -1202,7 +1202,9 @@ export class Database implements TransactionRunner {
           // RecoveryManager uses sessionName as secondary liveness check alongside ownerPid.
           db.exec(`ALTER TABLE workers ADD COLUMN session_name TEXT`);
           // Index for session-name lookups (RecoveryManager liveness check by session name).
-          db.exec(`CREATE INDEX IF NOT EXISTS idx_workers_session_name ON workers(session_name) WHERE session_name IS NOT NULL`);
+          db.exec(
+            `CREATE INDEX IF NOT EXISTS idx_workers_session_name ON workers(session_name) WHERE session_name IS NOT NULL`,
+          );
         },
       },
     ];
