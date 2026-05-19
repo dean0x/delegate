@@ -271,11 +271,14 @@ export const TASK_ID_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
 /**
  * Regex that validates a sessions base directory path is safe to embed in a
  * bash single-quoted string. The path may contain alphanumeric characters,
- * forward slashes, hyphens, underscores, and dots — no single quotes or other
- * shell metacharacters. The negative lookahead rejects path traversal sequences
+ * forward slashes, hyphens, underscores, dots, and spaces. Spaces are included
+ * because macOS paths commonly contain them (e.g. /Users/Jane Doe/Projects) and
+ * all path embeddings use singleQuoteToken()/escapeForSingleQuotes(), which make
+ * spaces safe inside single quotes. No single quotes or other shell metacharacters
+ * are permitted. The negative lookahead rejects path traversal sequences
  * (e.g. /tmp/../etc/passwd) that the character class alone cannot prevent.
  */
-export const SAFE_PATH_REGEX = /^(?!.*\.\.)([a-zA-Z0-9/_.\-]+)$/;
+export const SAFE_PATH_REGEX = /^(?!.*\.\.)([a-zA-Z0-9/_.\ \-]+)$/;
 
 /** Filename of the success sentinel (exit code 0) */
 export const SENTINEL_DONE = '.done' as const;

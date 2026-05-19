@@ -136,7 +136,12 @@ export class TmuxConnector implements TmuxConnectorPort {
    * 4. Creates the tmux session running the wrapper
    * 5. Starts (or restarts) the shared staleness timer
    */
-  spawn(config: TmuxSpawnConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
+  spawn(rawConfig: unknown, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
+    // ARCHITECTURE EXCEPTION: Interface uses `unknown` to break the circular dependency
+    // between core/tmux-types.ts and implementations/tmux/types.ts. The concrete
+    // TmuxConnector asserts the type here at the implementation boundary.
+    const config = rawConfig as TmuxSpawnConfig;
+
     // Guard: reject duplicate taskId to prevent orphaning the first session's watchers/timers
     if (this.activeSessions.has(config.taskId)) {
       return err(tmuxSessionFailed('spawn', `session for taskId '${config.taskId}' already exists`));
@@ -524,6 +529,9 @@ export class TmuxConnector implements TmuxConnectorPort {
     this.stopSharedStalenessTimer();
     this.currentTimerIntervalMs = minInterval;
     this.sharedStalenessTimer = setInterval(() => this.runSharedStalenessCheck(), minInterval);
+    // unref() prevents this timer from keeping the Node.js process alive in CLI/run modes
+    // when no workers are active — consistent with heartbeat and flush timers in worker pool.
+    this.sharedStalenessTimer.unref();
   }
 
   /**

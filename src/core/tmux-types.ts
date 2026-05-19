@@ -85,11 +85,12 @@ export interface TmuxSessionManagerCorePort {
  * the implementations layer import TmuxSpawnConfig from tmux/types.ts directly.
  */
 export interface TmuxConnectorPort {
-  // spawn config type is TmuxSpawnConfig from tmux/types.ts; kept as any here
+  // spawn config type is TmuxSpawnConfig from tmux/types.ts; kept as unknown
   // to avoid pulling implementation details into the core layer.
-  // ARCHITECTURE EXCEPTION: any config breaks the circular dependency.
-  // biome-ignore lint/suspicious/noExplicitAny: circular dependency — TmuxSpawnConfig lives in implementations layer
-  spawn(config: any, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError>;
+  // ARCHITECTURE EXCEPTION: using unknown (not TmuxSpawnConfig) breaks the
+  // circular dependency. The concrete TmuxConnector asserts `config as TmuxSpawnConfig`
+  // at the implementation boundary.
+  spawn(config: unknown, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError>;
   destroy(handle: TmuxHandle): Result<void, AutobeatError>;
   sendKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError>;
   /**
