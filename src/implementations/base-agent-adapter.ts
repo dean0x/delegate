@@ -135,6 +135,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       return err(agentMisconfigured(this.provider, 'tmux mode is not supported for this agent'));
     }
 
+    // Defense-in-depth: validate taskId before the expensive resolveSpawnConfig call.
+    // Downstream tmux-hooks.ts validates too, but this surfaces invalid IDs earlier
+    // with a clearer error.
+    if (!TASK_ID_REGEX.test(options.taskId)) {
+      return err(agentMisconfigured(this.provider, `invalid taskId: ${options.taskId}`));
+    }
+
     // Explicit narrowing — avoids `as TmuxAgentType` cast. If AgentProvider gains a new
     // value, the guard above will catch it and the assignment below will never be reached
     // with an unsupported value.
@@ -143,13 +150,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const configResult = this.resolveSpawnConfig(options);
     if (!configResult.ok) return configResult;
     const cfg = configResult.value;
-
-    // Defense-in-depth: validate taskId at the adapter boundary before embedding
-    // in the tmux session name. Downstream tmux-hooks.ts validates too, but this
-    // surfaces invalid IDs earlier with a clearer error.
-    if (!TASK_ID_REGEX.test(options.taskId)) {
-      return err(agentMisconfigured(this.provider, `invalid taskId: ${options.taskId}`));
-    }
 
     const args = [...this.buildTmuxArgs(cfg.resolvedModel), ...cfg.systemPromptArgs];
     const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...args] : args;

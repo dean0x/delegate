@@ -385,7 +385,11 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
       }).toThrow(/CHECK/);
     });
 
-    it('INSERT with judge_agent=claude succeeds', () => {
+    it.each([
+      ['claude', 'loop-claude'],
+      ['codex', 'loop-codex'],
+      [null, 'loop-null'],
+    ] as const)('INSERT with judge_agent=%s succeeds', (judgeAgent, loopId) => {
       const sqliteDb = db.getDatabase();
       const now = Date.now();
 
@@ -395,35 +399,7 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
             `INSERT INTO loops (id, strategy, task_template, exit_condition, working_directory, created_at, updated_at, judge_agent)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run('loop-claude', 'retry', 'template', 'cond', '/tmp', now, now, 'claude');
-      }).not.toThrow();
-    });
-
-    it('INSERT with judge_agent=codex succeeds', () => {
-      const sqliteDb = db.getDatabase();
-      const now = Date.now();
-
-      expect(() => {
-        sqliteDb
-          .prepare(
-            `INSERT INTO loops (id, strategy, task_template, exit_condition, working_directory, created_at, updated_at, judge_agent)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run('loop-codex', 'retry', 'template', 'cond', '/tmp', now, now, 'codex');
-      }).not.toThrow();
-    });
-
-    it('INSERT with judge_agent=NULL succeeds', () => {
-      const sqliteDb = db.getDatabase();
-      const now = Date.now();
-
-      expect(() => {
-        sqliteDb
-          .prepare(
-            `INSERT INTO loops (id, strategy, task_template, exit_condition, working_directory, created_at, updated_at, judge_agent)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run('loop-null', 'retry', 'template', 'cond', '/tmp', now, now, null);
+          .run(loopId, 'retry', 'template', 'cond', '/tmp', now, now, judgeAgent);
       }).not.toThrow();
     });
 
@@ -574,21 +550,5 @@ describe('Database - REAL Database Operations (In-Memory)', () => {
       expect(parsed.agent).toBe('claude');
     });
 
-    it('after DB construction, manually-inserted agent=gemini row fails Zod validation', () => {
-      // End-to-end invariant: proves that schema enforcement is active.
-      // A fresh Database runs all migrations (including v28). Any agent='gemini' value
-      // inserted after migration would be caught by TaskRowSchema's z.enum(['claude','codex']).nullable().
-      const { z } = require('zod');
-      const AGENT_PROVIDERS_TUPLE: [string, ...string[]] = ['claude', 'codex'];
-      const TaskAgentSchema = z.enum(AGENT_PROVIDERS_TUPLE).nullable();
-
-      // Simulate what happens when task-repository reads a 'gemini' agent from the DB
-      const result = TaskAgentSchema.safeParse('gemini');
-      expect(result.success).toBe(false);
-
-      // NULL is still valid (tasks.agent is nullable)
-      const nullResult = TaskAgentSchema.safeParse(null);
-      expect(nullResult.success).toBe(true);
-    });
   });
 });
