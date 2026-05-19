@@ -61,6 +61,8 @@ npm run test:coverage       # With coverage
 - `LoopHandler` → loop iteration engine (retry/optimize strategies, exit condition evaluation)
 - `UsageCaptureHandler` → captures Claude token/cost usage on TaskCompleted, writes to `task_usage` via UsageParser
 
+**Worker Runtime**: Workers run as tmux sessions via injected `TmuxConnectorPort`. Identified by session name; pid=0 sentinel. Kill sequence: C-c → grace period → force-destroy. Requires tmux >= 3.0.
+
 See `docs/architecture/` for implementation details.
 
 ## Task Dependencies (v0.3.0+)
@@ -229,7 +231,7 @@ Safety nets that exist in the codebase but are not part of the manual release st
 - **Memory limit**: `vmMemoryLimit: '1024MB'` in vitest.config.ts — hard-kills forks at 1GB, OS reclaims instantly
 - **Tests are sequential** via vitest config (`maxWorkers: 1`, `isolate: false`)
 - **All commands use 2GB** memory limit (`--max-old-space-size=2048`)
-- **No real process spawning** - all tests use mocks (MockWorkerPool, MockProcessSpawner)
+- **No real process spawning** - all tests use mocks (MockWorkerPool, MockTmuxConnector)
 
 ### Database
 
@@ -276,6 +278,7 @@ Quick reference for common operations:
 | Task lifecycle | `src/core/domain.ts` |
 | Event definitions | `src/core/events/events.ts` |
 | Dependency graph | `src/core/dependency-graph.ts` |
+| Tmux port interfaces | `src/core/tmux-types.ts` |
 | Task repository | `src/implementations/task-repository.ts` |
 | Dependency repository | `src/implementations/dependency-repository.ts` |
 | Event handlers | `src/services/handlers/` |
@@ -284,6 +287,7 @@ Quick reference for common operations:
 | MCP instructions | `src/adapters/mcp-instructions.ts` |
 | CLI | `src/cli.ts` |
 | Worker repository | `src/implementations/worker-repository.ts` |
+| Worker pool | `src/implementations/event-driven-worker-pool.ts` |
 | Schedule repository | `src/implementations/schedule-repository.ts` |
 | Schedule handler | `src/services/handlers/schedule-handler.ts` |
 | Schedule executor | `src/services/schedule-executor.ts` |
