@@ -6,10 +6,9 @@
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Container } from '../../../src/core/container';
 import { InMemoryEventBus } from '../../../src/core/events/event-bus';
-import { ok } from '../../../src/core/result';
 import { InMemoryAgentRegistry } from '../../../src/implementations/agent-registry';
 import { SQLiteCheckpointRepository } from '../../../src/implementations/checkpoint-repository';
 import { Database } from '../../../src/implementations/database';
@@ -28,7 +27,7 @@ import {
   setupEventHandlers,
 } from '../../../src/services/handler-setup';
 import { createTestConfiguration } from '../../fixtures/factories';
-import { createMockOutputRepository, createMockWorkerRepository } from '../../fixtures/mocks';
+import { createMockOutputRepository, createMockTmuxConnector, createMockWorkerRepository } from '../../fixtures/mocks';
 import { TestLogger, TestProcessSpawner } from '../../fixtures/test-doubles';
 
 describe('handler-setup', () => {
@@ -80,6 +79,8 @@ describe('handler-setup', () => {
       outputCapture: new BufferedOutputCapture(config.maxOutputBuffer, eventBus),
       workerRepository: mockWorkerRepo,
       outputRepository: createMockOutputRepository(),
+      tmuxConnector: createMockTmuxConnector(),
+      sessionsDir: '/tmp/test-sessions',
     });
     container.registerValue('workerPool', workerPool);
 

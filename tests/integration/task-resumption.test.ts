@@ -25,7 +25,8 @@ import type { CheckpointCreatedEvent } from '../../src/core/events/events.js';
 import { CheckpointRepository, TaskManager, TaskRepository } from '../../src/core/interfaces.js';
 import { Database } from '../../src/implementations/database.js';
 import { TestResourceMonitor } from '../../src/implementations/resource-monitor.js';
-import { NoOpProcessSpawner } from '../fixtures/no-op-spawner.js';
+import { createTmuxAgentRegistry } from '../fixtures/mock-agent.js';
+import { createMockTmuxConnector } from '../fixtures/mocks.js';
 import { flushEventLoop, waitForEvent } from '../utils/event-helpers.js';
 
 describe('Integration: Task Resumption - End-to-End Flow', () => {
@@ -44,8 +45,9 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
     process.env.WORKER_MIN_SPAWN_DELAY_MS = '10'; // Fast spawn for tests
 
     const result = await bootstrap({
-      processSpawner: new NoOpProcessSpawner(),
+      agentRegistry: createTmuxAgentRegistry(),
       resourceMonitor: new TestResourceMonitor(),
+      tmuxConnector: createMockTmuxConnector({ autoComplete: true }),
     });
     if (!result.ok) throw new Error(`Bootstrap failed: ${result.error.message}`);
     container = result.value;

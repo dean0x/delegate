@@ -8,13 +8,11 @@
  * Rationale: Enables pluggable agent backends without changing core task logic
  */
 
-import { ChildProcess, spawnSync } from 'child_process';
-// TEMPORARY: TmuxSpawnConfig will move to src/core when Phase 3 (WorkerPool rewiring)
-// establishes it as a first-class domain concept. Until then, import as type-only
-// (zero runtime cost, no value-level dependency).
-import type { TmuxSpawnConfig } from '../implementations/tmux/types.js';
+import type { ChildProcess } from 'child_process';
+import { spawnSync } from 'child_process';
 import { AutobeatError, ErrorCode } from './errors.js';
 import { err, ok, Result } from './result.js';
+import type { TmuxSpawnCoreConfig } from './tmux-types.js';
 
 /**
  * Supported agent providers
@@ -317,10 +315,10 @@ export interface AgentAdapter {
    * Config is used by TmuxConnector to set up the session; prompt is delivered via send-keys.
    * Does NOT call TmuxConnector — pure config assembly.
    *
-   * ARCHITECTURE: TmuxSpawnConfig is imported as a type-only reference from the tmux layer
-   * (src/implementations/tmux/types.ts). Type-only imports carry zero runtime cost and do
-   * not create a value-level dependency. The concrete type will move to src/core when
-   * Phase 3 (WorkerPool rewiring) establishes it as a first-class domain concept.
+   * ARCHITECTURE: The return type uses TmuxSpawnCoreConfig (core/tmux-types.ts) — a minimal
+   * interface carrying only the fields needed at the port boundary. Implementation-layer
+   * TmuxSpawnConfig extends TmuxSpawnCoreConfig and stays in src/implementations/tmux/types.ts
+   * (it references TmuxAgentType/TmuxSessionConfig which are implementation concerns).
    *
    * Adapters that do not support tmux (e.g. ProcessSpawnerAdapter) must return
    * err with ErrorCode.INVALID_OPERATION. Adapters that support tmux require a
@@ -328,7 +326,7 @@ export interface AgentAdapter {
    * taskId is absent or empty.
    */
   buildTmuxCommand(options: SpawnOptions & { sessionsDir: string }): Result<{
-    readonly config: TmuxSpawnConfig;
+    readonly config: TmuxSpawnCoreConfig;
     readonly prompt: string;
   }>;
 }

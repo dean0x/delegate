@@ -12,6 +12,11 @@ import { BaseEventHandler } from '../../core/events/handlers.js';
 import { Logger, ResourceMonitor, TaskQueue, TaskRepository, WorkerPool } from '../../core/interfaces.js';
 import { err, ok, Result } from '../../core/result.js';
 
+type SpawnOutcome =
+  | { type: 'ok' | 'empty' | 'delayed' | 'constrained' }
+  | { type: 'starting-failed'; task: Task; error: Error }
+  | { type: 'spawn-failed'; task: Task; error: Error };
+
 export interface WorkerHandlerDeps {
   readonly config: Configuration;
   readonly workerPool: WorkerPool;
@@ -374,28 +379,27 @@ export class WorkerHandler extends BaseEventHandler {
    * preserving all invariants documented in HANDLER-DECOMPOSITION-INVARIANTS.md
    */
   private async processNextTask(): Promise<void> {
-    // CRITICAL: All spawn logic must run inside the lock to prevent race conditions
-    await this.withSpawnLock(async () => {
+    const outcome: SpawnOutcome = await this.withSpawnLock(async () => {
       try {
         // Step 1: Check spawn delay (fork-bomb prevention)
         const delayCheck = this.getSpawnDelayRequired();
         if (delayCheck.shouldDelay) {
           const timeSinceLastSpawn = Date.now() - this.lastSpawnTime;
           this.handleSpawnDelayRequired(delayCheck.delayMs, timeSinceLastSpawn);
-          return;
+          return { type: 'delayed' as const };
         }
 
         // Step 2: Check resource availability
         const canSpawnResult = await this.resourceMonitor.canSpawnWorker();
         if (!canSpawnResult.ok || !canSpawnResult.value) {
           this.handleResourcesConstrained();
-          return;
+          return { type: 'constrained' as const };
         }
 
         // Step 3: Get next task from queue (direct call)
         const taskResult = this.taskQueue.dequeue();
         if (!taskResult.ok || !taskResult.value) {
-          return; // No tasks or error
+          return { type: 'empty' as const };
         }
 
         const task = taskResult.value;
@@ -409,25 +413,32 @@ export class WorkerHandler extends BaseEventHandler {
           taskId: task.id,
         });
         if (!startingResult.ok) {
-          await this.handleTaskStartingFailure(task, startingResult.error);
-          return;
+          return { type: 'starting-failed' as const, task, error: startingResult.error };
         }
 
         // Step 5: Spawn worker
         const workerResult = await this.workerPool.spawn(task);
         if (!workerResult.ok) {
-          await this.handleSpawnFailure(task, workerResult.error);
-          return;
+          return { type: 'spawn-failed' as const, task, error: workerResult.error };
         }
 
         // Step 6: Record success and emit events (atomic success path)
         await this.recordSpawnSuccessAndEmitEvents(workerResult.value, task);
+        return { type: 'ok' as const };
       } catch (error) {
         // Normalize unknown error to Error object for type safety
         const normalizedError = error instanceof Error ? error : new Error(String(error));
         this.logger.error('Error in task processing', normalizedError);
+        return { type: 'ok' as const };
       }
     });
+
+    // Handle failures OUTSIDE the lock — emit events freely without re-entrancy deadlock
+    if (outcome.type === 'starting-failed') {
+      await this.handleTaskStartingFailure(outcome.task, outcome.error);
+    } else if (outcome.type === 'spawn-failed') {
+      await this.handleSpawnFailure(outcome.task, outcome.error);
+    }
   }
 
   /**

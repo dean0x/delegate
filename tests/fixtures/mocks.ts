@@ -1,7 +1,7 @@
 import type { EventEmitter } from 'events';
 import { vi } from 'vitest';
 import type { SpawnOptions } from '../../src/core/agents';
-import type { Task, Worker, WorkerOptions } from '../../src/core/domain';
+import type { Task, TaskId, Worker, WorkerOptions } from '../../src/core/domain';
 import type {
   EventBus,
   Logger,
@@ -15,6 +15,7 @@ import type {
 } from '../../src/core/interfaces';
 import type { Result } from '../../src/core/result';
 import { ok } from '../../src/core/result';
+import type { OutputMessage, SpawnCallbacks, TmuxConnectorPort, TmuxHandle } from '../../src/core/tmux-types';
 import { createMockTask, createMockWorker } from './mock-data.js';
 
 export const createMockLogger = (): Logger => ({
@@ -129,3 +130,59 @@ export const createMockOutputRepository = (): OutputRepository => ({
   delete: vi.fn().mockResolvedValue(ok(undefined)),
   getSize: vi.fn().mockResolvedValue(ok(0)),
 });
+
+/**
+ * MockTmuxConnector for integration tests.
+ *
+ * Stores SpawnCallbacks per taskId so tests can drive completion/output:
+ *   _simulateExit(taskId, code) — triggers onExit callback
+ *   _simulateOutput(taskId, msg) — triggers onOutput callback
+ */
+export type MockTmuxConnector = TmuxConnectorPort & {
+  _simulateExit(taskId: string, code: number | null): void;
+  _simulateOutput(taskId: string, msg: OutputMessage): void;
+  _getCallbacks(): Map<string, SpawnCallbacks>;
+};
+
+export const createMockTmuxConnector = (opts?: { autoComplete?: boolean }): MockTmuxConnector => {
+  const callbacksMap = new Map<string, SpawnCallbacks>();
+  const autoComplete = opts?.autoComplete ?? false;
+
+  return {
+    spawn: vi.fn().mockImplementation((config: { taskId: string; sessionsDir: string }, callbacks: SpawnCallbacks) => {
+      const sessionName = `beat-${config.taskId}`;
+      callbacksMap.set(config.taskId, callbacks);
+      if (autoComplete) {
+        setImmediate(() => callbacks.onExit(0));
+      }
+      const handle: TmuxHandle = {
+        sessionName,
+        taskId: config.taskId as TaskId,
+        sessionsDir: config.sessionsDir ?? '/tmp/sessions',
+      };
+      return ok(handle);
+    }),
+    destroy: vi.fn().mockReturnValue(ok(undefined)),
+    sendKeys: vi.fn().mockReturnValue(ok(undefined)),
+    sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
+    isAlive: vi.fn().mockReturnValue(ok(true)),
+    getActiveHandles: vi.fn().mockReturnValue([]),
+    dispose: vi.fn(),
+
+    _simulateExit(taskId: string, code: number | null): void {
+      const callbacks = callbacksMap.get(taskId);
+      if (!callbacks) throw new Error(`No callbacks registered for taskId: ${taskId}`);
+      callbacks.onExit(code);
+    },
+
+    _simulateOutput(taskId: string, msg: OutputMessage): void {
+      const callbacks = callbacksMap.get(taskId);
+      if (!callbacks) throw new Error(`No callbacks registered for taskId: ${taskId}`);
+      callbacks.onOutput(msg);
+    },
+
+    _getCallbacks(): Map<string, SpawnCallbacks> {
+      return callbacksMap;
+    },
+  };
+};

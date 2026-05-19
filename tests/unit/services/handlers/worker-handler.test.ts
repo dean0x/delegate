@@ -980,4 +980,36 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       });
     });
   });
+
+  describe('Spawn Failure Deadlock Prevention', () => {
+    it('should not deadlock when spawn failure triggers requeue → TaskQueued re-entry', async () => {
+      const task = new TaskFactory().withPrompt('deadlock test').build();
+
+      // Simulate QueueHandler: RequeueTask → enqueue → emit TaskQueued
+      eventBus.subscribe('RequeueTask', async (event) => {
+        taskQueue.setDequeueResult(ok(null)); // Queue is empty on retry
+        await eventBus.emit('TaskQueued', { taskId: (event as { task: Task }).task.id });
+      });
+
+      workerPool.spawn = vi
+        .fn()
+        .mockResolvedValue(err(new AutobeatError(ErrorCode.PROCESS_SPAWN_FAILED, 'tmux command failed', {})));
+
+      resourceMonitor.setCanSpawn(true);
+      taskQueue.setDequeueResult(ok(task));
+
+      // This must complete — a deadlock would cause the timeout to fire
+      const raceResult = await Promise.race([
+        eventBus
+          .emit('TaskQueued', { taskId: task.id })
+          .then(() => eventBus.flushHandlers())
+          .then(() => 'completed' as const),
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2000)),
+      ]);
+
+      expect(raceResult).toBe('completed');
+      expect(eventBus.hasEmitted('RequeueTask')).toBe(true);
+      expect(eventBus.hasEmitted('TaskFailed')).toBe(true);
+    });
+  });
 });

@@ -22,6 +22,7 @@ import { tmuxSessionFailed } from '../../core/errors.js';
 import type { Logger } from '../../core/interfaces.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
+import type { TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
 import type {
   OutputMessage,
   SpawnCallbacks,
@@ -136,7 +137,12 @@ export class TmuxConnector implements TmuxConnectorPort {
    * 4. Creates the tmux session running the wrapper
    * 5. Starts (or restarts) the shared staleness timer
    */
-  spawn(config: TmuxSpawnConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
+  spawn(rawConfig: TmuxSpawnCoreConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
+    // TmuxSpawnConfig extends TmuxSpawnCoreConfig (the port interface type) and adds
+    // implementation-specific fields (agent, staleness, cwd, env). Cast here at the
+    // implementation boundary where the full field set is needed.
+    const config = rawConfig as TmuxSpawnConfig;
+
     // Guard: reject duplicate taskId to prevent orphaning the first session's watchers/timers
     if (this.activeSessions.has(config.taskId)) {
       return err(tmuxSessionFailed('spawn', `session for taskId '${config.taskId}' already exists`));
@@ -269,6 +275,14 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   sendKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError> {
     return this.deps.sessionManager.sendKeys(handle.sessionName, keys);
+  }
+
+  /**
+   * Delegates sendControlKeys to the session manager.
+   * Used for kill flow (C-c → SIGINT) where tmux key interpretation is required.
+   */
+  sendControlKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError> {
+    return this.deps.sessionManager.sendControlKeys(handle.sessionName, keys);
   }
 
   isAlive(handle: TmuxHandle): Result<boolean, AutobeatError> {
@@ -516,6 +530,9 @@ export class TmuxConnector implements TmuxConnectorPort {
     this.stopSharedStalenessTimer();
     this.currentTimerIntervalMs = minInterval;
     this.sharedStalenessTimer = setInterval(() => this.runSharedStalenessCheck(), minInterval);
+    // unref() prevents this timer from keeping the Node.js process alive in CLI/run modes
+    // when no workers are active — consistent with heartbeat and flush timers in worker pool.
+    this.sharedStalenessTimer.unref();
   }
 
   /**

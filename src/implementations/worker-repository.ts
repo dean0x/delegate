@@ -27,6 +27,8 @@ const WorkerRowSchema = z.object({
   agent: z.string(),
   started_at: z.number(),
   last_heartbeat: z.number().nullable().optional(),
+  // session_name is nullable — NULL for pre-Phase 3 process-based workers (migration v29)
+  session_name: z.string().nullable().optional(),
 });
 
 /** Database row type inferred from Zod schema (single source of truth) */
@@ -47,8 +49,8 @@ export class SQLiteWorkerRepository implements WorkerRepository {
     this.db = database.getDatabase();
 
     this.registerStmt = this.db.prepare(`
-      INSERT INTO workers (worker_id, task_id, pid, owner_pid, agent, started_at)
-      VALUES (@workerId, @taskId, @pid, @ownerPid, @agent, @startedAt)
+      INSERT INTO workers (worker_id, task_id, pid, owner_pid, agent, started_at, session_name)
+      VALUES (@workerId, @taskId, @pid, @ownerPid, @agent, @startedAt, @sessionName)
     `);
 
     this.unregisterStmt = this.db.prepare(`
@@ -95,6 +97,8 @@ export class SQLiteWorkerRepository implements WorkerRepository {
           ownerPid: registration.ownerPid,
           agent: registration.agent,
           startedAt: registration.startedAt,
+          // sessionName is null for legacy process-based workers; populated for tmux workers (Phase 3)
+          sessionName: registration.sessionName ?? null,
         });
       },
       (error) => {
@@ -198,6 +202,8 @@ export class SQLiteWorkerRepository implements WorkerRepository {
       startedAt: data.started_at,
       // lastHeartbeat is undefined when NULL (no heartbeat written yet)
       lastHeartbeat: data.last_heartbeat ?? undefined,
+      // sessionName is undefined for pre-Phase 3 rows (NULL in DB); populated for tmux workers
+      sessionName: data.session_name ?? undefined,
     };
   }
 }

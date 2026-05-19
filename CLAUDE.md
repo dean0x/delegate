@@ -30,6 +30,8 @@ npm run test:repositories   # Data layer (~2s) - SAFE in Claude Code
 npm run test:adapters       # MCP adapter (~2s) - SAFE in Claude Code
 npm run test:implementations # Other implementations (~2s) - SAFE in Claude Code
 npm run test:cli            # CLI tests (~2s) - SAFE in Claude Code
+npm run test:tmux           # Tmux unit tests (~2s) - SAFE in Claude Code
+npm run test:tmux:integration # Tmux integration tests (~3s) - SAFE in Claude Code
 npm run test:integration    # Integration tests - SAFE in Claude Code
 npm test                    # ⚠️  BLOCKED - Prints warning and exits (technical safeguard)
 npm run test:all            # Full suite - Use in local terminal/CI only
@@ -60,6 +62,8 @@ npm run test:coverage       # With coverage
 - `ScheduleExecutor` → cron/one-time execution engine (note: has direct repo writes, architectural exception to event-driven pattern)
 - `LoopHandler` → loop iteration engine (retry/optimize strategies, exit condition evaluation)
 - `UsageCaptureHandler` → captures Claude token/cost usage on TaskCompleted, writes to `task_usage` via UsageParser
+
+**Worker Runtime**: Workers run as tmux sessions via injected `TmuxConnectorPort`. Identified by session name; pid=0 sentinel. Kill sequence: C-c → grace period → force-destroy. Requires tmux >= 3.0.
 
 See `docs/architecture/` for implementation details.
 
@@ -134,7 +138,8 @@ npm run test:core && npm run test:handlers && npm run test:services && \
   npm run test:dashboard && npm run test:scheduling && \
   npm run test:checkpoints && npm run test:error-scenarios && \
   npm run test:orchestration && npm run test:translation && \
-  npm run test:integration
+  npm run test:integration && npm run test:tmux && \
+  npm run test:tmux:integration
 ```
 
 CI runs the full `npm run test:all` in the release workflow — do not attempt it from Claude Code.
@@ -229,7 +234,7 @@ Safety nets that exist in the codebase but are not part of the manual release st
 - **Memory limit**: `vmMemoryLimit: '1024MB'` in vitest.config.ts — hard-kills forks at 1GB, OS reclaims instantly
 - **Tests are sequential** via vitest config (`maxWorkers: 1`, `isolate: false`)
 - **All commands use 2GB** memory limit (`--max-old-space-size=2048`)
-- **No real process spawning** - all tests use mocks (MockWorkerPool, MockProcessSpawner)
+- **No real process spawning** - all tests use mocks (MockWorkerPool, MockTmuxConnector)
 
 ### Database
 
@@ -252,6 +257,7 @@ Safety nets that exist in the codebase but are not part of the manual release st
 - `loop_iterations` CHECK constraint updated: adds `progress` to iteration status enum (migration v26)
 - `loops.convergence_enabled` column: nullable INTEGER default 1 for opt-out convergence (migration v27)
 - `loops.judge_agent` CHECK constraint updated: removes 'gemini' from allowed values; `tasks.agent` NULLed for any existing 'gemini' rows (migration v28)
+- `workers.session_name` column: nullable TEXT for tmux session name tracking; index `idx_workers_session_name`; pid=0 sentinel for tmux workers (migration v29)
 
 ### Dependencies
 
@@ -275,6 +281,7 @@ Quick reference for common operations:
 | Task lifecycle | `src/core/domain.ts` |
 | Event definitions | `src/core/events/events.ts` |
 | Dependency graph | `src/core/dependency-graph.ts` |
+| Tmux port interfaces | `src/core/tmux-types.ts` |
 | Task repository | `src/implementations/task-repository.ts` |
 | Dependency repository | `src/implementations/dependency-repository.ts` |
 | Event handlers | `src/services/handlers/` |
@@ -283,6 +290,7 @@ Quick reference for common operations:
 | MCP instructions | `src/adapters/mcp-instructions.ts` |
 | CLI | `src/cli.ts` |
 | Worker repository | `src/implementations/worker-repository.ts` |
+| Worker pool | `src/implementations/event-driven-worker-pool.ts` |
 | Schedule repository | `src/implementations/schedule-repository.ts` |
 | Schedule handler | `src/services/handlers/schedule-handler.ts` |
 | Schedule executor | `src/services/schedule-executor.ts` |

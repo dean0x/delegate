@@ -189,6 +189,11 @@ export class Database implements TransactionRunner {
     return this.db;
   }
 
+  /** Returns the absolute path of the database file. Used by bootstrap to derive sessionsDir. */
+  getPath(): string {
+    return this.dbPath;
+  }
+
   /**
    * Get current schema version from migrations table
    * Returns 0 if no migrations have been applied (fresh database)
@@ -1186,6 +1191,20 @@ export class Database implements TransactionRunner {
           db.exec(`CREATE INDEX IF NOT EXISTS idx_loops_status ON loops(status)`);
           db.exec(`CREATE INDEX IF NOT EXISTS idx_loops_schedule_id ON loops(schedule_id)`);
           db.exec(`CREATE INDEX IF NOT EXISTS idx_loops_updated_at ON loops(updated_at)`);
+        },
+      },
+      {
+        version: 29,
+        description: 'Add session_name column to workers table for Phase 3 tmux session tracking',
+        up: (db) => {
+          // DECISION: session_name is nullable TEXT — existing rows (process-based workers) have NULL.
+          // Phase 3 tmux workers populate this from TmuxHandle.sessionName at registration time.
+          // RecoveryManager uses sessionName as secondary liveness check alongside ownerPid.
+          db.exec(`ALTER TABLE workers ADD COLUMN session_name TEXT`);
+          // Index for session-name lookups (RecoveryManager liveness check by session name).
+          db.exec(
+            `CREATE INDEX IF NOT EXISTS idx_workers_session_name ON workers(session_name) WHERE session_name IS NOT NULL`,
+          );
         },
       },
     ];

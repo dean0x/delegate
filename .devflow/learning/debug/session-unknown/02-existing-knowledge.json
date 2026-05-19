@@ -1,0 +1,34 @@
+{
+  "conventions": {
+    "frontmatter": {
+      "category": "conventions",
+      "sectionCount": 0,
+      "lastUpdated": "2026-01-21T20:36:19.582Z"
+    },
+    "sections": []
+  },
+  "architecture": {
+    "frontmatter": {
+      "category": "architecture",
+      "sectionCount": 0,
+      "lastUpdated": "2026-01-21T20:36:19.583Z"
+    },
+    "sections": []
+  },
+  "decisions": {
+    "frontmatter": {
+      "category": "decisions",
+      "sectionCount": 0,
+      "lastUpdated": "2026-01-21T20:36:19.584Z"
+    },
+    "sections": []
+  },
+  "gotchas": {
+    "frontmatter": {
+      "category": "gotchas",
+      "sectionCount": 0,
+      "lastUpdated": "2026-01-21T20:36:19.585Z"
+    },
+    "sections": []
+  }
+}

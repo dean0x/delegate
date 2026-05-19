@@ -17,7 +17,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrap } from '../../src/bootstrap.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { TestResourceMonitor } from '../../src/implementations/resource-monitor.js';
-import { NoOpProcessSpawner } from '../fixtures/no-op-spawner.js';
+import { createTmuxAgentRegistry } from '../fixtures/mock-agent.js';
+import { createMockTmuxConnector } from '../fixtures/mocks.js';
 
 describe('Bootstrap handler wiring (regression)', () => {
   let tempDir: string;
@@ -42,8 +43,9 @@ describe('Bootstrap handler wiring (regression)', () => {
     // Bootstrap with mode 'run' (same mode used by `beat orchestrate --foreground`)
     const containerResult = await bootstrap({
       mode: 'run',
-      processSpawner: new NoOpProcessSpawner(),
+      agentRegistry: createTmuxAgentRegistry(),
       resourceMonitor: new TestResourceMonitor(),
+      tmuxConnector: createMockTmuxConnector(),
     });
 
     expect(containerResult.ok).toBe(true);
@@ -70,8 +72,9 @@ describe('Bootstrap handler wiring (regression)', () => {
   it('should subscribe same handlers when taskManager IS resolved', async () => {
     const containerResult = await bootstrap({
       mode: 'run',
-      processSpawner: new NoOpProcessSpawner(),
+      agentRegistry: createTmuxAgentRegistry(),
       resourceMonitor: new TestResourceMonitor(),
+      tmuxConnector: createMockTmuxConnector(),
     });
 
     expect(containerResult.ok).toBe(true);

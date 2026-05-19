@@ -287,6 +287,65 @@ describe('SQLiteWorkerRepository - Unit Tests', () => {
   });
 
   // ============================================================================
+  // sessionName field (migration v29)
+  // ============================================================================
+
+  describe('sessionName (Phase 3 tmux field)', () => {
+    it('should persist and retrieve sessionName when provided', () => {
+      // Arrange
+      const reg = createRegistration({
+        workerId: WorkerId('w-session'),
+        taskId: TaskId('t-session'),
+        sessionName: 'beat-t-session',
+      });
+
+      // Act
+      const registerResult = repo.register(reg);
+      const found = repo.findByTaskId(TaskId('t-session'));
+
+      // Assert
+      expect(registerResult.ok).toBe(true);
+      expect(found.ok).toBe(true);
+      if (!found.ok || found.value === null) return;
+      expect(found.value.sessionName).toBe('beat-t-session');
+    });
+
+    it('should return undefined sessionName for rows without sessionName (pre-Phase 3 rows)', () => {
+      // Arrange — register without sessionName
+      const reg = createRegistration({ workerId: WorkerId('w-nosess'), taskId: TaskId('t-nosess') });
+
+      // Act
+      repo.register(reg);
+      const found = repo.findByTaskId(TaskId('t-nosess'));
+
+      // Assert
+      expect(found.ok).toBe(true);
+      if (!found.ok || found.value === null) return;
+      expect(found.value.sessionName).toBeUndefined();
+    });
+
+    it('should handle NULL session_name from existing rows gracefully', () => {
+      // Direct DB insertion (simulating a pre-Phase 3 row without session_name)
+      const taskId = 't-legacy';
+      ensureTaskExists(taskId);
+      db.getDatabase()
+        .prepare(
+          `INSERT INTO workers (worker_id, task_id, pid, owner_pid, agent, started_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run('w-legacy', taskId, 111, 222, 'claude', Date.now());
+
+      // Act
+      const found = repo.findByTaskId(TaskId(taskId));
+
+      // Assert
+      expect(found.ok).toBe(true);
+      if (!found.ok || found.value === null) return;
+      expect(found.value.sessionName).toBeUndefined();
+    });
+  });
+
+  // ============================================================================
   // updateHeartbeat()
   // ============================================================================
 

@@ -15,6 +15,19 @@ import type { AgentProvider } from '../../core/agents.js';
 import type { TaskId } from '../../core/domain.js';
 import type { AutobeatError } from '../../core/errors.js';
 import type { Result } from '../../core/result.js';
+// Phase 3: Import consumer-facing types from core/tmux-types.ts so they are
+// available within this module (e.g. TmuxHandle in TmuxSessionResult).
+// These are also re-exported below for backward compat with external consumers.
+import type { OutputMessage, SpawnCallbacks, TmuxHandle, TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
+
+export type {
+  OutputMessage,
+  SpawnCallbacks,
+  TmuxConnectorPort,
+  TmuxHandle,
+  TmuxSessionManagerCorePort,
+  TmuxSpawnCoreConfig,
+} from '../../core/tmux-types.js';
 
 /**
  * Agent types supported by the tmux abstraction layer.
@@ -42,9 +55,11 @@ export interface TmuxSessionConfig {
 }
 
 /**
- * Extended configuration for spawning a managed agent session
+ * Extended configuration for spawning a managed agent session.
+ * Extends TmuxSpawnCoreConfig (core/tmux-types.ts) — the minimal interface used at
+ * the port boundary — adding implementation-specific fields (agent type, staleness config).
  */
-export interface TmuxSpawnConfig extends TmuxSessionConfig {
+export interface TmuxSpawnConfig extends TmuxSessionConfig, TmuxSpawnCoreConfig {
   /** Task identifier — used to name the session directory */
   readonly taskId: TaskId;
   /** Base directory where all session data lives */
@@ -57,18 +72,7 @@ export interface TmuxSpawnConfig extends TmuxSessionConfig {
   readonly staleness?: Partial<StalenessConfig>;
 }
 
-/**
- * Handle to a live tmux session
- * Returned from spawn(); passed back to destroy/sendKeys/isAlive
- */
-export interface TmuxHandle {
-  /** Full session name (e.g. "beat-task-abc123") */
-  readonly sessionName: string;
-  /** Task ID that owns this session */
-  readonly taskId: TaskId;
-  /** Base directory where session data (sentinel, messages) lives */
-  readonly sessionsDir: string;
-}
+// TmuxHandle is now defined in core/tmux-types.ts and re-exported above.
 
 /**
  * Result of TmuxSessionManager.createSession().
@@ -79,19 +83,7 @@ export type TmuxSessionResult = Pick<TmuxHandle, 'sessionName'>;
 
 // ─── Output & messaging ───────────────────────────────────────────────────────
 
-/**
- * A single output message written by the wrapper script
- */
-export interface OutputMessage {
-  /** Monotonically increasing sequence number */
-  readonly sequence: number;
-  /** ISO 8601 timestamp */
-  readonly timestamp: string;
-  /** Message type */
-  readonly type: 'stdout' | 'stderr' | 'result';
-  /** Message content */
-  readonly content: string;
-}
+// OutputMessage is now defined in core/tmux-types.ts and re-exported above.
 
 // ─── Wrapper script ───────────────────────────────────────────────────────────
 
@@ -225,6 +217,14 @@ export interface TmuxSessionManagerPort {
   createSession(config: TmuxSessionConfig): Result<TmuxSessionResult, AutobeatError>;
   destroySession(name: string): Result<void, AutobeatError>;
   sendKeys(name: string, keys: string): Result<void, AutobeatError>;
+  /**
+   * Send control key sequence (e.g. C-c) to a session WITHOUT -l (literal) mode.
+   * Implementation: tmux send-keys -t '<name>' <keys>  (no -l flag)
+   * DECISION: Separate method from sendKeys to make the no-literal-mode intent explicit
+   * at every call site. Passing C-c via sendKeys would send the literal string "C-c"
+   * rather than triggering Ctrl+C (SIGINT).
+   */
+  sendControlKeys(name: string, keys: string): Result<void, AutobeatError>;
   isAlive(name: string): Result<boolean, AutobeatError>;
   /** List all running beat-* tmux sessions. Used by the connector's staleness timer and admission control. */
   listSessions(): Result<TmuxSessionInfo[], AutobeatError>;
@@ -249,40 +249,12 @@ export interface TmuxValidatorPort {
   validate(): Result<TmuxInfo, AutobeatError>;
 }
 
-/**
- * Callbacks passed to TmuxConnectorPort.spawn() for push-based event delivery.
- * onOutput fires for each ordered OutputMessage; onExit fires once when the
- * agent process terminates (or is declared stale/shut down).
- */
-export interface SpawnCallbacks {
-  onOutput: (msg: OutputMessage) => void;
-  onExit: (code: number | null, signal?: string) => void;
-}
+// SpawnCallbacks is now defined in core/tmux-types.ts and re-exported above.
 
-/**
- * Port interface for the high-level managed session lifecycle.
- * TmuxConnector is the canonical implementation; alternative implementations
- * (test doubles, future adapters) only need to implement these methods.
- *
- * DESIGN DECISION: TmuxConnectorPort is kept narrow — it exposes only the
- * methods that consumers outside the tmux package need. Internal helpers
- * (buildActiveSession, startWatchers, etc.) remain in TmuxConnector.
- *
- * DESIGN DECISION: TmuxConnectorPort is intentionally co-located with its
- * implementation types in src/implementations/tmux/types.ts rather than
- * src/core/interfaces.ts. Phase 1 is purely additive with no external consumers
- * yet. Moving the port prematurely would be speculative — the correct location
- * will be clear once Phase 3 (Worker Pool Rewiring) introduces real consumers
- * and the dependency direction is established by actual use. Move at that point.
- */
-export interface TmuxConnectorPort {
-  spawn(config: TmuxSpawnConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError>;
-  destroy(handle: TmuxHandle): Result<void, AutobeatError>;
-  sendKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError>;
-  isAlive(handle: TmuxHandle): Result<boolean, AutobeatError>;
-  getActiveHandles(): TmuxHandle[];
-  dispose(): void;
-}
+// TmuxConnectorPort is now defined in core/tmux-types.ts and re-exported above.
+// spawn() uses `unknown` config to break the circular dependency between this
+// file and core/tmux-types.ts. The concrete TmuxConnector still enforces full
+// typing internally via its own spawn(config: TmuxSpawnConfig, ...) signature.
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -302,11 +274,14 @@ export const TASK_ID_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
 /**
  * Regex that validates a sessions base directory path is safe to embed in a
  * bash single-quoted string. The path may contain alphanumeric characters,
- * forward slashes, hyphens, underscores, and dots — no single quotes or other
- * shell metacharacters. The negative lookahead rejects path traversal sequences
+ * forward slashes, hyphens, underscores, dots, and spaces. Spaces are included
+ * because macOS paths commonly contain them (e.g. /Users/Jane Doe/Projects) and
+ * all path embeddings use singleQuoteToken()/escapeForSingleQuotes(), which make
+ * spaces safe inside single quotes. No single quotes or other shell metacharacters
+ * are permitted. The negative lookahead rejects path traversal sequences
  * (e.g. /tmp/../etc/passwd) that the character class alone cannot prevent.
  */
-export const SAFE_PATH_REGEX = /^(?!.*\.\.)([a-zA-Z0-9/_.\-]+)$/;
+export const SAFE_PATH_REGEX = /^(?!.*\.\.)([a-zA-Z0-9/_. \-]+)$/;
 
 /** Filename of the success sentinel (exit code 0) */
 export const SENTINEL_DONE = '.done' as const;

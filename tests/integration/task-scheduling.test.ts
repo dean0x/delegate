@@ -22,7 +22,8 @@ import { ScheduleRepository, ScheduleService } from '../../src/core/interfaces.j
 import { Database } from '../../src/implementations/database.js';
 import { TestResourceMonitor } from '../../src/implementations/resource-monitor.js';
 import { ScheduleExecutor } from '../../src/services/schedule-executor.js';
-import { NoOpProcessSpawner } from '../fixtures/no-op-spawner.js';
+import { createTmuxAgentRegistry } from '../fixtures/mock-agent.js';
+import { createMockTmuxConnector } from '../fixtures/mocks.js';
 import { flushEventLoop, waitForEvent } from '../utils/event-helpers.js';
 
 describe('Integration: Task Scheduling - End-to-End Flow', () => {
@@ -40,8 +41,9 @@ describe('Integration: Task Scheduling - End-to-End Flow', () => {
     process.env.WORKER_MIN_SPAWN_DELAY_MS = '10'; // Fast spawn for tests
 
     const result = await bootstrap({
-      processSpawner: new NoOpProcessSpawner(),
+      agentRegistry: createTmuxAgentRegistry(),
       resourceMonitor: new TestResourceMonitor(),
+      tmuxConnector: createMockTmuxConnector(),
     });
     if (!result.ok) throw new Error(`Bootstrap failed: ${result.error.message}`);
     container = result.value;

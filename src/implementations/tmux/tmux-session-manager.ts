@@ -43,6 +43,14 @@ const POSIX_ENV_VAR_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Maximum byte length for an environment variable value — protects against oversized inputs */
 const MAX_ENV_VALUE_LENGTH = 4096;
 
+/**
+ * Allowlist of tmux control key tokens accepted by sendControlKeys().
+ * SECURITY: Keys are interpolated directly into the shell command without quoting
+ * (no -l flag so tmux can interpret them as key bindings). Restricting to known
+ * tmux key names prevents shell injection through the keys parameter.
+ */
+export const ALLOWED_CONTROL_KEYS = new Set(['C-c', 'C-d', 'C-z', 'C-\\', 'Enter', 'Escape']);
+
 function isSessionNotFound(output: string): boolean {
   const lower = output.toLowerCase();
   return SESSION_NOT_FOUND_PATTERNS.some((p) => lower.includes(p));
@@ -214,6 +222,40 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
 
     const escaped = escapeForSingleQuotes(keys);
     const result = this.deps.exec(`tmux send-keys -t '${name}' -l '${escaped}'`);
+
+    if (result.status !== 0) {
+      return err(tmuxSendKeysFailed(name, result.stderr || result.stdout));
+    }
+
+    return ok(undefined);
+  }
+
+  /**
+   * Sends control key sequences to a session WITHOUT -l (literal) mode.
+   * Use for keys that tmux should interpret (e.g. C-c triggers SIGINT).
+   *
+   * SECURITY: Does not use escapeForSingleQuotes because keys like C-c are
+   * tmux binding tokens, not user-controlled strings. Callers must only pass
+   * well-known tmux key names (e.g. 'C-c', 'Enter').
+   */
+  sendControlKeys(name: string, keys: string): Result<void, AutobeatError> {
+    const nameCheck = validateSessionName(name, 'sendControlKeys');
+    if (!nameCheck.ok) return nameCheck;
+
+    // SECURITY: Validate keys against the allowlist before embedding in the shell command.
+    // Keys are NOT single-quoted (no -l flag) so tmux interprets them as key bindings.
+    // An unvalidated keys parameter would allow shell injection.
+    if (!ALLOWED_CONTROL_KEYS.has(keys)) {
+      return err(
+        tmuxSessionFailed('sendControlKeys', `key '${keys}' is not in the allowed control keys list`, {
+          sessionName: name,
+        }),
+      );
+    }
+
+    // DECISION: No -l flag — allows tmux to interpret key bindings (C-c → SIGINT).
+    // This is intentionally different from sendKeys which uses -l for literal text.
+    const result = this.deps.exec(`tmux send-keys -t '${name}' ${keys}`);
 
     if (result.status !== 0) {
       return err(tmuxSendKeysFailed(name, result.stderr || result.stdout));

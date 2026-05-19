@@ -3,6 +3,9 @@
  * Wires all components together
  */
 
+import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import { validateConfiguration } from './core/config-validator.js';
 import { Configuration, loadAgentConfig, loadConfiguration } from './core/configuration.js';
 import { Container } from './core/container.js';
@@ -80,6 +83,10 @@ export interface BootstrapOptions {
   processSpawner?: ProcessSpawner;
   /** Custom ResourceMonitor (e.g., TestResourceMonitor for tests) */
   resourceMonitor?: ResourceMonitor;
+  /** Custom TmuxConnectorPort (e.g., MockTmuxConnector for tests without tmux installed) */
+  tmuxConnector?: TmuxConnectorPort;
+  /** Custom AgentRegistry (e.g., createTmuxAgentRegistry() for tests) — overrides processSpawner */
+  agentRegistry?: AgentRegistry;
   /**
    * Custom Logger instance — when provided, this logger is used instead of the
    * default ConsoleLogger/StructuredLogger. Used by the dashboard to swap in
@@ -93,8 +100,8 @@ export interface BootstrapOptions {
 import { MCPAdapter } from './adapters/mcp-adapter.js';
 
 // Core
-import { AgentRegistry } from './core/agents.js';
-
+import type { AgentRegistry } from './core/agents.js';
+import type { TmuxConnectorPort } from './core/tmux-types.js';
 // Implementations
 import { InMemoryAgentRegistry } from './implementations/agent-registry.js';
 import { SQLiteCheckpointRepository } from './implementations/checkpoint-repository.js';
@@ -114,6 +121,11 @@ import { SystemResourceMonitor } from './implementations/resource-monitor.js';
 import { SQLiteScheduleRepository } from './implementations/schedule-repository.js';
 import { PriorityTaskQueue } from './implementations/task-queue.js';
 import { SQLiteTaskRepository } from './implementations/task-repository.js';
+import { TmuxConnector } from './implementations/tmux/tmux-connector.js';
+import { TmuxHooks } from './implementations/tmux/tmux-hooks.js';
+import { TmuxSessionManager } from './implementations/tmux/tmux-session-manager.js';
+import { TmuxValidator } from './implementations/tmux/tmux-validator.js';
+import type { ExecFn, WatchFn } from './implementations/tmux/types.js';
 import { SQLiteUsageRepository } from './implementations/usage-repository.js';
 import { SQLiteWorkerRepository } from './implementations/worker-repository.js';
 
@@ -438,6 +450,10 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // compatibility adapter. Otherwise, register all 4 agent adapters.
   // If a translation proxy is active (proxyPort set), use ProxiedClaudeAdapter.
   container.registerSingleton('agentRegistry', () => {
+    if (options.agentRegistry) {
+      logger.info('Using injected AgentRegistry');
+      return options.agentRegistry;
+    }
     if (options.processSpawner) {
       logger.info('Using ProcessSpawnerAdapter for injected ProcessSpawner');
       const adapter = new ProcessSpawnerAdapter(options.processSpawner);
@@ -491,7 +507,51 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     return new BufferedOutputCapture(config.maxOutputBuffer, eventBus);
   });
 
-  // Register worker pool (v0.5.0: uses AgentRegistry instead of ProcessSpawner)
+  // ─── Tmux wiring (Phase 3: worker pool rewiring) ──────────────────────────
+  // DECISION: Shared exec function for all tmux components — spawnSync with shell: true
+  // so compound commands work correctly. Single allocation — reused by validator,
+  // session manager, and (indirectly) the connector via its deps.
+  const tmuxExec: ExecFn = (cmd) => {
+    const result = spawnSync(cmd, { shell: true, encoding: 'utf8', timeout: 10_000 });
+    return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status ?? -1 };
+  };
+
+  let tmuxSessionManager: TmuxSessionManager | undefined;
+
+  if (options.tmuxConnector) {
+    container.registerValue('tmuxConnector', options.tmuxConnector);
+  } else {
+    tmuxSessionManager = new TmuxSessionManager({ exec: tmuxExec });
+    container.registerValue('tmuxSessionManager', tmuxSessionManager);
+    const sessionManager = tmuxSessionManager;
+    container.registerSingleton('tmuxConnector', () => {
+      return new TmuxConnector({
+        validator: new TmuxValidator({ exec: tmuxExec }),
+        sessionManager,
+        hooks: new TmuxHooks({
+          writeFile: (p, c, opts) => fs.writeFileSync(p, c, { mode: opts.mode }),
+          mkdirSync: (p, opts) => fs.mkdirSync(p, opts),
+          rmSync: (p, opts) => fs.rmSync(p, opts),
+        }),
+        logger: logger.child({ module: 'TmuxConnector' }),
+        watch: fs.watch as WatchFn,
+        readFileSync: (p, enc) => fs.readFileSync(p, enc),
+        readFile: (p, enc) => fs.promises.readFile(p, enc),
+        readdirSync: (p) => fs.readdirSync(p) as string[],
+      });
+    });
+  }
+
+  // sessionsDir lives alongside the database file (e.g. ~/.autobeat/sessions/)
+  // DECISION: Colocation with DB ensures sessions data is managed with the same
+  // lifecycle and backup/migration considerations as the rest of autobeat state.
+  const dbResult = container.get<Database>('database');
+  if (!dbResult.ok) {
+    return err(new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Failed to get database for sessionsDir computation'));
+  }
+  const sessionsDir = path.join(path.dirname(dbResult.value.getPath()), 'sessions');
+
+  // Register worker pool (Phase 3: uses TmuxConnectorPort + sessionsDir)
   container.registerSingleton('workerPool', () => {
     return new EventDrivenWorkerPool({
       agentRegistry: getFromContainer<AgentRegistry>(container, 'agentRegistry'),
@@ -502,6 +562,8 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       workerRepository: getFromContainer<WorkerRepository>(container, 'workerRepository'),
       outputRepository: getFromContainer<OutputRepository>(container, 'outputRepository'),
       outputFlushIntervalMs: config.outputFlushIntervalMs,
+      tmuxConnector: getFromContainer<TmuxConnector>(container, 'tmuxConnector'),
+      sessionsDir,
     });
   });
 
@@ -587,14 +649,8 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   // Register recovery manager
   container.registerSingleton('recoveryManager', () => {
-    const repositoryResult = container.get('taskRepository');
-
-    if (!repositoryResult.ok) {
-      throw new Error('TaskRepository required for RecoveryManager');
-    }
-
     return new RecoveryManager({
-      taskRepo: repositoryResult.value as TaskRepository,
+      taskRepo: getFromContainer<TaskRepository>(container, 'taskRepository'),
       queue: getFromContainer<TaskQueue>(container, 'taskQueue'),
       eventBus: getFromContainer<EventBus>(container, 'eventBus'),
       logger: getFromContainer<Logger>(container, 'logger').child({ module: 'Recovery' }),
@@ -602,6 +658,8 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       dependencyRepo: getFromContainer<DependencyRepository>(container, 'dependencyRepository'),
       loopRepo: getFromContainer<LoopRepository>(container, 'loopRepository'),
       orchestrationRepo: getFromContainer<OrchestrationRepository>(container, 'orchestrationRepository'),
+      // Phase 3: tmux session manager for session-based liveness checks at startup
+      tmuxSessionManager,
     });
   });
 

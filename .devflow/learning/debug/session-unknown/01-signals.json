@@ -1,0 +1,22 @@
+[
+  {
+    "id": "e970fd82-f773-47dd-a1b3-20829428a83c",
+    "timestamp": "2026-01-21T20:31:04.364Z",
+    "turn_number": 1769027464364,
+    "signal_type": "file_touched",
+    "content": "Touched 1 file(s)",
+    "files": [
+      "/workspace/alefy/functions/src/migrations/corelogicMortgageBackfill.ts"
+    ]
+  },
+  {
+    "id": "8b73a0a5-b47f-4eb9-b8fe-2f501efe09a9",
+    "timestamp": "2026-01-21T20:31:04.364Z",
+    "turn_number": 1769027464364,
+    "signal_type": "turn_context",
+    "content": "User: heya\n\nAssistant: Hey! Ready when you are. What would you like to do next?",
+    "files": [
+      "/workspace/alefy/functions/src/migrations/corelogicMortgageBackfill.ts"
+    ]
+  }
+]
