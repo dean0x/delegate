@@ -85,6 +85,8 @@ export interface BootstrapOptions {
   resourceMonitor?: ResourceMonitor;
   /** Custom TmuxConnectorPort (e.g., MockTmuxConnector for tests without tmux installed) */
   tmuxConnector?: TmuxConnectorPort;
+  /** Custom AgentRegistry (e.g., createTmuxAgentRegistry() for tests) — overrides processSpawner */
+  agentRegistry?: AgentRegistry;
   /**
    * Custom Logger instance — when provided, this logger is used instead of the
    * default ConsoleLogger/StructuredLogger. Used by the dashboard to swap in
@@ -448,6 +450,10 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // compatibility adapter. Otherwise, register all 4 agent adapters.
   // If a translation proxy is active (proxyPort set), use ProxiedClaudeAdapter.
   container.registerSingleton('agentRegistry', () => {
+    if (options.agentRegistry) {
+      logger.info('Using injected AgentRegistry');
+      return options.agentRegistry;
+    }
     if (options.processSpawner) {
       logger.info('Using ProcessSpawnerAdapter for injected ProcessSpawner');
       const adapter = new ProcessSpawnerAdapter(options.processSpawner);

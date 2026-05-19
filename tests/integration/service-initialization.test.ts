@@ -17,8 +17,8 @@ import { SystemResourceMonitor, TestResourceMonitor } from '../../src/implementa
 import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { TaskManagerService } from '../../src/services/task-manager.js';
+import { createTmuxAgentRegistry } from '../fixtures/mock-agent.js';
 import { createMockTmuxConnector } from '../fixtures/mocks.js';
-import { NoOpProcessSpawner } from '../fixtures/no-op-spawner.js';
 import { flushEventLoop } from '../utils/event-helpers.js';
 
 describe('Integration: Service initialization', () => {
@@ -31,7 +31,7 @@ describe('Integration: Service initialization', () => {
 
       // Bootstrap returns Result<Container>
       const result = await bootstrap({
-        processSpawner: new NoOpProcessSpawner(),
+        agentRegistry: createTmuxAgentRegistry(),
         resourceMonitor: new TestResourceMonitor(),
         tmuxConnector: createMockTmuxConnector(),
       });
@@ -159,7 +159,7 @@ describe('Integration: Service initialization', () => {
 
       // Bootstrap the system
       const result = await bootstrap({
-        processSpawner: new NoOpProcessSpawner(),
+        agentRegistry: createTmuxAgentRegistry(),
         resourceMonitor: new TestResourceMonitor(),
         tmuxConnector: createMockTmuxConnector(),
       });
@@ -227,7 +227,7 @@ describe('Integration: Service initialization', () => {
       process.env.AUTOBEAT_DATABASE_PATH = join(tempDir, 'test.db');
 
       const result = await bootstrap({
-        processSpawner: new NoOpProcessSpawner(),
+        agentRegistry: createTmuxAgentRegistry(),
         resourceMonitor: new TestResourceMonitor(),
         tmuxConnector: createMockTmuxConnector(),
       });
@@ -300,7 +300,7 @@ describe('Integration: Service initialization', () => {
       process.env.AUTOBEAT_DATABASE_PATH = join(tempDir, 'test.db');
 
       const result = await bootstrap({
-        processSpawner: new NoOpProcessSpawner(),
+        agentRegistry: createTmuxAgentRegistry(),
         resourceMonitor: new TestResourceMonitor(),
         tmuxConnector: createMockTmuxConnector(),
       });
