@@ -102,7 +102,7 @@ export class UsageCaptureHandler extends BaseEventHandler {
       return ok(undefined);
     }
 
-    // Fetch task output — ProcessConnector flush is guaranteed complete before TaskCompleted
+    // Fetch task output — output flush is guaranteed complete before TaskCompleted
     const outputResult = await this.outputRepository.get(taskId);
     if (!outputResult.ok) {
       logger.warn('UsageCaptureHandler: failed to fetch task output', {

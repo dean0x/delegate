@@ -10,10 +10,9 @@
 
 import { ChildProcess } from 'child_process';
 import { AgentAdapter, AgentProvider, type InteractiveSpawnOptions, SpawnOptions } from '../core/agents.js';
-import type { TaskId } from '../core/domain.js';
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { ProcessSpawner } from '../core/interfaces.js';
-import { err, ok, Result } from '../core/result.js';
+import { err, Result } from '../core/result.js';
 import type { TmuxSpawnConfig } from './tmux/types.js';
 
 export class ProcessSpawnerAdapter implements AgentAdapter {
@@ -45,21 +44,9 @@ export class ProcessSpawnerAdapter implements AgentAdapter {
   }
 
   buildTmuxCommand(
-    options: SpawnOptions & { sessionsDir: string },
+    _options: SpawnOptions & { sessionsDir: string },
   ): Result<{ readonly config: TmuxSpawnConfig; readonly prompt: string }> {
-    const taskId = (options.taskId ?? 'task-unknown') as TaskId;
-    return ok({
-      config: {
-        name: `beat-${taskId}`,
-        command: 'echo',
-        cwd: options.workingDirectory || process.cwd(),
-        taskId,
-        sessionsDir: options.sessionsDir,
-        agent: 'claude' as const,
-        agentArgs: [],
-      } as unknown as TmuxSpawnConfig,
-      prompt: options.prompt,
-    });
+    return err(new AutobeatError(ErrorCode.INVALID_OPERATION, 'ProcessSpawnerAdapter does not support tmux'));
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

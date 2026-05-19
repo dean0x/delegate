@@ -123,7 +123,7 @@ import { TmuxConnector } from './implementations/tmux/tmux-connector.js';
 import { TmuxHooks } from './implementations/tmux/tmux-hooks.js';
 import { TmuxSessionManager } from './implementations/tmux/tmux-session-manager.js';
 import { TmuxValidator } from './implementations/tmux/tmux-validator.js';
-import type { ExecFn } from './implementations/tmux/types.js';
+import type { ExecFn, WatchFn } from './implementations/tmux/types.js';
 import { SQLiteUsageRepository } from './implementations/usage-repository.js';
 import { SQLiteWorkerRepository } from './implementations/worker-repository.js';
 
@@ -506,7 +506,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // so compound commands work correctly. Single allocation — reused by validator,
   // session manager, and (indirectly) the connector via its deps.
   const tmuxExec: ExecFn = (cmd) => {
-    const result = spawnSync(cmd, { shell: true, encoding: 'utf8' });
+    const result = spawnSync(cmd, { shell: true, encoding: 'utf8', timeout: 10_000 });
     return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status ?? -1 };
   };
 
@@ -525,8 +525,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
           rmSync: (p, opts) => fs.rmSync(p, opts),
         }),
         logger: logger.child({ module: 'TmuxConnector' }),
-        // biome-ignore lint/suspicious/noExplicitAny: fs.watch overloads don't match WatchFn structurally — cast required
-        watch: fs.watch as any,
+        watch: fs.watch as WatchFn,
         readFileSync: (p, enc) => fs.readFileSync(p, enc),
         readFile: (p, enc) => fs.promises.readFile(p, enc),
         readdirSync: (p) => fs.readdirSync(p) as string[],
