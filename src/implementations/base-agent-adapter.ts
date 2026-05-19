@@ -35,7 +35,7 @@ import {
 import type { TaskId } from '../core/domain.js';
 import { AutobeatError, agentMisconfigured, ErrorCode, processSpawnFailed } from '../core/errors.js';
 import { err, ok, Result, tryCatch } from '../core/result.js';
-import type { TmuxAgentType, TmuxSpawnConfig } from './tmux/types.js';
+import { TASK_ID_REGEX, type TmuxAgentType, type TmuxSpawnConfig } from './tmux/types.js';
 
 export abstract class BaseAgentAdapter implements AgentAdapter {
   abstract readonly provider: AgentProvider;
@@ -143,6 +143,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const configResult = this.resolveSpawnConfig(options);
     if (!configResult.ok) return configResult;
     const cfg = configResult.value;
+
+    // Defense-in-depth: validate taskId at the adapter boundary before embedding
+    // in the tmux session name. Downstream tmux-hooks.ts validates too, but this
+    // surfaces invalid IDs earlier with a clearer error.
+    if (!TASK_ID_REGEX.test(options.taskId)) {
+      return err(agentMisconfigured(this.provider, `invalid taskId: ${options.taskId}`));
+    }
 
     const args = [...this.buildTmuxArgs(cfg.resolvedModel), ...cfg.systemPromptArgs];
     const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...args] : args;
@@ -302,7 +309,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   ): { effectivePrompt: string; args: readonly string[]; env: Record<string, string> } {
     if (!systemPrompt) return { effectivePrompt: prompt, args: [], env: {} };
 
-    const safeId = taskId ?? crypto.randomUUID().substring(0, 8);
+    const safeId = (taskId ?? crypto.randomUUID().substring(0, 8)).replace(/[^a-z0-9_-]/gi, '');
     const systemPromptPath = path.join(os.homedir(), '.autobeat', 'system-prompts', `${safeId}.md`);
     const config = this.getSystemPromptConfig(systemPrompt, systemPromptPath);
 
