@@ -7,7 +7,14 @@
  * TmuxSessionManagerCorePort.isAlive() when tmuxSessionManager is configured.
  */
 
-import { isTerminalState, OrchestratorStatus, Task, TaskStatus, updateOrchestration, WorkerRegistration } from '../core/domain.js';
+import {
+  isTerminalState,
+  OrchestratorStatus,
+  Task,
+  TaskStatus,
+  updateOrchestration,
+  WorkerRegistration,
+} from '../core/domain.js';
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
 import {
@@ -326,9 +333,7 @@ export class RecoveryManager {
           taskRepo: this.taskRepo,
           workerRepo: this.workerRepo,
           isProcessAlive: this.isProcessAlive,
-          isTmuxSessionAlive: this.tmuxSessionManager
-            ? (name) => this.isTmuxSessionAlive(name)
-            : undefined,
+          isTmuxSessionAlive: this.tmuxSessionManager ? (name) => this.isTmuxSessionAlive(name) : undefined,
         });
       } catch (error) {
         // Defensive: skip this orchestration on unexpected error.

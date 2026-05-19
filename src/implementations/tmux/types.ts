@@ -249,9 +249,9 @@ export interface TmuxValidatorPort {
 // SpawnCallbacks is now defined in core/tmux-types.ts and re-exported above.
 
 // TmuxConnectorPort is now defined in core/tmux-types.ts and re-exported above.
-// The re-exported TmuxConnectorPort.spawn() accepts `any` config to break the
-// circular dependency. The concrete TmuxConnector still enforces full typing
-// internally via its own spawn(config: TmuxSpawnConfig, ...) signature.
+// spawn() uses `unknown` config to break the circular dependency between this
+// file and core/tmux-types.ts. The concrete TmuxConnector still enforces full
+// typing internally via its own spawn(config: TmuxSpawnConfig, ...) signature.
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

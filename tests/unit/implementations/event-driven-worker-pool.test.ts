@@ -22,7 +22,12 @@ import {
   type EventDrivenWorkerPoolDeps,
 } from '../../../src/implementations/event-driven-worker-pool';
 import { TaskFactory } from '../../fixtures/factories';
-import { createMockLogger, createMockOutputRepository, createMockTmuxConnector, createMockWorkerRepository } from '../../fixtures/mocks';
+import {
+  createMockLogger,
+  createMockOutputRepository,
+  createMockTmuxConnector,
+  createMockWorkerRepository,
+} from '../../fixtures/mocks';
 
 // ─── Mock agent adapter ───────────────────────────────────────────────────────
 

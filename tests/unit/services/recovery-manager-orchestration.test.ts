@@ -226,7 +226,13 @@ describe('checkOrchestrationLiveness', () => {
     const task = { id: TaskId('task-1'), workerId: WorkerId('worker-1'), status: 'running' };
     const taskRepo = { findById: vi.fn().mockResolvedValue(ok(task)) };
     // pid=0 is the tmux sentinel; sessionName identifies the session
-    const workerReg = { workerId: WorkerId('worker-1'), pid: 0, ownerPid: 0, sessionName: 'beat-task-1', taskId: TaskId('task-1') };
+    const workerReg = {
+      workerId: WorkerId('worker-1'),
+      pid: 0,
+      ownerPid: 0,
+      sessionName: 'beat-task-1',
+      taskId: TaskId('task-1'),
+    };
     const workerRepo = { findByTaskId: vi.fn().mockReturnValue(ok(workerReg)) };
     const isProcessAlive = vi.fn().mockReturnValue(false); // Should NOT be called for tmux workers
     const isTmuxSessionAlive = vi.fn().mockReturnValue(true);
@@ -250,7 +256,13 @@ describe('checkOrchestrationLiveness', () => {
     const loopRepo = { getIterations: vi.fn().mockResolvedValue(ok([iter])) };
     const task = { id: TaskId('task-1'), workerId: WorkerId('worker-1'), status: 'running' };
     const taskRepo = { findById: vi.fn().mockResolvedValue(ok(task)) };
-    const workerReg = { workerId: WorkerId('worker-1'), pid: 0, ownerPid: 0, sessionName: 'beat-task-1', taskId: TaskId('task-1') };
+    const workerReg = {
+      workerId: WorkerId('worker-1'),
+      pid: 0,
+      ownerPid: 0,
+      sessionName: 'beat-task-1',
+      taskId: TaskId('task-1'),
+    };
     const workerRepo = { findByTaskId: vi.fn().mockReturnValue(ok(workerReg)) };
     const isProcessAlive = vi.fn().mockReturnValue(false);
     const isTmuxSessionAlive = vi.fn().mockReturnValue(false);
@@ -273,7 +285,13 @@ describe('checkOrchestrationLiveness', () => {
     const loopRepo = { getIterations: vi.fn().mockResolvedValue(ok([iter])) };
     const task = { id: TaskId('task-1'), workerId: WorkerId('worker-1'), status: 'running' };
     const taskRepo = { findById: vi.fn().mockResolvedValue(ok(task)) };
-    const workerReg = { workerId: WorkerId('worker-1'), pid: 0, ownerPid: 0, sessionName: 'beat-task-1', taskId: TaskId('task-1') };
+    const workerReg = {
+      workerId: WorkerId('worker-1'),
+      pid: 0,
+      ownerPid: 0,
+      sessionName: 'beat-task-1',
+      taskId: TaskId('task-1'),
+    };
     const workerRepo = { findByTaskId: vi.fn().mockReturnValue(ok(workerReg)) };
     const isProcessAlive = vi.fn().mockReturnValue(false);
 

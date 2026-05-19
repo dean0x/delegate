@@ -513,24 +513,19 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // IDEMPOTENCY GUARD: return early if already cleaned up.
     // kill() and onExit/handleWorkerCompletion both call this; without the guard
     // monitor.decrementWorkerCount() would fire twice causing double-decrement.
-    if (!this.workers.has(workerId)) {
-      return;
-    }
-
     const worker = this.workers.get(workerId);
+    if (!worker) return;
 
     // Clear all timers before removing from maps
-    if (worker) {
-      if (worker.heartbeatTimer) {
-        clearInterval(worker.heartbeatTimer);
-        worker.heartbeatTimer = undefined;
-      }
-      if (worker.timeoutTimer) {
-        clearTimeout(worker.timeoutTimer);
-        worker.timeoutTimer = undefined;
-      }
-      this.stopFlushing(worker);
+    if (worker.heartbeatTimer) {
+      clearInterval(worker.heartbeatTimer);
+      worker.heartbeatTimer = undefined;
     }
+    if (worker.timeoutTimer) {
+      clearTimeout(worker.timeoutTimer);
+      worker.timeoutTimer = undefined;
+    }
+    this.stopFlushing(worker);
 
     this.workers.delete(workerId);
     this.taskToWorker.delete(taskId);
@@ -543,7 +538,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     }
 
     // Best-effort cleanup of task-scoped resources (e.g. system prompt temp files)
-    if (worker?.cleanupFn) {
+    if (worker.cleanupFn) {
       try {
         worker.cleanupFn(taskId);
       } catch (cleanupErr) {
