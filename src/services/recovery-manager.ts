@@ -419,13 +419,31 @@ export class RecoveryManager {
       const workerResult = this.workerRepo.findByTaskId(task.id);
       const workerRegistration = workerResult.ok ? workerResult.value : null;
 
-      if (workerRegistration !== null && this.isProcessAlive(workerRegistration.ownerPid)) {
-        // Worker is alive in another process — leave it alone
-        this.logger.info('Running task has live worker in another process, skipping', {
-          taskId: task.id,
-          ownerPid: workerRegistration.ownerPid,
-        });
-        continue;
+      if (workerRegistration !== null) {
+        // Phase 3: Tmux workers (pid=0) check session liveness instead of ownerPid.
+        // After a server restart the ownerPid is from the old process (dead), but the
+        // tmux session may still be alive and working. Falling through to isProcessAlive
+        // would incorrectly mark the task as crashed.
+        const isTmuxWorker = workerRegistration.pid === 0;
+        const isWorkerAlive = isTmuxWorker
+          ? workerRegistration.sessionName
+            ? this.isTmuxSessionAlive(workerRegistration.sessionName)
+            : false // No sessionName — treat as dead (incomplete registration)
+          : this.isProcessAlive(workerRegistration.ownerPid);
+
+        if (isWorkerAlive) {
+          this.logger.info(
+            isTmuxWorker
+              ? 'Running task has live tmux session, skipping'
+              : 'Running task has live worker in another process, skipping',
+            {
+              taskId: task.id,
+              ownerPid: workerRegistration.ownerPid,
+              sessionName: workerRegistration.sessionName,
+            },
+          );
+          continue;
+        }
       }
 
       // Guard: verify task is still RUNNING (TOCTOU — another process may have completed it)
