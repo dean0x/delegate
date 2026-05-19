@@ -9,6 +9,7 @@ import { EventBus, TaskDependencyFailedEvent } from '../../src/core/events/event
 import { DependencyRepository, TaskManager, TaskQueue } from '../../src/core/interfaces.js';
 import { Database } from '../../src/implementations/database.js';
 import { TestResourceMonitor } from '../../src/implementations/resource-monitor.js';
+import { createMockTmuxConnector } from '../fixtures/mocks.js';
 import { NoOpProcessSpawner } from '../fixtures/no-op-spawner.js';
 import { flushEventLoop } from '../utils/event-helpers.js';
 
@@ -29,6 +30,7 @@ describe('Integration: Task Dependencies - End-to-End Flow', () => {
     const result = await bootstrap({
       processSpawner: new NoOpProcessSpawner(),
       resourceMonitor: new TestResourceMonitor(),
+      tmuxConnector: createMockTmuxConnector(),
     });
     if (!result.ok) {
       throw new Error(`Bootstrap failed: ${result.error.message}`);

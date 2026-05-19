@@ -8,7 +8,6 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it, vi } from 'vitest';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
-import { ok } from '../../src/core/result.js';
 import { Database } from '../../src/implementations/database.js';
 import { EventDrivenWorkerPool } from '../../src/implementations/event-driven-worker-pool.js';
 import { BufferedOutputCapture } from '../../src/implementations/output-capture.js';
@@ -16,9 +15,8 @@ import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { TaskManagerService } from '../../src/services/task-manager.js';
 import { createTestConfiguration } from '../fixtures/factories.js';
-import { createAgentRegistryFromSpawner } from '../fixtures/mock-agent.js';
-import { MockProcessSpawner } from '../fixtures/mock-process-spawner.js';
-import { createMockOutputRepository, createMockWorkerRepository } from '../fixtures/mocks.js';
+import { createTmuxAgentRegistry } from '../fixtures/mock-agent.js';
+import { createMockOutputRepository, createMockTmuxConnector, createMockWorkerRepository } from '../fixtures/mocks.js';
 import { createTestTask as createTask } from '../fixtures/test-data.js';
 import { TestLogger } from '../fixtures/test-doubles.js';
 import { flushEventLoop } from '../utils/event-helpers.js';
@@ -39,10 +37,10 @@ describe('Integration: Event-driven task delegation flow', () => {
     const queue = new PriorityTaskQueue(logger);
     const { MockResourceMonitor } = await import('../fixtures/mock-resource-monitor.js');
     const resourceMonitor = new MockResourceMonitor();
-    const processSpawner = new MockProcessSpawner();
+    const mockTmuxConnector = createMockTmuxConnector();
     const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
 
-    const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
+    const agentRegistry = createTmuxAgentRegistry();
     const mockWorkerRepo = createMockWorkerRepository();
     const workerPool = new EventDrivenWorkerPool({
       agentRegistry,
@@ -52,6 +50,8 @@ describe('Integration: Event-driven task delegation flow', () => {
       outputCapture,
       workerRepository: mockWorkerRepo,
       outputRepository: createMockOutputRepository(),
+      tmuxConnector: mockTmuxConnector,
+      sessionsDir: join(tempDir, 'sessions'),
     });
 
     // Initialize task manager with hybrid architecture
@@ -142,7 +142,7 @@ describe('Integration: Event-driven task delegation flow', () => {
       }
 
       // Test 3: Handle task completion
-      processSpawner.simulateCompletion(task1!.id, 'Integration test output');
+      mockTmuxConnector._simulateExit(task1!.id, 0);
       await flushEventLoop();
 
       expect(events).toContain('TaskCompleted');
@@ -176,7 +176,7 @@ describe('Integration: Event-driven task delegation flow', () => {
       const errorTask = errorResult.ok ? errorResult.value : null;
       expect(errorTask).toBeTruthy();
 
-      processSpawner.simulateError(errorTask!.id, new Error('Simulated error'));
+      mockTmuxConnector._simulateExit(errorTask!.id, 1);
       await flushEventLoop();
 
       expect(events).toContain('TaskFailed');

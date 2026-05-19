@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrap } from '../../src/bootstrap.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { TestResourceMonitor } from '../../src/implementations/resource-monitor.js';
+import { createMockTmuxConnector } from '../fixtures/mocks.js';
 import { NoOpProcessSpawner } from '../fixtures/no-op-spawner.js';
 
 describe('Bootstrap handler wiring (regression)', () => {
@@ -44,6 +45,7 @@ describe('Bootstrap handler wiring (regression)', () => {
       mode: 'run',
       processSpawner: new NoOpProcessSpawner(),
       resourceMonitor: new TestResourceMonitor(),
+      tmuxConnector: createMockTmuxConnector(),
     });
 
     expect(containerResult.ok).toBe(true);
@@ -72,6 +74,7 @@ describe('Bootstrap handler wiring (regression)', () => {
       mode: 'run',
       processSpawner: new NoOpProcessSpawner(),
       resourceMonitor: new TestResourceMonitor(),
+      tmuxConnector: createMockTmuxConnector(),
     });
 
     expect(containerResult.ok).toBe(true);

@@ -1,6 +1,9 @@
 /**
  * Integration test for worker pool management
  * Tests worker lifecycle, resource monitoring, and output capture
+ *
+ * Phase 3: Uses MockTmuxConnector instead of MockProcessSpawner.
+ * Workers are tmux sessions identified by sessionName, not PIDs.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -9,41 +12,54 @@ import { ok } from '../../src/core/result.js';
 import { EventDrivenWorkerPool } from '../../src/implementations/event-driven-worker-pool.js';
 import { BufferedOutputCapture } from '../../src/implementations/output-capture.js';
 import { createTestConfiguration } from '../fixtures/factories.js';
-import { createAgentRegistryFromSpawner } from '../fixtures/mock-agent.js';
-import { MockProcessSpawner } from '../fixtures/mock-process-spawner.js';
+import { createTmuxAgentRegistry } from '../fixtures/mock-agent.js';
 import { MockResourceMonitor } from '../fixtures/mock-resource-monitor.js';
-import { createMockOutputRepository, createMockWorkerRepository } from '../fixtures/mocks.js';
+import { createMockOutputRepository, createMockTmuxConnector, createMockWorkerRepository } from '../fixtures/mocks.js';
 import { createTestTask as createTask } from '../fixtures/test-data.js';
 import { TestLogger } from '../fixtures/test-doubles.js';
 import { flushEventLoop } from '../utils/event-helpers.js';
 
+function createWorkerPoolFixture() {
+  const logger = new TestLogger();
+  const config = createTestConfiguration();
+  const eventBus = new InMemoryEventBus(config, logger);
+  const mockTmuxConnector = createMockTmuxConnector();
+  const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
+  const resourceMonitor = new MockResourceMonitor();
+  const workerRepository = createMockWorkerRepository();
+  const outputRepository = createMockOutputRepository();
+  const agentRegistry = createTmuxAgentRegistry();
+
+  const workerPool = new EventDrivenWorkerPool({
+    agentRegistry,
+    monitor: resourceMonitor,
+    logger,
+    eventBus,
+    outputCapture,
+    workerRepository,
+    outputRepository,
+    tmuxConnector: mockTmuxConnector,
+    sessionsDir: '/tmp/test-sessions',
+  });
+
+  return {
+    workerPool,
+    eventBus,
+    mockTmuxConnector,
+    resourceMonitor,
+    workerRepository,
+    outputRepository,
+    outputCapture,
+  };
+}
+
 describe('Integration: Worker pool management', () => {
   it('should handle worker pool lifecycle management', async () => {
-    const logger = new TestLogger();
-    const config = createTestConfiguration();
-    const eventBus = new InMemoryEventBus(config, logger);
-    const processSpawner = new MockProcessSpawner();
-    const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
-    const resourceMonitor = new MockResourceMonitor();
-    const workerRepository = createMockWorkerRepository();
-    const outputRepository = createMockOutputRepository();
-
-    const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const workerPool = new EventDrivenWorkerPool({
-      agentRegistry,
-      monitor: resourceMonitor,
-      logger,
-      eventBus,
-      outputCapture,
-      workerRepository,
-      outputRepository,
-    });
+    const { workerPool, eventBus, mockTmuxConnector, resourceMonitor } = createWorkerPoolFixture();
 
     try {
-      // Track worker events
       const workerEvents: string[] = [];
 
-      // Listen for task completion/failure
       eventBus.on('TaskCompleted', (data) => {
         workerEvents.push(`completed:${data.taskId}`);
       });
@@ -53,35 +69,28 @@ describe('Integration: Worker pool management', () => {
       });
 
       // Test 1: Spawn workers up to limit
-      // Use 'sleep' in prompt to prevent auto-completion
-      const tasks = Array.from({ length: 5 }, (_, i) => createTask({ prompt: `sleep 10 && echo "Task ${i}"` }));
+      const tasks = Array.from({ length: 5 }, (_, i) => createTask({ prompt: `Task ${i}` }));
 
-      // Spawn first 3 workers (at max capacity)
       for (let i = 0; i < 3; i++) {
         const result = await workerPool.spawn(tasks[i]);
         expect(result.ok).toBe(true);
-        if (result.ok) {
-          // Update worker count in monitor so it knows we have workers
-          resourceMonitor.updateWorkerCount(i + 1);
-        }
+        resourceMonitor.updateWorkerCount(i + 1);
       }
 
-      // Wait for events to process
       await flushEventLoop();
-
       expect(workerPool.getWorkerCount()).toBe(3);
 
       // Test 2: Cannot spawn beyond limit - simulate resource exhaustion
-      resourceMonitor.simulateHighCPU(90); // High CPU prevents spawning
+      resourceMonitor.simulateHighCPU(90);
       const result = await workerPool.spawn(tasks[3]);
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.code).toBe('INSUFFICIENT_RESOURCES');
       }
-      resourceMonitor.simulateHighCPU(30); // Reset CPU
+      resourceMonitor.simulateHighCPU(30);
 
       // Test 3: Complete a worker to free slot
-      processSpawner.simulateCompletion(tasks[0].id, 'Task 0 complete');
+      mockTmuxConnector._simulateExit(tasks[0].id, 0);
       await flushEventLoop();
       expect(workerPool.getWorkerCount()).toBe(2);
 
@@ -92,7 +101,7 @@ describe('Integration: Worker pool management', () => {
       expect(workerPool.getWorkerCount()).toBe(3);
 
       // Test 5: Handle worker failure
-      processSpawner.simulateError(tasks[1].id, new Error('Worker crashed'));
+      mockTmuxConnector._simulateExit(tasks[1].id, 1);
       await flushEventLoop();
 
       expect(workerEvents.some((e) => e.includes('failed'))).toBe(true);
@@ -110,25 +119,7 @@ describe('Integration: Worker pool management', () => {
   });
 
   it('should respect resource limits when spawning workers', async () => {
-    const logger = new TestLogger();
-    const config = createTestConfiguration();
-    const eventBus = new InMemoryEventBus(config, logger);
-    const resourceMonitor = new MockResourceMonitor();
-    const processSpawner = new MockProcessSpawner();
-    const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
-    const workerRepository = createMockWorkerRepository();
-    const outputRepository = createMockOutputRepository();
-
-    const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const workerPool = new EventDrivenWorkerPool({
-      agentRegistry,
-      monitor: resourceMonitor,
-      logger,
-      eventBus,
-      outputCapture,
-      workerRepository,
-      outputRepository,
-    });
+    const { workerPool, eventBus, mockTmuxConnector, resourceMonitor } = createWorkerPoolFixture();
 
     try {
       const tasks = Array.from({ length: 5 }, (_, i) => createTask({ prompt: `Resource task ${i}` }));
@@ -157,10 +148,8 @@ describe('Integration: Worker pool management', () => {
       expect(workerPool.getWorkerCount()).toBe(2);
 
       // Test 4: Complete all workers and verify count drops
-      const activeTasks = processSpawner.getActiveTasks();
-      activeTasks.forEach((taskId) => {
-        processSpawner.simulateCompletion(taskId, 'Complete');
-      });
+      mockTmuxConnector._simulateExit(tasks[0].id, 0);
+      mockTmuxConnector._simulateExit(tasks[1].id, 0);
       await flushEventLoop();
       expect(workerPool.getWorkerCount()).toBe(0);
     } finally {
@@ -170,15 +159,11 @@ describe('Integration: Worker pool management', () => {
   });
 
   it('should handle output capture and streaming', async () => {
-    const logger = new TestLogger();
-    const config = createTestConfiguration();
-    const eventBus = new InMemoryEventBus(config, logger);
-    const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus); // 10MB buffer to allow large output
+    const { eventBus, outputCapture } = createWorkerPoolFixture();
 
     try {
       const task = createTask({ prompt: 'Output test' });
 
-      // Track output events
       const outputs: string[] = [];
       eventBus.on('OutputReceived', (data) => {
         outputs.push(data.output);
@@ -198,20 +183,17 @@ describe('Integration: Worker pool management', () => {
       }
 
       // Test 2: Handle large output
-      const largeOutput = 'x'.repeat(2048); // Large output
+      const largeOutput = 'x'.repeat(2048);
       const captureResult = outputCapture.capture(task.id, 'stdout', largeOutput);
-
-      // Check if capture succeeded
       expect(captureResult.ok).toBe(true);
 
       const output2Result = outputCapture.getOutput(task.id);
       expect(output2Result.ok).toBe(true);
       if (output2Result.ok) {
         const totalOutput = output2Result.value.stdout.join('');
-        // Should have all output captured
         expect(totalOutput).toContain('Line 1');
         expect(totalOutput).toContain('Line 2');
-        expect(totalOutput).toContain('xxx'); // At least some x's
+        expect(totalOutput).toContain('xxx');
       }
 
       // Test 3: Tail functionality
@@ -219,7 +201,6 @@ describe('Integration: Worker pool management', () => {
         outputCapture.capture(task.id, 'stdout', `Line ${i}\n`);
       }
 
-      // getOutput with tail parameter instead of separate tail method
       const tailResult = outputCapture.getOutput(task.id, 3);
       expect(tailResult.ok).toBe(true);
       if (tailResult.ok) {
@@ -240,12 +221,10 @@ describe('Integration: Worker pool management', () => {
       // Test 5: Multiple concurrent captures
       const tasks = Array.from({ length: 5 }, (_, i) => createTask({ prompt: `Concurrent output ${i}` }));
 
-      // Capture output for all tasks
       tasks.forEach((t, i) => {
         outputCapture.capture(t.id, 'stdout', `Output from task ${i}\n`);
       });
 
-      // Verify all outputs captured
       for (let i = 0; i < tasks.length; i++) {
         const outputResult = outputCapture.getOutput(tasks[i].id);
         expect(outputResult.ok).toBe(true);
@@ -261,45 +240,25 @@ describe('Integration: Worker pool management', () => {
   });
 
   it('should register worker in repository on spawn and unregister on completion', async () => {
-    const logger = new TestLogger();
-    const config = createTestConfiguration();
-    const eventBus = new InMemoryEventBus(config, logger);
-    const processSpawner = new MockProcessSpawner();
-    const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
-    const resourceMonitor = new MockResourceMonitor();
-    const workerRepository = createMockWorkerRepository();
-    const outputRepository = createMockOutputRepository();
-
-    const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const workerPool = new EventDrivenWorkerPool({
-      agentRegistry,
-      monitor: resourceMonitor,
-      logger,
-      eventBus,
-      outputCapture,
-      workerRepository,
-      outputRepository,
-    });
+    const { workerPool, eventBus, mockTmuxConnector, workerRepository } = createWorkerPoolFixture();
 
     try {
       const task = createTask({ prompt: 'register test' });
 
-      // Spawn worker
       const spawnResult = await workerPool.spawn(task);
       expect(spawnResult.ok).toBe(true);
 
-      // WorkerRepository.register should have been called with task details
       expect(workerRepository.register).toHaveBeenCalledTimes(1);
       const registrationArg = (workerRepository.register as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(registrationArg.taskId).toBe(task.id);
       expect(registrationArg.agent).toBe('claude');
       expect(registrationArg.ownerPid).toBe(process.pid);
+      expect(registrationArg.sessionName).toMatch(/^beat-/);
 
-      // Complete the worker
-      processSpawner.simulateCompletion(task.id, 'Done');
+      // Complete the worker via tmux exit
+      mockTmuxConnector._simulateExit(task.id, 0);
       await flushEventLoop();
 
-      // WorkerRepository.unregister should have been called
       expect(workerRepository.unregister).toHaveBeenCalledTimes(1);
       expect(workerPool.getWorkerCount()).toBe(0);
     } finally {
@@ -309,16 +268,8 @@ describe('Integration: Worker pool management', () => {
   });
 
   it('should track global worker count via repository', async () => {
-    const logger = new TestLogger();
-    const config = createTestConfiguration();
-    const eventBus = new InMemoryEventBus(config, logger);
-    const processSpawner = new MockProcessSpawner();
-    const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
-    const resourceMonitor = new MockResourceMonitor();
-    const workerRepository = createMockWorkerRepository();
-    const outputRepository = createMockOutputRepository();
+    const { workerPool, eventBus, mockTmuxConnector, resourceMonitor, workerRepository } = createWorkerPoolFixture();
 
-    // Simulate getGlobalCount returning the number of registered workers
     let registeredCount = 0;
     (workerRepository.register as ReturnType<typeof vi.fn>).mockImplementation(() => {
       registeredCount++;
@@ -330,39 +281,24 @@ describe('Integration: Worker pool management', () => {
     });
     (workerRepository.getGlobalCount as ReturnType<typeof vi.fn>).mockImplementation(() => ok(registeredCount));
 
-    const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const workerPool = new EventDrivenWorkerPool({
-      agentRegistry,
-      monitor: resourceMonitor,
-      logger,
-      eventBus,
-      outputCapture,
-      workerRepository,
-      outputRepository,
-    });
-
     try {
       const tasks = Array.from({ length: 3 }, (_, i) => createTask({ prompt: `count task ${i}` }));
 
-      // Spawn 3 workers
       for (const task of tasks) {
         const result = await workerPool.spawn(task);
         expect(result.ok).toBe(true);
         resourceMonitor.updateWorkerCount(workerPool.getWorkerCount());
       }
 
-      // Global count should reflect 3 registered workers
       const countResult = workerRepository.getGlobalCount();
       expect(countResult.ok).toBe(true);
       if (countResult.ok) {
         expect(countResult.value).toBe(3);
       }
 
-      // Complete one worker
-      processSpawner.simulateCompletion(tasks[0].id, 'Done');
+      mockTmuxConnector._simulateExit(tasks[0].id, 0);
       await flushEventLoop();
 
-      // Global count should drop to 2
       const countResult2 = workerRepository.getGlobalCount();
       expect(countResult2.ok).toBe(true);
       if (countResult2.ok) {
@@ -376,47 +312,24 @@ describe('Integration: Worker pool management', () => {
     }
   });
 
-  it('should persist output to repository via ProcessConnector flush', async () => {
-    const logger = new TestLogger();
-    const config = createTestConfiguration();
-    const eventBus = new InMemoryEventBus(config, logger);
-    const processSpawner = new MockProcessSpawner();
-    const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
-    const resourceMonitor = new MockResourceMonitor();
-    const workerRepository = createMockWorkerRepository();
-    const outputRepository = createMockOutputRepository();
-
-    const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
-    const workerPool = new EventDrivenWorkerPool({
-      agentRegistry,
-      monitor: resourceMonitor,
-      logger,
-      eventBus,
-      outputCapture,
-      workerRepository,
-      outputRepository,
-    });
+  it('should persist output to repository via tmux flush', async () => {
+    const { workerPool, eventBus, mockTmuxConnector, outputCapture, outputRepository } = createWorkerPoolFixture();
 
     try {
       const task = createTask({ prompt: 'output persist test' });
 
-      // Spawn worker
       const spawnResult = await workerPool.spawn(task);
       expect(spawnResult.ok).toBe(true);
 
-      // Capture some output in the buffer
       outputCapture.capture(task.id, 'stdout', 'Hello from worker\n');
       outputCapture.capture(task.id, 'stderr', 'Warning: something\n');
 
-      // Complete the worker (triggers final flush via ProcessConnector)
-      processSpawner.simulateCompletion(task.id, 'Hello from worker');
+      // Complete the worker (triggers final flush)
+      mockTmuxConnector._simulateExit(task.id, 0);
       await flushEventLoop();
 
-      // OutputRepository.save should have been called during flush
-      // The ProcessConnector flushes on completion, persisting captured output
       expect(outputRepository.save).toHaveBeenCalled();
 
-      // Verify the save was called with the task ID
       const saveCalls = (outputRepository.save as ReturnType<typeof vi.fn>).mock.calls;
       const saveForTask = saveCalls.find((call: unknown[]) => call[0] === task.id);
       expect(saveForTask).toBeDefined();

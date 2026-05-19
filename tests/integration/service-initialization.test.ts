@@ -17,6 +17,7 @@ import { SystemResourceMonitor, TestResourceMonitor } from '../../src/implementa
 import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { TaskManagerService } from '../../src/services/task-manager.js';
+import { createMockTmuxConnector } from '../fixtures/mocks.js';
 import { NoOpProcessSpawner } from '../fixtures/no-op-spawner.js';
 import { flushEventLoop } from '../utils/event-helpers.js';
 
@@ -32,6 +33,7 @@ describe('Integration: Service initialization', () => {
       const result = await bootstrap({
         processSpawner: new NoOpProcessSpawner(),
         resourceMonitor: new TestResourceMonitor(),
+        tmuxConnector: createMockTmuxConnector(),
       });
 
       // Verify bootstrap succeeded
@@ -159,6 +161,7 @@ describe('Integration: Service initialization', () => {
       const result = await bootstrap({
         processSpawner: new NoOpProcessSpawner(),
         resourceMonitor: new TestResourceMonitor(),
+        tmuxConnector: createMockTmuxConnector(),
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('Bootstrap failed');
@@ -226,6 +229,7 @@ describe('Integration: Service initialization', () => {
       const result = await bootstrap({
         processSpawner: new NoOpProcessSpawner(),
         resourceMonitor: new TestResourceMonitor(),
+        tmuxConnector: createMockTmuxConnector(),
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('Bootstrap failed');
@@ -298,6 +302,7 @@ describe('Integration: Service initialization', () => {
       const result = await bootstrap({
         processSpawner: new NoOpProcessSpawner(),
         resourceMonitor: new TestResourceMonitor(),
+        tmuxConnector: createMockTmuxConnector(),
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('Bootstrap failed');

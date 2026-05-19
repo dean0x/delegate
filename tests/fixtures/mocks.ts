@@ -130,3 +130,53 @@ export const createMockOutputRepository = (): OutputRepository => ({
   delete: vi.fn().mockResolvedValue(ok(undefined)),
   getSize: vi.fn().mockResolvedValue(ok(0)),
 });
+
+/**
+ * MockTmuxConnector for integration tests.
+ *
+ * Stores SpawnCallbacks per taskId so tests can drive completion/output:
+ *   _simulateExit(taskId, code) — triggers onExit callback
+ *   _simulateOutput(taskId, msg) — triggers onOutput callback
+ */
+export type MockTmuxConnector = TmuxConnectorPort & {
+  _simulateExit(taskId: string, code: number | null): void;
+  _simulateOutput(taskId: string, msg: OutputMessage): void;
+  _getCallbacks(): Map<string, SpawnCallbacks>;
+};
+
+export const createMockTmuxConnector = (): MockTmuxConnector => {
+  const callbacksMap = new Map<string, SpawnCallbacks>();
+
+  return {
+    spawn: vi.fn().mockImplementation((config: { taskId: string; sessionsDir: string }, callbacks: SpawnCallbacks) => {
+      const sessionName = `beat-${config.taskId}`;
+      callbacksMap.set(config.taskId, callbacks);
+      const handle: TmuxHandle = {
+        sessionName,
+        taskId: config.taskId as TaskId,
+        sessionsDir: config.sessionsDir ?? '/tmp/sessions',
+      };
+      return ok(handle);
+    }),
+    destroy: vi.fn().mockReturnValue(ok(undefined)),
+    sendKeys: vi.fn().mockReturnValue(ok(undefined)),
+    sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
+    isAlive: vi.fn().mockReturnValue(ok(true)),
+    getActiveHandles: vi.fn().mockReturnValue([]),
+    dispose: vi.fn(),
+
+    _simulateExit(taskId: string, code: number | null): void {
+      const callbacks = callbacksMap.get(taskId);
+      if (callbacks) callbacks.onExit(code);
+    },
+
+    _simulateOutput(taskId: string, msg: OutputMessage): void {
+      const callbacks = callbacksMap.get(taskId);
+      if (callbacks) callbacks.onOutput(msg);
+    },
+
+    _getCallbacks(): Map<string, SpawnCallbacks> {
+      return callbacksMap;
+    },
+  };
+};

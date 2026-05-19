@@ -83,6 +83,8 @@ export interface BootstrapOptions {
   processSpawner?: ProcessSpawner;
   /** Custom ResourceMonitor (e.g., TestResourceMonitor for tests) */
   resourceMonitor?: ResourceMonitor;
+  /** Custom TmuxConnectorPort (e.g., MockTmuxConnector for tests without tmux installed) */
+  tmuxConnector?: TmuxConnectorPort;
   /**
    * Custom Logger instance — when provided, this logger is used instead of the
    * default ConsoleLogger/StructuredLogger. Used by the dashboard to swap in
@@ -97,7 +99,7 @@ import { MCPAdapter } from './adapters/mcp-adapter.js';
 
 // Core
 import { AgentRegistry } from './core/agents.js';
-
+import type { TmuxConnectorPort } from './core/tmux-types.js';
 // Implementations
 import { InMemoryAgentRegistry } from './implementations/agent-registry.js';
 import { SQLiteCheckpointRepository } from './implementations/checkpoint-repository.js';
@@ -508,25 +510,29 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status ?? -1 };
   };
 
-  const tmuxSessionManager = new TmuxSessionManager({ exec: tmuxExec });
+  const tmuxSessionManager = options.tmuxConnector ? undefined : new TmuxSessionManager({ exec: tmuxExec });
 
-  container.registerSingleton('tmuxConnector', () => {
-    return new TmuxConnector({
-      validator: new TmuxValidator({ exec: tmuxExec }),
-      sessionManager: tmuxSessionManager,
-      hooks: new TmuxHooks({
-        writeFile: (p, c, opts) => fs.writeFileSync(p, c, { mode: opts.mode }),
-        mkdirSync: (p, opts) => fs.mkdirSync(p, opts),
-        rmSync: (p, opts) => fs.rmSync(p, opts),
-      }),
-      logger: logger.child({ module: 'TmuxConnector' }),
-      // biome-ignore lint/suspicious/noExplicitAny: fs.watch overloads don't match WatchFn structurally — cast required
-      watch: fs.watch as any,
-      readFileSync: (p, enc) => fs.readFileSync(p, enc),
-      readFile: (p, enc) => fs.promises.readFile(p, enc),
-      readdirSync: (p) => fs.readdirSync(p) as string[],
+  if (options.tmuxConnector) {
+    container.registerValue('tmuxConnector', options.tmuxConnector);
+  } else {
+    container.registerSingleton('tmuxConnector', () => {
+      return new TmuxConnector({
+        validator: new TmuxValidator({ exec: tmuxExec }),
+        sessionManager: tmuxSessionManager!,
+        hooks: new TmuxHooks({
+          writeFile: (p, c, opts) => fs.writeFileSync(p, c, { mode: opts.mode }),
+          mkdirSync: (p, opts) => fs.mkdirSync(p, opts),
+          rmSync: (p, opts) => fs.rmSync(p, opts),
+        }),
+        logger: logger.child({ module: 'TmuxConnector' }),
+        // biome-ignore lint/suspicious/noExplicitAny: fs.watch overloads don't match WatchFn structurally — cast required
+        watch: fs.watch as any,
+        readFileSync: (p, enc) => fs.readFileSync(p, enc),
+        readFile: (p, enc) => fs.promises.readFile(p, enc),
+        readdirSync: (p) => fs.readdirSync(p) as string[],
+      });
     });
-  });
+  }
 
   // sessionsDir lives alongside the database file (e.g. ~/.autobeat/sessions/)
   // DECISION: Colocation with DB ensures sessions data is managed with the same
