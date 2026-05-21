@@ -1,22 +1,18 @@
 /**
- * Shared orchestration liveness check utility
+ * Shared orchestration liveness check utility.
  *
- * DECISION (2026-04-10): Shared liveness chain trace extracted into its own utility
- * so RecoveryManager.failZombieRunningOrchestrations and the dashboard's liveness
- * fetcher use IDENTICAL logic. Without extraction, the two implementations could
- * drift, causing the dashboard to show 'live' for an orchestration that recovery
- * has already marked dead.
+ * DECISION (2026-04-10): Extracted so RecoveryManager.failZombieRunningOrchestrations
+ * and the dashboard liveness fetcher use identical logic. Diverging implementations
+ * would cause the dashboard to show 'live' for orchestrations recovery has already marked dead.
  *
  * Liveness is determined by tracing:
  *   orchestration → loop → most-recent-iteration → task → worker → liveness check
  *
- * Phase 4: All workers are tmux-session-based (pid=0 sentinel). The pid=0 dispatch
- * branches are removed; all paths use isTmuxSessionAlive. isOrchestratorProcessAlive
- * is retained for interactive mode orchestrators only (they use real PIDs).
+ * All workers are tmux-session-based. isOrchestratorProcessAlive is used only for
+ * interactive mode orchestrators, which use real PIDs.
  *
- * Conservative: 'unknown' results (broken chain) leave the row alone — false positives
- * marking live orchestrations as zombies would be far worse than false negatives
- * leaving zombies for the user to clean manually via the dashboard.
+ * Conservative: 'unknown' (broken chain) leaves the row alone — false positives marking
+ * live orchestrations as zombies are worse than false negatives the user cleans manually.
  */
 
 import type { Orchestration, TaskId } from '../core/domain.js';
@@ -31,13 +27,11 @@ export interface LivenessDeps {
   /**
    * PID-based liveness check for interactive mode orchestrators.
    * Interactive orchestrators use real PIDs (not pid=0 sentinel).
-   * DECISION: Renamed from isProcessAlive to isOrchestratorProcessAlive in Phase 4
-   * to clarify it applies to orchestrator processes, not worker processes.
    */
   readonly isOrchestratorProcessAlive: (pid: number) => boolean;
   /**
-   * Tmux session liveness check. Required in Phase 4 — all workers are tmux-based.
-   * Dashboard provides () => false when tmuxSessionManager is unavailable.
+   * Tmux session liveness check for all worker processes.
+   * Pass () => false when tmuxSessionManager is unavailable.
    */
   readonly isTmuxSessionAlive: (sessionName: string) => boolean;
 }

@@ -569,10 +569,9 @@ export interface TaskEnqueuer {
 }
 
 /**
- * Worker registration persistence for cross-process coordination
+ * Worker registration persistence for cross-process coordination.
  * ARCHITECTURE: Tracks which workers exist across all processes sharing the same SQLite DB.
- * Enables PID-based recovery (replaces 30-minute staleness heuristic) and cross-process
- * resource checks (prevents over-spawning).
+ * Enables tmux-session-based crash recovery and cross-process resource checks (prevents over-spawning).
  *
  * All methods are synchronous Result<T> — better-sqlite3 is synchronous,
  * enables use inside runInTransaction().

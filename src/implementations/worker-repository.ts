@@ -1,10 +1,10 @@
 /**
- * SQLite-based worker repository for cross-process coordination
+ * SQLite-based worker repository for cross-process coordination.
  * ARCHITECTURE: Tracks active workers across all processes sharing the same SQLite DB.
- * Enables PID-based crash recovery and cross-process resource checks.
+ * Enables tmux-session-based crash recovery and cross-process resource checks.
  *
  * Pattern: Repository with prepared statements, synchronous Result<T> returns
- * (better-sqlite3 is synchronous, enables use inside runInTransaction)
+ * (better-sqlite3 is synchronous, enables use inside runInTransaction).
  */
 
 import SQLite from 'better-sqlite3';
@@ -27,7 +27,7 @@ const WorkerRowSchema = z.object({
   agent: z.string(),
   started_at: z.number(),
   last_heartbeat: z.number().nullable().optional(),
-  // session_name is nullable — NULL for pre-Phase 3 process-based workers (migration v29)
+  // session_name is nullable — NULL for legacy rows without a tmux session (migration v29)
   session_name: z.string().nullable().optional(),
 });
 
@@ -92,7 +92,6 @@ export class SQLiteWorkerRepository implements WorkerRepository {
           ownerPid: registration.ownerPid,
           agent: registration.agent,
           startedAt: registration.startedAt,
-          // sessionName is null for legacy process-based workers; populated for tmux workers (Phase 3)
           sessionName: registration.sessionName ?? null,
         });
       },
@@ -176,7 +175,6 @@ export class SQLiteWorkerRepository implements WorkerRepository {
    * @throws Error if row data is invalid (indicates database corruption)
    */
   private rowToRegistration(row: WorkerRow): WorkerRegistration {
-    // Validate row data at system boundary (parse throws ZodError on invalid data)
     const data = WorkerRowSchema.parse(row);
     return {
       workerId: WorkerId(data.worker_id),
@@ -185,9 +183,7 @@ export class SQLiteWorkerRepository implements WorkerRepository {
       ownerPid: data.owner_pid,
       agent: data.agent,
       startedAt: data.started_at,
-      // lastHeartbeat is undefined when NULL (no heartbeat written yet)
       lastHeartbeat: data.last_heartbeat ?? undefined,
-      // sessionName is undefined for pre-Phase 3 rows (NULL in DB); populated for tmux workers
       sessionName: data.session_name ?? undefined,
     };
   }

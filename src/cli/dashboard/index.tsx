@@ -120,10 +120,7 @@ export async function startDashboard(): Promise<void> {
   const resourceMonitorResult = container.get<ResourceMonitor>('resourceMonitor');
   const resourceMonitor = resourceMonitorResult.ok ? resourceMonitorResult.value : undefined;
 
-  // Phase 4: Extract tmux session manager for orchestration liveness checks.
-  // Best-effort — fallback () => false when unavailable (e.g. test environments
-  // injecting a mock TmuxConnectorPort without a session manager). Non-optional
-  // per Phase 4 contract; callers always provide a value (even if a no-op fallback).
+  // Build the tmux session liveness check — fallback () => false when unavailable.
   const tmuxSessionManagerResult = container.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
   const isTmuxSessionAlive: (sessionName: string) => boolean = tmuxSessionManagerResult.ok
     ? (sessionName) => {

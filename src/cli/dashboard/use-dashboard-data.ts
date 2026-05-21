@@ -63,8 +63,6 @@ export const POLL_INTERVAL_BY_VIEW: Readonly<Record<'main' | 'detail', number>> 
 /**
  * PID-based liveness check for interactive mode orchestrators.
  * EPERM means the process exists but we lack permission — treated as alive.
- * DECISION: Renamed from isProcessAlive to isOrchestratorProcessAlive in Phase 4
- * to clarify it applies to orchestrator processes, not worker processes.
  */
 function isOrchestratorProcessAlive(pid: number): boolean {
   try {

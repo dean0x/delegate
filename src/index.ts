@@ -87,7 +87,7 @@ async function main() {
         await (workerPoolResult.value as WorkerPool).killAll();
       }
 
-      // Phase 4: Belt-and-suspenders session sweep — destroy any remaining beat-* sessions
+      // Belt-and-suspenders session sweep — destroy any remaining beat-* sessions
       // that killAll() may have missed (e.g. sessions that were spawning during shutdown).
       const tmuxSessionManagerResult = container?.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
       if (tmuxSessionManagerResult?.ok) {

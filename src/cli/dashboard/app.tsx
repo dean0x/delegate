@@ -42,10 +42,8 @@ interface AppProps {
    */
   readonly outputRepository?: OutputRepository;
   /**
-   * Phase 4: Tmux session liveness check (non-optional).
-   * When tmuxSessionManager is unavailable (e.g. test environments), callers
-   * pass () => false to preserve backward compatibility.
-   * RUNNING orchestrations backed by tmux workers use this to report 'live' or 'dead'.
+   * Tmux session liveness check for RUNNING orchestrations.
+   * Pass () => false when tmuxSessionManager is unavailable (e.g. test environments).
    */
   readonly isTmuxSessionAlive: (sessionName: string) => boolean;
 }

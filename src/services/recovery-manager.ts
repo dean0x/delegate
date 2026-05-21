@@ -1,11 +1,12 @@
 /**
- * Event-driven recovery manager for startup task restoration
- * Handles loading tasks from database and emits events for recovery actions
+ * Event-driven recovery manager for startup task restoration.
+ * Handles loading tasks from database and emits events for recovery actions.
  *
- * Phase 4: PID-based worker liveness removed. All workers are tmux-session-based.
- * Workers with NULL sessionName (legacy rows) are treated as dead.
- * Orphan tmux session cleanup added: sessions with no DB record are destroyed on startup.
- * Enhanced shutdown sweep: remaining beat-* sessions destroyed after killAll.
+ * Recovery phases:
+ *   Phase 0 — clean dead worker registrations + destroy orphan tmux sessions
+ *   Phase 1 — delete expired tasks, loops, and orchestrations (7-day retention)
+ *   Phase 2 — re-enqueue QUEUED tasks (skip dependency-blocked ones)
+ *   Phase 3 — fail RUNNING tasks whose tmux session is no longer alive
  */
 
 import {
@@ -41,9 +42,8 @@ export interface RecoveryManagerDeps {
   readonly loopRepo?: LoopRepository;
   readonly orchestrationRepo?: OrchestrationRepository;
   /**
-   * Phase 3: Optional tmux session manager for liveness checks on tmux workers.
-   * Phase 4: Required for production use — orphan cleanup and shutdown sweep need it.
-   * When omitted, orphan cleanup and session-based liveness are skipped gracefully.
+   * Required for full recovery — enables orphan session cleanup and session-based liveness.
+   * When omitted, orphan cleanup and session liveness checks are skipped gracefully.
    */
   readonly tmuxSessionManager?: TmuxSessionManagerCorePort;
 }
@@ -101,46 +101,28 @@ export class RecoveryManager {
   }
 
   /**
-   * Phase 4: Check if a tmux worker is alive by session name.
-   * Uses TmuxSessionManagerCorePort.isAlive() for session-based liveness.
-   * Falls back to false (dead) when sessionManager is not configured or check fails.
-   *
-   * DECISION: All workers use tmux sessions (pid=0 sentinel).
-   * Session name is the authoritative identity for all workers.
-   */
-  private isTmuxSessionAlive(sessionName: string): boolean {
-    if (!this.tmuxSessionManager) return false;
-    const result = this.tmuxSessionManager.isAlive(sessionName);
-    return result.ok ? result.value : false;
-  }
-
-  /**
-   * Unified liveness check for a worker registration.
-   * Phase 4: All workers are tmux-based. Workers without sessionName are treated as dead.
+   * Returns true if the worker's tmux session is currently alive.
+   * Workers without sessionName (legacy/corrupted rows) are treated as dead.
+   * Falls back to false when sessionManager is not configured or the check fails.
    */
   private isWorkerAlive(reg: WorkerRegistration): boolean {
-    return reg.sessionName ? this.isTmuxSessionAlive(reg.sessionName) : false;
+    if (!reg.sessionName || !this.tmuxSessionManager) return false;
+    const result = this.tmuxSessionManager.isAlive(reg.sessionName);
+    return result.ok ? result.value : false;
   }
 
   async recover(): Promise<Result<void>> {
     this.logger.info('Starting recovery process');
 
-    // Phase 0: Clean dead worker registrations and orphan sessions (must run before Phase 3)
+    // Phase 0: clean dead worker registrations + orphan sessions (must run before Phase 3)
     const cleanupSummary = await this.cleanDeadWorkerRegistrations();
 
-    // Phase 1: Cleanup old completed tasks
+    // Phase 1: delete expired tasks, loops, and orchestrations; fail zombie orchestrations
     await this.cleanupOldCompletedTasks();
-
-    // Phase 1b: Cleanup old completed loops (FK cascade handles iterations)
     await this.cleanupOldLoops();
-
-    // Phase 1c: Cleanup old completed orchestrations (state files + DB rows)
     await this.cleanupOldOrchestrations();
-
-    // Phase 1d: Detect zombie RUNNING orchestrations whose worker died silently.
-    // DECISION (2026-04-10): Stuck PLANNING orchestrations are NOT auto-cleaned by design.
-    // The user prefers visibility + manual control via dashboard keybindings (c/d)
-    // over silent automated cleanup.
+    // DECISION (2026-04-10): Stuck PLANNING orchestrations are NOT auto-cleaned.
+    // User manages them manually via dashboard keybindings (c/d).
     await this.failZombieRunningOrchestrations();
 
     // Fetch non-terminal tasks for recovery
@@ -190,11 +172,10 @@ export class RecoveryManager {
 
   /**
    * Clean dead workers and orphan tmux sessions.
-   * Phase 4: Worker liveness is tmux-session-based exclusively.
    * Workers without sessionName (legacy/corrupted rows) are treated as dead.
    *
-   * DESIGN DECISION: Both liveTmuxSessions and allWorkers are computed once here and
-   * passed to cleanOrphanTmuxSessions — avoids double listSessions() and findAll() calls.
+   * DESIGN DECISION: liveTmuxSessions and allWorkers are computed once here and passed
+   * to cleanOrphanTmuxSessions — avoids a second listSessions() and findAll() call.
    *
    * Returns a CleanupSummary for the structured 'Recovery complete' log.
    */
@@ -208,11 +189,11 @@ export class RecoveryManager {
       return { workersCleanedUp, orphanSessionsDestroyed, heartbeatWarnings };
     }
 
-    // Phase 3/4: Batch tmux liveness check — one listSessions() call instead of N sequential has-session calls.
+    // Batch liveness check — one listSessions() call instead of N sequential has-session calls.
     const liveTmuxSessions = this.buildLiveSessionSet();
 
     for (const reg of allWorkers.value) {
-      // Phase 4: All workers are tmux-based. Workers without sessionName are dead.
+      // Workers without sessionName (legacy/corrupted rows) are treated as dead.
       const alive = reg.sessionName !== undefined && liveTmuxSessions.has(reg.sessionName);
 
       if (!alive) {
@@ -257,7 +238,7 @@ export class RecoveryManager {
 
     // Build set of registered session names for O(1) lookup
     const registeredSessionNames = new Set(
-      registeredWorkers.filter((w) => w.sessionName !== undefined).map((w) => w.sessionName as string),
+      registeredWorkers.flatMap((w) => (w.sessionName !== undefined ? [w.sessionName] : [])),
     );
 
     let destroyed = 0;
@@ -379,8 +360,8 @@ export class RecoveryManager {
    * marking live orchestrations as zombies would be far worse than false negatives
    * leaving zombies for the user to clean manually via the dashboard.
    *
-   * Phase 4: isOrchestratorProcessAlive is inlined here for interactive orchestrators.
-   * isTmuxSessionAlive covers all other worker liveness checks.
+   * Stuck PLANNING orchestrations are NOT auto-cleaned — the user manages them manually
+   * via dashboard keybindings (c/d).
    */
   private async failZombieRunningOrchestrations(): Promise<void> {
     if (!this.orchestrationRepo || !this.loopRepo) return;
@@ -403,7 +384,11 @@ export class RecoveryManager {
               return (e as NodeJS.ErrnoException).code === 'EPERM';
             }
           },
-          isTmuxSessionAlive: (name: string) => this.isTmuxSessionAlive(name),
+          isTmuxSessionAlive: (name: string) => {
+            if (!this.tmuxSessionManager) return false;
+            const r = this.tmuxSessionManager.isAlive(name);
+            return r.ok ? r.value : false;
+          },
         });
       } catch (error) {
         // Defensive: skip this orchestration on unexpected error.
@@ -490,25 +475,17 @@ export class RecoveryManager {
   }
 
   /**
-   * TMUX SESSION-BASED RECOVERY for RUNNING tasks
+   * Recover RUNNING tasks using tmux session liveness detection.
    *
    * WHY THIS EXISTS:
-   * Tasks stuck in RUNNING status are typically from crashed workers or server shutdowns.
-   * Without this check, every server restart would re-queue ALL old running tasks,
-   * causing a fork-bomb scenario where dozens of claude-code processes spawn simultaneously.
+   * Tasks stuck in RUNNING are from crashed workers or server shutdowns.
+   * Without this check, every restart would re-queue ALL stale running tasks,
+   * spawning dozens of agent processes simultaneously (fork-bomb).
+   *   INCIDENT REFERENCE: 2025-10-04 — 7 stale tasks spawned simultaneously → crash.
    *
    * WHAT IT DOES:
-   * - Checks if the task has a worker row in the workers table
-   * - If worker row exists and tmux session is alive → leave it alone (worker still running)
-   * - If no worker row, no sessionName, or session is dead → mark FAILED immediately (definitively crashed)
-   *
-   * REPLACES: PID-based liveness detection (pre-Phase 4).
-   * Definitive session liveness detection — no false positives from short tasks,
-   * no wait for long-crashed tasks.
-   *
-   * INCIDENT REFERENCE: 2025-10-04
-   * Removing spawn delay caused 7 stale tasks to spawn simultaneously → system crash
-   * Liveness detection prevents this by marking crashed tasks immediately.
+   * - Worker row + alive tmux session → leave alone (worker still running)
+   * - No worker row, no sessionName, or dead session → mark FAILED immediately
    */
   private async recoverRunningTasks(tasks: readonly Task[]): Promise<number> {
     const now = Date.now();

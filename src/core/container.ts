@@ -233,7 +233,7 @@ export class Container {
       }
     }
 
-    // Phase 4: Belt-and-suspenders session sweep — destroy any remaining beat-* sessions
+    // Belt-and-suspenders session sweep — destroy any remaining beat-* sessions
     // that killAll() may have missed (e.g. sessions that were spawning during shutdown).
     const tmuxSessionManagerResult = this.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
     if (tmuxSessionManagerResult.ok) {
