@@ -309,6 +309,43 @@ describe('RecoveryManager', () => {
         taskId: TaskId('task-err'),
       });
     });
+
+    it('should not count worker as cleaned up when task lookup fails (P2: accurate metric)', async () => {
+      // P2: workersCleanedUp must only increment when handleDeadWorker returns true.
+      // A task lookup failure means outcome is unknown — the counter must NOT increment.
+      const deadWorker = buildTmuxWorker('w-dead-fail', 'task-fail', 'beat-task-fail');
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
+      const findError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'DB read failed');
+      repo.findById.mockResolvedValue(err(findError));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // Recovery summary must report 0 — lookup failed, outcome is unknown
+      expect(logger.info).toHaveBeenCalledWith(
+        'Recovery complete',
+        expect.objectContaining({ workersCleanedUp: 0 }),
+      );
+    });
+
+    it('should count worker as cleaned up when task is already terminal (P2: accurate metric)', async () => {
+      // P2: handleDeadWorker returns true for already-terminal tasks — worker row was unregistered.
+      const deadWorker = buildTmuxWorker('w-dead-terminal', 'task-terminal', 'beat-task-terminal');
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
+      const completedTask = new TaskFactory().withStatus(TaskStatus.COMPLETED).build();
+      repo.findById.mockResolvedValue(ok({ ...completedTask, id: TaskId('task-terminal') }));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // Worker was unregistered and task was already terminal — counts as cleaned up
+      expect(logger.info).toHaveBeenCalledWith(
+        'Recovery complete',
+        expect.objectContaining({ workersCleanedUp: 1 }),
+      );
+    });
   });
 
   describe('Phase 0: Orphan tmux session cleanup', () => {
@@ -367,6 +404,36 @@ describe('RecoveryManager', () => {
 
       // Should not crash
       await expect(managerNoTmux.recover()).resolves.toEqual({ ok: true, value: undefined });
+    });
+
+    it('should NOT unregister workers or fail tasks when tmuxSessionManager is absent', async () => {
+      // P1 safety: when tmuxSessionManager is absent we cannot determine liveness.
+      // Running the dead-worker loop would treat every registered worker as dead
+      // (liveTmuxSessions is empty → has() always false) and destroy all registrations.
+      // The guard must skip the entire loop, leaving workers and tasks untouched.
+      const managerNoTmux = new RecoveryManager({
+        taskRepo: repo as unknown as TaskRepository,
+        queue: queue as unknown as TaskQueue,
+        eventBus: eventBus as unknown as EventBus,
+        logger: logger as unknown as Logger,
+        workerRepo: workerRepo as unknown as WorkerRepository,
+        dependencyRepo: dependencyRepo as unknown as DependencyRepository,
+        // tmuxSessionManager intentionally omitted
+      });
+
+      // Workers exist in the DB — without the guard they would all be treated as dead
+      const worker1 = buildTmuxWorker('w-1', 'task-1', 'beat-task-1');
+      const worker2 = buildTmuxWorker('w-2', 'task-2', 'beat-task-2');
+      workerRepo.findAll.mockReturnValue(ok([worker1, worker2]));
+      setupFindByStatus([], []);
+
+      const result = await managerNoTmux.recover();
+
+      expect(result.ok).toBe(true);
+      // Without the guard these would be called — the guard prevents destructive cleanup
+      expect(workerRepo.unregister).not.toHaveBeenCalled();
+      expect(repo.update).not.toHaveBeenCalled();
+      expect(eventBus.emit).not.toHaveBeenCalledWith('TaskFailed', expect.anything());
     });
 
     it('should log error and continue when destroySession fails for an orphan', async () => {

@@ -174,7 +174,9 @@ export class RecoveryManager {
    *  - `names`: Set<string> for O(1) liveness lookups in the dead-worker loop
    *  - `sessions`: raw info array (with `created` timestamps) for orphan grace-period checks
    *
-   * Returns empty values when no session manager is configured or listSessions fails.
+   * Only called from cleanDeadWorkerRegistrations after the tmuxSessionManager guard —
+   * this method is never invoked when tmuxSessionManager is absent.
+   * Returns empty values when listSessions fails.
    */
   private buildLiveSessionSet(): {
     names: Set<string>;
@@ -211,6 +213,14 @@ export class RecoveryManager {
     }
 
     // Batch liveness check — one listSessions() call instead of N sequential has-session calls.
+    // Guard: skip dead-worker loop entirely when tmuxSessionManager is absent.
+    // Without it we cannot distinguish live from dead sessions, so running the loop
+    // would treat every registered worker as dead and destroy all registrations.
+    // Orphan cleanup also guards on tmuxSessionManager — both paths are skipped gracefully.
+    if (!this.tmuxSessionManager) {
+      return { workersCleanedUp, orphanSessionsDestroyed: 0, heartbeatWarnings, liveTmuxSessions: new Set() };
+    }
+
     const { names: liveTmuxSessions, sessions: liveTmuxSessionInfos } = this.buildLiveSessionSet();
 
     for (const reg of allWorkers.value) {
@@ -218,8 +228,8 @@ export class RecoveryManager {
       const alive = reg.sessionName !== undefined && liveTmuxSessions.has(reg.sessionName);
 
       if (!alive) {
-        await this.handleDeadWorker(reg);
-        workersCleanedUp++;
+        const cleaned = await this.handleDeadWorker(reg);
+        if (cleaned) workersCleanedUp++;
       } else {
         // Alive — observability only: warn if heartbeat is stale
         if (reg.lastHeartbeat !== undefined && Date.now() - reg.lastHeartbeat > HEARTBEAT_STALENESS_MS) {
@@ -311,8 +321,13 @@ export class RecoveryManager {
   /**
    * Unregister a dead worker, look up its task, and mark the task FAILED if non-terminal.
    * Emits TaskFailed so DependencyHandler can unblock downstream tasks.
+   *
+   * Returns true when the worker was successfully cleaned up (task failed or already terminal).
+   * Returns false when the task lookup fails — outcome is unknown, counter must not increment.
+   * Unregister failure does not affect the return value: the session is dead regardless,
+   * and the error is logged for observability.
    */
-  private async handleDeadWorker(reg: WorkerRegistration): Promise<void> {
+  private async handleDeadWorker(reg: WorkerRegistration): Promise<boolean> {
     const unregResult = this.workerRepo.unregister(reg.workerId);
     if (!unregResult.ok) {
       this.logger.error('Failed to unregister dead worker', unregResult.error, {
@@ -326,7 +341,8 @@ export class RecoveryManager {
       this.logger.error('Failed to look up task for dead worker', taskResult.error, {
         taskId: reg.taskId,
       });
-      return;
+      // Outcome unknown — do not count as cleaned up
+      return false;
     }
 
     if (taskResult.value !== null && isTerminalState(taskResult.value.status)) {
@@ -336,7 +352,8 @@ export class RecoveryManager {
         currentStatus: taskResult.value.status,
         deadPid: reg.ownerPid,
       });
-      return;
+      // Worker row cleaned, task already in terminal state — count as cleaned up
+      return true;
     }
 
     // ARCHITECTURE EXCEPTION: Direct repository write + TaskFailed emit (double-write).
@@ -367,10 +384,12 @@ export class RecoveryManager {
           taskId: reg.taskId,
         });
       }
+      return true;
     } else {
       this.logger.error('Failed to mark dead worker task as failed', updateResult.error, {
         taskId: reg.taskId,
       });
+      return false;
     }
   }
 
