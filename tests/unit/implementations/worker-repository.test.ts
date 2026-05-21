@@ -167,7 +167,7 @@ describe('SQLiteWorkerRepository - Unit Tests', () => {
     });
 
     it('should return null for workers with NULL session_name (legacy rows)', () => {
-      // Insert a row without session_name (simulating pre-Phase 3 row)
+      // Insert a row without session_name (simulating pre-migration v29 row)
       const taskId = 't-legacy-sess';
       ensureTaskExists(taskId);
       db.getDatabase()
@@ -286,7 +286,7 @@ describe('SQLiteWorkerRepository - Unit Tests', () => {
   // sessionName field (migration v29)
   // ============================================================================
 
-  describe('sessionName (Phase 3 tmux field)', () => {
+  describe('sessionName (migration v29 tmux field)', () => {
     it('should persist and retrieve sessionName when provided', () => {
       // Arrange
       const reg = createRegistration({
@@ -306,7 +306,7 @@ describe('SQLiteWorkerRepository - Unit Tests', () => {
       expect(found.value.sessionName).toBe('beat-t-session');
     });
 
-    it('should return undefined sessionName for rows without sessionName (pre-Phase 3 rows)', () => {
+    it('should return undefined sessionName for rows without sessionName (pre-migration v29 rows)', () => {
       // Arrange — register without sessionName
       const reg = createRegistration({ workerId: WorkerId('w-nosess'), taskId: TaskId('t-nosess') });
 
@@ -321,7 +321,7 @@ describe('SQLiteWorkerRepository - Unit Tests', () => {
     });
 
     it('should handle NULL session_name from existing rows gracefully', () => {
-      // Direct DB insertion (simulating a pre-Phase 3 row without session_name)
+      // Direct DB insertion (simulating a pre-migration v29 row without session_name)
       const taskId = 't-legacy';
       ensureTaskExists(taskId);
       db.getDatabase()

@@ -77,6 +77,12 @@ interface CleanupSummary {
   readonly workersCleanedUp: number;
   readonly orphanSessionsDestroyed: number;
   readonly heartbeatWarnings: number;
+  /**
+   * The live tmux session names observed during Phase 0 cleanup.
+   * Reused in Phase 3 (recoverRunningTasks) for O(1) set membership checks
+   * instead of N sequential isAlive() calls.
+   */
+  readonly liveTmuxSessions: Set<string>;
 }
 
 export class RecoveryManager {
@@ -152,8 +158,9 @@ export class RecoveryManager {
     }
 
     // Phase 2 & 3: Recover tasks
+    // Pass liveTmuxSessions from Phase 0 to Phase 3 — avoids N sequential isAlive() execs.
     const { queuedCount, blockedCount } = await this.recoverQueuedTasks(queuedResult.value);
-    const failedCount = await this.recoverRunningTasks(runningResult.value);
+    const failedCount = await this.recoverRunningTasks(runningResult.value, cleanupSummary.liveTmuxSessions);
 
     this.logger.info('Recovery complete', {
       workersCleanedUp: cleanupSummary.workersCleanedUp,
@@ -199,6 +206,8 @@ export class RecoveryManager {
    *
    * DESIGN DECISION: liveTmuxSessions and allWorkers are computed once here and passed
    * to cleanOrphanTmuxSessions — avoids a second listSessions() and findAll() call.
+   * The same liveTmuxSessions set is returned in CleanupSummary for reuse in
+   * recoverRunningTasks — avoids N sequential isAlive() calls in Phase 3.
    *
    * Returns a CleanupSummary for the structured 'Recovery complete' log.
    */
@@ -209,7 +218,7 @@ export class RecoveryManager {
     const allWorkers = this.workerRepo.findAll();
     if (!allWorkers.ok) {
       const orphanSessionsDestroyed = await this.cleanOrphanTmuxSessions(new Set(), [], []);
-      return { workersCleanedUp, orphanSessionsDestroyed, heartbeatWarnings };
+      return { workersCleanedUp, orphanSessionsDestroyed, heartbeatWarnings, liveTmuxSessions: new Set() };
     }
 
     // Batch liveness check — one listSessions() call instead of N sequential has-session calls.
@@ -244,7 +253,7 @@ export class RecoveryManager {
       liveTmuxSessionInfos,
     );
 
-    return { workersCleanedUp, orphanSessionsDestroyed, heartbeatWarnings };
+    return { workersCleanedUp, orphanSessionsDestroyed, heartbeatWarnings, liveTmuxSessions };
   }
 
   /**
@@ -420,20 +429,23 @@ export class RecoveryManager {
     const result = await this.orchestrationRepo.findByStatus(OrchestratorStatus.RUNNING);
     if (!result.ok) return;
 
+    // Hoist closure deps outside the loop — captures stable this.tmuxSessionManager reference
+    const livenessDeps = {
+      loopRepo: this.loopRepo,
+      taskRepo: this.taskRepo,
+      workerRepo: this.workerRepo,
+      isOrchestratorProcessAlive: isProcessAlive,
+      isTmuxSessionAlive: (name: string) => {
+        if (!this.tmuxSessionManager) return false;
+        const r = this.tmuxSessionManager.isAlive(name);
+        return r.ok ? r.value : false;
+      },
+    };
+
     for (const o of result.value) {
       let liveness: Liveness;
       try {
-        liveness = await checkOrchestrationLiveness(o, {
-          loopRepo: this.loopRepo,
-          taskRepo: this.taskRepo,
-          workerRepo: this.workerRepo,
-          isOrchestratorProcessAlive: isProcessAlive,
-          isTmuxSessionAlive: (name: string) => {
-            if (!this.tmuxSessionManager) return false;
-            const r = this.tmuxSessionManager.isAlive(name);
-            return r.ok ? r.value : false;
-          },
-        });
+        liveness = await checkOrchestrationLiveness(o, livenessDeps);
       } catch (error) {
         // Defensive: skip this orchestration on unexpected error.
         // Log so an unseen bug in the liveness chain doesn't silently disable zombie detection.
@@ -530,8 +542,11 @@ export class RecoveryManager {
    * WHAT IT DOES:
    * - Worker row + alive tmux session → leave alone (worker still running)
    * - No worker row, no sessionName, or dead session → mark FAILED immediately
+   *
+   * @param liveTmuxSessions - Set of live session names from Phase 0 cleanup.
+   *   Reusing this set avoids N sequential isAlive() execs (one per RUNNING task).
    */
-  private async recoverRunningTasks(tasks: readonly Task[]): Promise<number> {
+  private async recoverRunningTasks(tasks: readonly Task[], liveTmuxSessions: Set<string>): Promise<number> {
     const now = Date.now();
     let failedCount = 0;
 
@@ -540,7 +555,10 @@ export class RecoveryManager {
       const workerRegistration = workerResult.ok ? workerResult.value : null;
 
       if (workerRegistration !== null) {
-        if (this.isWorkerAlive(workerRegistration)) {
+        // Use the batch session set from Phase 0 — O(1) lookup instead of a per-task exec.
+        const alive =
+          workerRegistration.sessionName !== undefined && liveTmuxSessions.has(workerRegistration.sessionName);
+        if (alive) {
           this.logger.info('Running task has live tmux session, skipping', {
             taskId: task.id,
             ownerPid: workerRegistration.ownerPid,

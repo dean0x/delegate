@@ -934,9 +934,9 @@ describe('RecoveryManager', () => {
       expect(logger.info).toHaveBeenCalledWith(
         'Recovery complete',
         expect.objectContaining({
-          workersCleanedUp: expect.any(Number),
-          orphanSessionsDestroyed: expect.any(Number),
-          heartbeatWarnings: expect.any(Number),
+          workersCleanedUp: 1,
+          orphanSessionsDestroyed: 1,
+          heartbeatWarnings: 0,
           queuedTasks: expect.any(Number),
           runningTasks: expect.any(Number),
           tasksRequeued: expect.any(Number),
