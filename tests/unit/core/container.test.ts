@@ -551,10 +551,7 @@ describe('Container - Dependency Injection', () => {
           return { ok: true as const, value: undefined };
         }),
         isAlive: vi.fn(),
-        createSession: vi.fn(),
-        sendKeys: vi.fn(),
-        capturePane: vi.fn(),
-        resizeWindow: vi.fn(),
+        sendControlKeys: vi.fn(),
       };
       const mockDatabase = {
         close: vi.fn(() => {

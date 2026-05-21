@@ -61,13 +61,6 @@ export const POLL_INTERVAL_BY_VIEW: Readonly<Record<'main' | 'detail', number>> 
   detail: 2_000,
 };
 
-/**
- * PID-based liveness check for interactive mode orchestrators.
- * EPERM means the process exists but we lack permission — treated as alive.
- * Delegates to the shared isProcessAlive utility from src/utils/process-liveness.ts.
- */
-const isOrchestratorProcessAlive = isProcessAlive;
-
 // ============================================================================
 // Liveness cache
 // ============================================================================
@@ -286,7 +279,7 @@ export async function fetchAllData(
     loopRepo: loopRepository,
     taskRepo: taskRepository,
     workerRepo: workerRepository,
-    isOrchestratorProcessAlive,
+    isOrchestratorProcessAlive: isProcessAlive,
     isTmuxSessionAlive,
   };
   const orchestrationLiveness = await computeOrchestrationLiveness(orchestrations, cache, livenessDeps);

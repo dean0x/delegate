@@ -118,17 +118,6 @@ export class RecoveryManager {
     this.tmuxSessionManager = tmuxSessionManager;
   }
 
-  /**
-   * Returns true if the worker's tmux session is currently alive.
-   * Workers without sessionName (legacy/corrupted rows) are treated as dead.
-   * Falls back to false when sessionManager is not configured or the check fails.
-   */
-  private isWorkerAlive(reg: WorkerRegistration): boolean {
-    if (!reg.sessionName || !this.tmuxSessionManager) return false;
-    const result = this.tmuxSessionManager.isAlive(reg.sessionName);
-    return result.ok ? result.value : false;
-  }
-
   async recover(): Promise<Result<void>> {
     this.logger.info('Starting recovery process');
 
