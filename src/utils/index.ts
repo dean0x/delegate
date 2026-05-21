@@ -13,6 +13,8 @@ export {
 } from './cron.js';
 // Output measurement utilities
 export { linesByteSize } from './output.js';
+// Process liveness utility
+export { isProcessAlive } from './process-liveness.js';
 export type { RetryOptions } from './retry.js';
 // Retry utilities
 export {

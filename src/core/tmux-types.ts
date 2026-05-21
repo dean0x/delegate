@@ -102,11 +102,15 @@ export interface TmuxSessionManagerCorePort {
   /**
    * List all active tmux sessions. Used by RecoveryManager to batch liveness
    * checks at startup — one exec call instead of N sequential has-session calls.
-   * Returns an array of objects with at least a `name` field; on error (e.g.
-   * no tmux server running) returns an empty array rather than propagating the error
-   * so callers can treat the empty result as "no live sessions".
+   * Returns an array of objects with at least `name` and `created` (Unix epoch seconds)
+   * fields; on error (e.g. no tmux server running) returns an empty array rather than
+   * propagating the error so callers can treat the empty result as "no live sessions".
+   *
+   * The `created` field is used by orphan cleanup to apply a grace period: sessions
+   * younger than ORPHAN_GRACE_PERIOD_MS are not destroyed, preventing TOCTOU races
+   * where a worker just spawned between listSessions() and findAll().
    */
-  listSessions(): Result<ReadonlyArray<{ readonly name: string }>, AutobeatError>;
+  listSessions(): Result<ReadonlyArray<{ readonly name: string; readonly created: number }>, AutobeatError>;
   /**
    * Destroy a tmux session by name.
    * Used by RecoveryManager orphan cleanup and graceful shutdown session sweep.

@@ -30,6 +30,7 @@ import {
 } from '../core/interfaces.js';
 import { ok, Result } from '../core/result.js';
 import type { TmuxSessionManagerCorePort } from '../core/tmux-types.js';
+import { isProcessAlive } from '../utils/process-liveness.js';
 import { checkOrchestrationLiveness, type Liveness } from './orchestration-liveness.js';
 
 export interface RecoveryManagerDeps {
@@ -57,6 +58,17 @@ const CLEANUP_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
  * filtering transient delays. Tmux session check is authoritative.
  */
 const HEARTBEAT_STALENESS_MS = 90_000;
+
+/**
+ * DECISION: 60s grace period for orphan session cleanup.
+ * Sessions younger than this threshold are not destroyed during startup recovery.
+ * This prevents a TOCTOU race: a worker that spawned a session between
+ * listSessions() and findAll() would appear as an orphan without a DB record,
+ * but the worker is still live and should not be killed.
+ * 60 seconds comfortably exceeds the time it takes for a session spawn to
+ * propagate from tmux into the DB, while still cleaning up genuine orphans promptly.
+ */
+const ORPHAN_GRACE_PERIOD_MS = 60_000;
 
 /**
  * Summary of all recovery phases — emitted as a single structured log at the end of recover().
@@ -158,16 +170,27 @@ export class RecoveryManager {
   }
 
   /**
-   * Build a Set of live tmux session names in a single exec call.
+   * Build a Set of live tmux session names and the raw session info array in a single exec call.
    * Used by cleanDeadWorkerRegistrations to batch tmux liveness checks at startup
    * instead of issuing N sequential has-session calls (one per tmux worker).
-   * Returns an empty Set when no session manager is configured or listSessions fails.
+   *
+   * Returns both:
+   *  - `names`: Set<string> for O(1) liveness lookups in the dead-worker loop
+   *  - `sessions`: raw info array (with `created` timestamps) for orphan grace-period checks
+   *
+   * Returns empty values when no session manager is configured or listSessions fails.
    */
-  private buildLiveSessionSet(): Set<string> {
-    if (!this.tmuxSessionManager) return new Set();
+  private buildLiveSessionSet(): {
+    names: Set<string>;
+    sessions: ReadonlyArray<{ readonly name: string; readonly created: number }>;
+  } {
+    if (!this.tmuxSessionManager) return { names: new Set(), sessions: [] };
     const result = this.tmuxSessionManager.listSessions();
-    if (!result.ok) return new Set();
-    return new Set(result.value.map((s) => s.name));
+    if (!result.ok) return { names: new Set(), sessions: [] };
+    return {
+      names: new Set(result.value.map((s) => s.name)),
+      sessions: result.value,
+    };
   }
 
   /**
@@ -185,12 +208,12 @@ export class RecoveryManager {
 
     const allWorkers = this.workerRepo.findAll();
     if (!allWorkers.ok) {
-      const orphanSessionsDestroyed = await this.cleanOrphanTmuxSessions(new Set(), []);
+      const orphanSessionsDestroyed = await this.cleanOrphanTmuxSessions(new Set(), [], []);
       return { workersCleanedUp, orphanSessionsDestroyed, heartbeatWarnings };
     }
 
     // Batch liveness check — one listSessions() call instead of N sequential has-session calls.
-    const liveTmuxSessions = this.buildLiveSessionSet();
+    const { names: liveTmuxSessions, sessions: liveTmuxSessionInfos } = this.buildLiveSessionSet();
 
     for (const reg of allWorkers.value) {
       // Workers without sessionName (legacy/corrupted rows) are treated as dead.
@@ -214,8 +237,12 @@ export class RecoveryManager {
       }
     }
 
-    // Orphan cleanup reuses already-fetched liveTmuxSessions and allWorkers — no extra queries
-    const orphanSessionsDestroyed = await this.cleanOrphanTmuxSessions(liveTmuxSessions, allWorkers.value);
+    // Orphan cleanup reuses already-fetched liveTmuxSessions/infos and allWorkers — no extra queries
+    const orphanSessionsDestroyed = await this.cleanOrphanTmuxSessions(
+      liveTmuxSessions,
+      allWorkers.value,
+      liveTmuxSessionInfos,
+    );
 
     return { workersCleanedUp, orphanSessionsDestroyed, heartbeatWarnings };
   }
@@ -223,9 +250,13 @@ export class RecoveryManager {
   /**
    * Destroy orphan tmux sessions: live sessions with no corresponding DB record.
    *
-   * DESIGN DECISION: Takes both liveTmuxSessions and registeredWorkers as parameters
-   * to avoid a second listSessions() call and a second findAll() call.
-   * Called only from cleanDeadWorkerRegistrations() which has both values in scope.
+   * DESIGN DECISION: Takes liveTmuxSessions, registeredWorkers, AND liveTmuxSessionInfos
+   * as parameters to avoid extra listSessions()/findAll() calls.
+   * Called only from cleanDeadWorkerRegistrations() which has all three in scope.
+   *
+   * Grace period: sessions younger than ORPHAN_GRACE_PERIOD_MS are skipped to avoid
+   * destroying sessions that were spawned between listSessions() and findAll() (TOCTOU).
+   * The `created` field is sourced from TmuxSessionInfo (Unix epoch seconds from tmux).
    *
    * Returns the number of orphan sessions destroyed.
    * Failures per session are logged at error level and do not abort remaining cleanup.
@@ -233,6 +264,7 @@ export class RecoveryManager {
   private async cleanOrphanTmuxSessions(
     liveTmuxSessions: Set<string>,
     registeredWorkers: readonly WorkerRegistration[],
+    liveTmuxSessionInfos: ReadonlyArray<{ readonly name: string; readonly created: number }>,
   ): Promise<number> {
     if (!this.tmuxSessionManager || liveTmuxSessions.size === 0) return 0;
 
@@ -241,11 +273,30 @@ export class RecoveryManager {
       registeredWorkers.flatMap((w) => (w.sessionName !== undefined ? [w.sessionName] : [])),
     );
 
+    // Build map of session name → created timestamp for grace-period checks
+    const sessionCreatedAt = new Map<string, number>(
+      liveTmuxSessionInfos.map((s) => [s.name, s.created * 1_000]), // convert epoch seconds → ms
+    );
+
+    const now = Date.now();
     let destroyed = 0;
     for (const sessionName of liveTmuxSessions) {
       if (registeredSessionNames.has(sessionName)) continue;
 
-      // Orphan: live session with no DB record — destroy it
+      // Grace period: skip sessions that are too young to have a DB record yet.
+      // This prevents destroying a session whose worker spawned between listSessions()
+      // and findAll() — it will be cleaned up on the next startup if still orphaned.
+      const createdAtMs = sessionCreatedAt.get(sessionName);
+      if (createdAtMs !== undefined && now - createdAtMs < ORPHAN_GRACE_PERIOD_MS) {
+        this.logger.info('Skipping young orphan tmux session (within grace period)', {
+          sessionName,
+          ageMs: now - createdAtMs,
+          gracePeriodMs: ORPHAN_GRACE_PERIOD_MS,
+        });
+        continue;
+      }
+
+      // Orphan: live session with no DB record, past grace period — destroy it
       const result = this.tmuxSessionManager.destroySession(sessionName);
       if (result.ok) {
         destroyed++;
@@ -376,14 +427,7 @@ export class RecoveryManager {
           loopRepo: this.loopRepo,
           taskRepo: this.taskRepo,
           workerRepo: this.workerRepo,
-          isOrchestratorProcessAlive: (pid: number) => {
-            try {
-              process.kill(pid, 0);
-              return true;
-            } catch (e) {
-              return (e as NodeJS.ErrnoException).code === 'EPERM';
-            }
-          },
+          isOrchestratorProcessAlive: isProcessAlive,
           isTmuxSessionAlive: (name: string) => {
             if (!this.tmuxSessionManager) return false;
             const r = this.tmuxSessionManager.isAlive(name);
@@ -535,7 +579,7 @@ export class RecoveryManager {
         // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
         const failedEmitResult = await this.eventBus.emit('TaskFailed', {
           taskId: task.id,
-          error: new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Worker process crashed during execution'),
+          error: new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Tmux session died (no live session detected at startup)'),
           exitCode: -1,
         });
         if (!failedEmitResult.ok) {

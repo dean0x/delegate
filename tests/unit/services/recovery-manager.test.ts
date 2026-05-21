@@ -143,6 +143,15 @@ describe('RecoveryManager', () => {
 
   const FIVE_MINUTES_AGO = Date.now() - 5 * 60 * 1000;
 
+  /**
+   * Build a session info object for use in listSessions() mocks.
+   * `createdSecondsAgo` controls the `created` epoch-seconds field.
+   * Default: 120 seconds ago (old enough to pass the 60s orphan grace period).
+   */
+  function buildSession(name: string, createdSecondsAgo = 120): { name: string; created: number } {
+    return { name, created: Math.floor(Date.now() / 1000) - createdSecondsAgo };
+  }
+
   function buildQueuedTask(id: string): Task {
     const base = new TaskFactory().withStatus(TaskStatus.QUEUED).build();
     return { ...base, id: TaskId(id) };
@@ -207,7 +216,7 @@ describe('RecoveryManager', () => {
       const aliveWorker = buildTmuxWorker('w-alive', 'task-alive', 'beat-task-alive');
       workerRepo.findAll.mockReturnValue(ok([aliveWorker]));
       // Session is present → alive
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-task-alive' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-task-alive')]));
       setupFindByStatus([], []);
 
       await manager.recover();
@@ -220,7 +229,7 @@ describe('RecoveryManager', () => {
       const aliveWorker = buildTmuxWorker('w-alive', 'task-alive', 'beat-task-alive');
       workerRepo.findAll.mockReturnValue(ok([deadWorker, aliveWorker]));
       // Only the alive session appears in listSessions
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-task-alive' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-task-alive')]));
       repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead')));
       setupFindByStatus([], []);
 
@@ -307,7 +316,7 @@ describe('RecoveryManager', () => {
       // No workers in DB
       workerRepo.findAll.mockReturnValue(ok([]));
       // But there is a live session with no record
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-orphan-abc' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-orphan-abc')]));
       setupFindByStatus([], []);
 
       await manager.recover();
@@ -322,7 +331,7 @@ describe('RecoveryManager', () => {
       const registeredWorker = buildTmuxWorker('w-registered', 'task-registered', 'beat-task-registered');
       workerRepo.findAll.mockReturnValue(ok([registeredWorker]));
       // Session exists and matches a registered worker
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-task-registered' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-task-registered')]));
       setupFindByStatus([], []);
 
       await manager.recover();
@@ -362,7 +371,7 @@ describe('RecoveryManager', () => {
 
     it('should log error and continue when destroySession fails for an orphan', async () => {
       workerRepo.findAll.mockReturnValue(ok([]));
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-orphan-fail' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-orphan-fail')]));
       const destroyError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'tmux kill-session failed');
       tmuxSessionManager.destroySession.mockReturnValue(err(destroyError));
       setupFindByStatus([], []);
@@ -379,7 +388,7 @@ describe('RecoveryManager', () => {
     it('should destroy all orphan sessions even if one fails', async () => {
       workerRepo.findAll.mockReturnValue(ok([]));
       tmuxSessionManager.listSessions.mockReturnValue(
-        ok([{ name: 'beat-orphan-1' }, { name: 'beat-orphan-2' }, { name: 'beat-orphan-3' }]),
+        ok([buildSession('beat-orphan-1'), buildSession('beat-orphan-2'), buildSession('beat-orphan-3')]),
       );
       const destroyError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'kill-session failed');
       tmuxSessionManager.destroySession
@@ -398,7 +407,7 @@ describe('RecoveryManager', () => {
       // Orphan cleanup must reuse the already-fetched data from cleanDeadWorkerRegistrations
       const worker = buildTmuxWorker('w-1', 'task-1', 'beat-task-1');
       workerRepo.findAll.mockReturnValue(ok([worker]));
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-task-1' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-task-1')]));
       setupFindByStatus([], []);
 
       await manager.recover();
@@ -407,6 +416,38 @@ describe('RecoveryManager', () => {
       expect(workerRepo.findAll).toHaveBeenCalledTimes(1);
       // listSessions called once (in buildLiveSessionSet), not twice
       expect(tmuxSessionManager.listSessions).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT destroy orphan sessions younger than the 60s grace period', async () => {
+      // Simulate a session spawned 5 seconds ago — no DB record yet (worker still registering)
+      const youngSession = buildSession('beat-orphan-young', 5); // 5 seconds old
+      workerRepo.findAll.mockReturnValue(ok([]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([youngSession]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // Young orphan must be skipped — destroying it would kill a live worker mid-spawn
+      expect(tmuxSessionManager.destroySession).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith(
+        'Skipping young orphan tmux session (within grace period)',
+        expect.objectContaining({ sessionName: 'beat-orphan-young' }),
+      );
+    });
+
+    it('should destroy orphan sessions older than the 60s grace period', async () => {
+      // Session is 90 seconds old — past grace period, safe to destroy
+      const oldSession = buildSession('beat-orphan-old', 90);
+      workerRepo.findAll.mockReturnValue(ok([]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([oldSession]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      expect(tmuxSessionManager.destroySession).toHaveBeenCalledWith('beat-orphan-old');
+      expect(logger.info).toHaveBeenCalledWith('Destroyed orphan tmux session', {
+        sessionName: 'beat-orphan-old',
+      });
     });
   });
 
@@ -679,7 +720,7 @@ describe('RecoveryManager', () => {
 
       expect(eventBus.emit).toHaveBeenCalledWith('TaskFailed', {
         taskId: task.id,
-        error: expect.objectContaining({ message: 'Worker process crashed during execution' }),
+        error: expect.objectContaining({ message: 'Tmux session died (no live session detected at startup)' }),
         exitCode: -1,
       });
     });
