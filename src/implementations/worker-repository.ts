@@ -131,6 +131,11 @@ export class SQLiteWorkerRepository implements WorkerRepository {
     );
   }
 
+  /**
+   * Find a worker registration by its tmux session name.
+   * Returns ok(null) when no worker has the given session name.
+   * Uses idx_workers_session_name index (migration v29).
+   */
   findBySessionName(sessionName: string): Result<WorkerRegistration | null> {
     return tryCatch(
       () => {

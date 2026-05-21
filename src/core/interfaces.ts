@@ -582,9 +582,12 @@ export interface WorkerRepository {
   findByTaskId(taskId: TaskId): Result<WorkerRegistration | null>;
   /**
    * Find a worker registration by its tmux session name.
-   * Used by orphan session cleanup to distinguish registered sessions from orphans.
-   * Returns ok(null) when no worker has the given session name (orphan candidate).
+   * Returns ok(null) when no worker has the given session name.
    * Uses idx_workers_session_name index (migration v29).
+   *
+   * NOTE: Orphan cleanup (cleanOrphanTmuxSessions) does NOT call this method — it builds
+   * its registered-session set from the pre-fetched findAll() result to avoid a second
+   * DB round-trip per session. This method is available for targeted single-session lookups.
    */
   findBySessionName(sessionName: string): Result<WorkerRegistration | null>;
   findAll(): Result<readonly WorkerRegistration[]>;
