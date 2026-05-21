@@ -25,6 +25,8 @@ export {
 // URL probe utility for connectivity checks at config time
 export type { UrlProbeOptions, UrlProbeResult } from './url-probe.js';
 export { probeUrl } from './url-probe.js';
+// Session sweep utility for graceful shutdown
+export { sweepTmuxSessions } from './session-sweep.js';
 // Validation utilities
 export {
   validateBufferSize,

@@ -3,7 +3,7 @@
  * Manages service lifecycle and dependencies
  */
 
-import { sweepTmuxSessions } from '../services/session-sweep.js';
+import { sweepTmuxSessions } from '../utils/session-sweep.js';
 import { AutobeatError, ErrorCode } from './errors.js';
 import { err, ok, Result } from './result.js';
 import type { TmuxSessionManagerCorePort } from './tmux-types.js';
@@ -239,7 +239,9 @@ export class Container {
     // that killAll() may have missed (e.g. sessions that were spawning during shutdown).
     const tmuxSessionManagerResult = this.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
     if (tmuxSessionManagerResult.ok) {
-      // No logger passed — failures silently ignored so DB close is not blocked
+      // INTENTIONAL: result discarded — no logger available at this call site and
+      // DB close must not be blocked by a stale session entry. Individual destroy
+      // failures are logged inside sweepTmuxSessions when a logger is provided.
       sweepTmuxSessions(tmuxSessionManagerResult.value);
     }
 

@@ -11,7 +11,7 @@ import { Container } from './core/container.js';
 import { Logger, WorkerPool } from './core/interfaces.js';
 import type { TmuxSessionManagerCorePort } from './core/tmux-types.js';
 import { VERSION } from './generated/version.js';
-import { sweepTmuxSessions } from './services/session-sweep.js';
+import { sweepTmuxSessions } from './utils/session-sweep.js';
 import { ProxyManager } from './translation/proxy/proxy-manager.js';
 
 // Handle errors gracefully
@@ -92,7 +92,12 @@ async function main() {
       // that killAll() may have missed (e.g. sessions that were spawning during shutdown).
       const tmuxSessionManagerResult = container?.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
       if (tmuxSessionManagerResult?.ok) {
-        sweepTmuxSessions(tmuxSessionManagerResult.value, logger);
+        const sweepResult = sweepTmuxSessions(tmuxSessionManagerResult.value, logger);
+        if (!sweepResult.ok) {
+          logger.warn('Shutdown session sweep failed to list sessions', {
+            error: sweepResult.error.message,
+          });
+        }
       }
 
       // Close server
