@@ -240,7 +240,7 @@ describe('RecoveryManager', () => {
     });
 
     it('should treat legacy workers (NULL sessionName) as dead', async () => {
-      // Workers without sessionName are pre-Phase 3 rows — treated as dead in Phase 4
+      // Workers without sessionName are pre-migration v29 rows — treated as dead
       const legacyWorker = buildTmuxWorker('w-legacy', 'task-legacy', undefined);
       workerRepo.findAll.mockReturnValue(ok([legacyWorker]));
       tmuxSessionManager.listSessions.mockReturnValue(ok([]));
@@ -618,7 +618,7 @@ describe('RecoveryManager', () => {
 
     it('should mark RUNNING task as FAILED when worker has dead tmux session', async () => {
       const task = buildRunningTask('dead-worker');
-      // Phase 3 uses isAlive() directly — mock it to return false (dead session)
+      // recoverRunningTasks checks liveTmuxSessions set from Phase 0 — session absent means dead
       tmuxSessionManager.isAlive.mockReturnValue(ok(false));
       // Phase 0 uses listSessions() — empty so no workers cleaned there either
       tmuxSessionManager.listSessions.mockReturnValue(ok([]));
@@ -638,7 +638,7 @@ describe('RecoveryManager', () => {
     it('should skip RUNNING task when worker has alive tmux session', async () => {
       const task = buildRunningTask('alive-worker');
       // Session present → alive
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-alive-session' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-alive-session')]));
       setupFindByStatus([], [task]);
 
       workerRepo.findByTaskId.mockReturnValue(ok(buildTmuxWorker('w1', task.id, 'beat-alive-session')));
@@ -816,7 +816,7 @@ describe('RecoveryManager', () => {
       const deadWorkerTask = buildRunningTask('dead-1');
       const aliveWorkerTask = buildRunningTask('alive-1');
       // Session 'beat-alive-session' is alive, dead-1's session is absent
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-alive-session' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-alive-session')]));
       setupFindByStatus([queuedTask], [deadWorkerTask, aliveWorkerTask]);
 
       workerRepo.findByTaskId
@@ -841,7 +841,7 @@ describe('RecoveryManager', () => {
       const deadTask1 = buildRunningTask('dead-1');
       const deadTask2 = buildRunningTask('dead-2');
       const aliveTask = buildRunningTask('alive-1');
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-alive' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-alive')]));
       setupFindByStatus([q1, q2], [deadTask1, deadTask2, aliveTask]);
 
       queue.contains.mockReturnValueOnce(false).mockReturnValueOnce(true);
@@ -925,7 +925,7 @@ describe('RecoveryManager', () => {
       const deadWorker = buildTmuxWorker('w-dead', 'task-dead', 'beat-task-dead');
       const orphanSession = 'beat-orphan-xyz';
       workerRepo.findAll.mockReturnValue(ok([deadWorker]));
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: orphanSession }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession(orphanSession)]));
       repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead')));
       setupFindByStatus([], []);
 
@@ -937,10 +937,10 @@ describe('RecoveryManager', () => {
           workersCleanedUp: 1,
           orphanSessionsDestroyed: 1,
           heartbeatWarnings: 0,
-          queuedTasks: expect.any(Number),
-          runningTasks: expect.any(Number),
-          tasksRequeued: expect.any(Number),
-          tasksFailed: expect.any(Number),
+          queuedTasks: 0,
+          runningTasks: 0,
+          tasksRequeued: 0,
+          tasksFailed: 0,
         }),
       );
     });
@@ -976,7 +976,7 @@ describe('RecoveryManager', () => {
       };
       workerRepo.findAll.mockReturnValue(ok([aliveWorkerWithStaleHb]));
       // Session IS alive
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-stale-hb' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-stale-hb')]));
       setupFindByStatus([], []);
 
       await manager.recover();
@@ -1002,7 +1002,7 @@ describe('RecoveryManager', () => {
         lastHeartbeat: freshHeartbeat,
       };
       workerRepo.findAll.mockReturnValue(ok([aliveWorkerWithFreshHb]));
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-fresh-hb' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-fresh-hb')]));
       setupFindByStatus([], []);
 
       await manager.recover();
@@ -1016,7 +1016,7 @@ describe('RecoveryManager', () => {
     it('should NOT warn when lastHeartbeat is undefined (no heartbeat written yet)', async () => {
       const aliveWorkerNoHb = buildTmuxWorker('w-no-hb', 'task-no-hb', 'beat-no-hb');
       workerRepo.findAll.mockReturnValue(ok([aliveWorkerNoHb]));
-      tmuxSessionManager.listSessions.mockReturnValue(ok([{ name: 'beat-no-hb' }]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-no-hb')]));
       setupFindByStatus([], []);
 
       await manager.recover();
