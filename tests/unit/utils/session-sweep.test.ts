@@ -57,7 +57,9 @@ describe('sweepTmuxSessions()', () => {
       const result = sweepTmuxSessions(tmux);
 
       expect(result.ok).toBe(false);
-      expect((result as any).error).toBe(listError);
+      if (!result.ok) {
+        expect(result.error).toBe(listError);
+      }
       expect(tmux.destroySession).not.toHaveBeenCalled();
     });
   });
@@ -69,9 +71,9 @@ describe('sweepTmuxSessions()', () => {
 
       const destroyError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'session already gone');
       vi.mocked(tmux.destroySession)
-        .mockReturnValueOnce(ok(undefined))  // beat-ok: success
+        .mockReturnValueOnce(ok(undefined)) // beat-ok: success
         .mockReturnValueOnce(err(destroyError)) // beat-fail: failure
-        .mockReturnValueOnce(ok(undefined));  // beat-ok2: success
+        .mockReturnValueOnce(ok(undefined)); // beat-ok2: success
 
       const logger = createMockLogger();
       const result = sweepTmuxSessions(tmux, logger);
@@ -111,9 +113,7 @@ describe('sweepTmuxSessions()', () => {
       vi.mocked(tmux.listSessions).mockReturnValue(ok(sessions));
 
       const destroyError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'already gone');
-      vi.mocked(tmux.destroySession)
-        .mockReturnValueOnce(ok(undefined))
-        .mockReturnValueOnce(err(destroyError));
+      vi.mocked(tmux.destroySession).mockReturnValueOnce(ok(undefined)).mockReturnValueOnce(err(destroyError));
 
       // No logger passed — failures should be silently swallowed
       const result = sweepTmuxSessions(tmux);
@@ -123,14 +123,13 @@ describe('sweepTmuxSessions()', () => {
       expect(tmux.destroySession).toHaveBeenCalledTimes(2);
     });
 
-    it('returns ok(0) and does not throw when all sessions fail without a logger', () => {
+    it('returns ok(0) when all sessions fail without a logger', () => {
       const sessions = [makeSession('beat-a'), makeSession('beat-b')];
       vi.mocked(tmux.listSessions).mockReturnValue(ok(sessions));
 
       const destroyError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'cannot destroy');
       vi.mocked(tmux.destroySession).mockReturnValue(err(destroyError));
 
-      expect(() => sweepTmuxSessions(tmux)).not.toThrow();
       const result = sweepTmuxSessions(tmux);
       expect(result).toEqual({ ok: true, value: 0 });
     });

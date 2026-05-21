@@ -11,8 +11,8 @@ import { Container } from './core/container.js';
 import { Logger, WorkerPool } from './core/interfaces.js';
 import type { TmuxSessionManagerCorePort } from './core/tmux-types.js';
 import { VERSION } from './generated/version.js';
-import { sweepTmuxSessions } from './utils/session-sweep.js';
 import { ProxyManager } from './translation/proxy/proxy-manager.js';
+import { sweepTmuxSessions } from './utils/session-sweep.js';
 
 // Handle errors gracefully
 process.on('uncaughtException', (error) => {
