@@ -158,7 +158,7 @@ export class SQLiteWorkerRepository implements WorkerRepository {
   /**
    * Update the last_heartbeat column for the given worker to the current time.
    * DECISION: 30s write interval keeps DB write load low while enabling stale-worker
-   * detection at 90s threshold in RecoveryManager. PID check remains authoritative.
+   * detection at 90s threshold in RecoveryManager. Tmux session check is authoritative.
    */
   updateHeartbeat(workerId: WorkerId): Result<void> {
     return tryCatch(
