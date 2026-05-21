@@ -323,10 +323,7 @@ describe('RecoveryManager', () => {
       await manager.recover();
 
       // Recovery summary must report 0 — lookup failed, outcome is unknown
-      expect(logger.info).toHaveBeenCalledWith(
-        'Recovery complete',
-        expect.objectContaining({ workersCleanedUp: 0 }),
-      );
+      expect(logger.info).toHaveBeenCalledWith('Recovery complete', expect.objectContaining({ workersCleanedUp: 0 }));
     });
 
     it('should count worker as cleaned up when task is already terminal (P2: accurate metric)', async () => {
@@ -341,10 +338,7 @@ describe('RecoveryManager', () => {
       await manager.recover();
 
       // Worker was unregistered and task was already terminal — counts as cleaned up
-      expect(logger.info).toHaveBeenCalledWith(
-        'Recovery complete',
-        expect.objectContaining({ workersCleanedUp: 1 }),
-      );
+      expect(logger.info).toHaveBeenCalledWith('Recovery complete', expect.objectContaining({ workersCleanedUp: 1 }));
     });
   });
 
