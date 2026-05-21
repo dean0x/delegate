@@ -546,11 +546,6 @@ export class RecoveryManager {
    *   Reusing this set avoids N sequential isAlive() execs (one per RUNNING task).
    */
   private async recoverRunningTasks(tasks: readonly Task[], liveTmuxSessions: Set<string>): Promise<number> {
-    // Guard: cannot distinguish live from dead without tmuxSessionManager — skip entirely.
-    // Without this, an empty liveTmuxSessions set would cause every RUNNING task to be
-    // incorrectly marked FAILED (every has() check returns false on an empty set).
-    if (!this.tmuxSessionManager) return 0;
-
     const now = Date.now();
     let failedCount = 0;
 
@@ -559,6 +554,12 @@ export class RecoveryManager {
       const workerRegistration = workerResult.ok ? workerResult.value : null;
 
       if (workerRegistration !== null) {
+        // When tmuxSessionManager is absent we cannot verify session liveness —
+        // conservatively skip tmux-based workers rather than incorrectly failing them
+        // (an empty liveTmuxSessions set would make every has() return false).
+        if (!this.tmuxSessionManager && workerRegistration.sessionName !== undefined) {
+          continue;
+        }
         // Use the batch session set from Phase 0 — O(1) lookup instead of a per-task exec.
         const alive =
           workerRegistration.sessionName !== undefined && liveTmuxSessions.has(workerRegistration.sessionName);

@@ -404,8 +404,8 @@ describe('RecoveryManager', () => {
       // P1 safety: when tmuxSessionManager is absent we cannot determine liveness.
       // Phase 0: dead-worker loop would treat every registered worker as dead
       // (liveTmuxSessions is empty → has() always false) and destroy all registrations.
-      // Phase 3: recoverRunningTasks would mark every RUNNING task as FAILED
-      // (same empty-set issue). Both guards must skip entirely.
+      // Phase 3: tmux-based workers (with sessionName) must be skipped — we can't
+      // verify their sessions. But tasks with NO worker are still genuinely orphaned.
       const managerNoTmux = new RecoveryManager({
         taskRepo: repo as unknown as TaskRepository,
         queue: queue as unknown as TaskQueue,
@@ -432,9 +432,32 @@ describe('RecoveryManager', () => {
       expect(result.ok).toBe(true);
       // Phase 0 guard: no workers unregistered
       expect(workerRepo.unregister).not.toHaveBeenCalled();
-      // Phase 3 guard: no tasks marked FAILED
+      // Phase 3 guard: tmux-based workers skipped, no tasks marked FAILED
       expect(repo.update).not.toHaveBeenCalled();
       expect(eventBus.emit).not.toHaveBeenCalledWith('TaskFailed', expect.anything());
+    });
+
+    it('should still fail RUNNING tasks with no worker when tmuxSessionManager is absent', async () => {
+      const managerNoTmux = new RecoveryManager({
+        taskRepo: repo as unknown as TaskRepository,
+        queue: queue as unknown as TaskQueue,
+        eventBus: eventBus as unknown as EventBus,
+        logger: logger as unknown as Logger,
+        workerRepo: workerRepo as unknown as WorkerRepository,
+        dependencyRepo: dependencyRepo as unknown as DependencyRepository,
+      });
+
+      workerRepo.findAll.mockReturnValue(ok([]));
+
+      const runningTask = buildRunningTask('task-orphan');
+      setupFindByStatus([], [runningTask]);
+      workerRepo.findByTaskId.mockReturnValueOnce(ok(null));
+      repo.findById.mockResolvedValueOnce(ok(runningTask));
+
+      const result = await managerNoTmux.recover();
+
+      expect(result.ok).toBe(true);
+      expect(repo.update).toHaveBeenCalledWith('task-orphan', expect.objectContaining({ status: 'failed' }));
     });
 
     it('should log error and continue when destroySession fails for an orphan', async () => {
