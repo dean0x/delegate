@@ -1074,20 +1074,21 @@ describe('checkOrchestrationLiveness - interactive mode', () => {
     loopRepo: {} as Parameters<typeof checkOrchestrationLiveness>[1]['loopRepo'],
     taskRepo: {} as Parameters<typeof checkOrchestrationLiveness>[1]['taskRepo'],
     workerRepo: {} as Parameters<typeof checkOrchestrationLiveness>[1]['workerRepo'],
-    isProcessAlive: vi.fn(),
+    isOrchestratorProcessAlive: vi.fn(),
+    isTmuxSessionAlive: vi.fn().mockReturnValue(false),
   };
 
   it('should return live when interactive PID is alive', async () => {
-    mockDeps.isProcessAlive.mockReturnValue(true);
+    mockDeps.isOrchestratorProcessAlive.mockReturnValue(true);
     const orch = { mode: 'interactive', pid: 1234, status: 'running' } as unknown as Orchestration;
 
     const result = await checkOrchestrationLiveness(orch, mockDeps);
     expect(result).toBe('live');
-    expect(mockDeps.isProcessAlive).toHaveBeenCalledWith(1234);
+    expect(mockDeps.isOrchestratorProcessAlive).toHaveBeenCalledWith(1234);
   });
 
   it('should return dead when interactive PID is dead', async () => {
-    mockDeps.isProcessAlive.mockReturnValue(false);
+    mockDeps.isOrchestratorProcessAlive.mockReturnValue(false);
     const orch = { mode: 'interactive', pid: 1234, status: 'running' } as unknown as Orchestration;
 
     const result = await checkOrchestrationLiveness(orch, mockDeps);
