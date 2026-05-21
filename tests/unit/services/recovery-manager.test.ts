@@ -402,9 +402,10 @@ describe('RecoveryManager', () => {
 
     it('should NOT unregister workers or fail tasks when tmuxSessionManager is absent', async () => {
       // P1 safety: when tmuxSessionManager is absent we cannot determine liveness.
-      // Running the dead-worker loop would treat every registered worker as dead
+      // Phase 0: dead-worker loop would treat every registered worker as dead
       // (liveTmuxSessions is empty → has() always false) and destroy all registrations.
-      // The guard must skip the entire loop, leaving workers and tasks untouched.
+      // Phase 3: recoverRunningTasks would mark every RUNNING task as FAILED
+      // (same empty-set issue). Both guards must skip entirely.
       const managerNoTmux = new RecoveryManager({
         taskRepo: repo as unknown as TaskRepository,
         queue: queue as unknown as TaskQueue,
@@ -419,13 +420,19 @@ describe('RecoveryManager', () => {
       const worker1 = buildTmuxWorker('w-1', 'task-1', 'beat-task-1');
       const worker2 = buildTmuxWorker('w-2', 'task-2', 'beat-task-2');
       workerRepo.findAll.mockReturnValue(ok([worker1, worker2]));
-      setupFindByStatus([], []);
+
+      // RUNNING tasks with worker registrations — Phase 3 must NOT fail these
+      const runningTask1 = buildRunningTask('task-1');
+      const runningTask2 = buildRunningTask('task-2');
+      setupFindByStatus([], [runningTask1, runningTask2]);
+      workerRepo.findByTaskId.mockReturnValueOnce(ok(worker1)).mockReturnValueOnce(ok(worker2));
 
       const result = await managerNoTmux.recover();
 
       expect(result.ok).toBe(true);
-      // Without the guard these would be called — the guard prevents destructive cleanup
+      // Phase 0 guard: no workers unregistered
       expect(workerRepo.unregister).not.toHaveBeenCalled();
+      // Phase 3 guard: no tasks marked FAILED
       expect(repo.update).not.toHaveBeenCalled();
       expect(eventBus.emit).not.toHaveBeenCalledWith('TaskFailed', expect.anything());
     });

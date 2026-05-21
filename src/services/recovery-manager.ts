@@ -208,17 +208,12 @@ export class RecoveryManager {
 
     const allWorkers = this.workerRepo.findAll();
     if (!allWorkers.ok) {
-      const orphanSessionsDestroyed = await this.cleanOrphanTmuxSessions(new Set(), [], []);
-      return { workersCleanedUp, orphanSessionsDestroyed, heartbeatWarnings, liveTmuxSessions: new Set() };
+      return { workersCleanedUp: 0, orphanSessionsDestroyed: 0, heartbeatWarnings: 0, liveTmuxSessions: new Set() };
     }
 
-    // Batch liveness check — one listSessions() call instead of N sequential has-session calls.
-    // Guard: skip dead-worker loop entirely when tmuxSessionManager is absent.
-    // Without it we cannot distinguish live from dead sessions, so running the loop
-    // would treat every registered worker as dead and destroy all registrations.
-    // Orphan cleanup also guards on tmuxSessionManager — both paths are skipped gracefully.
+    // Guard: cannot distinguish live from dead without tmuxSessionManager — skip both loops.
     if (!this.tmuxSessionManager) {
-      return { workersCleanedUp, orphanSessionsDestroyed: 0, heartbeatWarnings, liveTmuxSessions: new Set() };
+      return { workersCleanedUp: 0, orphanSessionsDestroyed: 0, heartbeatWarnings: 0, liveTmuxSessions: new Set() };
     }
 
     const { names: liveTmuxSessions, sessions: liveTmuxSessionInfos } = this.buildLiveSessionSet();
@@ -311,7 +306,6 @@ export class RecoveryManager {
         this.logger.info('Destroyed orphan tmux session', { sessionName });
       } else {
         this.logger.error('Failed to destroy orphan tmux session', result.error, { sessionName });
-        // Continue — don't abort on individual session failure
       }
     }
 
@@ -335,13 +329,11 @@ export class RecoveryManager {
       });
     }
 
-    // Guard: only update non-terminal tasks
     const taskResult = await this.taskRepo.findById(reg.taskId);
     if (!taskResult.ok) {
       this.logger.error('Failed to look up task for dead worker', taskResult.error, {
         taskId: reg.taskId,
       });
-      // Outcome unknown — do not count as cleaned up
       return false;
     }
 
@@ -352,7 +344,6 @@ export class RecoveryManager {
         currentStatus: taskResult.value.status,
         deadPid: reg.ownerPid,
       });
-      // Worker row cleaned, task already in terminal state — count as cleaned up
       return true;
     }
 
@@ -385,12 +376,12 @@ export class RecoveryManager {
         });
       }
       return true;
-    } else {
-      this.logger.error('Failed to mark dead worker task as failed', updateResult.error, {
-        taskId: reg.taskId,
-      });
-      return false;
     }
+
+    this.logger.error('Failed to mark dead worker task as failed', updateResult.error, {
+      taskId: reg.taskId,
+    });
+    return false;
   }
 
   private async cleanupOldCompletedTasks(): Promise<void> {
@@ -555,6 +546,11 @@ export class RecoveryManager {
    *   Reusing this set avoids N sequential isAlive() execs (one per RUNNING task).
    */
   private async recoverRunningTasks(tasks: readonly Task[], liveTmuxSessions: Set<string>): Promise<number> {
+    // Guard: cannot distinguish live from dead without tmuxSessionManager — skip entirely.
+    // Without this, an empty liveTmuxSessions set would cause every RUNNING task to be
+    // incorrectly marked FAILED (every has() check returns false on an empty set).
+    if (!this.tmuxSessionManager) return 0;
+
     const now = Date.now();
     let failedCount = 0;
 
