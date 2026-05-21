@@ -15,7 +15,13 @@ import type {
 } from '../../src/core/interfaces';
 import type { Result } from '../../src/core/result';
 import { ok } from '../../src/core/result';
-import type { OutputMessage, SpawnCallbacks, TmuxConnectorPort, TmuxHandle } from '../../src/core/tmux-types';
+import type {
+  OutputMessage,
+  SpawnCallbacks,
+  TmuxConnectorPort,
+  TmuxHandle,
+  TmuxSessionManagerCorePort,
+} from '../../src/core/tmux-types';
 import { createMockTask, createMockWorker } from './mock-data.js';
 
 export const createMockLogger = (): Logger => ({
@@ -112,10 +118,9 @@ export const createMockWorkerRepository = (): WorkerRepository => ({
   register: vi.fn().mockReturnValue(ok(undefined)),
   unregister: vi.fn().mockReturnValue(ok(undefined)),
   findByTaskId: vi.fn().mockReturnValue(ok(null)),
-  findByOwnerPid: vi.fn().mockReturnValue(ok([])),
+  findBySessionName: vi.fn().mockReturnValue(ok(null)),
   findAll: vi.fn().mockReturnValue(ok([])),
   getGlobalCount: vi.fn().mockReturnValue(ok(0)),
-  deleteByOwnerPid: vi.fn().mockReturnValue(ok(0)),
   updateHeartbeat: vi.fn().mockReturnValue(ok(undefined)),
 });
 
@@ -186,3 +191,15 @@ export const createMockTmuxConnector = (opts?: { autoComplete?: boolean }): Mock
     },
   };
 };
+
+/**
+ * Create a mock TmuxSessionManagerCorePort for use in RecoveryManager tests.
+ * All sessions default to alive (isAlive returns ok(true), listSessions returns ok([])).
+ * Tests override listSessions to control which sessions are "live".
+ */
+export const createMockTmuxSessionManagerCore = (): TmuxSessionManagerCorePort => ({
+  isAlive: vi.fn().mockReturnValue(ok(true)),
+  sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
+  listSessions: vi.fn().mockReturnValue(ok([])),
+  destroySession: vi.fn().mockReturnValue(ok(undefined)),
+});

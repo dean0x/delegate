@@ -551,7 +551,8 @@ describe('computeOrchestrationLiveness', () => {
         get: vi.fn(),
       } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['taskRepo'],
       workerRepo: { findAll: vi.fn() } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['workerRepo'],
-      isProcessAlive: vi.fn().mockReturnValue(true),
+      isOrchestratorProcessAlive: vi.fn().mockReturnValue(true),
+      isTmuxSessionAlive: vi.fn().mockReturnValue(false),
     };
   }
 
@@ -601,7 +602,7 @@ describe('computeOrchestrationLiveness', () => {
     expect(cache.has('orch-run')).toBe(true);
   });
 
-  it('RUNNING orchestration, warm cache within TTL — cached result returned, isProcessAlive not called', async () => {
+  it('RUNNING orchestration, warm cache within TTL — cached result returned, liveness functions not called', async () => {
     const { OrchestratorStatus: Status } = await import('../../../../src/core/domain.js');
     const orch = { id: 'orch-cached', status: Status.RUNNING, loopId: 'loop-1' };
     const cache = new Map<string, LivenessCacheEntry>([
@@ -610,8 +611,9 @@ describe('computeOrchestrationLiveness', () => {
     const deps = makeLivenessDeps();
     const result = await computeOrchestrationLiveness([orch as never], cache, deps);
     expect(result['orch-cached']).toBe('live');
-    // isProcessAlive should NOT have been called (cache hit — no liveness computation)
-    expect(deps.isProcessAlive).not.toHaveBeenCalled();
+    // Liveness functions should NOT have been called (cache hit — no liveness computation)
+    expect(deps.isOrchestratorProcessAlive).not.toHaveBeenCalled();
+    expect(deps.isTmuxSessionAlive).not.toHaveBeenCalled();
   });
 
   it('stale cache entry swept before computation', async () => {
@@ -645,7 +647,8 @@ describe('computeOrchestrationLiveness', () => {
         get: vi.fn().mockRejectedValue(new Error('db gone')),
       } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['taskRepo'],
       workerRepo: { findAll: vi.fn() } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['workerRepo'],
-      isProcessAlive: vi.fn().mockReturnValue(true),
+      isOrchestratorProcessAlive: vi.fn().mockReturnValue(true),
+      isTmuxSessionAlive: vi.fn().mockReturnValue(false),
     };
     const result = await computeOrchestrationLiveness([orch as never], cache, deps);
     // Should degrade gracefully to 'unknown'

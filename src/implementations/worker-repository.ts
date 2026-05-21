@@ -1,10 +1,10 @@
 /**
- * SQLite-based worker repository for cross-process coordination
+ * SQLite-based worker repository for cross-process coordination.
  * ARCHITECTURE: Tracks active workers across all processes sharing the same SQLite DB.
- * Enables PID-based crash recovery and cross-process resource checks.
+ * Enables tmux-session-based crash recovery and cross-process resource checks.
  *
  * Pattern: Repository with prepared statements, synchronous Result<T> returns
- * (better-sqlite3 is synchronous, enables use inside runInTransaction)
+ * (better-sqlite3 is synchronous, enables use inside runInTransaction).
  */
 
 import SQLite from 'better-sqlite3';
@@ -27,7 +27,7 @@ const WorkerRowSchema = z.object({
   agent: z.string(),
   started_at: z.number(),
   last_heartbeat: z.number().nullable().optional(),
-  // session_name is nullable — NULL for pre-Phase 3 process-based workers (migration v29)
+  // session_name is nullable — NULL for legacy rows without a tmux session (migration v29)
   session_name: z.string().nullable().optional(),
 });
 
@@ -39,10 +39,9 @@ export class SQLiteWorkerRepository implements WorkerRepository {
   private readonly registerStmt: SQLite.Statement;
   private readonly unregisterStmt: SQLite.Statement;
   private readonly findByTaskIdStmt: SQLite.Statement;
-  private readonly findByOwnerPidStmt: SQLite.Statement;
+  private readonly findBySessionNameStmt: SQLite.Statement;
   private readonly findAllStmt: SQLite.Statement;
   private readonly countStmt: SQLite.Statement;
-  private readonly deleteByOwnerPidStmt: SQLite.Statement;
   private readonly updateHeartbeatStmt: SQLite.Statement;
 
   constructor(database: Database) {
@@ -61,8 +60,8 @@ export class SQLiteWorkerRepository implements WorkerRepository {
       SELECT * FROM workers WHERE task_id = ?
     `);
 
-    this.findByOwnerPidStmt = this.db.prepare(`
-      SELECT * FROM workers WHERE owner_pid = ?
+    this.findBySessionNameStmt = this.db.prepare(`
+      SELECT * FROM workers WHERE session_name = ?
     `);
 
     this.findAllStmt = this.db.prepare(`
@@ -71,10 +70,6 @@ export class SQLiteWorkerRepository implements WorkerRepository {
 
     this.countStmt = this.db.prepare(`
       SELECT COUNT(*) as count FROM workers
-    `);
-
-    this.deleteByOwnerPidStmt = this.db.prepare(`
-      DELETE FROM workers WHERE owner_pid = ?
     `);
 
     this.updateHeartbeatStmt = this.db.prepare(`
@@ -97,7 +92,6 @@ export class SQLiteWorkerRepository implements WorkerRepository {
           ownerPid: registration.ownerPid,
           agent: registration.agent,
           startedAt: registration.startedAt,
-          // sessionName is null for legacy process-based workers; populated for tmux workers (Phase 3)
           sessionName: registration.sessionName ?? null,
         });
       },
@@ -137,13 +131,18 @@ export class SQLiteWorkerRepository implements WorkerRepository {
     );
   }
 
-  findByOwnerPid(ownerPid: number): Result<readonly WorkerRegistration[]> {
+  /**
+   * Find a worker registration by its tmux session name.
+   * Returns ok(null) when no worker has the given session name.
+   * Uses idx_workers_session_name index (migration v29).
+   */
+  findBySessionName(sessionName: string): Result<WorkerRegistration | null> {
     return tryCatch(
       () => {
-        const rows = this.findByOwnerPidStmt.all(ownerPid) as WorkerRow[];
-        return rows.map((row) => this.rowToRegistration(row));
+        const row = this.findBySessionNameStmt.get(sessionName) as WorkerRow | undefined;
+        return row ? this.rowToRegistration(row) : null;
       },
-      operationErrorHandler('find workers by owner PID', { ownerPid }),
+      operationErrorHandler('find worker by session name', { sessionName }),
     );
   }
 
@@ -161,20 +160,10 @@ export class SQLiteWorkerRepository implements WorkerRepository {
     }, operationErrorHandler('get global worker count'));
   }
 
-  deleteByOwnerPid(ownerPid: number): Result<number> {
-    return tryCatch(
-      () => {
-        const result = this.deleteByOwnerPidStmt.run(ownerPid);
-        return result.changes;
-      },
-      operationErrorHandler('delete workers by owner PID', { ownerPid }),
-    );
-  }
-
   /**
    * Update the last_heartbeat column for the given worker to the current time.
    * DECISION: 30s write interval keeps DB write load low while enabling stale-worker
-   * detection at 90s threshold in RecoveryManager. PID check remains authoritative.
+   * detection at 90s threshold in RecoveryManager. Tmux session check is authoritative.
    */
   updateHeartbeat(workerId: WorkerId): Result<void> {
     return tryCatch(
@@ -191,7 +180,6 @@ export class SQLiteWorkerRepository implements WorkerRepository {
    * @throws Error if row data is invalid (indicates database corruption)
    */
   private rowToRegistration(row: WorkerRow): WorkerRegistration {
-    // Validate row data at system boundary (parse throws ZodError on invalid data)
     const data = WorkerRowSchema.parse(row);
     return {
       workerId: WorkerId(data.worker_id),
@@ -200,9 +188,7 @@ export class SQLiteWorkerRepository implements WorkerRepository {
       ownerPid: data.owner_pid,
       agent: data.agent,
       startedAt: data.started_at,
-      // lastHeartbeat is undefined when NULL (no heartbeat written yet)
       lastHeartbeat: data.last_heartbeat ?? undefined,
-      // sessionName is undefined for pre-Phase 3 rows (NULL in DB); populated for tmux workers
       sessionName: data.session_name ?? undefined,
     };
   }

@@ -22,6 +22,7 @@ import { OrchestratorStatus, type Task, TaskId } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import { checkOrchestrationLiveness, type Liveness } from '../../services/orchestration-liveness.js';
+import { isProcessAlive } from '../../utils/process-liveness.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { buildActivityFeed } from './activity-feed.js';
 import type { DashboardData, DetailExtra, EntityCounts, ViewState } from './types.js';
@@ -59,19 +60,6 @@ export const POLL_INTERVAL_BY_VIEW: Readonly<Record<'main' | 'detail', number>> 
   main: 1_000,
   detail: 2_000,
 };
-
-/**
- * Check if a process is alive by sending signal 0 (existence check, no signal sent).
- * EPERM means the process exists but we lack permission — treated as alive.
- */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
 
 // ============================================================================
 // Liveness cache
@@ -180,6 +168,17 @@ export async function computeOrchestrationLiveness(
 }
 
 /**
+ * Stable no-op tmux session liveness predicate used as the default for fetchAllData
+ * and useDashboardData when the caller omits isTmuxSessionAlive.
+ *
+ * DESIGN DECISION: Module-level constant rather than an inline default `() => false`
+ * so that every render/call site references the same function object.
+ * An inline default creates a new function reference on every call, which can trigger
+ * unnecessary re-renders or useCallback invalidation in React hooks.
+ */
+const TMUX_SESSION_ALWAYS_DEAD = (_sessionName: string): boolean => false;
+
+/**
  * Fetch all dashboard data in parallel.
  * Returns a Result<DashboardData> — on any repository error, returns the error message.
  * For detail extras (iterations, executions), errors are handled gracefully (undefined).
@@ -193,7 +192,7 @@ export async function fetchAllData(
   viewState: ViewState,
   childPage = 0,
   livenessCache?: Map<string, LivenessCacheEntry>,
-  isTmuxSessionAlive?: (sessionName: string) => boolean,
+  isTmuxSessionAlive: (sessionName: string) => boolean = TMUX_SESSION_ALWAYS_DEAD,
 ): Promise<Result<DashboardData, string>> {
   const {
     taskRepository,
@@ -280,7 +279,7 @@ export async function fetchAllData(
     loopRepo: loopRepository,
     taskRepo: taskRepository,
     workerRepo: workerRepository,
-    isProcessAlive,
+    isOrchestratorProcessAlive: isProcessAlive,
     isTmuxSessionAlive,
   };
   const orchestrationLiveness = await computeOrchestrationLiveness(orchestrations, cache, livenessDeps);
@@ -447,7 +446,7 @@ export function useDashboardData(
   ctx: ReadOnlyContext,
   viewState: ViewState,
   orchestrationChildPage = 0,
-  isTmuxSessionAlive?: (sessionName: string) => boolean,
+  isTmuxSessionAlive: (sessionName: string) => boolean = TMUX_SESSION_ALWAYS_DEAD,
 ): UseDashboardDataResult {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);

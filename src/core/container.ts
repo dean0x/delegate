@@ -3,8 +3,10 @@
  * Manages service lifecycle and dependencies
  */
 
+import { sweepTmuxSessions } from '../utils/session-sweep.js';
 import { AutobeatError, ErrorCode } from './errors.js';
 import { err, ok, Result } from './result.js';
+import type { TmuxSessionManagerCorePort } from './tmux-types.js';
 
 type Factory<T> = () => T | Promise<T>;
 // biome-ignore lint/suspicious/noExplicitAny: DI container needs generic flexibility for heterogeneous service storage
@@ -166,10 +168,11 @@ export class Container {
    * 3. Stop ScheduleExecutor - prevents timer firing against closed resources
    * 4. Stop translation proxy - lets in-flight requests complete before workers die
    * 5. Kill all workers (emit `WorkersTerminating`, then `killAll()`)
-   * 6. Close database (emit `DatabaseClosing`, then `close()`)
-   * 7. Emit `ShutdownComplete` event
-   * 8. Dispose EventBus (clears cleanup timers)
-   * 9. Clear all service registrations
+   * 6. Sweep remaining tmux sessions (belt-and-suspenders for sessions missed by killAll)
+   * 7. Close database (emit `DatabaseClosing`, then `close()`)
+   * 8. Emit `ShutdownComplete` event
+   * 9. Dispose EventBus (clears cleanup timers)
+   * 10. Clear all service registrations
    *
    * @example
    * ```typescript
@@ -230,6 +233,16 @@ export class Container {
         }
         await workerPool.killAll();
       }
+    }
+
+    // Belt-and-suspenders session sweep — destroy any remaining beat-* sessions
+    // that killAll() may have missed (e.g. sessions that were spawning during shutdown).
+    const tmuxSessionManagerResult = this.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
+    if (tmuxSessionManagerResult.ok) {
+      // INTENTIONAL: result discarded — no logger available at this call site and
+      // DB close must not be blocked by a stale session entry. Individual destroy
+      // failures are logged inside sweepTmuxSessions when a logger is provided.
+      sweepTmuxSessions(tmuxSessionManagerResult.value);
     }
 
     // Close database if exists

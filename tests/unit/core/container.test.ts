@@ -539,6 +539,20 @@ describe('Container - Dependency Injection', () => {
           callOrder.push('workerPool:killAll');
         }),
       };
+      // sweepTmuxSessions calls listSessions() then destroySession() per session.
+      // Register a session so the sweep is observable in callOrder.
+      const mockTmuxSessionManager = {
+        listSessions: vi.fn(() => {
+          callOrder.push('tmuxSessionManager:listSessions');
+          return { ok: true as const, value: [{ name: 'beat-test-session', created: 0 }] };
+        }),
+        destroySession: vi.fn(() => {
+          callOrder.push('tmuxSessionManager:destroySession');
+          return { ok: true as const, value: undefined };
+        }),
+        isAlive: vi.fn(),
+        sendControlKeys: vi.fn(),
+      };
       const mockDatabase = {
         close: vi.fn(() => {
           callOrder.push('database:close');
@@ -549,6 +563,7 @@ describe('Container - Dependency Injection', () => {
       container.registerValue('resourceMonitor', mockResourceMonitor);
       container.registerValue('scheduleExecutor', mockScheduleExecutor);
       container.registerValue('workerPool', mockWorkerPool);
+      container.registerValue('tmuxSessionManager', mockTmuxSessionManager);
       container.registerValue('database', mockDatabase);
 
       await container.dispose();
@@ -559,6 +574,8 @@ describe('Container - Dependency Injection', () => {
         'scheduleExecutor:stop',
         'emit:WorkersTerminating',
         'workerPool:killAll',
+        'tmuxSessionManager:listSessions',
+        'tmuxSessionManager:destroySession',
         'emit:DatabaseClosing',
         'database:close',
         'emit:ShutdownComplete',

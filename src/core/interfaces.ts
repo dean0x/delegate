@@ -569,10 +569,9 @@ export interface TaskEnqueuer {
 }
 
 /**
- * Worker registration persistence for cross-process coordination
+ * Worker registration persistence for cross-process coordination.
  * ARCHITECTURE: Tracks which workers exist across all processes sharing the same SQLite DB.
- * Enables PID-based recovery (replaces 30-minute staleness heuristic) and cross-process
- * resource checks (prevents over-spawning).
+ * Enables tmux-session-based crash recovery and cross-process resource checks (prevents over-spawning).
  *
  * All methods are synchronous Result<T> — better-sqlite3 is synchronous,
  * enables use inside runInTransaction().
@@ -581,10 +580,18 @@ export interface WorkerRepository {
   register(registration: WorkerRegistration): Result<void>;
   unregister(workerId: WorkerId): Result<void>;
   findByTaskId(taskId: TaskId): Result<WorkerRegistration | null>;
-  findByOwnerPid(ownerPid: number): Result<readonly WorkerRegistration[]>;
+  /**
+   * Find a worker registration by its tmux session name.
+   * Returns ok(null) when no worker has the given session name.
+   * Uses idx_workers_session_name index (migration v29).
+   *
+   * NOTE: Orphan cleanup (cleanOrphanTmuxSessions) does NOT call this method — it builds
+   * its registered-session set from the pre-fetched findAll() result to avoid a second
+   * DB round-trip per session. This method is available for targeted single-session lookups.
+   */
+  findBySessionName(sessionName: string): Result<WorkerRegistration | null>;
   findAll(): Result<readonly WorkerRegistration[]>;
   getGlobalCount(): Result<number>;
-  deleteByOwnerPid(ownerPid: number): Result<number>;
   /**
    * Update the last_heartbeat timestamp for a worker to Date.now().
    * Called periodically by the worker pool to signal the owning process is alive.

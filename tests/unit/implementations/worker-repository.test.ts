@@ -132,44 +132,83 @@ describe('SQLiteWorkerRepository - Unit Tests', () => {
   });
 
   // ============================================================================
-  // findByOwnerPid()
+  // findBySessionName()
   // ============================================================================
 
-  describe('findByOwnerPid', () => {
-    it('should return workers belonging to the specified owner PID', () => {
+  describe('findBySessionName', () => {
+    it('should return matching registration when session name exists', () => {
       // Arrange
-      const ownerA = 1000;
-      const ownerB = 2000;
-      const reg1 = createRegistration({ workerId: WorkerId('w-1'), taskId: TaskId('t-1'), ownerPid: ownerA });
-      const reg2 = createRegistration({ workerId: WorkerId('w-2'), taskId: TaskId('t-2'), ownerPid: ownerA });
-      const reg3 = createRegistration({ workerId: WorkerId('w-3'), taskId: TaskId('t-3'), ownerPid: ownerB });
-      repo.register(reg1);
-      repo.register(reg2);
-      repo.register(reg3);
+      const reg = createRegistration({
+        workerId: WorkerId('w-sess'),
+        taskId: TaskId('t-sess'),
+        sessionName: 'beat-task-abc',
+      });
+      repo.register(reg);
 
       // Act
-      const resultA = repo.findByOwnerPid(ownerA);
-      const resultB = repo.findByOwnerPid(ownerB);
-
-      // Assert
-      expect(resultA.ok).toBe(true);
-      expect(resultB.ok).toBe(true);
-      if (!resultA.ok || !resultB.ok) return;
-
-      expect(resultA.value).toHaveLength(2);
-      expect(resultA.value.every((r) => r.ownerPid === ownerA)).toBe(true);
-      expect(resultB.value).toHaveLength(1);
-      expect(resultB.value[0].workerId).toBe(WorkerId('w-3'));
-    });
-
-    it('should return empty array when no workers match the owner PID', () => {
-      // Act
-      const result = repo.findByOwnerPid(99999);
+      const result = repo.findBySessionName('beat-task-abc');
 
       // Assert
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.value).toHaveLength(0);
+      expect(result.value).not.toBeNull();
+      expect(result.value!.workerId).toBe(WorkerId('w-sess'));
+      expect(result.value!.sessionName).toBe('beat-task-abc');
+    });
+
+    it('should return null for non-existent session name', () => {
+      // Act
+      const result = repo.findBySessionName('beat-nonexistent');
+
+      // Assert
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBeNull();
+    });
+
+    it('should return null for workers with NULL session_name (legacy rows)', () => {
+      // Insert a row without session_name (simulating pre-migration v29 row)
+      const taskId = 't-legacy-sess';
+      ensureTaskExists(taskId);
+      db.getDatabase()
+        .prepare(
+          `INSERT INTO workers (worker_id, task_id, pid, owner_pid, agent, started_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run('w-legacy-sess', taskId, 111, 222, 'claude', Date.now());
+
+      // Act — searching by NULL session_name should not match
+      const result = repo.findBySessionName('beat-anything');
+
+      // Assert
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBeNull();
+    });
+
+    it('should find the correct worker when multiple workers exist', () => {
+      // Arrange
+      const reg1 = createRegistration({
+        workerId: WorkerId('w-multi-1'),
+        taskId: TaskId('t-multi-1'),
+        sessionName: 'beat-task-111',
+      });
+      const reg2 = createRegistration({
+        workerId: WorkerId('w-multi-2'),
+        taskId: TaskId('t-multi-2'),
+        sessionName: 'beat-task-222',
+      });
+      repo.register(reg1);
+      repo.register(reg2);
+
+      // Act
+      const result = repo.findBySessionName('beat-task-222');
+
+      // Assert
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).not.toBeNull();
+      expect(result.value!.workerId).toBe(WorkerId('w-multi-2'));
     });
   });
 
@@ -202,49 +241,6 @@ describe('SQLiteWorkerRepository - Unit Tests', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value).toHaveLength(0);
-    });
-  });
-
-  // ============================================================================
-  // deleteByOwnerPid()
-  // ============================================================================
-
-  describe('deleteByOwnerPid', () => {
-    it('should delete matching workers and return count', () => {
-      // Arrange
-      const ownerToDelete = 1000;
-      const ownerToKeep = 2000;
-      const reg1 = createRegistration({ workerId: WorkerId('w-1'), taskId: TaskId('t-1'), ownerPid: ownerToDelete });
-      const reg2 = createRegistration({ workerId: WorkerId('w-2'), taskId: TaskId('t-2'), ownerPid: ownerToDelete });
-      const reg3 = createRegistration({ workerId: WorkerId('w-3'), taskId: TaskId('t-3'), ownerPid: ownerToKeep });
-      repo.register(reg1);
-      repo.register(reg2);
-      repo.register(reg3);
-
-      // Act
-      const deleteResult = repo.deleteByOwnerPid(ownerToDelete);
-
-      // Assert
-      expect(deleteResult.ok).toBe(true);
-      if (!deleteResult.ok) return;
-      expect(deleteResult.value).toBe(2);
-
-      // Verify remaining workers
-      const remaining = repo.findAll();
-      expect(remaining.ok).toBe(true);
-      if (!remaining.ok) return;
-      expect(remaining.value).toHaveLength(1);
-      expect(remaining.value[0].ownerPid).toBe(ownerToKeep);
-    });
-
-    it('should return 0 when no workers match the owner PID', () => {
-      // Act
-      const result = repo.deleteByOwnerPid(99999);
-
-      // Assert
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.value).toBe(0);
     });
   });
 
@@ -290,7 +286,7 @@ describe('SQLiteWorkerRepository - Unit Tests', () => {
   // sessionName field (migration v29)
   // ============================================================================
 
-  describe('sessionName (Phase 3 tmux field)', () => {
+  describe('sessionName (migration v29 tmux field)', () => {
     it('should persist and retrieve sessionName when provided', () => {
       // Arrange
       const reg = createRegistration({
@@ -310,7 +306,7 @@ describe('SQLiteWorkerRepository - Unit Tests', () => {
       expect(found.value.sessionName).toBe('beat-t-session');
     });
 
-    it('should return undefined sessionName for rows without sessionName (pre-Phase 3 rows)', () => {
+    it('should return undefined sessionName for rows without sessionName (pre-migration v29 rows)', () => {
       // Arrange — register without sessionName
       const reg = createRegistration({ workerId: WorkerId('w-nosess'), taskId: TaskId('t-nosess') });
 
@@ -325,7 +321,7 @@ describe('SQLiteWorkerRepository - Unit Tests', () => {
     });
 
     it('should handle NULL session_name from existing rows gracefully', () => {
-      // Direct DB insertion (simulating a pre-Phase 3 row without session_name)
+      // Direct DB insertion (simulating a pre-migration v29 row without session_name)
       const taskId = 't-legacy';
       ensureTaskExists(taskId);
       db.getDatabase()

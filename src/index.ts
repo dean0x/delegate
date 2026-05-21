@@ -9,8 +9,10 @@ import { MCPAdapter } from './adapters/mcp-adapter.js';
 import { bootstrap } from './bootstrap.js';
 import { Container } from './core/container.js';
 import { Logger, WorkerPool } from './core/interfaces.js';
+import type { TmuxSessionManagerCorePort } from './core/tmux-types.js';
 import { VERSION } from './generated/version.js';
 import { ProxyManager } from './translation/proxy/proxy-manager.js';
+import { sweepTmuxSessions } from './utils/session-sweep.js';
 
 // Handle errors gracefully
 process.on('uncaughtException', (error) => {
@@ -84,6 +86,18 @@ async function main() {
       const workerPoolResult = container?.get('workerPool');
       if (workerPoolResult?.ok) {
         await (workerPoolResult.value as WorkerPool).killAll();
+      }
+
+      // Belt-and-suspenders session sweep — destroy any remaining beat-* sessions
+      // that killAll() may have missed (e.g. sessions that were spawning during shutdown).
+      const tmuxSessionManagerResult = container?.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
+      if (tmuxSessionManagerResult?.ok) {
+        const sweepResult = sweepTmuxSessions(tmuxSessionManagerResult.value, logger);
+        if (!sweepResult.ok) {
+          logger.warn('Shutdown session sweep failed to list sessions', {
+            error: sweepResult.error.message,
+          });
+        }
       }
 
       // Close server

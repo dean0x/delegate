@@ -42,12 +42,10 @@ interface AppProps {
    */
   readonly outputRepository?: OutputRepository;
   /**
-   * Phase 3: Optional tmux session liveness check.
-   * When provided, RUNNING orchestrations backed by tmux workers report 'live' or 'dead'
-   * instead of conservatively returning 'unknown'. Omitting preserves backward
-   * compatibility with process-based workers.
+   * Tmux session liveness check for RUNNING orchestrations.
+   * Pass () => false when tmuxSessionManager is unavailable (e.g. test environments).
    */
-  readonly isTmuxSessionAlive?: (sessionName: string) => boolean;
+  readonly isTmuxSessionAlive: (sessionName: string) => boolean;
 }
 
 /** Initial navigation state — focus on tasks panel (most common starting point), no selection, no filters */

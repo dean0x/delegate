@@ -120,16 +120,14 @@ export async function startDashboard(): Promise<void> {
   const resourceMonitorResult = container.get<ResourceMonitor>('resourceMonitor');
   const resourceMonitor = resourceMonitorResult.ok ? resourceMonitorResult.value : undefined;
 
-  // Phase 3: Extract tmux session manager for orchestration liveness checks.
-  // Best-effort — dashboard degrades to 'unknown' liveness when unavailable
-  // (e.g., test environments injecting a mock TmuxConnectorPort without a session manager).
+  // Build the tmux session liveness check — fallback () => false when unavailable.
   const tmuxSessionManagerResult = container.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
-  const isTmuxSessionAlive: ((sessionName: string) => boolean) | undefined = tmuxSessionManagerResult.ok
+  const isTmuxSessionAlive: (sessionName: string) => boolean = tmuxSessionManagerResult.ok
     ? (sessionName) => {
         const result = tmuxSessionManagerResult.value.isAlive(sessionName);
         return result.ok ? result.value : false;
       }
-    : undefined;
+    : () => false;
 
   // Extract mutation services for cancel/delete keybindings
   const orchestrationServiceResult = container.get<OrchestrationService>('orchestrationService');

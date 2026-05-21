@@ -1,13 +1,15 @@
 /**
  * Unit tests for RecoveryManager
  * ARCHITECTURE: Tests startup task recovery with pure mocks (no DB)
- * Pattern: Behavioral testing - focuses on recovery decisions:
- *   - Phase 0: Dead worker cleanup via PID-based detection
+ * Pattern: Behavioral testing — focuses on recovery decisions:
+ *   - Phase 0: Dead worker cleanup via tmux session liveness detection
+ *   - Phase 0: Orphan tmux session cleanup (sessions with no DB record destroyed)
  *   - QUEUED tasks are re-queued
- *   - RUNNING tasks with no live worker (PID-based) are marked FAILED
- *   - RUNNING tasks with live worker are left alone (skipped)
+ *   - RUNNING tasks with no live session are marked FAILED
+ *   - RUNNING tasks with live session are left alone (skipped)
  *   - Duplicate detection via queue.contains()
  *   - Error propagation from repository
+ *   - Recovery summary log includes all counts
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,7 +29,7 @@ import type {
 import { err, ok } from '../../../src/core/result';
 import { RecoveryManager } from '../../../src/services/recovery-manager';
 import { TaskFactory } from '../../fixtures/factories';
-import { createMockLogger, createMockWorkerRepository } from '../../fixtures/mocks';
+import { createMockLogger, createMockTmuxSessionManagerCore, createMockWorkerRepository } from '../../fixtures/mocks';
 
 // --- Mock factories ---
 
@@ -113,6 +115,7 @@ describe('RecoveryManager', () => {
   let logger: ReturnType<typeof createMockLogger>;
   let workerRepo: ReturnType<typeof createMockWorkerRepository>;
   let dependencyRepo: ReturnType<typeof createMockDependencyRepo>;
+  let tmuxSessionManager: ReturnType<typeof createMockTmuxSessionManagerCore>;
 
   beforeEach(() => {
     repo = createMockRepo();
@@ -121,6 +124,7 @@ describe('RecoveryManager', () => {
     logger = createMockLogger();
     workerRepo = createMockWorkerRepository();
     dependencyRepo = createMockDependencyRepo();
+    tmuxSessionManager = createMockTmuxSessionManagerCore();
 
     manager = new RecoveryManager({
       taskRepo: repo as unknown as TaskRepository,
@@ -129,6 +133,7 @@ describe('RecoveryManager', () => {
       logger: logger as unknown as Logger,
       workerRepo: workerRepo as unknown as WorkerRepository,
       dependencyRepo: dependencyRepo as unknown as DependencyRepository,
+      tmuxSessionManager,
     });
   });
 
@@ -137,6 +142,15 @@ describe('RecoveryManager', () => {
   // Instead, we build via the factory and spread into a new (unfrozen) object with the desired id.
 
   const FIVE_MINUTES_AGO = Date.now() - 5 * 60 * 1000;
+
+  /**
+   * Build a session info object for use in listSessions() mocks.
+   * `createdSecondsAgo` controls the `created` epoch-seconds field.
+   * Default: 120 seconds ago (old enough to pass the 60s orphan grace period).
+   */
+  function buildSession(name: string, createdSecondsAgo = 120): { name: string; created: number } {
+    return { name, created: Math.floor(Date.now() / 1000) - createdSecondsAgo };
+  }
 
   function buildQueuedTask(id: string): Task {
     const base = new TaskFactory().withStatus(TaskStatus.QUEUED).build();
@@ -152,23 +166,30 @@ describe('RecoveryManager', () => {
     repo.findByStatus.mockResolvedValueOnce(ok(queuedTasks)).mockResolvedValueOnce(ok(runningTasks));
   }
 
-  // Use current process PID for "alive" checks and a known-dead PID for "dead" checks
-  const ALIVE_PID = process.pid;
-  const DEAD_PID = 999999;
+  /**
+   * Build a tmux-worker fixture with pid=0 (tmux sentinel).
+   * @param sessionName - tmux session name; set to undefined to simulate legacy rows without sessionName
+   */
+  function buildTmuxWorker(workerId: string, taskId: string, sessionName: string | undefined = `beat-${taskId}`) {
+    return {
+      workerId: WorkerId(workerId),
+      taskId: TaskId(taskId),
+      pid: 0,
+      ownerPid: process.pid,
+      agent: 'claude',
+      startedAt: Date.now(),
+      sessionName,
+    };
+  }
 
   // --- Tests ---
 
-  describe('Phase 0: Dead worker cleanup on startup', () => {
-    it('should unregister dead workers and fail their tasks', async () => {
-      const deadWorker = {
-        workerId: WorkerId('w-dead'),
-        taskId: TaskId('task-dead'),
-        pid: DEAD_PID,
-        ownerPid: DEAD_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-      };
+  describe('Phase 0: Dead worker cleanup via tmux session liveness', () => {
+    it('should unregister dead workers and fail their tasks when session is absent', async () => {
+      const deadWorker = buildTmuxWorker('w-dead', 'task-dead', 'beat-task-dead');
       workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      // listSessions returns empty — session is NOT present → dead
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead')));
       setupFindByStatus([], []);
 
@@ -186,20 +207,16 @@ describe('RecoveryManager', () => {
       expect(logger.info).toHaveBeenCalledWith('Cleaned up dead worker and failed its task', {
         workerId: WorkerId('w-dead'),
         taskId: TaskId('task-dead'),
-        deadPid: DEAD_PID,
+        deadPid: process.pid,
+        sessionName: 'beat-task-dead',
       });
     });
 
-    it('should leave alive workers untouched', async () => {
-      const aliveWorker = {
-        workerId: WorkerId('w-alive'),
-        taskId: TaskId('task-alive'),
-        pid: ALIVE_PID,
-        ownerPid: ALIVE_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-      };
+    it('should leave alive workers untouched when session is present', async () => {
+      const aliveWorker = buildTmuxWorker('w-alive', 'task-alive', 'beat-task-alive');
       workerRepo.findAll.mockReturnValue(ok([aliveWorker]));
+      // Session is present → alive
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-task-alive')]));
       setupFindByStatus([], []);
 
       await manager.recover();
@@ -208,23 +225,11 @@ describe('RecoveryManager', () => {
     });
 
     it('should handle mix of dead and alive workers', async () => {
-      const deadWorker = {
-        workerId: WorkerId('w-dead'),
-        taskId: TaskId('task-dead'),
-        pid: DEAD_PID,
-        ownerPid: DEAD_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-      };
-      const aliveWorker = {
-        workerId: WorkerId('w-alive'),
-        taskId: TaskId('task-alive'),
-        pid: ALIVE_PID,
-        ownerPid: ALIVE_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-      };
+      const deadWorker = buildTmuxWorker('w-dead', 'task-dead', 'beat-task-dead');
+      const aliveWorker = buildTmuxWorker('w-alive', 'task-alive', 'beat-task-alive');
       workerRepo.findAll.mockReturnValue(ok([deadWorker, aliveWorker]));
+      // Only the alive session appears in listSessions
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-task-alive')]));
       repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead')));
       setupFindByStatus([], []);
 
@@ -234,52 +239,34 @@ describe('RecoveryManager', () => {
       expect(workerRepo.unregister).toHaveBeenCalledWith(WorkerId('w-dead'));
     });
 
-    it('should treat EPERM as process-alive (no permission to signal)', async () => {
-      const epermWorker = {
-        workerId: WorkerId('w-eperm'),
-        taskId: TaskId('task-eperm'),
-        pid: 42,
-        ownerPid: 42,
-        agent: 'claude',
-        startedAt: Date.now(),
-      };
-      workerRepo.findAll.mockReturnValue(ok([epermWorker]));
+    it('should treat legacy workers (NULL sessionName) as dead', async () => {
+      // Workers without sessionName are pre-migration v29 rows — treated as dead
+      const legacyWorker = buildTmuxWorker('w-legacy', 'task-legacy', undefined);
+      workerRepo.findAll.mockReturnValue(ok([legacyWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
+      repo.findById.mockResolvedValue(ok(buildRunningTask('task-legacy')));
       setupFindByStatus([], []);
 
-      const killSpy = vi.spyOn(process, 'kill');
-      try {
-        const epermError = Object.assign(new Error('EPERM'), { code: 'EPERM' });
-        killSpy.mockImplementation((pid: number) => {
-          if (pid === 42) throw epermError;
-          return true;
-        });
+      await manager.recover();
 
-        await manager.recover();
-
-        // Worker should NOT be unregistered — EPERM means process is alive
-        expect(workerRepo.unregister).not.toHaveBeenCalled();
-      } finally {
-        killSpy.mockRestore();
-      }
+      expect(workerRepo.unregister).toHaveBeenCalledWith(WorkerId('w-legacy'));
+      expect(repo.update).toHaveBeenCalledWith(
+        TaskId('task-legacy'),
+        expect.objectContaining({ status: TaskStatus.FAILED }),
+      );
     });
 
     it('should skip status update when dead worker task is already COMPLETED', async () => {
-      const deadWorker = {
-        workerId: WorkerId('w-dead-completed'),
-        taskId: TaskId('task-completed'),
-        pid: DEAD_PID,
-        ownerPid: DEAD_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-      };
+      const deadWorker = buildTmuxWorker('w-dead-completed', 'task-completed', 'beat-task-completed');
       workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const completedTask = new TaskFactory().withStatus(TaskStatus.COMPLETED).build();
       repo.findById.mockResolvedValue(ok({ ...completedTask, id: TaskId('task-completed') }));
       setupFindByStatus([], []);
 
       await manager.recover();
 
-      // Worker should be unregistered (dead PID)
+      // Worker should be unregistered (dead session)
       expect(workerRepo.unregister).toHaveBeenCalledWith(WorkerId('w-dead-completed'));
       // But task should NOT be updated (already terminal)
       expect(repo.update).not.toHaveBeenCalled();
@@ -287,20 +274,14 @@ describe('RecoveryManager', () => {
         workerId: WorkerId('w-dead-completed'),
         taskId: TaskId('task-completed'),
         currentStatus: TaskStatus.COMPLETED,
-        deadPid: DEAD_PID,
+        deadPid: process.pid,
       });
     });
 
     it('should skip status update when dead worker task is already CANCELLED', async () => {
-      const deadWorker = {
-        workerId: WorkerId('w-dead-cancelled'),
-        taskId: TaskId('task-cancelled'),
-        pid: DEAD_PID,
-        ownerPid: DEAD_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-      };
+      const deadWorker = buildTmuxWorker('w-dead-cancelled', 'task-cancelled', 'beat-task-cancelled');
       workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const cancelledTask = new TaskFactory().withStatus(TaskStatus.CANCELLED).build();
       repo.findById.mockResolvedValue(ok({ ...cancelledTask, id: TaskId('task-cancelled') }));
       setupFindByStatus([], []);
@@ -312,15 +293,9 @@ describe('RecoveryManager', () => {
     });
 
     it('should handle findById failure gracefully in Phase 0', async () => {
-      const deadWorker = {
-        workerId: WorkerId('w-dead-err'),
-        taskId: TaskId('task-err'),
-        pid: DEAD_PID,
-        ownerPid: DEAD_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-      };
+      const deadWorker = buildTmuxWorker('w-dead-err', 'task-err', 'beat-task-err');
       workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const findError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'DB read failed');
       repo.findById.mockResolvedValue(err(findError));
       setupFindByStatus([], []);
@@ -334,10 +309,242 @@ describe('RecoveryManager', () => {
         taskId: TaskId('task-err'),
       });
     });
+
+    it('should not count worker as cleaned up when task lookup fails (P2: accurate metric)', async () => {
+      // P2: workersCleanedUp must only increment when handleDeadWorker returns true.
+      // A task lookup failure means outcome is unknown — the counter must NOT increment.
+      const deadWorker = buildTmuxWorker('w-dead-fail', 'task-fail', 'beat-task-fail');
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
+      const findError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'DB read failed');
+      repo.findById.mockResolvedValue(err(findError));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // Recovery summary must report 0 — lookup failed, outcome is unknown
+      expect(logger.info).toHaveBeenCalledWith('Recovery complete', expect.objectContaining({ workersCleanedUp: 0 }));
+    });
+
+    it('should count worker as cleaned up when task is already terminal (P2: accurate metric)', async () => {
+      // P2: handleDeadWorker returns true for already-terminal tasks — worker row was unregistered.
+      const deadWorker = buildTmuxWorker('w-dead-terminal', 'task-terminal', 'beat-task-terminal');
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
+      const completedTask = new TaskFactory().withStatus(TaskStatus.COMPLETED).build();
+      repo.findById.mockResolvedValue(ok({ ...completedTask, id: TaskId('task-terminal') }));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // Worker was unregistered and task was already terminal — counts as cleaned up
+      expect(logger.info).toHaveBeenCalledWith('Recovery complete', expect.objectContaining({ workersCleanedUp: 1 }));
+    });
+  });
+
+  describe('Phase 0: Orphan tmux session cleanup', () => {
+    it('should destroy orphan sessions that have no DB record', async () => {
+      // No workers in DB
+      workerRepo.findAll.mockReturnValue(ok([]));
+      // But there is a live session with no record
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-orphan-abc')]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      expect(tmuxSessionManager.destroySession).toHaveBeenCalledWith('beat-orphan-abc');
+      expect(logger.info).toHaveBeenCalledWith('Destroyed orphan tmux session', {
+        sessionName: 'beat-orphan-abc',
+      });
+    });
+
+    it('should NOT destroy sessions that have a matching DB record', async () => {
+      const registeredWorker = buildTmuxWorker('w-registered', 'task-registered', 'beat-task-registered');
+      workerRepo.findAll.mockReturnValue(ok([registeredWorker]));
+      // Session exists and matches a registered worker
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-task-registered')]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // Worker was alive — not destroyed
+      expect(workerRepo.unregister).not.toHaveBeenCalled();
+      expect(tmuxSessionManager.destroySession).not.toHaveBeenCalled();
+    });
+
+    it('should handle empty session list without error', async () => {
+      workerRepo.findAll.mockReturnValue(ok([]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      expect(tmuxSessionManager.destroySession).not.toHaveBeenCalled();
+    });
+
+    it('should skip orphan cleanup when tmuxSessionManager is absent', async () => {
+      // Create a manager without tmuxSessionManager
+      const managerNoTmux = new RecoveryManager({
+        taskRepo: repo as unknown as TaskRepository,
+        queue: queue as unknown as TaskQueue,
+        eventBus: eventBus as unknown as EventBus,
+        logger: logger as unknown as Logger,
+        workerRepo: workerRepo as unknown as WorkerRepository,
+        dependencyRepo: dependencyRepo as unknown as DependencyRepository,
+      });
+
+      workerRepo.findAll.mockReturnValue(ok([]));
+      setupFindByStatus([], []);
+
+      // Should not crash
+      await expect(managerNoTmux.recover()).resolves.toEqual({ ok: true, value: undefined });
+    });
+
+    it('should NOT unregister workers or fail tasks when tmuxSessionManager is absent', async () => {
+      // P1 safety: when tmuxSessionManager is absent we cannot determine liveness.
+      // Phase 0: dead-worker loop would treat every registered worker as dead
+      // (liveTmuxSessions is empty → has() always false) and destroy all registrations.
+      // Phase 3: tmux-based workers (with sessionName) must be skipped — we can't
+      // verify their sessions. But tasks with NO worker are still genuinely orphaned.
+      const managerNoTmux = new RecoveryManager({
+        taskRepo: repo as unknown as TaskRepository,
+        queue: queue as unknown as TaskQueue,
+        eventBus: eventBus as unknown as EventBus,
+        logger: logger as unknown as Logger,
+        workerRepo: workerRepo as unknown as WorkerRepository,
+        dependencyRepo: dependencyRepo as unknown as DependencyRepository,
+        // tmuxSessionManager intentionally omitted
+      });
+
+      // Workers exist in the DB — without the guard they would all be treated as dead
+      const worker1 = buildTmuxWorker('w-1', 'task-1', 'beat-task-1');
+      const worker2 = buildTmuxWorker('w-2', 'task-2', 'beat-task-2');
+      workerRepo.findAll.mockReturnValue(ok([worker1, worker2]));
+
+      // RUNNING tasks with worker registrations — Phase 3 must NOT fail these
+      const runningTask1 = buildRunningTask('task-1');
+      const runningTask2 = buildRunningTask('task-2');
+      setupFindByStatus([], [runningTask1, runningTask2]);
+      workerRepo.findByTaskId.mockReturnValueOnce(ok(worker1)).mockReturnValueOnce(ok(worker2));
+
+      const result = await managerNoTmux.recover();
+
+      expect(result.ok).toBe(true);
+      // Phase 0 guard: no workers unregistered
+      expect(workerRepo.unregister).not.toHaveBeenCalled();
+      // Phase 3 guard: tmux-based workers skipped, no tasks marked FAILED
+      expect(repo.update).not.toHaveBeenCalled();
+      expect(eventBus.emit).not.toHaveBeenCalledWith('TaskFailed', expect.anything());
+    });
+
+    it('should still fail RUNNING tasks with no worker when tmuxSessionManager is absent', async () => {
+      const managerNoTmux = new RecoveryManager({
+        taskRepo: repo as unknown as TaskRepository,
+        queue: queue as unknown as TaskQueue,
+        eventBus: eventBus as unknown as EventBus,
+        logger: logger as unknown as Logger,
+        workerRepo: workerRepo as unknown as WorkerRepository,
+        dependencyRepo: dependencyRepo as unknown as DependencyRepository,
+      });
+
+      workerRepo.findAll.mockReturnValue(ok([]));
+
+      const runningTask = buildRunningTask('task-orphan');
+      setupFindByStatus([], [runningTask]);
+      workerRepo.findByTaskId.mockReturnValueOnce(ok(null));
+      repo.findById.mockResolvedValueOnce(ok(runningTask));
+
+      const result = await managerNoTmux.recover();
+
+      expect(result.ok).toBe(true);
+      expect(repo.update).toHaveBeenCalledWith('task-orphan', expect.objectContaining({ status: 'failed' }));
+    });
+
+    it('should log error and continue when destroySession fails for an orphan', async () => {
+      workerRepo.findAll.mockReturnValue(ok([]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-orphan-fail')]));
+      const destroyError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'tmux kill-session failed');
+      tmuxSessionManager.destroySession.mockReturnValue(err(destroyError));
+      setupFindByStatus([], []);
+
+      // Should not throw — logged and continued
+      const result = await manager.recover();
+
+      expect(result.ok).toBe(true);
+      expect(logger.error).toHaveBeenCalledWith('Failed to destroy orphan tmux session', destroyError, {
+        sessionName: 'beat-orphan-fail',
+      });
+    });
+
+    it('should destroy all orphan sessions even if one fails', async () => {
+      workerRepo.findAll.mockReturnValue(ok([]));
+      tmuxSessionManager.listSessions.mockReturnValue(
+        ok([buildSession('beat-orphan-1'), buildSession('beat-orphan-2'), buildSession('beat-orphan-3')]),
+      );
+      const destroyError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'kill-session failed');
+      tmuxSessionManager.destroySession
+        .mockReturnValueOnce(err(destroyError)) // first fails
+        .mockReturnValueOnce(ok(undefined)) // second succeeds
+        .mockReturnValueOnce(ok(undefined)); // third succeeds
+      setupFindByStatus([], []);
+
+      const result = await manager.recover();
+
+      expect(result.ok).toBe(true);
+      expect(tmuxSessionManager.destroySession).toHaveBeenCalledTimes(3);
+    });
+
+    it('should not issue extra listSessions() or findAll() calls for orphan cleanup', async () => {
+      // Orphan cleanup must reuse the already-fetched data from cleanDeadWorkerRegistrations
+      const worker = buildTmuxWorker('w-1', 'task-1', 'beat-task-1');
+      workerRepo.findAll.mockReturnValue(ok([worker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-task-1')]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // findAll called once (in cleanDeadWorkerRegistrations), not twice
+      expect(workerRepo.findAll).toHaveBeenCalledTimes(1);
+      // listSessions called once (in buildLiveSessionSet), not twice
+      expect(tmuxSessionManager.listSessions).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT destroy orphan sessions younger than the 60s grace period', async () => {
+      // Simulate a session spawned 5 seconds ago — no DB record yet (worker still registering)
+      const youngSession = buildSession('beat-orphan-young', 5); // 5 seconds old
+      workerRepo.findAll.mockReturnValue(ok([]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([youngSession]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // Young orphan must be skipped — destroying it would kill a live worker mid-spawn
+      expect(tmuxSessionManager.destroySession).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith(
+        'Skipping young orphan tmux session (within grace period)',
+        expect.objectContaining({ sessionName: 'beat-orphan-young' }),
+      );
+    });
+
+    it('should destroy orphan sessions older than the 60s grace period', async () => {
+      // Session is 90 seconds old — past grace period, safe to destroy
+      const oldSession = buildSession('beat-orphan-old', 90);
+      workerRepo.findAll.mockReturnValue(ok([]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([oldSession]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      expect(tmuxSessionManager.destroySession).toHaveBeenCalledWith('beat-orphan-old');
+      expect(logger.info).toHaveBeenCalledWith('Destroyed orphan tmux session', {
+        sessionName: 'beat-orphan-old',
+      });
+    });
   });
 
   describe('Empty recovery', () => {
     it('should succeed with no operations when no queued or running tasks exist', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
 
       const result = await manager.recover();
@@ -349,6 +556,7 @@ describe('RecoveryManager', () => {
 
   describe('Cleanup of old tasks', () => {
     it('should call cleanupOldTasks with 7-day threshold in milliseconds', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
       const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 
@@ -358,6 +566,7 @@ describe('RecoveryManager', () => {
     });
 
     it('should log cleanup count when tasks are cleaned up', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
       repo.cleanupOldTasks.mockResolvedValue(ok(5));
 
@@ -367,12 +576,12 @@ describe('RecoveryManager', () => {
     });
 
     it('should not log cleanup when zero tasks are cleaned', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
       repo.cleanupOldTasks.mockResolvedValue(ok(0));
 
       await manager.recover();
 
-      // info is called for other messages, but not for cleanup
       const cleanupCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls.filter(
         (call: unknown[]) => call[0] === 'Cleaned up old completed tasks',
       );
@@ -382,6 +591,7 @@ describe('RecoveryManager', () => {
 
   describe('QUEUED task recovery', () => {
     it('should re-queue QUEUED tasks and emit TaskQueued events', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task1 = buildQueuedTask('queued-1');
       const task2 = buildQueuedTask('queued-2');
       setupFindByStatus([task1, task2], []);
@@ -393,16 +603,12 @@ describe('RecoveryManager', () => {
       expect(queue.enqueue).toHaveBeenCalledWith(task1);
       expect(queue.enqueue).toHaveBeenCalledWith(task2);
 
-      // TaskQueued events emitted for each
-      expect(eventBus.emit).toHaveBeenCalledWith('TaskQueued', {
-        taskId: task1.id,
-      });
-      expect(eventBus.emit).toHaveBeenCalledWith('TaskQueued', {
-        taskId: task2.id,
-      });
+      expect(eventBus.emit).toHaveBeenCalledWith('TaskQueued', { taskId: task1.id });
+      expect(eventBus.emit).toHaveBeenCalledWith('TaskQueued', { taskId: task2.id });
     });
 
     it('should skip QUEUED tasks that are already in the queue', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildQueuedTask('already-queued');
       setupFindByStatus([task], []);
       queue.contains.mockReturnValue(true);
@@ -415,6 +621,7 @@ describe('RecoveryManager', () => {
     });
 
     it('should skip re-queuing QUEUED tasks that are blocked by dependencies', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildQueuedTask('blocked-task');
       setupFindByStatus([task], []);
       dependencyRepo.isBlocked.mockResolvedValue(ok(true));
@@ -429,6 +636,7 @@ describe('RecoveryManager', () => {
     });
 
     it('should enqueue conservatively on dependency check failure', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildQueuedTask('dep-error');
       setupFindByStatus([task], []);
       const depError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'DB read failed');
@@ -448,12 +656,11 @@ describe('RecoveryManager', () => {
     });
 
     it('should handle mix of blocked and unblocked QUEUED tasks', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const blockedTask = buildQueuedTask('blocked-1');
       const unblockedTask = buildQueuedTask('unblocked-1');
       setupFindByStatus([blockedTask, unblockedTask], []);
-      dependencyRepo.isBlocked
-        .mockResolvedValueOnce(ok(true)) // blocked-1 is blocked
-        .mockResolvedValueOnce(ok(false)); // unblocked-1 is not
+      dependencyRepo.isBlocked.mockResolvedValueOnce(ok(true)).mockResolvedValueOnce(ok(false));
 
       const result = await manager.recover();
 
@@ -464,6 +671,7 @@ describe('RecoveryManager', () => {
     });
 
     it('should log enqueue failures but continue recovery', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task1 = buildQueuedTask('fail-enqueue');
       const task2 = buildQueuedTask('succeed-enqueue');
       setupFindByStatus([task1, task2], []);
@@ -473,18 +681,15 @@ describe('RecoveryManager', () => {
 
       const result = await manager.recover();
 
-      // Recovery should succeed overall despite individual enqueue failure
       expect(result.ok).toBe(true);
       expect(logger.error).toHaveBeenCalledWith('Failed to re-queue task', enqueueError, { taskId: task1.id });
-      // Second task should still be enqueued
-      expect(eventBus.emit).toHaveBeenCalledWith('TaskQueued', {
-        taskId: task2.id,
-      });
+      expect(eventBus.emit).toHaveBeenCalledWith('TaskQueued', { taskId: task2.id });
     });
   });
 
-  describe('RUNNING task recovery - PID-based detection', () => {
+  describe('RUNNING task recovery — tmux session-based detection', () => {
     it('should mark RUNNING task as FAILED when no worker row exists', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildRunningTask('no-worker');
       setupFindByStatus([], [task]);
       // Default: findByTaskId returns ok(null) — no worker row
@@ -502,90 +707,71 @@ describe('RecoveryManager', () => {
       );
     });
 
-    it('should mark RUNNING task as FAILED when worker has dead ownerPid', async () => {
+    it('should mark RUNNING task as FAILED when worker has dead tmux session', async () => {
       const task = buildRunningTask('dead-worker');
+      // recoverRunningTasks checks liveTmuxSessions set from Phase 0 — session absent means dead
+      tmuxSessionManager.isAlive.mockReturnValue(ok(false));
+      // Phase 0 uses listSessions() — empty so no workers cleaned there either
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], [task]);
 
-      workerRepo.findByTaskId.mockReturnValue(
-        ok({
-          workerId: WorkerId('w1'),
-          taskId: task.id,
-          pid: DEAD_PID,
-          ownerPid: DEAD_PID,
-          agent: 'claude',
-          startedAt: Date.now(),
-        }),
-      );
+      workerRepo.findByTaskId.mockReturnValue(ok(buildTmuxWorker('w1', task.id, 'beat-dead-session')));
 
       const result = await manager.recover();
 
       expect(result.ok).toBe(true);
       expect(repo.update).toHaveBeenCalledWith(
         task.id,
-        expect.objectContaining({
-          status: TaskStatus.FAILED,
-          exitCode: -1,
-          completedAt: expect.any(Number),
-        }),
+        expect.objectContaining({ status: TaskStatus.FAILED, exitCode: -1 }),
       );
     });
 
-    it('should skip RUNNING task when worker has alive ownerPid', async () => {
+    it('should skip RUNNING task when worker has alive tmux session', async () => {
       const task = buildRunningTask('alive-worker');
+      // Session present → alive
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-alive-session')]));
       setupFindByStatus([], [task]);
 
-      workerRepo.findByTaskId.mockReturnValue(
-        ok({
-          workerId: WorkerId('w1'),
-          taskId: task.id,
-          pid: ALIVE_PID,
-          ownerPid: ALIVE_PID,
-          agent: 'claude',
-          startedAt: Date.now(),
-        }),
-      );
+      workerRepo.findByTaskId.mockReturnValue(ok(buildTmuxWorker('w1', task.id, 'beat-alive-session')));
 
       const result = await manager.recover();
 
       expect(result.ok).toBe(true);
-      // Task should NOT be updated (it's alive)
       expect(repo.update).not.toHaveBeenCalled();
-      expect(logger.info).toHaveBeenCalledWith('Running task has live worker in another process, skipping', {
+      expect(logger.info).toHaveBeenCalledWith('Running task has live tmux session, skipping', {
         taskId: task.id,
-        ownerPid: ALIVE_PID,
+        ownerPid: process.pid,
+        sessionName: 'beat-alive-session',
       });
     });
 
-    it('should not re-queue RUNNING tasks with dead workers', async () => {
+    it('should not re-queue RUNNING tasks with dead sessions', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildRunningTask('dead-no-queue');
       setupFindByStatus([], [task]);
-      // Default: findByTaskId returns ok(null) — no worker
 
       await manager.recover();
 
-      // Enqueue should not be called for crashed tasks
       expect(queue.enqueue).not.toHaveBeenCalled();
     });
 
     it('should log crashed task failure', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildRunningTask('crashed-logged');
       setupFindByStatus([], [task]);
-      // Default: findByTaskId returns ok(null) — no worker
 
       await manager.recover();
 
       expect(logger.info).toHaveBeenCalledWith(
         'Marked crashed task as failed (no live worker)',
-        expect.objectContaining({
-          taskId: task.id,
-        }),
+        expect.objectContaining({ taskId: task.id }),
       );
     });
 
     it('should log error when update fails for crashed task', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildRunningTask('crashed-update-fail');
       setupFindByStatus([], [task]);
-      // Default: findByTaskId returns ok(null) — no worker
       const updateError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'DB write failed');
       repo.update.mockResolvedValue(err(updateError));
 
@@ -597,17 +783,15 @@ describe('RecoveryManager', () => {
     });
 
     it('should skip RUNNING task when it became terminal between fetch and update', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildRunningTask('race-completed');
       setupFindByStatus([], [task]);
-      // No worker row → would normally mark as FAILED
       workerRepo.findByTaskId.mockReturnValue(ok(null));
-      // But task has since been completed by another process (TOCTOU)
       const completedTask = new TaskFactory().withStatus(TaskStatus.COMPLETED).build();
       repo.findById.mockResolvedValue(ok({ ...completedTask, id: TaskId('race-completed') }));
 
       await manager.recover();
 
-      // Task should NOT be updated — it's already terminal
       expect(repo.update).not.toHaveBeenCalled();
       expect(logger.info).toHaveBeenCalledWith('Running task already terminal, skipping recovery', {
         taskId: TaskId('race-completed'),
@@ -618,45 +802,36 @@ describe('RecoveryManager', () => {
 
   describe('TaskFailed event emission', () => {
     it('should emit TaskFailed event when marking crashed RUNNING task as failed', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildRunningTask('crashed-emit');
       setupFindByStatus([], [task]);
-      // No worker row → crash
       workerRepo.findByTaskId.mockReturnValue(ok(null));
 
       await manager.recover();
 
       expect(eventBus.emit).toHaveBeenCalledWith('TaskFailed', {
         taskId: task.id,
-        error: expect.objectContaining({ message: 'Worker process crashed during execution' }),
+        error: expect.objectContaining({ message: 'Tmux session died (no live session detected at startup)' }),
         exitCode: -1,
       });
     });
 
     it('should log error and continue recovery when TaskFailed emit fails for dead worker task', async () => {
-      const deadWorker = {
-        workerId: WorkerId('w-dead-fail'),
-        taskId: TaskId('task-dead-fail'),
-        pid: DEAD_PID,
-        ownerPid: DEAD_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-      };
+      const deadWorker = buildTmuxWorker('w-dead-fail', 'task-dead-fail', 'beat-task-dead-fail');
       workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead-fail')));
       setupFindByStatus([], []);
 
       const emitError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Event bus error');
-      // First emit call is TaskFailed for dead worker — make it fail
       eventBus.emit.mockResolvedValueOnce(err(emitError));
 
       const result = await manager.recover();
 
-      // Recovery should succeed despite emit failure
       expect(result.ok).toBe(true);
       expect(logger.error).toHaveBeenCalledWith('Failed to emit TaskFailed event for dead worker task', emitError, {
         taskId: TaskId('task-dead-fail'),
       });
-      // Task was still marked as FAILED in the repository
       expect(repo.update).toHaveBeenCalledWith(
         TaskId('task-dead-fail'),
         expect.objectContaining({ status: TaskStatus.FAILED }),
@@ -664,35 +839,27 @@ describe('RecoveryManager', () => {
     });
 
     it('should log error and continue recovery when TaskFailed emit fails for crashed running task', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildRunningTask('crashed-emit-fail');
       setupFindByStatus([], [task]);
       workerRepo.findByTaskId.mockReturnValue(ok(null));
 
       const emitError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Event bus error');
-      // TaskFailed emit for crashed running task — make it fail
       eventBus.emit.mockResolvedValueOnce(err(emitError));
 
       const result = await manager.recover();
 
-      // Recovery should succeed despite emit failure
       expect(result.ok).toBe(true);
       expect(logger.error).toHaveBeenCalledWith('Failed to emit TaskFailed event for crashed task', emitError, {
         taskId: task.id,
       });
-      // Task was still marked as FAILED in the repository
       expect(repo.update).toHaveBeenCalledWith(task.id, expect.objectContaining({ status: TaskStatus.FAILED }));
     });
 
-    it('should emit TaskFailed event when failing dead worker task', async () => {
-      const deadWorker = {
-        workerId: WorkerId('w-dead-emit'),
-        taskId: TaskId('task-dead-emit'),
-        pid: DEAD_PID,
-        ownerPid: DEAD_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-      };
+    it('should emit TaskFailed with tmux session message when failing dead worker task', async () => {
+      const deadWorker = buildTmuxWorker('w-dead-emit', 'task-dead-emit', 'beat-task-dead-emit');
       workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead-emit')));
       setupFindByStatus([], []);
 
@@ -700,7 +867,7 @@ describe('RecoveryManager', () => {
 
       expect(eventBus.emit).toHaveBeenCalledWith('TaskFailed', {
         taskId: TaskId('task-dead-emit'),
-        error: expect.objectContaining({ message: 'Worker process died (dead PID detected)' }),
+        error: expect.objectContaining({ message: 'Tmux session died (dead session detected at startup)' }),
         exitCode: -1,
       });
     });
@@ -708,6 +875,7 @@ describe('RecoveryManager', () => {
 
   describe('Error propagation', () => {
     it('should return error when findByStatus for QUEUED tasks fails', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const findError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'DB read failed');
       repo.findByStatus.mockResolvedValueOnce(err(findError));
 
@@ -720,10 +888,9 @@ describe('RecoveryManager', () => {
     });
 
     it('should return error when findByStatus for RUNNING tasks fails', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const findError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'DB read failed');
-      repo.findByStatus
-        .mockResolvedValueOnce(ok([])) // QUEUED succeeds
-        .mockResolvedValueOnce(err(findError)); // RUNNING fails
+      repo.findByStatus.mockResolvedValueOnce(ok([])).mockResolvedValueOnce(err(findError));
 
       const result = await manager.recover();
 
@@ -735,43 +902,26 @@ describe('RecoveryManager', () => {
   });
 
   describe('Mixed scenario', () => {
-    it('should handle a mix of queued, dead-worker running, and alive-worker running tasks', async () => {
+    it('should handle a mix of queued, dead-session running, and alive-session running tasks', async () => {
       const queuedTask = buildQueuedTask('q-1');
       const deadWorkerTask = buildRunningTask('dead-1');
       const aliveWorkerTask = buildRunningTask('alive-1');
+      // Session 'beat-alive-session' is alive, dead-1's session is absent
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-alive-session')]));
       setupFindByStatus([queuedTask], [deadWorkerTask, aliveWorkerTask]);
 
-      // Dead worker for first task, alive worker for second
       workerRepo.findByTaskId
         .mockReturnValueOnce(ok(null)) // dead-1: no worker row
-        .mockReturnValueOnce(
-          ok({
-            workerId: WorkerId('w-alive'),
-            taskId: aliveWorkerTask.id,
-            pid: ALIVE_PID,
-            ownerPid: ALIVE_PID,
-            agent: 'claude',
-            startedAt: Date.now(),
-          }),
-        );
+        .mockReturnValueOnce(ok(buildTmuxWorker('w-alive', aliveWorkerTask.id, 'beat-alive-session')));
 
       const result = await manager.recover();
 
       expect(result.ok).toBe(true);
-
-      // Queued task re-queued
       expect(queue.enqueue).toHaveBeenCalledWith(queuedTask);
-
-      // Dead-worker task marked FAILED
       expect(repo.update).toHaveBeenCalledWith(
         deadWorkerTask.id,
-        expect.objectContaining({
-          status: TaskStatus.FAILED,
-          exitCode: -1,
-        }),
+        expect.objectContaining({ status: TaskStatus.FAILED, exitCode: -1 }),
       );
-
-      // Alive-worker task left alone (not updated)
       const updateCalls = repo.update.mock.calls.filter((call: unknown[]) => call[0] === aliveWorkerTask.id);
       expect(updateCalls).toHaveLength(0);
     });
@@ -782,35 +932,21 @@ describe('RecoveryManager', () => {
       const deadTask1 = buildRunningTask('dead-1');
       const deadTask2 = buildRunningTask('dead-2');
       const aliveTask = buildRunningTask('alive-1');
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-alive')]));
       setupFindByStatus([q1, q2], [deadTask1, deadTask2, aliveTask]);
 
-      // Second queued task is already in queue
-      queue.contains
-        .mockReturnValueOnce(false) // q1 not in queue
-        .mockReturnValueOnce(true); // q2 already in queue
+      queue.contains.mockReturnValueOnce(false).mockReturnValueOnce(true);
 
-      // Worker lookups: dead tasks have no worker, alive task has worker
       workerRepo.findByTaskId
-        .mockReturnValueOnce(ok(null)) // dead-1: no worker
-        .mockReturnValueOnce(ok(null)) // dead-2: no worker
-        .mockReturnValueOnce(
-          ok({
-            workerId: WorkerId('w-alive'),
-            taskId: aliveTask.id,
-            pid: ALIVE_PID,
-            ownerPid: ALIVE_PID,
-            agent: 'claude',
-            startedAt: Date.now(),
-          }),
-        );
+        .mockReturnValueOnce(ok(null))
+        .mockReturnValueOnce(ok(null))
+        .mockReturnValueOnce(ok(buildTmuxWorker('w-alive', aliveTask.id, 'beat-alive')));
 
       await manager.recover();
 
-      // q1 enqueued, q2 skipped
       expect(queue.enqueue).toHaveBeenCalledTimes(1);
       expect(queue.enqueue).toHaveBeenCalledWith(q1);
 
-      // 2 dead tasks marked FAILED (alive task skipped)
       const failedUpdateCalls = repo.update.mock.calls.filter((call: unknown[]) => {
         const update = call[1] as { status?: string };
         return update.status === TaskStatus.FAILED;
@@ -821,11 +957,11 @@ describe('RecoveryManager', () => {
 
   describe('TaskQueued event emit failure', () => {
     it('should log TaskQueued event emit failure but still count task as recovered', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const task = buildQueuedTask('event-fail');
       setupFindByStatus([task], []);
       const emitError = new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Event bus error');
 
-      // TaskQueued fails
       eventBus.emit.mockResolvedValueOnce(err(emitError));
 
       const result = await manager.recover();
@@ -839,28 +975,24 @@ describe('RecoveryManager', () => {
 
   describe('Edge cases', () => {
     it('should mark RUNNING task with no worker as FAILED regardless of task age', async () => {
-      // Even a very recent task with no worker row is definitively crashed
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       const base = new TaskFactory()
         .withStatus(TaskStatus.RUNNING)
-        .withStartedAt(Date.now() - 1000) // Started 1 second ago
+        .withStartedAt(Date.now() - 1000)
         .build();
       const task = { ...base, id: TaskId('recent-no-worker') };
       setupFindByStatus([], [task]);
-      // Default: findByTaskId returns ok(null)
 
       await manager.recover();
 
-      // PID-based: no worker → FAILED, regardless of age
       expect(repo.update).toHaveBeenCalledWith(
         task.id,
-        expect.objectContaining({
-          status: TaskStatus.FAILED,
-          exitCode: -1,
-        }),
+        expect.objectContaining({ status: TaskStatus.FAILED, exitCode: -1 }),
       );
     });
 
     it('should call findByStatus with correct status values', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
 
       await manager.recover();
@@ -870,11 +1002,120 @@ describe('RecoveryManager', () => {
     });
 
     it('should return ok result on successful recovery', async () => {
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
 
       const result = await manager.recover();
 
       expect(result).toEqual({ ok: true, value: undefined });
+    });
+  });
+
+  describe('Recovery summary log', () => {
+    it('should log recovery complete with all counts including cleanup metrics', async () => {
+      const deadWorker = buildTmuxWorker('w-dead', 'task-dead', 'beat-task-dead');
+      const orphanSession = 'beat-orphan-xyz';
+      workerRepo.findAll.mockReturnValue(ok([deadWorker]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession(orphanSession)]));
+      repo.findById.mockResolvedValue(ok(buildRunningTask('task-dead')));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      expect(logger.info).toHaveBeenCalledWith(
+        'Recovery complete',
+        expect.objectContaining({
+          workersCleanedUp: 1,
+          orphanSessionsDestroyed: 1,
+          heartbeatWarnings: 0,
+          queuedTasks: 0,
+          runningTasks: 0,
+          tasksRequeued: 0,
+          tasksFailed: 0,
+        }),
+      );
+    });
+
+    it('should log recovery complete with all zeros in a clean state', async () => {
+      workerRepo.findAll.mockReturnValue(ok([]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      expect(logger.info).toHaveBeenCalledWith(
+        'Recovery complete',
+        expect.objectContaining({
+          workersCleanedUp: 0,
+          orphanSessionsDestroyed: 0,
+          heartbeatWarnings: 0,
+          queuedTasks: 0,
+          runningTasks: 0,
+          tasksRequeued: 0,
+          tasksFailed: 0,
+        }),
+      );
+    });
+  });
+
+  describe('Stale heartbeat warning (observability)', () => {
+    it('should log tmux warning when session is alive but heartbeat is older than 90s', async () => {
+      const staleHeartbeat = Date.now() - 95_000; // 95s ago
+      const aliveWorkerWithStaleHb = {
+        ...buildTmuxWorker('w-stale-hb', 'task-stale-hb', 'beat-stale-hb'),
+        lastHeartbeat: staleHeartbeat,
+      };
+      workerRepo.findAll.mockReturnValue(ok([aliveWorkerWithStaleHb]));
+      // Session IS alive
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-stale-hb')]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      // Worker should NOT be unregistered — session is alive
+      expect(workerRepo.unregister).not.toHaveBeenCalled();
+
+      // Warning logged for stale heartbeat
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Tmux session alive but heartbeat stale',
+        expect.objectContaining({
+          workerId: WorkerId('w-stale-hb'),
+          taskId: TaskId('task-stale-hb'),
+          sessionName: 'beat-stale-hb',
+        }),
+      );
+    });
+
+    it('should NOT warn when heartbeat is fresh (< 90s)', async () => {
+      const freshHeartbeat = Date.now() - 20_000;
+      const aliveWorkerWithFreshHb = {
+        ...buildTmuxWorker('w-fresh-hb', 'task-fresh-hb', 'beat-fresh-hb'),
+        lastHeartbeat: freshHeartbeat,
+      };
+      workerRepo.findAll.mockReturnValue(ok([aliveWorkerWithFreshHb]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-fresh-hb')]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      const staleWarnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === 'Tmux session alive but heartbeat stale',
+      );
+      expect(staleWarnCalls).toHaveLength(0);
+    });
+
+    it('should NOT warn when lastHeartbeat is undefined (no heartbeat written yet)', async () => {
+      const aliveWorkerNoHb = buildTmuxWorker('w-no-hb', 'task-no-hb', 'beat-no-hb');
+      workerRepo.findAll.mockReturnValue(ok([aliveWorkerNoHb]));
+      tmuxSessionManager.listSessions.mockReturnValue(ok([buildSession('beat-no-hb')]));
+      setupFindByStatus([], []);
+
+      await manager.recover();
+
+      const staleWarnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === 'Tmux session alive but heartbeat stale',
+      );
+      expect(staleWarnCalls).toHaveLength(0);
     });
   });
 
@@ -891,8 +1132,10 @@ describe('RecoveryManager', () => {
         workerRepo: workerRepo as unknown as WorkerRepository,
         dependencyRepo: dependencyRepo as unknown as DependencyRepository,
         loopRepo: mockLoopRepo as unknown as LoopRepository,
+        tmuxSessionManager,
       });
 
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
 
       await managerWithLoops.recover();
@@ -912,8 +1155,10 @@ describe('RecoveryManager', () => {
         workerRepo: workerRepo as unknown as WorkerRepository,
         dependencyRepo: dependencyRepo as unknown as DependencyRepository,
         loopRepo: mockLoopRepo as unknown as LoopRepository,
+        tmuxSessionManager,
       });
 
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
 
       await managerWithLoops.recover();
@@ -922,11 +1167,10 @@ describe('RecoveryManager', () => {
     });
 
     it('should skip loop cleanup when no LoopRepository is provided', async () => {
-      // The default manager has no loop repo — verify no crash
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
 
       await manager.recover();
-      // No assertion needed — just verifying it doesn't throw
     });
   });
 
@@ -943,8 +1187,10 @@ describe('RecoveryManager', () => {
         workerRepo: workerRepo as unknown as WorkerRepository,
         dependencyRepo: dependencyRepo as unknown as DependencyRepository,
         orchestrationRepo: mockOrchRepo as unknown as OrchestrationRepository,
+        tmuxSessionManager,
       });
 
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
 
       await managerWithOrch.recover();
@@ -964,8 +1210,10 @@ describe('RecoveryManager', () => {
         workerRepo: workerRepo as unknown as WorkerRepository,
         dependencyRepo: dependencyRepo as unknown as DependencyRepository,
         orchestrationRepo: mockOrchRepo as unknown as OrchestrationRepository,
+        tmuxSessionManager,
       });
 
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
 
       await managerWithOrch.recover();
@@ -985,8 +1233,10 @@ describe('RecoveryManager', () => {
         workerRepo: workerRepo as unknown as WorkerRepository,
         dependencyRepo: dependencyRepo as unknown as DependencyRepository,
         orchestrationRepo: mockOrchRepo as unknown as OrchestrationRepository,
+        tmuxSessionManager,
       });
 
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
 
       await managerWithOrch.recover();
@@ -998,88 +1248,10 @@ describe('RecoveryManager', () => {
     });
 
     it('should skip orchestration cleanup when no OrchestrationRepository is provided', async () => {
-      // The default manager has no orchestration repo — verify no crash
+      tmuxSessionManager.listSessions.mockReturnValue(ok([]));
       setupFindByStatus([], []);
 
       await manager.recover();
-      // No assertion needed — just verifying it doesn't throw
-    });
-  });
-
-  describe('Stale heartbeat warning (observability)', () => {
-    it('should log warning when PID is alive but heartbeat is older than 90s', async () => {
-      const staleHeartbeat = Date.now() - 95_000; // 95s ago — older than 90s threshold
-      const aliveWorkerWithStaleHb = {
-        workerId: WorkerId('w-stale-hb'),
-        taskId: TaskId('task-stale-hb'),
-        pid: ALIVE_PID,
-        ownerPid: ALIVE_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-        lastHeartbeat: staleHeartbeat,
-      };
-      workerRepo.findAll.mockReturnValue(ok([aliveWorkerWithStaleHb]));
-      setupFindByStatus([], []);
-
-      await manager.recover();
-
-      // Worker should NOT be unregistered — PID is alive
-      expect(workerRepo.unregister).not.toHaveBeenCalled();
-
-      // Warning should be logged for stale heartbeat
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Worker PID alive but heartbeat stale',
-        expect.objectContaining({
-          workerId: WorkerId('w-stale-hb'),
-          taskId: TaskId('task-stale-hb'),
-          ownerPid: ALIVE_PID,
-        }),
-      );
-    });
-
-    it('should NOT warn when heartbeat is fresh (< 90s)', async () => {
-      const freshHeartbeat = Date.now() - 20_000; // 20s ago — within threshold
-      const aliveWorkerWithFreshHb = {
-        workerId: WorkerId('w-fresh-hb'),
-        taskId: TaskId('task-fresh-hb'),
-        pid: ALIVE_PID,
-        ownerPid: ALIVE_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-        lastHeartbeat: freshHeartbeat,
-      };
-      workerRepo.findAll.mockReturnValue(ok([aliveWorkerWithFreshHb]));
-      setupFindByStatus([], []);
-
-      await manager.recover();
-
-      // No warning
-      const staleWarnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (call: unknown[]) => call[0] === 'Worker PID alive but heartbeat stale',
-      );
-      expect(staleWarnCalls).toHaveLength(0);
-    });
-
-    it('should NOT warn when lastHeartbeat is undefined (no heartbeat written yet)', async () => {
-      const aliveWorkerNoHb = {
-        workerId: WorkerId('w-no-hb'),
-        taskId: TaskId('task-no-hb'),
-        pid: ALIVE_PID,
-        ownerPid: ALIVE_PID,
-        agent: 'claude',
-        startedAt: Date.now(),
-        // lastHeartbeat intentionally absent
-      };
-      workerRepo.findAll.mockReturnValue(ok([aliveWorkerNoHb]));
-      setupFindByStatus([], []);
-
-      await manager.recover();
-
-      // No warning — newly registered workers have no heartbeat yet, that's normal
-      const staleWarnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (call: unknown[]) => call[0] === 'Worker PID alive but heartbeat stale',
-      );
-      expect(staleWarnCalls).toHaveLength(0);
     });
   });
 });
