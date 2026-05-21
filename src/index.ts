@@ -9,6 +9,7 @@ import { MCPAdapter } from './adapters/mcp-adapter.js';
 import { bootstrap } from './bootstrap.js';
 import { Container } from './core/container.js';
 import { Logger, WorkerPool } from './core/interfaces.js';
+import type { TmuxSessionManagerCorePort } from './core/tmux-types.js';
 import { VERSION } from './generated/version.js';
 import { ProxyManager } from './translation/proxy/proxy-manager.js';
 
@@ -84,6 +85,25 @@ async function main() {
       const workerPoolResult = container?.get('workerPool');
       if (workerPoolResult?.ok) {
         await (workerPoolResult.value as WorkerPool).killAll();
+      }
+
+      // Phase 4: Belt-and-suspenders session sweep — destroy any remaining beat-* sessions
+      // that killAll() may have missed (e.g. sessions that were spawning during shutdown).
+      const tmuxSessionManagerResult = container?.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
+      if (tmuxSessionManagerResult?.ok) {
+        const tmux = tmuxSessionManagerResult.value;
+        const sessionsResult = tmux.listSessions();
+        if (sessionsResult.ok) {
+          for (const session of sessionsResult.value) {
+            const destroyResult = tmux.destroySession(session.name);
+            if (!destroyResult.ok) {
+              logger.warn('Shutdown session sweep: failed to destroy session', {
+                sessionName: session.name,
+                error: destroyResult.error.message,
+              });
+            }
+          }
+        }
       }
 
       // Close server

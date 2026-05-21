@@ -581,10 +581,15 @@ export interface WorkerRepository {
   register(registration: WorkerRegistration): Result<void>;
   unregister(workerId: WorkerId): Result<void>;
   findByTaskId(taskId: TaskId): Result<WorkerRegistration | null>;
-  findByOwnerPid(ownerPid: number): Result<readonly WorkerRegistration[]>;
+  /**
+   * Find a worker registration by its tmux session name.
+   * Used by orphan session cleanup to distinguish registered sessions from orphans.
+   * Returns ok(null) when no worker has the given session name (orphan candidate).
+   * Uses idx_workers_session_name index (migration v29).
+   */
+  findBySessionName(sessionName: string): Result<WorkerRegistration | null>;
   findAll(): Result<readonly WorkerRegistration[]>;
   getGlobalCount(): Result<number>;
-  deleteByOwnerPid(ownerPid: number): Result<number>;
   /**
    * Update the last_heartbeat timestamp for a worker to Date.now().
    * Called periodically by the worker pool to signal the owning process is alive.

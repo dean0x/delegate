@@ -755,9 +755,11 @@ export class TestWorkerRepository implements WorkerRepository {
     return ok(null);
   }
 
-  findByOwnerPid(ownerPid: number): Result<readonly WorkerRegistration[], Error> {
-    const matches = Array.from(this.workers.values()).filter((r) => r.ownerPid === ownerPid);
-    return ok(matches);
+  findBySessionName(sessionName: string): Result<WorkerRegistration | null, Error> {
+    for (const reg of this.workers.values()) {
+      if (reg.sessionName === sessionName) return ok(reg);
+    }
+    return ok(null);
   }
 
   findAll(): Result<readonly WorkerRegistration[], Error> {
@@ -768,15 +770,8 @@ export class TestWorkerRepository implements WorkerRepository {
     return ok(this.workers.size);
   }
 
-  deleteByOwnerPid(ownerPid: number): Result<number, Error> {
-    let deleted = 0;
-    for (const [id, reg] of this.workers.entries()) {
-      if (reg.ownerPid === ownerPid) {
-        this.workers.delete(id);
-        deleted++;
-      }
-    }
-    return ok(deleted);
+  updateHeartbeat(_workerId: WorkerId): Result<void, Error> {
+    return ok(undefined);
   }
 
   // Test helpers

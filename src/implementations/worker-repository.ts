@@ -39,10 +39,9 @@ export class SQLiteWorkerRepository implements WorkerRepository {
   private readonly registerStmt: SQLite.Statement;
   private readonly unregisterStmt: SQLite.Statement;
   private readonly findByTaskIdStmt: SQLite.Statement;
-  private readonly findByOwnerPidStmt: SQLite.Statement;
+  private readonly findBySessionNameStmt: SQLite.Statement;
   private readonly findAllStmt: SQLite.Statement;
   private readonly countStmt: SQLite.Statement;
-  private readonly deleteByOwnerPidStmt: SQLite.Statement;
   private readonly updateHeartbeatStmt: SQLite.Statement;
 
   constructor(database: Database) {
@@ -61,8 +60,8 @@ export class SQLiteWorkerRepository implements WorkerRepository {
       SELECT * FROM workers WHERE task_id = ?
     `);
 
-    this.findByOwnerPidStmt = this.db.prepare(`
-      SELECT * FROM workers WHERE owner_pid = ?
+    this.findBySessionNameStmt = this.db.prepare(`
+      SELECT * FROM workers WHERE session_name = ?
     `);
 
     this.findAllStmt = this.db.prepare(`
@@ -71,10 +70,6 @@ export class SQLiteWorkerRepository implements WorkerRepository {
 
     this.countStmt = this.db.prepare(`
       SELECT COUNT(*) as count FROM workers
-    `);
-
-    this.deleteByOwnerPidStmt = this.db.prepare(`
-      DELETE FROM workers WHERE owner_pid = ?
     `);
 
     this.updateHeartbeatStmt = this.db.prepare(`
@@ -137,13 +132,13 @@ export class SQLiteWorkerRepository implements WorkerRepository {
     );
   }
 
-  findByOwnerPid(ownerPid: number): Result<readonly WorkerRegistration[]> {
+  findBySessionName(sessionName: string): Result<WorkerRegistration | null> {
     return tryCatch(
       () => {
-        const rows = this.findByOwnerPidStmt.all(ownerPid) as WorkerRow[];
-        return rows.map((row) => this.rowToRegistration(row));
+        const row = this.findBySessionNameStmt.get(sessionName) as WorkerRow | undefined;
+        return row ? this.rowToRegistration(row) : null;
       },
-      operationErrorHandler('find workers by owner PID', { ownerPid }),
+      operationErrorHandler('find worker by session name', { sessionName }),
     );
   }
 
@@ -159,16 +154,6 @@ export class SQLiteWorkerRepository implements WorkerRepository {
       const row = this.countStmt.get() as { count: number };
       return row.count;
     }, operationErrorHandler('get global worker count'));
-  }
-
-  deleteByOwnerPid(ownerPid: number): Result<number> {
-    return tryCatch(
-      () => {
-        const result = this.deleteByOwnerPidStmt.run(ownerPid);
-        return result.changes;
-      },
-      operationErrorHandler('delete workers by owner PID', { ownerPid }),
-    );
   }
 
   /**

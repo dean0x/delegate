@@ -61,10 +61,12 @@ export const POLL_INTERVAL_BY_VIEW: Readonly<Record<'main' | 'detail', number>> 
 };
 
 /**
- * Check if a process is alive by sending signal 0 (existence check, no signal sent).
+ * PID-based liveness check for interactive mode orchestrators.
  * EPERM means the process exists but we lack permission — treated as alive.
+ * DECISION: Renamed from isProcessAlive to isOrchestratorProcessAlive in Phase 4
+ * to clarify it applies to orchestrator processes, not worker processes.
  */
-function isProcessAlive(pid: number): boolean {
+function isOrchestratorProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -193,7 +195,7 @@ export async function fetchAllData(
   viewState: ViewState,
   childPage = 0,
   livenessCache?: Map<string, LivenessCacheEntry>,
-  isTmuxSessionAlive?: (sessionName: string) => boolean,
+  isTmuxSessionAlive: (sessionName: string) => boolean = () => false,
 ): Promise<Result<DashboardData, string>> {
   const {
     taskRepository,
@@ -280,7 +282,7 @@ export async function fetchAllData(
     loopRepo: loopRepository,
     taskRepo: taskRepository,
     workerRepo: workerRepository,
-    isProcessAlive,
+    isOrchestratorProcessAlive,
     isTmuxSessionAlive,
   };
   const orchestrationLiveness = await computeOrchestrationLiveness(orchestrations, cache, livenessDeps);
@@ -447,7 +449,7 @@ export function useDashboardData(
   ctx: ReadOnlyContext,
   viewState: ViewState,
   orchestrationChildPage = 0,
-  isTmuxSessionAlive?: (sessionName: string) => boolean,
+  isTmuxSessionAlive: (sessionName: string) => boolean = () => false,
 ): UseDashboardDataResult {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -107,6 +107,12 @@ export interface TmuxSessionManagerCorePort {
    * so callers can treat the empty result as "no live sessions".
    */
   listSessions(): Result<ReadonlyArray<{ readonly name: string }>, AutobeatError>;
+  /**
+   * Destroy a tmux session by name.
+   * Used by RecoveryManager orphan cleanup and graceful shutdown session sweep.
+   * Treated as idempotent — no error if the session does not exist.
+   */
+  destroySession(name: string): Result<void, AutobeatError>;
 }
 
 /**

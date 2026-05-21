@@ -10,9 +10,9 @@
  * Liveness is determined by tracing:
  *   orchestration → loop → most-recent-iteration → task → worker → liveness check
  *
- * Phase 3: Workers may be tmux-session-based (pid=0 sentinel). When isTmuxSessionAlive
- * is provided and the worker has sessionName set, session liveness is used instead of
- * PID check. Without isTmuxSessionAlive, tmux workers conservatively report 'unknown'.
+ * Phase 4: All workers are tmux-session-based (pid=0 sentinel). The pid=0 dispatch
+ * branches are removed; all paths use isTmuxSessionAlive. isOrchestratorProcessAlive
+ * is retained for interactive mode orchestrators only (they use real PIDs).
  *
  * Conservative: 'unknown' results (broken chain) leave the row alone — false positives
  * marking live orchestrations as zombies would be far worse than false negatives
@@ -28,14 +28,18 @@ export interface LivenessDeps {
   readonly loopRepo: LoopRepository;
   readonly taskRepo: TaskRepository;
   readonly workerRepo: WorkerRepository;
-  readonly isProcessAlive: (pid: number) => boolean;
   /**
-   * Phase 3: Optional tmux session liveness check.
-   * When provided, workers with pid=0 and a sessionName use this instead of isProcessAlive.
-   * When omitted, tmux workers (pid=0) conservatively return 'unknown' — the caller
-   * leaves the row alone rather than risk a false-positive zombie detection.
+   * PID-based liveness check for interactive mode orchestrators.
+   * Interactive orchestrators use real PIDs (not pid=0 sentinel).
+   * DECISION: Renamed from isProcessAlive to isOrchestratorProcessAlive in Phase 4
+   * to clarify it applies to orchestrator processes, not worker processes.
    */
-  readonly isTmuxSessionAlive?: (sessionName: string) => boolean;
+  readonly isOrchestratorProcessAlive: (pid: number) => boolean;
+  /**
+   * Tmux session liveness check. Required in Phase 4 — all workers are tmux-based.
+   * Dashboard provides () => false when tmuxSessionManager is unavailable.
+   */
+  readonly isTmuxSessionAlive: (sessionName: string) => boolean;
 }
 
 /**
@@ -46,14 +50,13 @@ export interface LivenessDeps {
  * - 'live'    — worker process/session is alive
  * - 'dead'    — worker process/session is not alive (zombie)
  * - 'unknown' — chain is broken (no loopId, no iteration, no task, no worker)
- *               or tmux worker without isTmuxSessionAlive provided
  *               Conservative: caller should leave these rows alone.
  */
 export async function checkOrchestrationLiveness(orchestration: Orchestration, deps: LivenessDeps): Promise<Liveness> {
   // Interactive mode: PID-based liveness (no loop chain)
   if (orchestration.mode === 'interactive') {
     if (!orchestration.pid) return 'unknown';
-    return deps.isProcessAlive(orchestration.pid) ? 'live' : 'dead';
+    return deps.isOrchestratorProcessAlive(orchestration.pid) ? 'live' : 'dead';
   }
 
   // No loop assigned yet (PLANNING state or create failed before loop was set)
@@ -78,13 +81,8 @@ export async function checkOrchestrationLiveness(orchestration: Orchestration, d
 
   const worker = workerResult.value;
 
-  // Phase 3: Tmux workers use pid=0 as sentinel — PID check is meaningless.
-  // Use session liveness when available; conservatively return 'unknown' when not.
-  if (worker.pid === 0) {
-    if (!worker.sessionName || !deps.isTmuxSessionAlive) return 'unknown';
-    return deps.isTmuxSessionAlive(worker.sessionName) ? 'live' : 'dead';
-  }
-
-  // PID-based liveness check for process workers
-  return deps.isProcessAlive(worker.ownerPid) ? 'live' : 'dead';
+  // Phase 4: All workers are tmux-session-based. If sessionName is missing,
+  // treat as dead — this is a legacy/corrupted row (no session to check).
+  if (!worker.sessionName) return 'unknown';
+  return deps.isTmuxSessionAlive(worker.sessionName) ? 'live' : 'dead';
 }

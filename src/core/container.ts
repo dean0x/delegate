@@ -5,6 +5,7 @@
 
 import { AutobeatError, ErrorCode } from './errors.js';
 import { err, ok, Result } from './result.js';
+import type { TmuxSessionManagerCorePort } from './tmux-types.js';
 
 type Factory<T> = () => T | Promise<T>;
 // biome-ignore lint/suspicious/noExplicitAny: DI container needs generic flexibility for heterogeneous service storage
@@ -229,6 +230,20 @@ export class Container {
           await eventBus.emit?.('WorkersTerminating', {});
         }
         await workerPool.killAll();
+      }
+    }
+
+    // Phase 4: Belt-and-suspenders session sweep — destroy any remaining beat-* sessions
+    // that killAll() may have missed (e.g. sessions that were spawning during shutdown).
+    const tmuxSessionManagerResult = this.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
+    if (tmuxSessionManagerResult.ok) {
+      const tmux = tmuxSessionManagerResult.value;
+      const sessionsResult = tmux.listSessions();
+      if (sessionsResult.ok) {
+        for (const session of sessionsResult.value) {
+          tmux.destroySession(session.name);
+          // Failure is silently ignored during dispose — don't block DB close
+        }
       }
     }
 

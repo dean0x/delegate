@@ -2,9 +2,10 @@
  * Event-driven recovery manager for startup task restoration
  * Handles loading tasks from database and emits events for recovery actions
  *
- * Phase 3: Supports tmux session-based liveness checks alongside PID-based checks.
- * Workers with pid=0 (tmux sentinel) are identified by sessionName and checked via
- * TmuxSessionManagerCorePort.isAlive() when tmuxSessionManager is configured.
+ * Phase 4: PID-based worker liveness removed. All workers are tmux-session-based.
+ * Workers with NULL sessionName (legacy rows) are treated as dead.
+ * Orphan tmux session cleanup added: sessions with no DB record are destroyed on startup.
+ * Enhanced shutdown sweep: remaining beat-* sessions destroyed after killAll.
  */
 
 import {
@@ -41,8 +42,8 @@ export interface RecoveryManagerDeps {
   readonly orchestrationRepo?: OrchestrationRepository;
   /**
    * Phase 3: Optional tmux session manager for liveness checks on tmux workers.
-   * When provided, workers with pid=0 (tmux sentinel) are checked via sessionName
-   * instead of PID. Omitting preserves backward compatibility for process-based workers.
+   * Phase 4: Required for production use — orphan cleanup and shutdown sweep need it.
+   * When omitted, orphan cleanup and session-based liveness are skipped gracefully.
    */
   readonly tmuxSessionManager?: TmuxSessionManagerCorePort;
 }
@@ -53,9 +54,18 @@ const CLEANUP_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 /**
  * DECISION: 90s staleness threshold for heartbeat warnings.
  * Why: 3x the 30s heartbeat interval gives 2 missed beats before alerting,
- * filtering transient delays. PID check is authoritative.
+ * filtering transient delays. Tmux session check is authoritative.
  */
 const HEARTBEAT_STALENESS_MS = 90_000;
+
+/**
+ * Summary of all recovery phases — emitted as a single structured log at the end of recover().
+ */
+interface CleanupSummary {
+  readonly workersCleanedUp: number;
+  readonly orphanSessionsDestroyed: number;
+  readonly heartbeatWarnings: number;
+}
 
 export class RecoveryManager {
   private readonly taskRepo: TaskRepository;
@@ -91,30 +101,12 @@ export class RecoveryManager {
   }
 
   /**
-   * Check if a process is alive using signal 0 (existence check).
-   * Returns true if the process exists, false if it doesn't.
-   */
-  private isProcessAlive(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (e) {
-      // EPERM means the process exists but we lack permission to signal it
-      if ((e as NodeJS.ErrnoException).code === 'EPERM') {
-        return true;
-      }
-      // ESRCH means the process does not exist
-      return false;
-    }
-  }
-
-  /**
-   * Phase 3: Check if a tmux worker is alive by session name.
+   * Phase 4: Check if a tmux worker is alive by session name.
    * Uses TmuxSessionManagerCorePort.isAlive() for session-based liveness.
    * Falls back to false (dead) when sessionManager is not configured or check fails.
    *
-   * DECISION: Tmux workers use pid=0 as sentinel — PID check is meaningless.
-   * Session name is the authoritative identity for tmux-backed workers.
+   * DECISION: All workers use tmux sessions (pid=0 sentinel).
+   * Session name is the authoritative identity for all workers.
    */
   private isTmuxSessionAlive(sessionName: string): boolean {
     if (!this.tmuxSessionManager) return false;
@@ -124,21 +116,17 @@ export class RecoveryManager {
 
   /**
    * Unified liveness check for a worker registration.
-   * Dispatches to tmux session check for pid=0 workers, PID check for process workers.
-   * Returns false when the worker type cannot be determined (e.g., tmux worker with no sessionName).
+   * Phase 4: All workers are tmux-based. Workers without sessionName are treated as dead.
    */
   private isWorkerAlive(reg: WorkerRegistration): boolean {
-    if (reg.pid === 0) {
-      return reg.sessionName ? this.isTmuxSessionAlive(reg.sessionName) : false;
-    }
-    return this.isProcessAlive(reg.ownerPid);
+    return reg.sessionName ? this.isTmuxSessionAlive(reg.sessionName) : false;
   }
 
   async recover(): Promise<Result<void>> {
     this.logger.info('Starting recovery process');
 
-    // Phase 0: Clean dead worker registrations (must run before Phase 3)
-    await this.cleanDeadWorkerRegistrations();
+    // Phase 0: Clean dead worker registrations and orphan sessions (must run before Phase 3)
+    const cleanupSummary = await this.cleanDeadWorkerRegistrations();
 
     // Phase 1: Cleanup old completed tasks
     await this.cleanupOldCompletedTasks();
@@ -174,11 +162,14 @@ export class RecoveryManager {
     const failedCount = await this.recoverRunningTasks(runningResult.value);
 
     this.logger.info('Recovery complete', {
+      workersCleanedUp: cleanupSummary.workersCleanedUp,
+      orphanSessionsDestroyed: cleanupSummary.orphanSessionsDestroyed,
+      heartbeatWarnings: cleanupSummary.heartbeatWarnings,
       queuedTasks: queuedResult.value.length,
       runningTasks: runningResult.value.length,
-      requeued: queuedCount,
+      tasksRequeued: queuedCount,
       blockedByDependencies: blockedCount,
-      markedFailed: failedCount,
+      tasksFailed: failedCount,
     });
 
     return ok(undefined);
@@ -197,40 +188,94 @@ export class RecoveryManager {
     return new Set(result.value.map((s) => s.name));
   }
 
-  private async cleanDeadWorkerRegistrations(): Promise<void> {
-    const allWorkers = this.workerRepo.findAll();
-    if (!allWorkers.ok) return;
+  /**
+   * Clean dead workers and orphan tmux sessions.
+   * Phase 4: Worker liveness is tmux-session-based exclusively.
+   * Workers without sessionName (legacy/corrupted rows) are treated as dead.
+   *
+   * DESIGN DECISION: Both liveTmuxSessions and allWorkers are computed once here and
+   * passed to cleanOrphanTmuxSessions — avoids double listSessions() and findAll() calls.
+   *
+   * Returns a CleanupSummary for the structured 'Recovery complete' log.
+   */
+  private async cleanDeadWorkerRegistrations(): Promise<CleanupSummary> {
+    let workersCleanedUp = 0;
+    let heartbeatWarnings = 0;
 
-    // Phase 3: Batch tmux liveness check — one listSessions() call instead of N
-    // sequential has-session spawnSync calls. For process workers the PID check
-    // remains per-worker (process.kill(pid,0) is in-process and has negligible cost).
+    const allWorkers = this.workerRepo.findAll();
+    if (!allWorkers.ok) {
+      const orphanSessionsDestroyed = await this.cleanOrphanTmuxSessions(new Set(), []);
+      return { workersCleanedUp, orphanSessionsDestroyed, heartbeatWarnings };
+    }
+
+    // Phase 3/4: Batch tmux liveness check — one listSessions() call instead of N sequential has-session calls.
     const liveTmuxSessions = this.buildLiveSessionSet();
 
     for (const reg of allWorkers.value) {
-      const alive =
-        reg.pid === 0
-          ? reg.sessionName !== undefined && liveTmuxSessions.has(reg.sessionName)
-          : this.isProcessAlive(reg.ownerPid);
+      // Phase 4: All workers are tmux-based. Workers without sessionName are dead.
+      const alive = reg.sessionName !== undefined && liveTmuxSessions.has(reg.sessionName);
 
       if (!alive) {
         await this.handleDeadWorker(reg);
+        workersCleanedUp++;
       } else {
         // Alive — observability only: warn if heartbeat is stale
         if (reg.lastHeartbeat !== undefined && Date.now() - reg.lastHeartbeat > HEARTBEAT_STALENESS_MS) {
-          const isTmuxWorker = reg.pid === 0;
-          this.logger.warn(
-            isTmuxWorker ? 'Tmux session alive but heartbeat stale' : 'Worker PID alive but heartbeat stale',
-            {
-              workerId: reg.workerId,
-              taskId: reg.taskId,
-              ownerPid: reg.ownerPid,
-              sessionName: reg.sessionName,
-              lastHeartbeatAgeMs: Date.now() - reg.lastHeartbeat,
-            },
-          );
+          heartbeatWarnings++;
+          this.logger.warn('Tmux session alive but heartbeat stale', {
+            workerId: reg.workerId,
+            taskId: reg.taskId,
+            ownerPid: reg.ownerPid,
+            sessionName: reg.sessionName,
+            lastHeartbeatAgeMs: Date.now() - reg.lastHeartbeat,
+          });
         }
       }
     }
+
+    // Orphan cleanup reuses already-fetched liveTmuxSessions and allWorkers — no extra queries
+    const orphanSessionsDestroyed = await this.cleanOrphanTmuxSessions(liveTmuxSessions, allWorkers.value);
+
+    return { workersCleanedUp, orphanSessionsDestroyed, heartbeatWarnings };
+  }
+
+  /**
+   * Destroy orphan tmux sessions: live sessions with no corresponding DB record.
+   *
+   * DESIGN DECISION: Takes both liveTmuxSessions and registeredWorkers as parameters
+   * to avoid a second listSessions() call and a second findAll() call.
+   * Called only from cleanDeadWorkerRegistrations() which has both values in scope.
+   *
+   * Returns the number of orphan sessions destroyed.
+   * Failures per session are logged at error level and do not abort remaining cleanup.
+   */
+  private async cleanOrphanTmuxSessions(
+    liveTmuxSessions: Set<string>,
+    registeredWorkers: readonly WorkerRegistration[],
+  ): Promise<number> {
+    if (!this.tmuxSessionManager || liveTmuxSessions.size === 0) return 0;
+
+    // Build set of registered session names for O(1) lookup
+    const registeredSessionNames = new Set(
+      registeredWorkers.filter((w) => w.sessionName !== undefined).map((w) => w.sessionName as string),
+    );
+
+    let destroyed = 0;
+    for (const sessionName of liveTmuxSessions) {
+      if (registeredSessionNames.has(sessionName)) continue;
+
+      // Orphan: live session with no DB record — destroy it
+      const result = this.tmuxSessionManager.destroySession(sessionName);
+      if (result.ok) {
+        destroyed++;
+        this.logger.info('Destroyed orphan tmux session', { sessionName });
+      } else {
+        this.logger.error('Failed to destroy orphan tmux session', result.error, { sessionName });
+        // Continue — don't abort on individual session failure
+      }
+    }
+
+    return destroyed;
   }
 
   /**
@@ -238,8 +283,6 @@ export class RecoveryManager {
    * Emits TaskFailed so DependencyHandler can unblock downstream tasks.
    */
   private async handleDeadWorker(reg: WorkerRegistration): Promise<void> {
-    const isTmuxWorker = reg.pid === 0;
-
     const unregResult = this.workerRepo.unregister(reg.workerId);
     if (!unregResult.ok) {
       this.logger.error('Failed to unregister dead worker', unregResult.error, {
@@ -284,12 +327,9 @@ export class RecoveryManager {
       });
 
       // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
-      const errorMsg = isTmuxWorker
-        ? 'Tmux session died (dead session detected at startup)'
-        : 'Worker process died (dead PID detected)';
       const failedEmitResult = await this.eventBus.emit('TaskFailed', {
         taskId: reg.taskId,
-        error: new AutobeatError(ErrorCode.SYSTEM_ERROR, errorMsg),
+        error: new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Tmux session died (dead session detected at startup)'),
         exitCode: -1,
       });
       if (!failedEmitResult.ok) {
@@ -339,8 +379,8 @@ export class RecoveryManager {
    * marking live orchestrations as zombies would be far worse than false negatives
    * leaving zombies for the user to clean manually via the dashboard.
    *
-   * Phase 3: isTmuxSessionAlive is passed so tmux-backed workers (pid=0) are correctly
-   * detected as dead when their session has gone away.
+   * Phase 4: isOrchestratorProcessAlive is inlined here for interactive orchestrators.
+   * isTmuxSessionAlive covers all other worker liveness checks.
    */
   private async failZombieRunningOrchestrations(): Promise<void> {
     if (!this.orchestrationRepo || !this.loopRepo) return;
@@ -355,8 +395,15 @@ export class RecoveryManager {
           loopRepo: this.loopRepo,
           taskRepo: this.taskRepo,
           workerRepo: this.workerRepo,
-          isProcessAlive: this.isProcessAlive,
-          isTmuxSessionAlive: this.tmuxSessionManager ? (name) => this.isTmuxSessionAlive(name) : undefined,
+          isOrchestratorProcessAlive: (pid: number) => {
+            try {
+              process.kill(pid, 0);
+              return true;
+            } catch (e) {
+              return (e as NodeJS.ErrnoException).code === 'EPERM';
+            }
+          },
+          isTmuxSessionAlive: (name: string) => this.isTmuxSessionAlive(name),
         });
       } catch (error) {
         // Defensive: skip this orchestration on unexpected error.
@@ -443,7 +490,7 @@ export class RecoveryManager {
   }
 
   /**
-   * PID/SESSION-BASED RECOVERY for RUNNING tasks
+   * TMUX SESSION-BASED RECOVERY for RUNNING tasks
    *
    * WHY THIS EXISTS:
    * Tasks stuck in RUNNING status are typically from crashed workers or server shutdowns.
@@ -452,14 +499,12 @@ export class RecoveryManager {
    *
    * WHAT IT DOES:
    * - Checks if the task has a worker row in the workers table
-   * - If worker row exists and worker is alive → leave it alone (worker still running)
-   *   - Process workers: ownerPid liveness check via process.kill(pid, 0)
-   *   - Tmux workers (pid=0): session liveness check via TmuxSessionManagerCorePort.isAlive()
-   * - If no worker row, or worker is dead → mark FAILED immediately (definitively crashed)
+   * - If worker row exists and tmux session is alive → leave it alone (worker still running)
+   * - If no worker row, no sessionName, or session is dead → mark FAILED immediately (definitively crashed)
    *
-   * REPLACES: 30-minute staleness heuristic (pre-v1.0).
-   * Definitive liveness detection — no false positives from short tasks,
-   * no 30-minute wait for long-crashed tasks.
+   * REPLACES: PID-based liveness detection (pre-Phase 4).
+   * Definitive session liveness detection — no false positives from short tasks,
+   * no wait for long-crashed tasks.
    *
    * INCIDENT REFERENCE: 2025-10-04
    * Removing spawn delay caused 7 stale tasks to spawn simultaneously → system crash
@@ -475,17 +520,11 @@ export class RecoveryManager {
 
       if (workerRegistration !== null) {
         if (this.isWorkerAlive(workerRegistration)) {
-          const isTmuxWorker = workerRegistration.pid === 0;
-          this.logger.info(
-            isTmuxWorker
-              ? 'Running task has live tmux session, skipping'
-              : 'Running task has live worker in another process, skipping',
-            {
-              taskId: task.id,
-              ownerPid: workerRegistration.ownerPid,
-              sessionName: workerRegistration.sessionName,
-            },
-          );
+          this.logger.info('Running task has live tmux session, skipping', {
+            taskId: task.id,
+            ownerPid: workerRegistration.ownerPid,
+            sessionName: workerRegistration.sessionName,
+          });
           continue;
         }
       }
