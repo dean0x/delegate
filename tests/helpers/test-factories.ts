@@ -9,7 +9,6 @@ import type { EventBus } from '../../src/core/events/event-bus';
 import type {
   Logger,
   OutputCapture,
-  ProcessSpawner,
   ResourceMonitor,
   TaskQueue,
   TaskRepository,
@@ -137,27 +136,6 @@ export const TaskFactory = {
 
 // Mock Factory
 export const MockFactory = {
-  processSpawner: (): ProcessSpawner => {
-    const mockProcess = {
-      pid: TEST_CONSTANTS.TEST_PID,
-      on: vi.fn(),
-      stdout: { on: vi.fn() },
-      stderr: { on: vi.fn() },
-      kill: vi.fn(),
-      killed: false,
-    };
-
-    return {
-      spawn: vi.fn().mockReturnValue(
-        ok({
-          process: mockProcess,
-          pid: TEST_CONSTANTS.TEST_PID,
-        }),
-      ),
-      kill: vi.fn().mockReturnValue(ok(undefined)),
-    } as ProcessSpawner;
-  },
-
   resourceMonitor: (canSpawn: boolean = true): ResourceMonitor => {
     return {
       canSpawnWorker: vi.fn().mockResolvedValue(ok(canSpawn)),

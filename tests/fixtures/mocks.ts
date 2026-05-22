@@ -1,13 +1,11 @@
 import type { EventEmitter } from 'events';
 import { vi } from 'vitest';
-import type { SpawnOptions } from '../../src/core/agents';
 import type { Task, TaskId, Worker, WorkerOptions } from '../../src/core/domain';
 import type {
   EventBus,
   Logger,
   OutputCapture,
   OutputRepository,
-  ProcessSpawner,
   ResourceMonitor,
   TaskQueue,
   TaskRepository,
@@ -74,14 +72,6 @@ export const createMockTaskRepository = (): TaskRepository => ({
   ),
   delete: vi.fn(async (id: string): Promise<Result<void>> => ({ ok: true, value: undefined })),
   findByStatus: vi.fn(async (status: Task['status']): Promise<Result<Task[]>> => ({ ok: true, value: [] })),
-});
-
-export const createMockProcessSpawner = (): ProcessSpawner => ({
-  spawn: vi.fn((_options: SpawnOptions) => ({
-    ok: true as const,
-    value: { process: {} as ReturnType<typeof import('child_process').spawn>, pid: 12345 },
-  })),
-  kill: vi.fn((_pid: number) => ({ ok: true as const, value: undefined })),
 });
 
 export const createMockOutputCapture = (): OutputCapture => ({

@@ -1,18 +1,16 @@
 /**
- * Base agent adapter — shared spawn/kill/dispose logic for all agent adapters
+ * Base agent adapter — shared tmux command assembly logic for all agent adapters
  *
- * ARCHITECTURE: All agent adapters share identical process lifecycle management
- * (spawn, kill with SIGTERM->SIGKILL escalation, timeout tracking, dispose).
- * Each subclass provides only:
+ * ARCHITECTURE: All agent adapters share identical configuration resolution
+ * for tmux-based worker spawning. Each subclass provides only:
  * 1. The CLI command name
- * 2. The CLI args for a given prompt
+ * 2. The tmux CLI args (no prompt — delivered via send-keys)
  * 3. The env var prefixes to strip (prevents nesting issues)
  * 4. Optional prompt transformation (e.g., Claude's short-prompt detection)
  *
  * Pattern: Template Method — shared algorithm, pluggable steps
  */
 
-import { ChildProcess, spawn } from 'child_process';
 import os from 'os';
 import path from 'path';
 import {
@@ -21,7 +19,6 @@ import {
   AgentAdapter,
   AgentAuthConfig,
   AgentProvider,
-  type InteractiveSpawnOptions,
   isCommandInPath,
   SpawnOptions,
 } from '../core/agents.js';
@@ -33,33 +30,18 @@ import {
   RUNTIME_AGENT_SUPPORT,
 } from '../core/configuration.js';
 import type { TaskId } from '../core/domain.js';
-import { AutobeatError, agentMisconfigured, ErrorCode, processSpawnFailed } from '../core/errors.js';
-import { err, ok, Result, tryCatch } from '../core/result.js';
+import { AutobeatError, agentMisconfigured, ErrorCode } from '../core/errors.js';
+import { err, ok, Result } from '../core/result.js';
 import type { TmuxSpawnCoreConfig } from '../core/tmux-types.js';
 import { TASK_ID_REGEX, type TmuxAgentType } from './tmux/types.js';
 
 export abstract class BaseAgentAdapter implements AgentAdapter {
   abstract readonly provider: AgentProvider;
 
-  private readonly killTimeouts = new Map<number, NodeJS.Timeout>();
-
   constructor(
     protected readonly config: Configuration,
     protected readonly command: string,
   ) {}
-
-  /**
-   * Build CLI args for the given prompt, optional model override, and optional JSON schema.
-   * Subclasses that support structured output (Claude) should use jsonSchema;
-   * others should accept the parameter but ignore it.
-   */
-  protected abstract buildArgs(prompt: string, model?: string, jsonSchema?: string): readonly string[];
-
-  /**
-   * Build CLI args for interactive mode (stdio: 'inherit').
-   * Each adapter omits headless flags (e.g. --print, --quiet, --prompt).
-   */
-  protected abstract buildInteractiveArgs(prompt: string, model?: string): readonly string[];
 
   /** Env var prefixes to strip before spawning (prevents nesting issues) */
   protected abstract get envPrefixesToStrip(): readonly string[];
@@ -101,14 +83,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   /**
    * Build CLI args for tmux mode (no prompt — delivered via send-keys).
    * Each adapter omits headless flags (e.g. --print, --quiet) and prompt.
-   * Default returns empty args; Claude and Codex override.
-   *
-   * DECISION: buildTmuxArgs is non-abstract (unlike buildArgs / buildInteractiveArgs)
-   * because ProcessSpawnerAdapter does not extend BaseAgentAdapter — it cannot be
-   * required to implement abstract methods. ProcessSpawnerAdapter returns
-   * INVALID_OPERATION from buildTmuxCommand() before this method is ever reached,
-   * so the guard at buildTmuxCommand line 118 prevents non-tmux adapters from
-   * reaching an empty implementation. New adapters that support tmux should override.
+   * Default returns empty args; Claude and Codex override to add agent-specific flags.
+   * New adapters that support tmux should override this method.
    */
   protected buildTmuxArgs(_model?: string): readonly string[] {
     return [];
@@ -274,7 +250,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         agentMisconfigured(
           this.provider,
           `Runtime '${agentConfig.runtime}' does not support agent '${this.provider}'. ` +
-            `Supported agents: ${RUNTIME_AGENT_SUPPORT[agentConfig.runtime].join(', ')}. ` +
+            `Supported agents: ${(RUNTIME_AGENT_SUPPORT[agentConfig.runtime] ?? []).join(', ') || 'none'}. ` +
             `Clear with: beat agents config set ${this.provider} runtime ""`,
         ),
       );
@@ -449,120 +425,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     };
   }
 
-  spawn({
-    prompt,
-    workingDirectory,
-    taskId,
-    model,
-    orchestratorId,
-    jsonSchema,
-    systemPrompt,
-  }: SpawnOptions): Result<{ process: ChildProcess; pid: number }> {
-    try {
-      const configResult = this.resolveSpawnConfig({
-        prompt,
-        workingDirectory,
-        taskId,
-        model,
-        orchestratorId,
-        systemPrompt,
-      });
-      if (!configResult.ok) return configResult;
-      const cfg = configResult.value;
-
-      const finalPrompt = this.transformPrompt(cfg.effectivePrompt);
-      const args = [...this.buildArgs(finalPrompt, cfg.resolvedModel, jsonSchema), ...cfg.systemPromptArgs];
-
-      const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...args] : args;
-
-      const child = spawn(cfg.command, spawnArgs, {
-        cwd: cfg.workingDirectory,
-        env: cfg.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      if (!child.pid) {
-        return err(processSpawnFailed('Failed to get process PID'));
-      }
-
-      return ok({ process: child, pid: child.pid });
-    } catch (error) {
-      return err(processSpawnFailed(String(error)));
-    }
-  }
-
-  spawnInteractive({
-    prompt,
-    workingDirectory,
-    taskId,
-    model,
-    orchestratorId,
-    systemPrompt,
-  }: InteractiveSpawnOptions): Result<{ process: ChildProcess; pid: number }> {
-    try {
-      const configResult = this.resolveSpawnConfig({
-        prompt,
-        workingDirectory,
-        taskId,
-        model,
-        orchestratorId,
-        systemPrompt,
-      });
-      if (!configResult.ok) return configResult;
-      const cfg = configResult.value;
-
-      const finalPrompt = this.transformPrompt(cfg.effectivePrompt);
-      const args = [...this.buildInteractiveArgs(finalPrompt, cfg.resolvedModel), ...cfg.systemPromptArgs];
-
-      const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...args] : args;
-
-      // Interactive: omit AUTOBEAT_WORKER from env (not a background worker)
-      const { AUTOBEAT_WORKER: _, ...interactiveEnv } = cfg.env;
-
-      const child = spawn(cfg.command, spawnArgs, {
-        cwd: cfg.workingDirectory,
-        env: interactiveEnv,
-        stdio: 'inherit',
-      });
-
-      if (!child.pid) {
-        return err(processSpawnFailed('Failed to get process PID'));
-      }
-
-      return ok({ process: child, pid: child.pid });
-    } catch (error) {
-      return err(processSpawnFailed(String(error)));
-    }
-  }
-
-  kill(pid: number): Result<void> {
-    return tryCatch(
-      () => {
-        this.clearKillTimeout(pid);
-        process.kill(pid, 'SIGTERM');
-
-        const timeoutId = setTimeout(() => {
-          try {
-            process.kill(pid, 'SIGKILL');
-          } catch {
-            // Process might already be dead
-          } finally {
-            this.killTimeouts.delete(pid);
-          }
-        }, this.config.killGracePeriodMs);
-
-        this.killTimeouts.set(pid, timeoutId);
-      },
-      (error) =>
-        new AutobeatError(ErrorCode.PROCESS_KILL_FAILED, `Failed to kill process ${pid}: ${error}`, { pid, error }),
-    );
-  }
-
   dispose(): void {
-    for (const [, timeoutId] of this.killTimeouts) {
-      clearTimeout(timeoutId);
-    }
-    this.killTimeouts.clear();
+    // No resources to clean up in base class.
+    // Subclasses that write temp files override cleanup() instead.
   }
 
   /**
@@ -571,13 +436,5 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    */
   cleanup(_taskId: string): void {
     // no-op — subclasses override if they create task-scoped resources
-  }
-
-  private clearKillTimeout(pid: number): void {
-    const timeoutId = this.killTimeouts.get(pid);
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      this.killTimeouts.delete(pid);
-    }
   }
 }

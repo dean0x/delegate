@@ -8,7 +8,6 @@
  * Rationale: Enables pluggable agent backends without changing core task logic
  */
 
-import type { ChildProcess } from 'child_process';
 import { spawnSync } from 'child_process';
 import { AutobeatError, ErrorCode } from './errors.js';
 import { err, ok, Result } from './result.js';
@@ -268,7 +267,7 @@ export interface InteractiveSpawnOptions {
  * ARCHITECTURE: Each agent implementation knows how to:
  * 1. Build the correct CLI command and args
  * 2. Strip environment variables that cause nesting issues
- * 3. Spawn and manage the agent process
+ * 3. Produce tmux session configs for background worker execution
  *
  * Pattern: Strategy pattern — swap implementations without changing callers
  */
@@ -277,27 +276,7 @@ export interface AgentAdapter {
   readonly provider: AgentProvider;
 
   /**
-   * Spawn an agent process for the given options.
-   * @param options - Spawn configuration (prompt, workingDirectory, and optional fields)
-   * @returns Process handle with PID, or error
-   */
-  spawn(options: SpawnOptions): Result<{ process: ChildProcess; pid: number }>;
-
-  /**
-   * Spawn an agent in interactive mode (stdio: 'inherit').
-   * The caller blocks on the child's exit — no stream events, no piped output.
-   */
-  spawnInteractive(options: InteractiveSpawnOptions): Result<{ process: ChildProcess; pid: number }>;
-
-  /**
-   * Kill an agent process by PID
-   * @param pid - Process ID to kill
-   * @returns Success or error
-   */
-  kill(pid: number): Result<void>;
-
-  /**
-   * Clean up resources (kill timeouts, etc.)
+   * Clean up resources (temp files, etc.)
    */
   dispose(): void;
 
@@ -320,10 +299,8 @@ export interface AgentAdapter {
    * TmuxSpawnConfig extends TmuxSpawnCoreConfig and stays in src/implementations/tmux/types.ts
    * (it references TmuxAgentType/TmuxSessionConfig which are implementation concerns).
    *
-   * Adapters that do not support tmux (e.g. ProcessSpawnerAdapter) must return
-   * err with ErrorCode.INVALID_OPERATION. Adapters that support tmux require a
-   * non-empty taskId and must return err with ErrorCode.AGENT_MISCONFIGURED when
-   * taskId is absent or empty.
+   * All adapters require a non-empty taskId; return err with ErrorCode.AGENT_MISCONFIGURED
+   * when taskId is absent or empty.
    */
   buildTmuxCommand(options: SpawnOptions & { sessionsDir: string }): Result<{
     readonly config: TmuxSpawnCoreConfig;

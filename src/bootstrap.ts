@@ -22,7 +22,6 @@ import {
   OutputCapture,
   OutputRepository,
   PipelineRepository,
-  ProcessSpawner,
   ResourceMonitor,
   ScheduleRepository,
   ScheduleService,
@@ -70,8 +69,6 @@ export function deriveModeFlags(mode: BootstrapMode): ModeFlags {
     skipRecovery: mode === 'cli',
     // DECISION: Proxy starts in any mode that spawns workers ('server', 'run').
     // Skipped in 'cli' mode (management commands that never spawn workers).
-    // The processSpawner guard is separate — checked at the call site because
-    // it's an options check, not a mode-derived flag.
     skipProxy: mode === 'cli',
   };
 }
@@ -79,13 +76,11 @@ export function deriveModeFlags(mode: BootstrapMode): ModeFlags {
 export interface BootstrapOptions {
   /** Bootstrap mode controlling which subsystems are initialized (default: 'server') */
   mode?: BootstrapMode;
-  /** Custom ProcessSpawner (e.g., NoOpProcessSpawner for tests) */
-  processSpawner?: ProcessSpawner;
   /** Custom ResourceMonitor (e.g., TestResourceMonitor for tests) */
   resourceMonitor?: ResourceMonitor;
   /** Custom TmuxConnectorPort (e.g., MockTmuxConnector for tests without tmux installed) */
   tmuxConnector?: TmuxConnectorPort;
-  /** Custom AgentRegistry (e.g., createTmuxAgentRegistry() for tests) — overrides processSpawner */
+  /** Custom AgentRegistry (e.g., createTmuxAgentRegistry() for tests) */
   agentRegistry?: AgentRegistry;
   /**
    * Custom Logger instance — when provided, this logger is used instead of the
@@ -116,7 +111,6 @@ import { SQLiteOrchestrationRepository } from './implementations/orchestration-r
 import { BufferedOutputCapture } from './implementations/output-capture.js';
 import { SQLiteOutputRepository } from './implementations/output-repository.js';
 import { SQLitePipelineRepository } from './implementations/pipeline-repository.js';
-import { ProcessSpawnerAdapter } from './implementations/process-spawner-adapter.js';
 import { SystemResourceMonitor } from './implementations/resource-monitor.js';
 import { SQLiteScheduleRepository } from './implementations/schedule-repository.js';
 import { PriorityTaskQueue } from './implementations/task-queue.js';
@@ -409,8 +403,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // and factory functions are synchronous. Eager start ensures consistency.
   //
   // DECISION: Proxy starts in server and run modes (both spawn workers).
-  // Skipped in cli mode (management commands that never spawn workers) and
-  // when a processSpawner is injected (tests with mock spawners).
+  // Skipped in cli mode (management commands that never spawn workers).
   //
   // DECISION: Proxy failure is fatal when config exists. The user
   // explicitly configured proxy — falling back to direct Anthropic API
@@ -419,7 +412,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // ============================================================================
   let proxyPort: number | undefined;
 
-  if (!options.processSpawner && !skipProxy) {
+  if (!skipProxy) {
     const claudeConfig = loadAgentConfig('claude');
     // DECISION: Skip proxy startup when runtime is set — runtime (e.g. ollama) handles
     // API routing itself, so the translation proxy is not needed and would conflict.
@@ -446,18 +439,13 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   }
 
   // Register AgentRegistry for multi-agent support (v0.5.0)
-  // ARCHITECTURE: If a custom ProcessSpawner is injected (tests), wrap it in a
-  // compatibility adapter. Otherwise, register all 4 agent adapters.
-  // If a translation proxy is active (proxyPort set), use ProxiedClaudeAdapter.
+  // ARCHITECTURE: Use injected AgentRegistry if provided (tests inject a mock registry).
+  // Otherwise register Claude + Codex adapters; use ProxiedClaudeAdapter when
+  // the translation proxy is active.
   container.registerSingleton('agentRegistry', () => {
     if (options.agentRegistry) {
       logger.info('Using injected AgentRegistry');
       return options.agentRegistry;
-    }
-    if (options.processSpawner) {
-      logger.info('Using ProcessSpawnerAdapter for injected ProcessSpawner');
-      const adapter = new ProcessSpawnerAdapter(options.processSpawner);
-      return new InMemoryAgentRegistry([adapter]);
     }
 
     const configResult = container.get<Configuration>('config');

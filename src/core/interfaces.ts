@@ -3,8 +3,6 @@
  * All implementations should be injected, not instantiated directly
  */
 
-import { ChildProcess } from 'child_process';
-import { SpawnOptions } from './agents.js';
 import {
   ActivityEntry,
   Loop,
@@ -56,19 +54,6 @@ export interface TaskQueue {
   size(): number;
   clear(): Result<void>;
   isEmpty(): boolean;
-}
-
-/**
- * Process spawning abstraction
- *
- * ARCHITECTURE: Widened in v1.3.0 to accept a SpawnOptions bag instead of
- * 4 positional params. This preserves orchestratorId and jsonSchema through
- * the ProcessSpawnerAdapter shim — both fields were silently dropped before
- * the refactor. See #139 review (batch-D-process-spawner).
- */
-export interface ProcessSpawner {
-  spawn(options: SpawnOptions): Result<{ process: ChildProcess; pid: number }>;
-  kill(pid: number): Result<void>;
 }
 
 /**

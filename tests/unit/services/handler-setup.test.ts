@@ -9,14 +9,12 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Container } from '../../../src/core/container';
 import { InMemoryEventBus } from '../../../src/core/events/event-bus';
-import { InMemoryAgentRegistry } from '../../../src/implementations/agent-registry';
 import { SQLiteCheckpointRepository } from '../../../src/implementations/checkpoint-repository';
 import { Database } from '../../../src/implementations/database';
 import { SQLiteDependencyRepository } from '../../../src/implementations/dependency-repository';
 import { EventDrivenWorkerPool } from '../../../src/implementations/event-driven-worker-pool';
 import { SQLiteLoopRepository } from '../../../src/implementations/loop-repository';
 import { BufferedOutputCapture } from '../../../src/implementations/output-capture';
-import { ProcessSpawnerAdapter } from '../../../src/implementations/process-spawner-adapter';
 import { SystemResourceMonitor } from '../../../src/implementations/resource-monitor';
 import { SQLiteScheduleRepository } from '../../../src/implementations/schedule-repository';
 import { PriorityTaskQueue } from '../../../src/implementations/task-queue';
@@ -27,8 +25,9 @@ import {
   setupEventHandlers,
 } from '../../../src/services/handler-setup';
 import { createTestConfiguration } from '../../fixtures/factories';
+import { createTmuxAgentRegistry } from '../../fixtures/mock-agent';
 import { createMockOutputRepository, createMockTmuxConnector, createMockWorkerRepository } from '../../fixtures/mocks';
-import { TestLogger, TestProcessSpawner } from '../../fixtures/test-doubles';
+import { TestLogger } from '../../fixtures/test-doubles';
 
 describe('handler-setup', () => {
   let container: Container;
@@ -69,8 +68,8 @@ describe('handler-setup', () => {
     );
     container.registerValue('resourceMonitor', resourceMonitor);
 
-    // Worker pool with test spawner wrapped in AgentRegistry
-    const agentRegistry = new InMemoryAgentRegistry([new ProcessSpawnerAdapter(new TestProcessSpawner())]);
+    // Worker pool with tmux-compatible mock agent registry
+    const agentRegistry = createTmuxAgentRegistry();
     const workerPool = new EventDrivenWorkerPool({
       agentRegistry,
       monitor: resourceMonitor,

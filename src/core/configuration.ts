@@ -265,7 +265,7 @@ export const RUNTIME_AGENT_SUPPORT: Readonly<Record<Runtime, readonly AgentProvi
  * Put here (not agents.ts) to avoid circular imports: configuration.ts → agents.ts.
  */
 export function isRuntimeSupportedForAgent(runtime: Runtime, provider: AgentProvider): boolean {
-  return (RUNTIME_AGENT_SUPPORT[runtime] as readonly string[]).includes(provider);
+  return (RUNTIME_AGENT_SUPPORT[runtime] as readonly string[] | undefined)?.includes(provider) ?? false;
 }
 
 export interface AgentConfig {

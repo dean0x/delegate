@@ -6,8 +6,6 @@
  * code but with controllable behavior for testing. Use these instead of mocks.
  */
 
-import type { ChildProcess } from 'child_process';
-import type { SpawnOptions } from '../../src/core/agents';
 import type {
   SystemResources,
   Task,
@@ -22,7 +20,6 @@ import type {
   EventBus,
   Logger,
   OutputCapture,
-  ProcessSpawner,
   ResourceMonitor,
   TaskQueue,
   TaskRepository,
@@ -457,108 +454,6 @@ export class TestTaskRepository implements TaskRepository {
     this.tasks.clear();
     this.saveError = null;
     this.findError = null;
-  }
-}
-
-/**
- * TestProcessSpawner - Controllable process spawner for testing
- *
- * ARCHITECTURE: Implements ProcessSpawner with SpawnOptions (widened in v1.3.0).
- * Keyed internally by pid string so test helpers (simulateExit, isProcessKilled)
- * accept the pid returned from spawn(). See batch-D-process-spawner review fix.
- */
-export class TestProcessSpawner implements ProcessSpawner {
-  private processes = new Map<string, { pid: number; killed: boolean }>();
-  private spawnError: Error | null = null;
-  private nextPid = 1000;
-  private outputHandlers = new Map<string, (data: string) => void>();
-
-  spawn(_options: SpawnOptions): Result<{ process: ChildProcess; pid: number }> {
-    if (this.spawnError) {
-      return err(this.spawnError);
-    }
-
-    const pid = this.nextPid++;
-    const key = pid.toString();
-
-    this.processes.set(key, { pid, killed: false });
-
-    const mockProcess = {
-      pid,
-      kill: () => {
-        const proc = this.processes.get(key);
-        if (proc) {
-          proc.killed = true;
-        }
-        return true;
-      },
-      on: (_event: string, _handler: (...args: unknown[]) => void) => {
-        // Mock event handling
-      },
-      stdout: {
-        on: (event: string, handler: (data: string) => void) => {
-          if (event === 'data') {
-            this.outputHandlers.set(`${key}-stdout`, handler);
-          }
-        },
-      },
-      stderr: {
-        on: (event: string, handler: (data: string) => void) => {
-          if (event === 'data') {
-            this.outputHandlers.set(`${key}-stderr`, handler);
-          }
-        },
-      },
-    } as unknown as ChildProcess;
-
-    return ok({ process: mockProcess, pid });
-  }
-
-  kill(pid: number): Result<void> {
-    const key = pid.toString();
-    const proc = this.processes.get(key);
-    if (!proc) {
-      return err(new Error(`Process ${pid} not found`));
-    }
-    proc.killed = true;
-    return ok(undefined);
-  }
-
-  // Test-specific methods
-  setSpawnError(error: Error | null): void {
-    this.spawnError = error;
-  }
-
-  /**
-   * Simulate output data on stdout or stderr for the given pid.
-   * Pass pid.toString() as the key (matches what spawn() returns).
-   */
-  simulateOutput(pidKey: string, stream: 'stdout' | 'stderr', data: string): void {
-    const handler = this.outputHandlers.get(`${pidKey}-${stream}`);
-    if (handler) {
-      handler(Buffer.from(data));
-    }
-  }
-
-  /**
-   * Simulate process exit for the given pid key.
-   */
-  simulateExit(pidKey: string, _code: number): void {
-    const proc = this.processes.get(pidKey);
-    if (proc) {
-      proc.killed = true;
-    }
-  }
-
-  isProcessKilled(pidKey: string): boolean {
-    return this.processes.get(pidKey)?.killed || false;
-  }
-
-  clear(): void {
-    this.processes.clear();
-    this.outputHandlers.clear();
-    this.spawnError = null;
-    this.nextPid = 1000;
   }
 }
 
