@@ -167,6 +167,12 @@ exit "$EXIT_CODE"
  * is validated against SAFE_PATH_REGEX before embedding.
  */
 function buildSetupShim(config: SetupShimConfig): string {
+  // Defense-in-depth: validate agentCommand even though generateSetupShim() validates
+  // before calling this function. Guards against future callers bypassing the outer check.
+  if (!SAFE_PATH_REGEX.test(config.agentCommand)) {
+    throw new Error(`unsafe agentCommand in buildSetupShim: ${config.agentCommand}`);
+  }
+
   const sessionDir = path.join(config.sessionsDir, config.taskId);
   const agentArgs = config.agentArgs.map(singleQuoteToken).join(' ');
   const sessionDirToken = singleQuoteToken(sessionDir);

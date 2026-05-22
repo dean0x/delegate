@@ -178,7 +178,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       return ok({ injectedEnv: { [auth.envVars[0]]: agentConfig.apiKey } });
     }
 
-    // 3. CLI binary already verified in spawn() — assume login-based auth
+    // 3. CLI binary already verified in buildTmuxCommand() — assume login-based auth
     return ok({ injectedEnv: {} });
   }
 

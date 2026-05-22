@@ -883,7 +883,8 @@ export interface OrchestrationService {
     }>
   >;
   /**
-   * Store the child process PID for remote cancel support.
+   * Store the child process PID for remote cancel support (pre-Phase 5 legacy path).
+   * Phase 5 orchestrations use tmux sessions — use updateInteractiveOrchestrationSessionName() instead.
    *
    * @returns ok(true) if PID was stored (orchestration still RUNNING),
    *   ok(false) if status already transitioned (e.g., remote cancel won the race —
@@ -900,7 +901,7 @@ export interface OrchestrationService {
    */
   updateInteractiveOrchestrationSessionName(id: OrchestratorId, sessionName: string): Promise<Result<boolean>>;
   /**
-   * Finalize an interactive orchestration after the child process exits (or spawn failure).
+   * Finalize an interactive orchestration after the tmux session ends (or child process exits for pre-Phase 5), or on spawn failure.
    * Determines terminal status from outcome, updates DB, emits lifecycle event.
    *
    * Idempotency: Uses updateIfStatus(RUNNING) for atomic check-and-set.
