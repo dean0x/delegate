@@ -80,6 +80,12 @@ export interface BootstrapOptions {
   resourceMonitor?: ResourceMonitor;
   /** Custom TmuxConnectorPort (e.g., MockTmuxConnector for tests without tmux installed) */
   tmuxConnector?: TmuxConnectorPort;
+  /**
+   * Custom exec function for tmux commands (e.g., injected mock for tests that need to
+   * simulate missing or outdated tmux without mocking child_process at module level).
+   * When omitted, defaults to spawnSync-based exec.
+   */
+  tmuxExec?: ExecFn;
   /** Custom AgentRegistry (e.g., createTmuxAgentRegistry() for tests) */
   agentRegistry?: AgentRegistry;
   /**
@@ -499,10 +505,15 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // DECISION: Shared exec function for all tmux components — spawnSync with shell: true
   // so compound commands work correctly. Single allocation — reused by validator,
   // session manager, and (indirectly) the connector via its deps.
-  const tmuxExec: ExecFn = (cmd) => {
-    const result = spawnSync(cmd, { shell: true, encoding: 'utf8', timeout: 10_000 });
-    return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status ?? -1 };
-  };
+  // DECISION: options.tmuxExec injection point allows tests to provide a custom exec
+  // without mocking child_process at module level (which pollutes other test files in
+  // non-isolated vitest mode).
+  const tmuxExec: ExecFn =
+    options.tmuxExec ??
+    ((cmd) => {
+      const result = spawnSync(cmd, { shell: true, encoding: 'utf8', timeout: 10_000 });
+      return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status ?? -1 };
+    });
 
   let tmuxSessionManager: TmuxSessionManager | undefined;
 
@@ -528,6 +539,25 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
         readdirSync: (p) => fs.readdirSync(p) as string[],
       });
     });
+  }
+
+  // Eager tmux validation: fail fast on server/run startup if tmux is missing or too old.
+  // Skipped when a connector is injected (tests) or in CLI mode (no worker spawning needed).
+  // DECISION: Validate once at bootstrap rather than at first spawn to surface misconfiguration
+  // immediately (fail-fast) instead of allowing the server to start and then silently reject tasks.
+  if (!options.tmuxConnector && mode !== 'cli') {
+    const validationResult = new TmuxValidator({ exec: tmuxExec }).validate();
+    if (!validationResult.ok) {
+      return err(
+        new AutobeatError(
+          ErrorCode.SYSTEM_ERROR,
+          `tmux validation failed: ${validationResult.error.message}\n\n` +
+            '  tmux >= 3.0 is required for background task execution.\n' +
+            '  Install: brew install tmux (macOS) or apt-get install tmux (Linux)\n',
+        ),
+      );
+    }
+    logger.info('tmux validated', { version: validationResult.value.version });
   }
 
   // sessionsDir lives alongside the database file (e.g. ~/.autobeat/sessions/)
