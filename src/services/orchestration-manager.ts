@@ -32,7 +32,7 @@ import {
   writeStateFile,
 } from '../core/orchestrator-state.js';
 import { err, ok, type Result } from '../core/result.js';
-import type { TmuxConnectorPort, TmuxSessionManagerCorePort } from '../core/tmux-types.js';
+import type { TmuxSessionManagerCorePort } from '../core/tmux-types.js';
 import { validatePath } from '../utils/validation.js';
 import { buildGoalEvalPrompt, buildOrchestratorPrompt } from './orchestrator-prompt.js';
 
@@ -43,15 +43,9 @@ export interface OrchestrationManagerServiceDeps {
   readonly loopService: LoopService;
   readonly config: Configuration;
   /**
-   * Optional: TmuxConnectorPort for destroying tmux sessions on cancel (Phase 5).
-   * When omitted (e.g., non-CLI modes that don't run interactive orchestrations),
-   * cancel falls back to PID-based SIGTERM for backward compat.
-   */
-  readonly tmuxConnector?: TmuxConnectorPort;
-  /**
    * Optional: TmuxSessionManagerCorePort for direct session destroy by name in the cancel path.
-   * Used because TmuxConnectorPort.destroy(handle) requires an actively-tracked handle;
-   * the cancel path runs in a different process/instance where the session is not tracked.
+   * Destroy-by-name is used instead of the connector's destroy(handle) because the cancel
+   * path runs in a different process/instance where the session is not actively tracked.
    * When omitted, cancel falls back to PID-based SIGTERM.
    */
   readonly tmuxSessionManager?: TmuxSessionManagerCorePort;
@@ -63,7 +57,6 @@ export class OrchestrationManagerService implements OrchestrationService {
   private readonly orchestrationRepo: OrchestrationRepository;
   private readonly loopService: LoopService;
   private readonly config: Configuration;
-  private readonly tmuxConnector: TmuxConnectorPort | undefined;
   private readonly tmuxSessionManager: TmuxSessionManagerCorePort | undefined;
 
   constructor(deps: OrchestrationManagerServiceDeps) {
@@ -72,7 +65,6 @@ export class OrchestrationManagerService implements OrchestrationService {
     this.orchestrationRepo = deps.orchestrationRepo;
     this.loopService = deps.loopService;
     this.config = deps.config;
-    this.tmuxConnector = deps.tmuxConnector;
     this.tmuxSessionManager = deps.tmuxSessionManager;
     this.logger.debug('OrchestrationManagerService initialized');
   }
@@ -620,7 +612,7 @@ export class OrchestrationManagerService implements OrchestrationService {
         // Phase 5: destroy the tmux session by name directly.
         // TmuxSessionManagerCorePort.destroySession is idempotent — returns ok even if session
         // is already gone. The cancel path is called from a different process instance where
-        // the session is not actively tracked (so TmuxConnectorPort.destroy would no-op).
+        // the session is not actively tracked (so connector destroy would no-op).
         const destroyResult = this.tmuxSessionManager.destroySession(orchestration.sessionName);
         if (!destroyResult.ok) {
           this.logger.warn('tmux session destroy returned error during cancel (session may already be gone)', {
