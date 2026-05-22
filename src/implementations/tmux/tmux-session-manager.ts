@@ -359,4 +359,47 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
 
     return ok(line.slice(eqIdx + 1));
   }
+
+  /**
+   * Sets an environment variable in a running tmux session.
+   * Used by WorkerPool for persistent session reuse — updates AUTOBEAT_TASK_ID
+   * so the Stop hook attributes output to the new iteration's task ID.
+   * Implementation: `tmux set-environment -t <name> <varName> <value>`
+   */
+  setSessionEnvironment(name: string, varName: string, value: string): Result<void, AutobeatError> {
+    const nameCheck = validateSessionName(name, 'setSessionEnvironment');
+    if (!nameCheck.ok) return nameCheck;
+
+    if (!POSIX_ENV_VAR_REGEX.test(varName)) {
+      return err(
+        tmuxSessionFailed('setSessionEnvironment', `Invalid environment variable name "${varName}"`, { varName }),
+      );
+    }
+
+    if (value.length > MAX_ENV_VALUE_LENGTH) {
+      return err(
+        tmuxSessionFailed(
+          'setSessionEnvironment',
+          `Environment variable value exceeds maximum length (${MAX_ENV_VALUE_LENGTH} bytes)`,
+          { varName },
+        ),
+      );
+    }
+
+    // SECURITY: value is single-quoted to prevent shell metachar interpretation.
+    const escapedValue = escapeForSingleQuotes(value);
+    const result = this.deps.exec(`tmux set-environment -t '${name}' ${varName} '${escapedValue}'`);
+
+    if (result.status !== 0) {
+      return err(
+        tmuxSessionFailed(
+          'setSessionEnvironment',
+          `tmux set-environment failed (exit ${result.status}): ${result.stderr}`,
+          { name, varName },
+        ),
+      );
+    }
+
+    return ok(undefined);
+  }
 }

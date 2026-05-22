@@ -478,3 +478,63 @@ describe('TmuxSessionManager', () => {
     expect(result.value).toBe('abc=def==');
   });
 });
+
+// ─── setSessionEnvironment ───────────────────────────────────────────────────
+
+describe('TmuxSessionManager.setSessionEnvironment()', () => {
+  let exec: ReturnType<typeof vi.fn>;
+  let manager: TmuxSessionManager;
+
+  beforeEach(() => {
+    exec = vi.fn().mockReturnValue({ stdout: '', stderr: '', status: 0 });
+    manager = new TmuxSessionManager({ exec });
+  });
+
+  it('calls tmux set-environment with correct arguments', () => {
+    const result = manager.setSessionEnvironment('beat-task-123', 'AUTOBEAT_TASK_ID', 'task-new-456');
+    expect(result.ok).toBe(true);
+    expect(exec).toHaveBeenCalledWith(expect.stringContaining('set-environment'));
+    const cmd = (exec.mock.calls[0] as [string])[0];
+    expect(cmd).toContain("'beat-task-123'");
+    expect(cmd).toContain('AUTOBEAT_TASK_ID');
+    expect(cmd).toContain("'task-new-456'");
+  });
+
+  it('returns err when tmux exits non-zero', () => {
+    exec.mockReturnValue({ stdout: '', stderr: 'session not found', status: 1 });
+    const result = manager.setSessionEnvironment('beat-task-123', 'AUTOBEAT_TASK_ID', 'task-abc');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('returns err for invalid session name', () => {
+    const result = manager.setSessionEnvironment('invalid session!', 'MY_VAR', 'value');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('returns err for invalid env var name', () => {
+    const result = manager.setSessionEnvironment('beat-task-123', '$(injected)', 'value');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('returns err for value exceeding max length', () => {
+    const longValue = 'x'.repeat(5000);
+    const result = manager.setSessionEnvironment('beat-task-123', 'MY_VAR', longValue);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('single-quotes value to prevent shell injection', () => {
+    const result = manager.setSessionEnvironment('beat-task-123', 'MY_VAR', 'task-abc');
+    expect(result.ok).toBe(true);
+    const cmd = (exec.mock.calls[0] as [string])[0];
+    // Value must be wrapped in single quotes
+    expect(cmd).toMatch(/'task-abc'/);
+  });
+});

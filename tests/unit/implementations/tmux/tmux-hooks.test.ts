@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorCode } from '../../../../src/core/errors.js';
 import { TmuxHooks, type TmuxHooksDeps } from '../../../../src/implementations/tmux/tmux-hooks.js';
-import type { WrapperConfig } from '../../../../src/implementations/tmux/types.js';
+import type { SetupShimConfig, WrapperConfig } from '../../../../src/implementations/tmux/types.js';
 
 const validConfig: WrapperConfig = {
   taskId: 'task-abc',
@@ -428,5 +428,116 @@ describe('TmuxHooks.cleanup()', () => {
     expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
     // rmSync must not have been called — validation rejects before filesystem access
     expect(rmSync).not.toHaveBeenCalled();
+  });
+});
+
+// ─── generateSetupShim ────────────────────────────────────────────────────────
+
+const validShimConfig: SetupShimConfig = {
+  taskId: 'task-xyz',
+  sessionsDir: '/tmp/sessions',
+  agentCommand: '/usr/bin/claude',
+  agentArgs: ['--dangerously-skip-permissions'],
+};
+
+describe('TmuxHooks.generateSetupShim()', () => {
+  let writeFile: ReturnType<typeof vi.fn>;
+  let mkdirSync: ReturnType<typeof vi.fn>;
+  let hooks: TmuxHooks;
+
+  beforeEach(() => {
+    const m = makeDeps();
+    writeFile = m.writeFile;
+    mkdirSync = m.mkdirSync;
+    hooks = new TmuxHooks(m.deps);
+  });
+
+  it('creates session root directory with mode 0o700', () => {
+    hooks.generateSetupShim(validShimConfig);
+    const call = mkdirSync.mock.calls.find(([p]: [string]) => p.endsWith('/task-xyz'));
+    expect(call).toBeDefined();
+    expect(call?.[1]).toMatchObject({ mode: 0o700 });
+  });
+
+  it('creates messages subdirectory with mode 0o700', () => {
+    hooks.generateSetupShim(validShimConfig);
+    const call = mkdirSync.mock.calls.find(([p]: [string]) => p.endsWith('/messages'));
+    expect(call).toBeDefined();
+    expect(call?.[1]).toMatchObject({ mode: 0o700 });
+  });
+
+  it('writes setup-shim.sh with mode 0o700', () => {
+    hooks.generateSetupShim(validShimConfig);
+    expect(writeFile).toHaveBeenCalledOnce();
+    const [shimPath, , opts] = writeFile.mock.calls[0] as [string, string, { mode: number }];
+    expect(shimPath).toContain('setup-shim.sh');
+    expect(opts.mode).toBe(0o700);
+  });
+
+  it('shim script contains shebang and set -euo pipefail', () => {
+    hooks.generateSetupShim(validShimConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string, { mode: number }];
+    expect(content).toContain('#!/bin/bash');
+    expect(content).toContain('set -euo pipefail');
+  });
+
+  it('shim script sets AUTOBEAT_WORKER=true', () => {
+    hooks.generateSetupShim(validShimConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string, { mode: number }];
+    expect(content).toContain('AUTOBEAT_WORKER=true');
+  });
+
+  it('shim script sets AUTOBEAT_TASK_ID to taskId', () => {
+    hooks.generateSetupShim(validShimConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string, { mode: number }];
+    expect(content).toContain("AUTOBEAT_TASK_ID='task-xyz'");
+  });
+
+  it('shim script sets AUTOBEAT_SESSIONS_DIR to sessionsDir', () => {
+    hooks.generateSetupShim(validShimConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string, { mode: number }];
+    expect(content).toContain("AUTOBEAT_SESSIONS_DIR='/tmp/sessions'");
+  });
+
+  it('shim script uses exec to replace shell with agent', () => {
+    hooks.generateSetupShim(validShimConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string, { mode: number }];
+    expect(content).toMatch(/^exec\s/m);
+    expect(content).toContain('/usr/bin/claude');
+  });
+
+  it('shim script does NOT contain --print flag', () => {
+    hooks.generateSetupShim(validShimConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string, { mode: number }];
+    expect(content).not.toContain('--print');
+  });
+
+  it('shim script single-quotes agent args', () => {
+    hooks.generateSetupShim(validShimConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string, { mode: number }];
+    expect(content).toContain("'--dangerously-skip-permissions'");
+  });
+
+  it('returns manifest with correct paths', () => {
+    const result = hooks.generateSetupShim(validShimConfig);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.shimPath).toContain('setup-shim.sh');
+    expect(result.value.sessionDir).toContain('task-xyz');
+    expect(result.value.messagesDir).toContain('messages');
+  });
+
+  it('returns TMUX_HOOK_FAILED for invalid taskId', () => {
+    const result = hooks.generateSetupShim({ ...validShimConfig, taskId: 'INVALID TASK ID!' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  it('returns TMUX_HOOK_FAILED for unsafe agentCommand', () => {
+    const result = hooks.generateSetupShim({ ...validShimConfig, agentCommand: '/usr/bin/bad"cmd' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
   });
 });
