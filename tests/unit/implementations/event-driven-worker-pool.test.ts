@@ -890,9 +890,12 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       // Behavioral outcome: the worker must be reachable via the new task ID, not the old one.
       const workerForTask2 = pool.getWorkerForTask(task2.id);
       expect(workerForTask2.ok).toBe(true);
-      expect(workerForTask2.ok && workerForTask2.value).toBeDefined();
+      if (!workerForTask2.ok) return;
+      expect(workerForTask2.value).not.toBeNull();
       const workerForTask1 = pool.getWorkerForTask(task1.id);
-      expect(workerForTask1.ok && workerForTask1.value).toBeNull();
+      expect(workerForTask1.ok).toBe(true);
+      if (!workerForTask1.ok) return;
+      expect(workerForTask1.value).toBeNull();
     });
 
     it('concurrent spawns with same persistentSessionKey: second falls through to fresh spawn while first reuse is in-progress', async () => {
@@ -1026,15 +1029,13 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       // TaskCompleted must be emitted for task2 (the active iteration), not task1
       const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
       const completedForTask2 = emitCalls.filter(
-        ([event, payload]: [string, { taskId: string }]) =>
-          event === 'TaskCompleted' && payload.taskId === task2.id,
+        ([event, payload]: [string, { taskId: string }]) => event === 'TaskCompleted' && payload.taskId === task2.id,
       );
       expect(completedForTask2).toHaveLength(1);
 
       // TaskCompleted must NOT be emitted for the stale task1 ID
       const completedForTask1 = emitCalls.filter(
-        ([event, payload]: [string, { taskId: string }]) =>
-          event === 'TaskCompleted' && payload.taskId === task1.id,
+        ([event, payload]: [string, { taskId: string }]) => event === 'TaskCompleted' && payload.taskId === task1.id,
       );
       expect(completedForTask1).toHaveLength(0);
     });

@@ -9,15 +9,16 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from 'child_process';
-import type { AgentProvider } from '../../core/agents.js';
+import type { AgentAdapter, AgentProvider, AgentRegistry } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
+import type { Orchestration } from '../../core/domain.js';
 import type { OrchestrationService } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
-import type { TmuxConnectorPort, TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
+import type { TmuxConnectorPort, TmuxHandle, TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
 import { TmuxValidator } from '../../implementations/tmux/tmux-validator.js';
 import { errorMessage, withServices } from '../services.js';
 import * as ui from '../ui.js';
-import { type CommonOrchestrateFlags, parseCommonOrchestrateFlag, parseIntFlag } from './orchestrate-parse-helpers.js';
+import { type CommonOrchestrateFlags, parseCommonOrchestrateFlag } from './orchestrate-parse-helpers.js';
 
 // ============================================================================
 // Types
@@ -120,7 +121,7 @@ function validateTmux(): Result<void, string> {
 // ============================================================================
 
 interface ContainerDeps {
-  readonly agentRegistry: import('../../core/agents.js').AgentRegistry;
+  readonly agentRegistry: AgentRegistry;
   readonly tmuxConnector: TmuxConnectorPort;
   readonly sessionsDir: string;
 }
@@ -130,7 +131,7 @@ interface ContainerDeps {
  * Returns null and calls process.exit(1) on any failure (CLI pattern — no recovery).
  */
 async function resolveContainerDeps(container: Container): Promise<ContainerDeps | null> {
-  const agentRegistryResult = container.get<import('../../core/agents.js').AgentRegistry>('agentRegistry');
+  const agentRegistryResult = container.get<AgentRegistry>('agentRegistry');
   if (!agentRegistryResult.ok) {
     ui.error(`Failed to get agent registry: ${agentRegistryResult.error.message}`);
     await container.dispose();
@@ -165,7 +166,7 @@ async function resolveContainerDeps(container: Container): Promise<ContainerDeps
 // ============================================================================
 
 interface SpawnedSession {
-  readonly handle: import('../../core/tmux-types.js').TmuxHandle;
+  readonly handle: TmuxHandle;
   readonly agentState: { exitCode: number | null; exited: boolean };
   readonly exitPromise: Promise<void>;
 }
@@ -179,8 +180,8 @@ interface SpawnedSession {
  */
 async function spawnAndDeliverPrompt(
   tmuxConnector: TmuxConnectorPort,
-  adapter: import('../../core/agents.js').AgentAdapter,
-  orchestration: import('../../core/domain.js').Orchestration,
+  adapter: AgentAdapter,
+  orchestration: Orchestration,
   orchestrationService: OrchestrationService,
   container: Container,
   params: { userPrompt: string; systemPrompt: string | undefined; sessionsDir: string },

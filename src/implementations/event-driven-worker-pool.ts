@@ -252,7 +252,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
           this.persistentSessions.delete(psk);
         }
       }
-    } else if (psk && this.reuseInProgress.has(psk)) {
+    } else if (psk) {
+      // reuseInProgress is set for this key — concurrent spawn falls through to fresh session
       this.logger.warn('Concurrent reuse attempt for persistent session key — spawning fresh', {
         taskId: task.id,
         persistentSessionKey: psk,
@@ -263,7 +264,15 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Phase 5: Set persistent=true when the task has a persistent session key so
     // TmuxConnector.spawn() uses the setup shim instead of the wrapper pipeline.
     const spawnConfig: TmuxSpawnCoreConfig = psk ? { ...config, persistent: true } : config;
-    const result = this.launchAndRegister({ task, config: spawnConfig, prompt, callbacks, taskIdRef, agentProvider, cleanupFn });
+    const result = this.launchAndRegister({
+      task,
+      config: spawnConfig,
+      prompt,
+      callbacks,
+      taskIdRef,
+      agentProvider,
+      cleanupFn,
+    });
 
     // After successful fresh spawn with a persistent key, register in persistentSessions map
     if (result.ok && psk) {
