@@ -114,8 +114,7 @@ function validateTmux(): Result<void, string> {
   }
 
   const major = parseInt(match[1], 10);
-  const minor = parseInt(match[2], 10);
-  if (major < 3 || (major === 3 && minor < 0)) {
+  if (major < 3) {
     return err(
       `tmux version ${raw} is too old. tmux >= 3.0 is required.\n` +
         '  Upgrade: brew upgrade tmux (macOS) or apt-get upgrade tmux (Linux)',
@@ -344,8 +343,12 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
     // Wait briefly for the onExit callback to fire if it hasn't yet.
     if (!agentExited) {
       await new Promise<void>((resolve) => {
-        const deadline = setTimeout(resolve, 2000);
-        const poll = setInterval(() => {
+        let poll: NodeJS.Timeout;
+        const deadline = setTimeout(() => {
+          clearInterval(poll);
+          resolve();
+        }, 2000);
+        poll = setInterval(() => {
           if (agentExited) {
             clearInterval(poll);
             clearTimeout(deadline);
