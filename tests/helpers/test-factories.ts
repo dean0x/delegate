@@ -203,6 +203,7 @@ export const MockFactory = {
       getWorkers: vi.fn().mockReturnValue(ok([])),
       getWorkerCount: vi.fn().mockReturnValue(0),
       getWorkerForTask: vi.fn().mockReturnValue(ok(null)),
+      cleanupPersistentSession: vi.fn(),
     } as WorkerPool;
   },
 

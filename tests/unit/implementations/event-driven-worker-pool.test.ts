@@ -886,6 +886,38 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       const sendKeysCalls = (tmuxConnector.sendKeys as ReturnType<typeof vi.fn>).mock.calls;
       expect(sendKeysCalls.some(([, keys]: [unknown, string]) => keys === '/clear\n')).toBe(true);
       expect(sendKeysCalls.some(([, keys]: [unknown, string]) => keys.includes('iteration 2'))).toBe(true);
+
+      // Behavioral outcome: the worker must be reachable via the new task ID, not the old one.
+      const workerForTask2 = pool.getWorkerForTask(task2.id);
+      expect(workerForTask2.ok).toBe(true);
+      expect(workerForTask2.ok && workerForTask2.value).toBeDefined();
+      const workerForTask1 = pool.getWorkerForTask(task1.id);
+      expect(workerForTask1.ok && workerForTask1.value).toBeNull();
+    });
+
+    it('concurrent spawns with same persistentSessionKey: second falls through to fresh spawn while first reuse is in-progress', async () => {
+      // Tests the reuseInProgress guard. When reuseSession() is executing for a key,
+      // a second concurrent spawn() for the same key must NOT wait for reuse — it falls
+      // through to launchAndRegister (fresh spawn) immediately.
+      const task1 = buildPersistentTask('loop-concurrent', (f) => f.withPrompt('first'));
+      const task2 = buildPersistentTask('loop-concurrent', (f) => f.withPrompt('second'));
+      const task3 = buildPersistentTask('loop-concurrent', (f) => f.withPrompt('concurrent'));
+
+      // Establish the persistent session entry
+      await pool.spawn(task1);
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(1);
+
+      // Now reuse task2 and concurrently spawn task3 (same key) while reuse is in-progress.
+      // task3 should see reuseInProgress and fall through to a fresh spawn.
+      await Promise.all([
+        pool.spawn(task2), // triggers reuseSession — acquires reuseInProgress lock for duration of settle timer
+        pool.spawn(task3), // arrives while lock held — must fall through to fresh spawn
+        vi.advanceTimersByTimeAsync(400), // advance past the 300ms settle timer so reuseSession can complete
+      ]);
+
+      // task2 reused the session (no new tmux spawn for it)
+      // task3 fell through to a fresh spawn → total spawn count = 2 (task1 + task3)
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
     });
 
     it('second spawn with dead persistent session creates a new fresh session', async () => {

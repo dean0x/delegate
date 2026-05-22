@@ -115,6 +115,15 @@ interface PersistentSessionEntry {
   readonly workerId: WorkerId;
 }
 
+/**
+ * Settle delay after sending /clear to the tmux session before registering the new
+ * iteration's output handler. Claude Code processes /clear asynchronously — without a
+ * brief pause, output from the clearing animation is incorrectly attributed to the new
+ * task. 300 ms is the empirically stable minimum on a local machine; a future dep
+ * injection point can override this via EventDrivenWorkerPoolDeps if needed.
+ */
+const CLEAR_SETTLE_MS = 300;
+
 export class EventDrivenWorkerPool implements WorkerPool {
   private readonly workers = new Map<WorkerId, WorkerState>();
   private readonly taskToWorker = new Map<TaskId, WorkerId>();
@@ -332,7 +341,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
       }
 
       // Wait for /clear to settle before registering new output handler
-      await new Promise<void>((resolve) => setTimeout(resolve, 300));
+      await new Promise<void>((resolve) => setTimeout(resolve, CLEAR_SETTLE_MS));
 
       // Re-map the existing worker entry to the new task.
       // The existing WorkerState handle stays the same — only task tracking changes.
