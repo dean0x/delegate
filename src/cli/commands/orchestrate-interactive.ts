@@ -13,7 +13,8 @@ import type { AgentProvider } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
 import type { OrchestrationService } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
-import type { TmuxConnectorPort } from '../../core/tmux-types.js';
+import type { TmuxConnectorPort, TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
+import { TmuxValidator } from '../../implementations/tmux/tmux-validator.js';
 import { errorMessage, withServices } from '../services.js';
 import * as ui from '../ui.js';
 import { type CommonOrchestrateFlags, parseCommonOrchestrateFlag, parseIntFlag } from './orchestrate-parse-helpers.js';
@@ -96,32 +97,179 @@ export function parseOrchestrateInteractiveArgs(args: readonly string[]): Result
  * DECISION: Validate at the call site in CLI mode rather than at bootstrap
  * because `beat orchestrate -i` is the only CLI path that spawns tmux sessions.
  * Other CLI commands (list, status, cancel) do not need tmux.
+ *
+ * Uses TmuxValidator (canonical implementation) rather than reimplementing
+ * version parsing. Also validates jq is available, which the wrapper scripts require.
  */
 function validateTmux(): Result<void, string> {
-  const result = spawnSync('tmux', ['-V'], { encoding: 'utf8', timeout: 5_000 });
-  if (result.status !== 0 || result.error) {
-    return err(
-      'tmux is not installed or not found in PATH.\n' +
-        '  Interactive mode requires tmux >= 3.0.\n' +
-        '  Install: brew install tmux (macOS) or apt-get install tmux (Linux)',
-    );
+  const validator = new TmuxValidator({
+    exec: (cmd) => {
+      const result = spawnSync(cmd, { shell: true, encoding: 'utf8', timeout: 10_000 });
+      return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status ?? -1 };
+    },
+  });
+  const result = validator.validate();
+  if (!result.ok) {
+    return err(result.error.message);
   }
-
-  const raw = result.stdout?.trim() ?? '';
-  const match = /(\d+)\.(\d+)/.exec(raw);
-  if (!match) {
-    return err(`Could not parse tmux version from: "${raw}". tmux >= 3.0 is required.`);
-  }
-
-  const major = parseInt(match[1], 10);
-  if (major < 3) {
-    return err(
-      `tmux version ${raw} is too old. tmux >= 3.0 is required.\n` +
-        '  Upgrade: brew upgrade tmux (macOS) or apt-get upgrade tmux (Linux)',
-    );
-  }
-
   return ok(undefined);
+}
+
+// ============================================================================
+// Container dependency resolution
+// ============================================================================
+
+interface ContainerDeps {
+  readonly agentRegistry: import('../../core/agents.js').AgentRegistry;
+  readonly tmuxConnector: TmuxConnectorPort;
+  readonly sessionsDir: string;
+}
+
+/**
+ * Resolve the three container-registered dependencies needed by interactive mode.
+ * Returns null and calls process.exit(1) on any failure (CLI pattern — no recovery).
+ */
+async function resolveContainerDeps(container: Container): Promise<ContainerDeps | null> {
+  const agentRegistryResult = container.get<import('../../core/agents.js').AgentRegistry>('agentRegistry');
+  if (!agentRegistryResult.ok) {
+    ui.error(`Failed to get agent registry: ${agentRegistryResult.error.message}`);
+    await container.dispose();
+    process.exit(1);
+  }
+
+  // Resolve tmuxConnector and sessionsDir from container.
+  // Both are always registered by bootstrap (even in CLI mode).
+  const tmuxConnectorResult = container.get<TmuxConnectorPort>('tmuxConnector');
+  if (!tmuxConnectorResult.ok) {
+    ui.error(`Failed to get tmux connector: ${tmuxConnectorResult.error.message}`);
+    await container.dispose();
+    process.exit(1);
+  }
+
+  const sessionsDirResult = container.get<string>('sessionsDir');
+  if (!sessionsDirResult.ok) {
+    ui.error(`Failed to get sessions directory: ${sessionsDirResult.error.message}`);
+    await container.dispose();
+    process.exit(1);
+  }
+
+  return {
+    agentRegistry: agentRegistryResult.value,
+    tmuxConnector: tmuxConnectorResult.value,
+    sessionsDir: sessionsDirResult.value,
+  };
+}
+
+// ============================================================================
+// Tmux session spawn + prompt delivery
+// ============================================================================
+
+interface SpawnedSession {
+  readonly handle: import('../../core/tmux-types.js').TmuxHandle;
+  readonly agentState: { exitCode: number | null; exited: boolean };
+  readonly exitPromise: Promise<void>;
+}
+
+/**
+ * Build the tmux config (stripping AUTOBEAT_WORKER), spawn the session, and deliver
+ * the initial prompt via send-keys.
+ *
+ * Returns null and calls process.exit(1) on any failure.
+ * On failure after spawn (send-keys), destroys the session before exiting.
+ */
+async function spawnAndDeliverPrompt(
+  tmuxConnector: TmuxConnectorPort,
+  adapter: import('../../core/agents.js').AgentAdapter,
+  orchestration: import('../../core/domain.js').Orchestration,
+  orchestrationService: OrchestrationService,
+  container: Container,
+  params: { userPrompt: string; systemPrompt: string | undefined; sessionsDir: string },
+): Promise<SpawnedSession | null> {
+  // Build tmux session config from the adapter (pure config assembly, no side effects).
+  const tmuxCommandResult = adapter.buildTmuxCommand({
+    prompt: params.userPrompt,
+    workingDirectory: orchestration.workingDirectory,
+    taskId: orchestration.id,
+    model: orchestration.model,
+    orchestratorId: orchestration.id,
+    systemPrompt: params.systemPrompt,
+    sessionsDir: params.sessionsDir,
+  });
+  if (!tmuxCommandResult.ok) {
+    ui.error(`Failed to build tmux session config: ${tmuxCommandResult.error.message}`);
+    await orchestrationService.finalizeInteractiveOrchestration(orchestration.id, {
+      exitCode: null,
+      cancelled: false,
+    });
+    await container.dispose();
+    process.exit(1);
+  }
+
+  const { config: rawTmuxConfig, prompt: tmuxPrompt } = tmuxCommandResult.value;
+
+  // Strip AUTOBEAT_WORKER from the interactive session's environment.
+  // buildTmuxCommand() always sets AUTOBEAT_WORKER=true (worker identity for background tasks),
+  // but an interactive orchestrator is not a worker — it is the orchestrator itself.
+  // Leaving it set would suppress interactive behaviors designed for orchestrators.
+  //
+  // TmuxSpawnCoreConfig is the minimal core-layer type; env lives on the impl-level extension.
+  // We produce a new config object that overrides env, passing it through unknown since the
+  // type boundary is intentionally opaque at this call site.
+  const existingEnv = (rawTmuxConfig as unknown as { env?: Record<string, string> }).env;
+  const tmuxConfig: TmuxSpawnCoreConfig = existingEnv
+    ? ({
+        ...rawTmuxConfig,
+        env: Object.fromEntries(Object.entries(existingEnv).filter(([k]) => k !== 'AUTOBEAT_WORKER')),
+      } as unknown as TmuxSpawnCoreConfig)
+    : rawTmuxConfig;
+
+  // Track agent exit state; shared across spawn callbacks and the attach wait below.
+  const agentState = { exitCode: null as number | null, exited: false };
+
+  // exitPromise resolves when onExit fires — eliminates setInterval polling after attach.
+  let resolveExitPromise!: () => void;
+  const exitPromise = new Promise<void>((resolve) => {
+    resolveExitPromise = resolve;
+  });
+
+  // Spawn the tmux session (creates the tmux window + wrapper, does NOT attach).
+  // Callbacks receive output and exit signals from the wrapper.
+  const spawnResult = tmuxConnector.spawn(tmuxConfig, {
+    onOutput: (_msg) => {
+      // Output captured by wrapper; not displayed in interactive mode (user sees it directly).
+    },
+    onExit: (code) => {
+      agentState.exitCode = code;
+      agentState.exited = true;
+      resolveExitPromise();
+    },
+  });
+  if (!spawnResult.ok) {
+    ui.error(`Failed to spawn tmux session: ${spawnResult.error.message}`);
+    await orchestrationService.finalizeInteractiveOrchestration(orchestration.id, {
+      exitCode: null,
+      cancelled: false,
+    });
+    await container.dispose();
+    process.exit(1);
+  }
+
+  const handle = spawnResult.value;
+
+  // Deliver the initial prompt via send-keys (the wrapper is now alive and ready).
+  const sendKeysResult = tmuxConnector.sendKeys(handle, tmuxPrompt);
+  if (!sendKeysResult.ok) {
+    ui.error(`Failed to deliver prompt to tmux session: ${sendKeysResult.error.message}`);
+    tmuxConnector.destroy(handle);
+    await orchestrationService.finalizeInteractiveOrchestration(orchestration.id, {
+      exitCode: null,
+      cancelled: false,
+    });
+    await container.dispose();
+    process.exit(1);
+  }
+
+  return { handle, agentState, exitPromise };
 }
 
 // ============================================================================
@@ -151,32 +299,12 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
     const { orchestrationService } = services;
     s.stop('Ready');
 
-    const agentRegistryResult = container.get<import('../../core/agents.js').AgentRegistry>('agentRegistry');
-    if (!agentRegistryResult.ok) {
-      ui.error(`Failed to get agent registry: ${agentRegistryResult.error.message}`);
-      await container.dispose();
-      process.exit(1);
-    }
-    const agentRegistry = agentRegistryResult.value;
+    // Phase 1: Resolve container dependencies
+    const deps = await resolveContainerDeps(container);
+    if (!deps) return; // process.exit already called
+    const { agentRegistry, tmuxConnector, sessionsDir } = deps;
 
-    // Resolve tmuxConnector and sessionsDir from container.
-    // Both are always registered by bootstrap (even in CLI mode).
-    const tmuxConnectorResult = container.get<TmuxConnectorPort>('tmuxConnector');
-    if (!tmuxConnectorResult.ok) {
-      ui.error(`Failed to get tmux connector: ${tmuxConnectorResult.error.message}`);
-      await container.dispose();
-      process.exit(1);
-    }
-    const tmuxConnector = tmuxConnectorResult.value;
-
-    const sessionsDirResult = container.get<string>('sessionsDir');
-    if (!sessionsDirResult.ok) {
-      ui.error(`Failed to get sessions directory: ${sessionsDirResult.error.message}`);
-      await container.dispose();
-      process.exit(1);
-    }
-    const sessionsDir = sessionsDirResult.value;
-
+    // Phase 2: Create orchestration record and resolve agent adapter
     const createResult = await orchestrationService.createInteractiveOrchestration({
       goal: parsed.goal,
       workingDirectory: parsed.workingDirectory,
@@ -210,67 +338,17 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
 
     const adapter = adapterResult.value;
 
-    // Build tmux session config from the adapter (pure config assembly, no side effects).
-    const tmuxCommandResult = adapter.buildTmuxCommand({
-      prompt: userPrompt,
-      workingDirectory: orchestration.workingDirectory,
-      taskId: orchestration.id,
-      model: orchestration.model,
-      orchestratorId: orchestration.id,
-      systemPrompt,
-      sessionsDir,
-    });
-    if (!tmuxCommandResult.ok) {
-      ui.error(`Failed to build tmux session config: ${tmuxCommandResult.error.message}`);
-      await orchestrationService.finalizeInteractiveOrchestration(orchestration.id, {
-        exitCode: null,
-        cancelled: false,
-      });
-      await container.dispose();
-      process.exit(1);
-    }
-
-    const { config: tmuxConfig, prompt: tmuxPrompt } = tmuxCommandResult.value;
-
-    // Track whether the agent process has exited (set by onExit callback).
-    let agentExitCode: number | null = null;
-    let agentExited = false;
-
-    // Spawn the tmux session (creates the tmux window + wrapper, does NOT attach).
-    // Callbacks receive output and exit signals from the wrapper.
-    const spawnResult = tmuxConnector.spawn(tmuxConfig, {
-      onOutput: (_msg) => {
-        // Output captured by wrapper; not displayed in interactive mode (user sees it directly).
-      },
-      onExit: (code) => {
-        agentExitCode = code;
-        agentExited = true;
-      },
-    });
-    if (!spawnResult.ok) {
-      ui.error(`Failed to spawn tmux session: ${spawnResult.error.message}`);
-      await orchestrationService.finalizeInteractiveOrchestration(orchestration.id, {
-        exitCode: null,
-        cancelled: false,
-      });
-      await container.dispose();
-      process.exit(1);
-    }
-
-    const handle = spawnResult.value;
-
-    // Deliver the initial prompt via send-keys (the wrapper is now alive and ready).
-    const sendKeysResult = tmuxConnector.sendKeys(handle, tmuxPrompt);
-    if (!sendKeysResult.ok) {
-      ui.error(`Failed to deliver prompt to tmux session: ${sendKeysResult.error.message}`);
-      tmuxConnector.destroy(handle);
-      await orchestrationService.finalizeInteractiveOrchestration(orchestration.id, {
-        exitCode: null,
-        cancelled: false,
-      });
-      await container.dispose();
-      process.exit(1);
-    }
+    // Phase 3: Spawn tmux session and deliver initial prompt
+    const session = await spawnAndDeliverPrompt(
+      tmuxConnector,
+      adapter,
+      orchestration,
+      orchestrationService,
+      container,
+      { userPrompt, systemPrompt, sessionsDir },
+    );
+    if (!session) return; // process.exit already called
+    const { handle, agentState, exitPromise } = session;
 
     // Store session name for remote cancel support.
     // Returns ok(false) if already cancelled — destroy the session and exit cleanly.
@@ -288,6 +366,7 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
       process.exit(0);
     }
 
+    // Phase 4: Attach, handle SIGINT, and finalize
     let cancelled = false;
     let sigintCount = 0;
 
@@ -341,25 +420,14 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
 
     // Session ended (agent exited or was killed).
     // Wait briefly for the onExit callback to fire if it hasn't yet.
-    if (!agentExited) {
-      await new Promise<void>((resolve) => {
-        let poll: NodeJS.Timeout;
-        const deadline = setTimeout(() => {
-          clearInterval(poll);
-          resolve();
-        }, 2000);
-        poll = setInterval(() => {
-          if (agentExited) {
-            clearInterval(poll);
-            clearTimeout(deadline);
-            resolve();
-          }
-        }, 50);
-      });
+    // Use event-driven resolution: exitPromise resolves when onExit fires;
+    // race against a 2000ms deadline to avoid blocking indefinitely.
+    if (!agentState.exited) {
+      await Promise.race([exitPromise, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
     }
 
     const finalizeResult = await orchestrationService.finalizeInteractiveOrchestration(orchestration.id, {
-      exitCode: agentExited ? agentExitCode : attachExitCode,
+      exitCode: agentState.exited ? agentState.exitCode : attachExitCode,
       cancelled,
     });
     if (!finalizeResult.ok) {
@@ -368,16 +436,16 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
 
     if (cancelled) {
       ui.info('\nOrchestration cancelled.');
-    } else if (agentExitCode === 0 || (agentExitCode === null && attachExitCode === 0)) {
+    } else if (agentState.exitCode === 0 || (agentState.exitCode === null && attachExitCode === 0)) {
       ui.success('\nOrchestration completed.');
     } else {
-      ui.error(`\nOrchestration failed (exit code: ${agentExitCode ?? attachExitCode}).`);
+      ui.error(`\nOrchestration failed (exit code: ${agentState.exitCode ?? attachExitCode}).`);
     }
 
     adapter.cleanup(orchestration.id);
 
     await container.dispose();
-    process.exit(agentExitCode ?? attachExitCode ?? 1);
+    process.exit(agentState.exitCode ?? attachExitCode ?? 1);
   } catch (error) {
     s.stop('Failed');
     ui.error(errorMessage(error));
