@@ -45,6 +45,7 @@ const OrchestrationRowSchema = z.object({
   status: z.enum(['planning', 'running', 'completed', 'failed', 'cancelled']),
   mode: z.enum(['standard', 'interactive']).nullable().optional(),
   pid: z.number().nullable().optional(),
+  session_name: z.string().nullable().optional(),
   created_at: z.number(),
   updated_at: z.number(),
   completed_at: z.number().nullable(),
@@ -84,6 +85,7 @@ interface OrchestrationRow {
   readonly status: string;
   readonly mode: string | null;
   readonly pid: number | null;
+  readonly session_name: string | null;
   readonly created_at: number;
   readonly updated_at: number;
   readonly completed_at: number | null;
@@ -116,11 +118,11 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       INSERT INTO orchestrations (
         id, goal, loop_id, state_file_path, working_directory,
         agent, model, max_depth, max_workers, max_iterations,
-        status, mode, pid, created_at, updated_at, completed_at
+        status, mode, pid, session_name, created_at, updated_at, completed_at
       ) VALUES (
         @id, @goal, @loopId, @stateFilePath, @workingDirectory,
         @agent, @model, @maxDepth, @maxWorkers, @maxIterations,
-        @status, @mode, @pid, @createdAt, @updatedAt, @completedAt
+        @status, @mode, @pid, @sessionName, @createdAt, @updatedAt, @completedAt
       )
     `);
 
@@ -138,6 +140,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
         status = @status,
         mode = @mode,
         pid = @pid,
+        session_name = @sessionName,
         updated_at = @updatedAt,
         completed_at = @completedAt
       WHERE id = @id
@@ -173,6 +176,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
         status = @status,
         mode = @mode,
         pid = @pid,
+        session_name = @sessionName,
         updated_at = @updatedAt,
         completed_at = @completedAt
       WHERE id = @id AND status = @expectedStatus
@@ -442,6 +446,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       status: orchestration.status,
       mode: orchestration.mode ?? null,
       pid: orchestration.pid ?? null,
+      sessionName: orchestration.sessionName ?? null,
       createdAt: orchestration.createdAt,
       updatedAt: orchestration.updatedAt,
       completedAt: orchestration.completedAt ?? null,
@@ -464,6 +469,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       status: this.toOrchestratorStatus(data.status),
       mode: (data.mode ?? undefined) as OrchestratorMode | undefined,
       pid: data.pid ?? undefined,
+      sessionName: data.session_name ?? undefined,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
       completedAt: data.completed_at ?? undefined,

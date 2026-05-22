@@ -102,7 +102,7 @@ import { MCPAdapter } from './adapters/mcp-adapter.js';
 
 // Core
 import type { AgentRegistry } from './core/agents.js';
-import type { TmuxConnectorPort } from './core/tmux-types.js';
+import type { TmuxConnectorPort, TmuxSessionManagerCorePort } from './core/tmux-types.js';
 // Implementations
 import { InMemoryAgentRegistry } from './implementations/agent-registry.js';
 import { SQLiteCheckpointRepository } from './implementations/checkpoint-repository.js';
@@ -378,13 +378,21 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   // Register OrchestrationService for orchestrator mode (v0.9.0)
   // Cancel cascade (v1.3.0) is handled by AttributedTaskCancellationHandler via OrchestrationCancelled event.
+  // Phase 5: tmuxSessionManager injected for interactive orchestration session cancel support.
+  // The tmuxSessionManager resolves lazily — it is registered later in bootstrap but the
+  // factory does not run until orchestrationService is first resolved.
   container.registerSingleton('orchestrationService', () => {
+    // Attempt to resolve tmuxSessionManager; absent in test environments or when a
+    // custom TmuxConnectorPort was injected without a separate session manager.
+    const tmuxSessionManagerResult = container.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
+    const tmuxSessionManager = tmuxSessionManagerResult.ok ? tmuxSessionManagerResult.value : undefined;
     return new OrchestrationManagerService({
       eventBus: getFromContainer<EventBus>(container, 'eventBus'),
       logger: getFromContainer<Logger>(container, 'logger').child({ module: 'OrchestrationManager' }),
       orchestrationRepo: getFromContainer<OrchestrationRepository>(container, 'orchestrationRepository'),
       loopService: getFromContainer<LoopService>(container, 'loopService'),
       config,
+      tmuxSessionManager,
     });
   });
 
@@ -568,6 +576,9 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     return err(new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Failed to get database for sessionsDir computation'));
   }
   const sessionsDir = path.join(path.dirname(dbResult.value.getPath()), 'sessions');
+  // Register sessionsDir as a value so CLI commands (e.g. orchestrate --interactive)
+  // can resolve it from the container when they need to build tmux session configs.
+  container.registerValue('sessionsDir', sessionsDir);
 
   // Register worker pool (Phase 3: uses TmuxConnectorPort + sessionsDir)
   container.registerSingleton('workerPool', () => {

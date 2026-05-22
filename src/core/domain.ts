@@ -803,6 +803,13 @@ export interface Orchestration {
   readonly status: OrchestratorStatus;
   readonly mode?: OrchestratorMode;
   readonly pid?: number;
+  /**
+   * tmux session name for interactive orchestrations that use tmux (Phase 5).
+   * Nullable — only set when mode='interactive' and the session was spawned via tmux.
+   * cancelOrchestration() uses this to destroy the tmux session; falls back to pid (SIGTERM)
+   * for orchestrations spawned before Phase 5.
+   */
+  readonly sessionName?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly completedAt?: number;

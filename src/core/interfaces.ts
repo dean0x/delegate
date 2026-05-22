@@ -885,6 +885,15 @@ export interface OrchestrationService {
    */
   updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<boolean>>;
   /**
+   * Store the tmux session name for remote cancel support (Phase 5).
+   * Replaces PID-based cancel for orchestrations that use tmux sessions.
+   *
+   * @returns ok(true) if session name was stored (orchestration still RUNNING),
+   *   ok(false) if status already transitioned (remote cancel won the race —
+   *   caller should destroy the session since cancel couldn't reach it).
+   */
+  updateInteractiveOrchestrationSessionName(id: OrchestratorId, sessionName: string): Promise<Result<boolean>>;
+  /**
    * Finalize an interactive orchestration after the child process exits (or spawn failure).
    * Determines terminal status from outcome, updates DB, emits lifecycle event.
    *

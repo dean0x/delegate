@@ -1207,6 +1207,22 @@ export class Database implements TransactionRunner {
           );
         },
       },
+      {
+        version: 30,
+        description: 'Add session_name column to orchestrations table for interactive tmux session tracking (Phase 5)',
+        up: (db) => {
+          // DECISION: session_name is nullable TEXT — only set for interactive orchestrations that
+          // use tmux sessions (Phase 5 migration). Older interactive orchestrations that used
+          // process-based spawning (pid column) leave this NULL.
+          // cancelOrchestration() checks session_name first (tmux destroy), then pid (SIGTERM),
+          // providing backward compat for in-flight orchestrations during the migration window.
+          db.exec(`ALTER TABLE orchestrations ADD COLUMN session_name TEXT`);
+          // Index for session-name lookups in cancel path.
+          db.exec(
+            `CREATE INDEX IF NOT EXISTS idx_orchestrations_session_name ON orchestrations(session_name) WHERE session_name IS NOT NULL`,
+          );
+        },
+      },
     ];
   }
 
