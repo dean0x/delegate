@@ -954,5 +954,99 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       // setEnvironment never called for non-persistent tasks
       expect(tmuxConnector.setEnvironment).not.toHaveBeenCalled();
     });
+
+    it('onOutput callback routes output to the current iteration task, not the original', async () => {
+      // Regression test for stale-closure bug: after reuseSession, output must be
+      // attributed to the new task ID, not the one captured at createCallbacks time.
+      const task1 = buildPersistentTask('loop-output', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-output', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // Simulate output arriving after the session is reused for task2
+      tmuxConnector._simulateOutput(task1.id, { type: 'stdout', content: 'hello from iter 2' });
+
+      // Output must be captured under task2's ID
+      expect(outputCapture.capture).toHaveBeenCalledWith(task2.id, 'stdout', 'hello from iter 2');
+      // Must NOT have been captured under task1's stale ID for this specific message
+      const calls = (outputCapture.capture as ReturnType<typeof vi.fn>).mock.calls;
+      const capturedUnderTask1 = calls.filter(
+        ([id, , content]: [string, string, string]) => id === task1.id && content === 'hello from iter 2',
+      );
+      expect(capturedUnderTask1).toHaveLength(0);
+    });
+
+    it('onExit callback emits TaskCompleted for the current iteration task after reuse', async () => {
+      // Regression test for stale-closure + stale WorkerState bugs: after reuseSession,
+      // onExit must look up the new taskId (not the original) so TaskCompleted is emitted.
+      const task1 = buildPersistentTask('loop-exit', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-exit', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // Simulate exit for the session (originally registered under task1's ID)
+      tmuxConnector._simulateExit(task1.id, 0);
+      // Let the async flush + completion chain resolve
+      await vi.advanceTimersByTimeAsync(100);
+
+      // TaskCompleted must be emitted for task2 (the active iteration), not task1
+      const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const completedForTask2 = emitCalls.filter(
+        ([event, payload]: [string, { taskId: string }]) =>
+          event === 'TaskCompleted' && payload.taskId === task2.id,
+      );
+      expect(completedForTask2).toHaveLength(1);
+
+      // TaskCompleted must NOT be emitted for the stale task1 ID
+      const completedForTask1 = emitCalls.filter(
+        ([event, payload]: [string, { taskId: string }]) =>
+          event === 'TaskCompleted' && payload.taskId === task1.id,
+      );
+      expect(completedForTask1).toHaveLength(0);
+    });
+
+    it('completionHandled is reset to false after session reuse so the new iteration can complete', async () => {
+      // Regression test for stale WorkerState: completionHandled from a previous iteration
+      // must be false after reuse so the new iteration's completion is not silently dropped.
+      const task1 = buildPersistentTask('loop-reset', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-reset', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // Simulate exit twice for the reused session — only the first should emit
+      tmuxConnector._simulateExit(task1.id, 0);
+      await vi.advanceTimersByTimeAsync(100);
+      tmuxConnector._simulateExit(task1.id, 0);
+      await vi.advanceTimersByTimeAsync(100);
+
+      const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const completedEvents = emitCalls.filter(([event]: [string]) => event === 'TaskCompleted');
+      // Exactly one completion event despite two exit signals
+      expect(completedEvents).toHaveLength(1);
+    });
+
+    it('reuseSession failure (setEnvironment error) falls through to fresh spawn rather than propagating error', async () => {
+      // Regression test for design-mismatch bug: setEnvironment failure must cause a fresh
+      // spawn rather than returning an error to the caller.
+      const task1 = buildPersistentTask('loop-fallback', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-fallback', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+
+      // Make setEnvironment fail on the next call (simulates a broken session)
+      (tmuxConnector.setEnvironment as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+        err(new Error('env update failed')),
+      );
+
+      const result = await pool.spawn(task2);
+
+      // Must succeed — fall through to fresh spawn, not propagate the error
+      expect(result.ok).toBe(true);
+      // A second tmux spawn was created for the fresh iteration
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+    });
   });
 });
