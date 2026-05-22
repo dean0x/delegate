@@ -2,7 +2,6 @@
  * Integration test for worker pool management
  * Tests worker lifecycle, resource monitoring, and output capture
  *
- * Phase 3: Uses MockTmuxConnector instead of MockProcessSpawner.
  * Workers are tmux sessions identified by sessionName, not PIDs.
  */
 

@@ -159,7 +159,7 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
     vi.clearAllMocks();
   });
 
-  // ─── AC-1: Uses TmuxConnectorPort (not ChildProcess/ProcessConnector) ─────
+  // ─── AC-1: Uses TmuxConnectorPort ─────
 
   describe('AC-1: TmuxConnectorPort usage', () => {
     it('calls tmuxConnector.spawn on successful spawn', async () => {

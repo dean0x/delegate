@@ -4,7 +4,6 @@
  *
  * ARCHITECTURE (Phase 3): Uses TmuxConnectorPort for all worker lifecycle.
  * Workers are tmux sessions identified by sessionName, not PIDs.
- * No ChildProcess or ProcessConnector references — see AC-10.
  *
  * ARCHITECTURE (v0.5.0): Uses AgentRegistry to resolve the correct agent adapter
  * per task. Requires task.agent to be set (resolved by TaskManager before queueing).
