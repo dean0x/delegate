@@ -87,6 +87,12 @@ export interface WorkerPool {
   getWorkers(): Result<readonly Worker[]>;
   getWorkerCount(): number;
   getWorkerForTask(taskId: TaskId): Result<Worker | null>;
+  /**
+   * Destroy and remove the persistent session registered under the given key.
+   * Called by LoopHandler when a loop completes, fails terminally, or is cancelled.
+   * No-op if no session is registered for the key.
+   */
+  cleanupPersistentSession(key: string): void;
 }
 
 /**

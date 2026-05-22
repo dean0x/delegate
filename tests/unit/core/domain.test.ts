@@ -86,6 +86,16 @@ describe('Domain Models - REAL Behavior Tests', () => {
         expect(task.id).toMatch(/^task-[a-f0-9-]+$/);
       }
     });
+
+    it('passes persistentSessionKey through to the created task', () => {
+      const task = createTask({ prompt: 'loop iteration', persistentSessionKey: 'loop-abc123' });
+      expect(task.persistentSessionKey).toBe('loop-abc123');
+    });
+
+    it('persistentSessionKey is optional — omitted when not provided', () => {
+      const task = createTask({ prompt: 'regular task' });
+      expect(task.persistentSessionKey).toBeUndefined();
+    });
   });
 
   describe('updateTask', () => {

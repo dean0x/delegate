@@ -47,6 +47,7 @@ class MockWorkerPool implements WorkerPool {
     this.killAllCalls++;
     this.workers.clear();
     this.workerCount = 0;
+    return ok(undefined);
   }
 
   getWorkerForTask(taskId: string) {
@@ -62,8 +63,16 @@ class MockWorkerPool implements WorkerPool {
     return this.workerCount;
   }
 
+  getWorker(workerId: string) {
+    return ok(this.workers.get(workerId) ?? null);
+  }
+
   getWorkers() {
     return ok(Array.from(this.workers.values()));
+  }
+
+  cleanupPersistentSession(_key: string) {
+    // no-op in test double
   }
 
   reset() {

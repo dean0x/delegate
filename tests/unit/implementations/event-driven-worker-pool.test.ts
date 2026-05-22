@@ -105,6 +105,12 @@ const buildTask = (configure?: (factory: TaskFactory) => void): Task => {
   return { ...factory.build(), agent: 'claude' as const };
 };
 
+const buildPersistentTask = (sessionKey: string, configure?: (factory: TaskFactory) => void): Task => {
+  const factory = new TaskFactory();
+  if (configure) configure(factory);
+  return { ...factory.build(), agent: 'claude' as const, persistentSessionKey: sessionKey };
+};
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
@@ -855,6 +861,107 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       await pool.spawn(buildTask());
       await pool.spawn(buildTask());
       expect(pool.getWorkerCount()).toBe(2);
+    });
+  });
+
+  // ─── Phase 5: Persistent session reuse ───────────────────────────────────
+
+  describe('Phase 5: persistent session reuse', () => {
+    it('first spawn with persistentSessionKey creates a fresh session', async () => {
+      const task = buildPersistentTask('loop-abc');
+      const result = await pool.spawn(task);
+      expect(result.ok).toBe(true);
+      expect(tmuxConnector.spawn).toHaveBeenCalledOnce();
+    });
+
+    it('second spawn with same key reuses session (sends /clear then prompt)', async () => {
+      const task1 = buildPersistentTask('loop-abc', (f) => f.withPrompt('iteration 1'));
+      const task2 = buildPersistentTask('loop-abc', (f) => f.withPrompt('iteration 2'));
+
+      await pool.spawn(task1);
+      // Session is alive by default in the mock.
+      // reuseSession() awaits a 300ms settle timer — advance fake timers concurrently.
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // spawn was only called once (for the first iteration)
+      expect(tmuxConnector.spawn).toHaveBeenCalledOnce();
+      // setEnvironment should have been called to update AUTOBEAT_TASK_ID
+      expect(tmuxConnector.setEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionName: expect.stringContaining('beat-') }),
+        'AUTOBEAT_TASK_ID',
+        task2.id,
+      );
+      // sendKeys called for /clear and for the prompt
+      const sendKeysCalls = (tmuxConnector.sendKeys as ReturnType<typeof vi.fn>).mock.calls;
+      expect(sendKeysCalls.some(([, keys]: [unknown, string]) => keys === '/clear\n')).toBe(true);
+      expect(sendKeysCalls.some(([, keys]: [unknown, string]) => keys.includes('iteration 2'))).toBe(true);
+    });
+
+    it('second spawn with dead persistent session creates a new fresh session', async () => {
+      const task1 = buildPersistentTask('loop-dead');
+      const task2 = buildPersistentTask('loop-dead');
+
+      await pool.spawn(task1);
+
+      // Simulate session dying
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+
+      await pool.spawn(task2);
+
+      // spawn called twice — once for each task
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+      // /clear NOT sent because the session was dead and a fresh spawn happened
+      const sendKeysCalls = (tmuxConnector.sendKeys as ReturnType<typeof vi.fn>).mock.calls;
+      expect(sendKeysCalls.some(([, keys]: [unknown, string]) => keys === '/clear\n')).toBe(false);
+    });
+
+    it('cleanupPersistentSession destroys the session and removes it from the map', async () => {
+      const task = buildPersistentTask('loop-cleanup');
+      await pool.spawn(task);
+
+      pool.cleanupPersistentSession('loop-cleanup');
+
+      expect(tmuxConnector.destroy).toHaveBeenCalledOnce();
+
+      // Subsequent spawn for same key should create a new session (not reuse destroyed one)
+      const task2 = buildPersistentTask('loop-cleanup');
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(true));
+      await pool.spawn(task2);
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+    });
+
+    it('cleanupPersistentSession is a no-op when no session is registered for the key', () => {
+      expect(() => pool.cleanupPersistentSession('nonexistent-key')).not.toThrow();
+      expect(tmuxConnector.destroy).not.toHaveBeenCalled();
+    });
+
+    it('killAll destroys all persistent sessions', async () => {
+      const task1 = buildPersistentTask('loop-x');
+      const task2 = buildPersistentTask('loop-y');
+
+      await pool.spawn(task1);
+      await pool.spawn(task2);
+
+      // isAlive: false so kill() skips graceful shutdown
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+
+      await pool.killAll();
+
+      // destroy should have been called for both persistent sessions
+      expect(tmuxConnector.destroy).toHaveBeenCalledTimes(2);
+    });
+
+    it('tasks without persistentSessionKey never reuse a session', async () => {
+      const regular1 = buildTask((f) => f.withPrompt('regular 1'));
+      const regular2 = buildTask((f) => f.withPrompt('regular 2'));
+
+      await pool.spawn(regular1);
+      await pool.spawn(regular2);
+
+      // Both tasks spawn fresh sessions
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+      // setEnvironment never called for non-persistent tasks
+      expect(tmuxConnector.setEnvironment).not.toHaveBeenCalled();
     });
   });
 });

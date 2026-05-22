@@ -414,6 +414,7 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     database: deps.database,
     exitConditionEvaluator,
     logger: childLogger('LoopHandler'),
+    workerPool: deps.workerPool,
   });
   if (!loopHandlerResult.ok) {
     // Cleanup previous handlers on failure

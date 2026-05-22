@@ -80,10 +80,36 @@ export interface EventDrivenWorkerPoolDeps {
   readonly sessionsDir: string;
 }
 
+/**
+ * Entry in the persistent session map.
+ * DESIGN DECISION (Phase 5): WorkerId is stored so reuseSession can look up the
+ * WorkerState and update its task reference when reusing for a new iteration.
+ */
+interface PersistentSessionEntry {
+  readonly handle: TmuxHandle;
+  readonly workerId: WorkerId;
+}
+
 export class EventDrivenWorkerPool implements WorkerPool {
   private readonly workers = new Map<WorkerId, WorkerState>();
   private readonly taskToWorker = new Map<TaskId, WorkerId>();
   private readonly flushingInProgress = new Set<TaskId>();
+
+  /**
+   * Persistent session map: key → { handle, workerId }.
+   * Populated when spawn() is called for a task with persistentSessionKey set.
+   * The entry lives for the lifetime of the loop; cleanupPersistentSession() removes it.
+   *
+   * DESIGN DECISION (Phase 5): Persistent sessions are stored separately from the
+   * regular workers map so the reuse check is O(1) without scanning workers.
+   */
+  private readonly persistentSessions = new Map<string, PersistentSessionEntry>();
+
+  /**
+   * Per-key concurrency guard: prevents two simultaneous reuse attempts for the same key.
+   * Set to true while reuseSession() is executing for that key; cleared when done.
+   */
+  private readonly reuseInProgress = new Set<string>();
 
   private readonly agentRegistry: AgentRegistry;
   private readonly monitor: ResourceMonitor;
@@ -165,8 +191,150 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Capture adapter cleanup at spawn time (P3: same pattern as old process-based pool)
     const cleanupFn = task.systemPrompt ? (taskId: string) => adapter.cleanup(taskId) : undefined;
 
+    // Step 5b: Check for persistent session reuse (Phase 5)
+    const psk = task.persistentSessionKey;
+    if (psk) {
+      // Check concurrent reuse guard
+      if (this.reuseInProgress.has(psk)) {
+        this.logger.warn('Concurrent reuse attempt for persistent session key — spawning fresh', {
+          taskId: task.id,
+          persistentSessionKey: psk,
+        });
+      } else {
+        const existing = this.persistentSessions.get(psk);
+        if (existing) {
+          const aliveResult = this.tmuxConnector.isAlive(existing.handle);
+          if (aliveResult.ok && aliveResult.value) {
+            // Reuse the alive session
+            return await this.reuseSession(task, psk, existing, prompt);
+          }
+          // Session is dead — clean up stale entry and fall through to fresh spawn
+          this.logger.info('Persistent session dead — spawning fresh', {
+            taskId: task.id,
+            persistentSessionKey: psk,
+            sessionName: existing.handle.sessionName,
+          });
+          this.persistentSessions.delete(psk);
+        }
+      }
+    }
+
     // Steps 6-10: spawn session, register, wire timers, send prompt
-    return this.launchAndRegister({ task, config, prompt, callbacks, agentProvider, cleanupFn });
+    const result = this.launchAndRegister({ task, config, prompt, callbacks, agentProvider, cleanupFn });
+
+    // After successful fresh spawn with a persistent key, register in persistentSessions map
+    if (result.ok && psk) {
+      const workerId = WorkerId(`worker-beat-${task.id}`);
+      const worker = this.workers.get(workerId);
+      if (worker) {
+        this.persistentSessions.set(psk, { handle: worker.handle, workerId: worker.id });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Reuse an existing persistent tmux session for a new loop iteration.
+   *
+   * Protocol:
+   * 1. Acquire per-key reuse lock (prevents concurrent reuse races)
+   * 2. Update AUTOBEAT_TASK_ID env var in the tmux session
+   * 3. Send /clear to reset agent context
+   * 4. Wait 300ms for /clear to settle
+   * 5. Register the new task against the existing worker state
+   * 6. Send new prompt via sendKeys
+   * 7. Release reuse lock
+   *
+   * DESIGN DECISION (Phase 5): On any failure, fall through to fresh spawn by
+   * destroying the stale session and removing it from persistentSessions. This
+   * prevents the loop from stalling on a broken persistent session.
+   */
+  private async reuseSession(
+    task: Task,
+    key: string,
+    entry: PersistentSessionEntry,
+    prompt: string,
+  ): Promise<Result<Worker>> {
+    this.reuseInProgress.add(key);
+    try {
+      const { handle, workerId } = entry;
+
+      this.logger.info('Reusing persistent tmux session for loop iteration', {
+        taskId: task.id,
+        persistentSessionKey: key,
+        sessionName: handle.sessionName,
+        existingWorkerId: workerId,
+      });
+
+      // Update AUTOBEAT_TASK_ID in the session so the Stop hook attributes output to
+      // the new task ID.
+      const setEnvResult = this.tmuxConnector.setEnvironment(handle, 'AUTOBEAT_TASK_ID', task.id);
+      if (!setEnvResult.ok) {
+        this.logger.warn('Failed to update AUTOBEAT_TASK_ID — destroying persistent session', {
+          taskId: task.id,
+          key,
+          error: setEnvResult.error.message,
+        });
+        this.cleanupPersistentSession(key);
+        return err(setEnvResult.error);
+      }
+
+      // Send /clear to reset agent context
+      const clearResult = this.tmuxConnector.sendKeys(handle, '/clear\n');
+      if (!clearResult.ok) {
+        this.logger.warn('Failed to send /clear to persistent session — destroying', {
+          taskId: task.id,
+          key,
+          error: clearResult.error.message,
+        });
+        this.cleanupPersistentSession(key);
+        return err(clearResult.error);
+      }
+
+      // Wait for /clear to settle before registering new output handler
+      await new Promise<void>((resolve) => setTimeout(resolve, 300));
+
+      // Re-map the existing worker entry to the new task.
+      // The existing WorkerState handle stays the same — only the task tracking changes.
+      const existingWorker = this.workers.get(workerId);
+      if (!existingWorker) {
+        // Worker was cleaned up between liveness check and reuse — spawn fresh
+        this.logger.warn('Persistent session worker state missing — spawning fresh', {
+          taskId: task.id,
+          key,
+        });
+        this.persistentSessions.delete(key);
+        return err(new AutobeatError(ErrorCode.WORKER_SPAWN_FAILED, 'Persistent session worker state not found'));
+      }
+
+      // Update taskToWorker so future lookups find the worker via the new taskId.
+      // Remove the old mapping (previous iteration's taskId → workerId).
+      this.taskToWorker.delete(existingWorker.task.id);
+      this.taskToWorker.set(task.id, workerId);
+
+      // Send new prompt
+      const sendResult = this.tmuxConnector.sendKeys(handle, prompt + '\n');
+      if (!sendResult.ok) {
+        this.logger.warn('Failed to send prompt to reused session — destroying', {
+          taskId: task.id,
+          key,
+          error: sendResult.error.message,
+        });
+        this.cleanupPersistentSession(key);
+        return err(sendResult.error);
+      }
+
+      this.logger.info('Persistent session reused successfully', {
+        taskId: task.id,
+        sessionName: handle.sessionName,
+        key,
+      });
+
+      return ok(existingWorker);
+    } finally {
+      this.reuseInProgress.delete(key);
+    }
   }
 
   /**
@@ -221,6 +389,36 @@ export class EventDrivenWorkerPool implements WorkerPool {
     });
 
     return ok(worker);
+  }
+
+  /**
+   * Destroy and remove the persistent session registered under the given key.
+   * Called by LoopHandler when a loop completes, fails terminally, or is cancelled.
+   * No-op if no session is registered for the key.
+   *
+   * DESIGN DECISION (Phase 5): destroy() is called on the tmux connector so that
+   * TmuxConnector's cleanup path (watchers, cleanup fn, session directory) runs
+   * uniformly whether the session exits naturally or is explicitly torn down.
+   */
+  cleanupPersistentSession(key: string): void {
+    const entry = this.persistentSessions.get(key);
+    if (!entry) return;
+
+    this.persistentSessions.delete(key);
+
+    const destroyResult = this.tmuxConnector.destroy(entry.handle);
+    if (!destroyResult.ok) {
+      this.logger.warn('Failed to destroy persistent session during cleanup', {
+        persistentSessionKey: key,
+        sessionName: entry.handle.sessionName,
+        error: destroyResult.error.message,
+      });
+    } else {
+      this.logger.info('Persistent session cleaned up', {
+        persistentSessionKey: key,
+        sessionName: entry.handle.sessionName,
+      });
+    }
   }
 
   /**
@@ -344,6 +542,12 @@ export class EventDrivenWorkerPool implements WorkerPool {
         failures: failureCount,
         total: workerIds.length,
       });
+    }
+
+    // Destroy all persistent sessions that were not already cleaned up by kill()
+    // above (persistent sessions may still be alive after all regular workers are gone).
+    for (const key of Array.from(this.persistentSessions.keys())) {
+      this.cleanupPersistentSession(key);
     }
 
     // Safety net: dispose catches orphaned sessions
