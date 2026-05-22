@@ -57,9 +57,6 @@ function createMockAgentRegistry(
     get: vi.fn().mockReturnValue(
       ok({
         provider: 'claude',
-        spawn: vi.fn(),
-        spawnInteractive: vi.fn(),
-        kill: vi.fn(),
         dispose: vi.fn(),
         cleanup: vi.fn(),
         buildTmuxCommand: buildTmuxCommandFn,
@@ -345,9 +342,6 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
         get: vi.fn().mockReturnValue(
           ok({
             provider: 'claude',
-            spawn: vi.fn(),
-            spawnInteractive: vi.fn(),
-            kill: vi.fn(),
             dispose: vi.fn(),
             cleanup: vi.fn(),
             buildTmuxCommand: vi.fn().mockReturnValue(err(buildError)),
@@ -705,9 +699,6 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       (registry.get as ReturnType<typeof vi.fn>).mockReturnValue(
         ok({
           provider: 'claude',
-          spawn: vi.fn(),
-          spawnInteractive: vi.fn(),
-          kill: vi.fn(),
           dispose: vi.fn(),
           cleanup: cleanupFn,
           buildTmuxCommand: vi

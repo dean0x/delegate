@@ -156,10 +156,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Resolve authentication before spawn.
    * Resolution order: env var → config file → CLI login (assumed)
    *
-   * NOTE: spawn() verifies CLI binary exists before calling resolveAuth(),
+   * NOTE: buildTmuxCommand() verifies CLI binary exists before calling resolveAuth(),
    * so step 3 safely assumes login-based auth if no explicit key is configured.
    *
-   * @param agentConfig - Pre-loaded agent config (loaded once in spawn() to avoid redundant reads)
+   * @param agentConfig - Pre-loaded agent config (loaded once in buildTmuxCommand() to avoid redundant reads)
    * @returns Additional env vars to inject (e.g., stored API key), or error
    */
   protected resolveAuth(agentConfig: AgentConfig): Result<{ injectedEnv: Record<string, string> }> {
@@ -192,7 +192,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Resolution order: user env (already in cleanEnv, takes precedence) → config file.
    * Returns env var name → value to inject. Empty object means nothing to inject.
    *
-   * @param agentConfig - Pre-loaded agent config (loaded once in spawn() to avoid redundant reads)
+   * @param agentConfig - Pre-loaded agent config (loaded once in buildTmuxCommand() to avoid redundant reads)
    */
   protected resolveBaseUrl(agentConfig: AgentConfig): Record<string, string> {
     const baseUrlEnvVar = AGENT_BASE_URL_ENV[this.provider];
@@ -211,7 +211,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Resolve the model to use for this spawn.
    * Resolution order: per-task model → agent-config model → undefined (use CLI default).
    *
-   * @param agentConfig - Pre-loaded agent config (loaded once in spawn() to avoid redundant reads)
+   * @param agentConfig - Pre-loaded agent config (loaded once in buildTmuxCommand() to avoid redundant reads)
    */
   protected resolveModel(agentConfig: AgentConfig, taskModel?: string): string | undefined {
     if (taskModel) return taskModel;
@@ -299,7 +299,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
   /**
    * Shared resolution logic: loads config, resolves runtime/auth/model/system-prompt/env.
-   * Used by both spawn() and spawnInteractive() to avoid duplicating the resolution chain.
+   * Used by buildTmuxCommand() to resolve the full spawn configuration chain.
    *
    * Resolution order:
    * 1. Runtime config (resolveRuntime) — checked first; when a runtime (e.g. 'ollama') is
