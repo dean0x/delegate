@@ -309,9 +309,11 @@ async function attachAndFinalize(ctx: AttachAndFinalizeContext): Promise<never> 
   process.on('SIGINT', () => {
     sigintCount++;
     cancelled = true;
-    if (sigintCount >= 2) {
-      // Second Ctrl+C: force-destroy the tmux session.
+    if (sigintCount === 2) {
+      // Second Ctrl+C: force-destroy the tmux session exactly once.
       tmuxConnector.destroy(handle);
+    } else if (sigintCount > 2) {
+      // Subsequent Ctrl+C presses: already destroyed, no-op.
     } else {
       // First Ctrl+C: send C-c to the session to interrupt the agent gracefully.
       tmuxConnector.sendControlKeys(handle, 'C-c');
@@ -329,6 +331,8 @@ async function attachAndFinalize(ctx: AttachAndFinalizeContext): Promise<never> 
 
   const attachExitCode = await new Promise<number | null>((resolve) => {
     attachProcess.on('exit', (code) => resolve(code));
+    // Treat spawn failure (ENOENT, EMFILE, etc.) as session-ended rather than hanging.
+    attachProcess.on('error', () => resolve(null));
   });
 
   process.removeAllListeners('SIGINT');
@@ -432,16 +436,25 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
     ui.info(`Orchestration ID: ${orchestration.id}`);
     ui.info(`State file:       ${orchestration.stateFilePath}`);
 
-    const agent = orchestration.agent ?? 'claude';
-    const adapterResult = agentRegistry.get(agent);
-    if (!adapterResult.ok) {
-      ui.error(`Agent adapter not available: ${adapterResult.error.message}`);
+    // failWithOrchestration: teardown helper for the post-create phase.
+    // The orchestration record exists at this point, so finalization is required
+    // before dispose — matching the spawnAndDeliverPrompt failWith pattern.
+    // Captures resolvedContainer (narrowed) to avoid the outer let-undefined type.
+    const resolvedContainer = container;
+    async function failWithOrchestration(msg: string): Promise<never> {
+      ui.error(msg);
       await orchestrationService.finalizeInteractiveOrchestration(orchestration.id, {
         exitCode: null,
         cancelled: false,
       });
-      await container.dispose();
+      await resolvedContainer.dispose();
       process.exit(1);
+    }
+
+    const agent = orchestration.agent ?? 'claude';
+    const adapterResult = agentRegistry.get(agent);
+    if (!adapterResult.ok) {
+      return failWithOrchestration(`Agent adapter not available: ${adapterResult.error.message}`);
     }
 
     const adapter = adapterResult.value;
