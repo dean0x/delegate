@@ -1187,12 +1187,13 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       await pool.spawn(task1);
 
       // Make sendKeys fail on the prompt send inside reuseSession.
-      // sendKeys call order: (1) task1 prompt in launchAndRegister, (2) /clear in reuseSession,
-      // (3) task2 prompt in reuseSession — fail on call 3.
+      // The mock is installed AFTER task1's spawn, so call counts restart from 0.
+      // sendKeys call order from this point: (1) /clear in reuseSession,
+      // (2) task2 prompt in reuseSession — fail on call 2.
       let sendKeysCallCount = 0;
       (tmuxConnector.sendKeys as ReturnType<typeof vi.fn>).mockImplementation(() => {
         sendKeysCallCount++;
-        if (sendKeysCallCount === 3) {
+        if (sendKeysCallCount === 2) {
           return err(new Error('pipe broken'));
         }
         return ok(undefined);
