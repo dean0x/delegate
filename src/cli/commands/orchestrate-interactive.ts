@@ -309,14 +309,12 @@ async function attachAndFinalize(ctx: AttachAndFinalizeContext): Promise<never> 
   process.on('SIGINT', () => {
     sigintCount++;
     cancelled = true;
-    if (sigintCount === 2) {
-      // Second Ctrl+C: force-destroy the tmux session exactly once.
-      tmuxConnector.destroy(handle);
-    } else if (sigintCount > 2) {
-      // Subsequent Ctrl+C presses: already destroyed, no-op.
-    } else {
-      // First Ctrl+C: send C-c to the session to interrupt the agent gracefully.
+    if (sigintCount === 1) {
+      // First Ctrl+C: interrupt the agent gracefully.
       tmuxConnector.sendControlKeys(handle, 'C-c');
+    } else if (sigintCount === 2) {
+      // Second Ctrl+C: force-destroy the session exactly once. Subsequent presses are no-ops.
+      tmuxConnector.destroy(handle);
     }
   });
 
