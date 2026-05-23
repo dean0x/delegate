@@ -38,6 +38,7 @@ export class SQLiteWorkerRepository implements WorkerRepository {
   private readonly db: SQLite.Database;
   private readonly registerStmt: SQLite.Statement;
   private readonly unregisterStmt: SQLite.Statement;
+  private readonly updateTaskIdTx: (registration: WorkerRegistration) => void;
   private readonly findByTaskIdStmt: SQLite.Statement;
   private readonly findBySessionNameStmt: SQLite.Statement;
   private readonly findAllStmt: SQLite.Statement;
@@ -55,6 +56,26 @@ export class SQLiteWorkerRepository implements WorkerRepository {
     this.unregisterStmt = this.db.prepare(`
       DELETE FROM workers WHERE worker_id = ?
     `);
+
+    // Atomic DELETE + INSERT for updateTaskId — prepared once and wrapped in a transaction
+    // to avoid the crash window that exists between separate unregister + register calls.
+    const deleteStmt = this.db.prepare(`DELETE FROM workers WHERE worker_id = ?`);
+    const insertStmt = this.db.prepare(`
+      INSERT INTO workers (worker_id, task_id, pid, owner_pid, agent, started_at, session_name)
+      VALUES (@workerId, @taskId, @pid, @ownerPid, @agent, @startedAt, @sessionName)
+    `);
+    this.updateTaskIdTx = this.db.transaction((reg: WorkerRegistration) => {
+      deleteStmt.run(reg.workerId);
+      insertStmt.run({
+        workerId: reg.workerId,
+        taskId: reg.taskId,
+        pid: reg.pid,
+        ownerPid: reg.ownerPid,
+        agent: reg.agent,
+        startedAt: reg.startedAt,
+        sessionName: reg.sessionName ?? null,
+      });
+    });
 
     this.findByTaskIdStmt = this.db.prepare(`
       SELECT * FROM workers WHERE task_id = ?
@@ -118,6 +139,20 @@ export class SQLiteWorkerRepository implements WorkerRepository {
         this.unregisterStmt.run(workerId);
       },
       operationErrorHandler('unregister worker', { workerId }),
+    );
+  }
+
+  /**
+   * Atomically replace the task ID for a worker registration in a single transaction.
+   * Prevents the crash window between separate unregister() + register() calls used
+   * during session reuse (B1-non-atomic-db fix).
+   */
+  updateTaskId(registration: WorkerRegistration): Result<void> {
+    return tryCatch(
+      () => {
+        this.updateTaskIdTx(registration);
+      },
+      operationErrorHandler('update worker task id', { workerId: registration.workerId }),
     );
   }
 

@@ -1182,6 +1182,37 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       expect(workerRepository.updateHeartbeat).toHaveBeenCalled();
     });
 
+    it('B1-timer-leak: existing timers are cleared before setup calls in in-place remap branch', async () => {
+      // Regression: the else branch (WorkerState still present) called setupTimeoutForWorker,
+      // setupHeartbeatForWorker, and startFlushing without first clearing existing timers.
+      // If the previous task's timeout or heartbeat was still running, those handles were
+      // silently overwritten — leaking setInterval/setTimeout.
+      //
+      // This test verifies that after in-place remap, there is exactly one heartbeat timer
+      // (not two). We use updateHeartbeat call frequency as a proxy: if a leaked timer ran
+      // alongside the new one, it would fire extra calls.
+      //
+      // The else branch runs when WorkerState is still in this.workers at reuse time —
+      // i.e. reuseSession() is called before onExit/cleanupWorkerState has removed it.
+      // We simulate this by NOT simulating task1's exit before spawning task2.
+      const task1 = buildPersistentTask('loop-timer-leak', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-timer-leak', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      // Do NOT simulate task1 exit — WorkerState remains in this.workers map,
+      // so reuseSession() hits the else (in-place remap) branch.
+      const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+      expect(spawnResult.ok).toBe(true);
+
+      // Advance past one full heartbeat interval (30s).
+      // With the fix: exactly one heartbeat fires.
+      // Without the fix: two leaked timers fire simultaneously → two calls.
+      (workerRepository.updateHeartbeat as ReturnType<typeof vi.fn>).mockClear();
+      await vi.advanceTimersByTimeAsync(31_000);
+      // Exactly one heartbeat per interval — no leaked timer running in parallel
+      expect(workerRepository.updateHeartbeat).toHaveBeenCalledTimes(1);
+    });
+
     it('B1-2: sendKeys failure on reuse cleans up WorkerState (falls through to fresh spawn)', async () => {
       // B1-2: if sendKeys fails after worker state is remapped, cleanupWorkerState must be
       // called to clear timers and remove the worker from maps — preventing orphaned callbacks.

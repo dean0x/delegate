@@ -570,6 +570,18 @@ export interface TaskEnqueuer {
 export interface WorkerRepository {
   register(registration: WorkerRegistration): Result<void>;
   unregister(workerId: WorkerId): Result<void>;
+  /**
+   * Atomically replace the task ID for a worker registration.
+   *
+   * Deletes the existing row for workerId and inserts a new row with the updated taskId
+   * in a single SQLite transaction. This prevents the gap that exists between separate
+   * unregister() + register() calls, where a crash would leave the tmux session
+   * invisible to RecoveryManager.
+   *
+   * DECISION: Used by reuseSession() (in-place remap branch) to update DB state
+   * when a persistent session is reused for a new loop iteration without re-spawning.
+   */
+  updateTaskId(registration: WorkerRegistration): Result<void>;
   findByTaskId(taskId: TaskId): Result<WorkerRegistration | null>;
   /**
    * Find a worker registration by its tmux session name.

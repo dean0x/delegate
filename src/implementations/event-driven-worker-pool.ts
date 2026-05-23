@@ -122,6 +122,15 @@ export interface EventDrivenWorkerPoolDeps {
 interface PersistentSessionEntry {
   readonly handle: TmuxHandle;
   readonly workerId: WorkerId;
+  /**
+   * Shared mutable ref between the entry and the current WorkerState for this session.
+   * reuseSession() updates taskIdRef.current to the new task ID before registering the
+   * WorkerState so all callbacks route to the correct task from the first tick.
+   *
+   * NOTE: Do not read entry.taskIdRef.current at arbitrary points — it reflects the
+   * current iteration's task ID, which changes each time the session is reused.
+   * Always read it immediately after reuseSession() sets it, or use worker.taskId.
+   */
   readonly taskIdRef: TaskIdRef;
   readonly agentProvider: string;
 }
@@ -371,7 +380,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
   ): Promise<Result<Worker | null>> {
     this.reuseInProgress.add(key);
     try {
-      const { handle, workerId, taskIdRef, agentProvider } = entry;
+      const { handle, workerId } = entry;
 
       this.logger.info('Reusing persistent tmux session for loop iteration', {
         taskId: task.id,
@@ -415,89 +424,13 @@ export class EventDrivenWorkerPool implements WorkerPool {
       // in the PersistentSessionEntry (which survives cleanupWorkerState).
       let worker = this.workers.get(workerId);
       if (!worker) {
-        this.logger.info('Re-registering WorkerState for reused persistent session', {
-          taskId: task.id,
-          key,
-          sessionName: handle.sessionName,
-        });
-        // Update the taskIdRef (stored in the entry) to the new task ID before
-        // re-registering so the callbacks immediately route to the correct task.
-        taskIdRef.current = task.id;
-        const regResult = this.registerWorker(task, handle, agentProvider, taskIdRef);
-        if (!regResult.ok) {
-          this.logger.warn('Failed to re-register worker for reused session — spawning fresh', {
-            taskId: task.id,
-            key,
-            error: regResult.error.message,
-          });
-          this.persistentSessions.delete(key);
-          return ok(null);
-        }
-        worker = regResult.value;
-        // Start timers for the freshly-registered worker (B1-3 fix applies here too).
-        this.setupTimeoutForWorker(worker);
-        this.setupHeartbeatForWorker(worker);
-        this.startFlushing(worker);
+        const result = this.reRegisterWorkerForReuse(task, key, entry);
+        if (!result.ok) return ok(null);
+        worker = result.value;
       } else {
         // WorkerState still present (e.g. reuse called before onExit cleanup — unlikely
         // in steady state but possible in tests). Remap in-place as before.
-
-        // B1-4 fix: Remove the old task's in-flight flush entry before updating taskId.
-        // The startFlushing closure reads worker.taskId on each tick; deleting the old
-        // entry prevents a spurious "already in progress" skip on the first new-task flush.
-        const prevTaskId = worker.taskId;
-        this.flushingInProgress.delete(prevTaskId);
-
-        // Update taskToWorker so future lookups find the worker via the new taskId.
-        this.taskToWorker.delete(prevTaskId);
-        this.taskToWorker.set(task.id, workerId);
-
-        // Update the mutable task ID ref so the callbacks (onOutput, onExit) route
-        // events to the new task ID from this point forward.
-        worker.taskIdRef.current = task.id;
-
-        // Update the worker state with the new task and reset the completion guard.
-        // completionHandled from the previous iteration must be cleared so the new
-        // iteration's completion event is not silently dropped (G2 guard).
-        worker.task = task;
-        worker.taskId = task.id;
-        worker.completionHandled = false;
-
-        // B1-5 fix: Update DB registration from old task ID to new task ID.
-        // If the server crashes between reuse and the next heartbeat, RecoveryManager
-        // would otherwise see a stale task ID for this worker.
-        const unregResult = this.workerRepository.unregister(workerId);
-        if (!unregResult.ok) {
-          this.logger.warn('Failed to unregister old task from DB during session reuse', {
-            workerId,
-            prevTaskId,
-            error: unregResult.error.message,
-          });
-        }
-        const reregResult = this.workerRepository.register({
-          workerId,
-          taskId: task.id,
-          pid: 0,
-          ownerPid: process.pid,
-          agent: agentProvider,
-          startedAt: Date.now(),
-          sessionName: handle.sessionName,
-        });
-        if (!reregResult.ok) {
-          this.logger.warn('Failed to re-register new task in DB during session reuse', {
-            workerId,
-            taskId: task.id,
-            error: reregResult.error.message,
-          });
-        }
-
-        // B1-3 fix: Restart timers stopped by the previous iteration's onExit callback.
-        // onExit stops flushing and the heartbeat timer before calling handleWorkerCompletion.
-        // Without restarting them, the reused session has no periodic output flushing,
-        // no heartbeat updates, and no task timeout enforcement.
-        this.setupTimeoutForWorker(worker);
-        this.setupHeartbeatForWorker(worker);
-        this.startFlushing(worker);
+        this.remapExistingWorkerForReuse(worker, task, workerId, entry);
       }
 
       // B1-2 fix: Worker state is now fully remapped. If sendKeys fails, clean up the
@@ -525,6 +458,130 @@ export class EventDrivenWorkerPool implements WorkerPool {
     } finally {
       this.reuseInProgress.delete(key);
     }
+  }
+
+  /**
+   * Re-registration path for reuseSession(): called when the previous WorkerState has
+   * been removed by cleanupWorkerState (the normal post-completion flow).
+   *
+   * Creates a new WorkerState reusing the existing tmux handle and taskIdRef from the
+   * PersistentSessionEntry, then wires timers. Returns the new WorkerState on success,
+   * or err() when registration fails (caller falls through to fresh spawn).
+   */
+  private reRegisterWorkerForReuse(
+    task: Task,
+    key: string,
+    entry: PersistentSessionEntry,
+  ): Result<WorkerState> {
+    const { handle, taskIdRef, agentProvider } = entry;
+
+    this.logger.info('Re-registering WorkerState for reused persistent session', {
+      taskId: task.id,
+      key,
+      sessionName: handle.sessionName,
+    });
+
+    // Update the taskIdRef (stored in the entry) to the new task ID before
+    // re-registering so the callbacks immediately route to the correct task.
+    taskIdRef.current = task.id;
+    const regResult = this.registerWorker(task, handle, agentProvider, taskIdRef);
+    if (!regResult.ok) {
+      this.logger.warn('Failed to re-register worker for reused session — spawning fresh', {
+        taskId: task.id,
+        key,
+        error: regResult.error.message,
+      });
+      this.persistentSessions.delete(key);
+      return regResult;
+    }
+
+    const worker = regResult.value;
+    // Start timers for the freshly-registered worker (B1-3 fix applies here too).
+    this.setupTimeoutForWorker(worker);
+    this.setupHeartbeatForWorker(worker);
+    this.startFlushing(worker);
+    return regResult;
+  }
+
+  /**
+   * In-place remap path for reuseSession(): called when the previous WorkerState is
+   * still present in this.workers (unlikely in steady state — normal flow removes it
+   * via cleanupWorkerState before the next iteration spawns, but can occur in tests or
+   * under rapid reuse).
+   *
+   * Updates the WorkerState and DB registration to reflect the new task, then restarts
+   * timers. No return value — all DB failures are logged as warnings and execution
+   * continues, matching the resilience posture of the surrounding reuse protocol.
+   */
+  private remapExistingWorkerForReuse(
+    worker: WorkerState,
+    task: Task,
+    workerId: WorkerId,
+    entry: PersistentSessionEntry,
+  ): void {
+    const { handle, agentProvider } = entry;
+    const prevTaskId = worker.taskId;
+
+    // B1-4 fix: Remove the old task's in-flight flush entry before updating taskId.
+    // The startFlushing closure reads worker.taskId on each tick; deleting the old
+    // entry prevents a spurious "already in progress" skip on the first new-task flush.
+    this.flushingInProgress.delete(prevTaskId);
+
+    // Update taskToWorker so future lookups find the worker via the new taskId.
+    this.taskToWorker.delete(prevTaskId);
+    this.taskToWorker.set(task.id, workerId);
+
+    // Update the mutable task ID ref so the callbacks (onOutput, onExit) route
+    // events to the new task ID from this point forward.
+    worker.taskIdRef.current = task.id;
+
+    // Update the worker state with the new task and reset the completion guard.
+    // completionHandled from the previous iteration must be cleared so the new
+    // iteration's completion event is not silently dropped (G2 guard).
+    worker.task = task;
+    worker.taskId = task.id;
+    worker.completionHandled = false;
+
+    // B1-5 fix / B1-non-atomic-db fix: Atomically update DB registration from old
+    // task ID to new task ID. Uses updateTaskId() which wraps DELETE + INSERT in a
+    // single SQLite transaction, eliminating the crash window of the prior
+    // unregister() + register() sequence.
+    const updateResult = this.workerRepository.updateTaskId({
+      workerId,
+      taskId: task.id,
+      pid: 0,
+      ownerPid: process.pid,
+      agent: agentProvider,
+      startedAt: Date.now(),
+      sessionName: handle.sessionName,
+    });
+    if (!updateResult.ok) {
+      this.logger.warn('Failed to update task ID in DB during session reuse', {
+        workerId,
+        prevTaskId,
+        taskId: task.id,
+        error: updateResult.error.message,
+      });
+    }
+
+    // B1-3 fix: Restart timers stopped by the previous iteration's onExit callback.
+    // onExit stops flushing and the heartbeat timer before calling handleWorkerCompletion.
+    // Without restarting them, the reused session has no periodic output flushing,
+    // no heartbeat updates, and no task timeout enforcement.
+    //
+    // Defensive clear before setup (B1-timer-leak fix): if the WorkerState is still
+    // present at reuse time (onExit has not yet removed it), the previous iteration's
+    // timers may still be running. Clearing them before setup prevents leaked handles
+    // that would write stale DB heartbeats or flush under the wrong task ID.
+    this.clearTimeoutForWorker(worker);
+    if (worker.heartbeatTimer) {
+      clearInterval(worker.heartbeatTimer);
+      worker.heartbeatTimer = undefined;
+    }
+    this.stopFlushing(worker);
+    this.setupTimeoutForWorker(worker);
+    this.setupHeartbeatForWorker(worker);
+    this.startFlushing(worker);
   }
 
   /**

@@ -107,6 +107,7 @@ export const createMockTaskQueue = (): TaskQueue => ({
 export const createMockWorkerRepository = (): WorkerRepository => ({
   register: vi.fn().mockReturnValue(ok(undefined)),
   unregister: vi.fn().mockReturnValue(ok(undefined)),
+  updateTaskId: vi.fn().mockReturnValue(ok(undefined)),
   findByTaskId: vi.fn().mockReturnValue(ok(null)),
   findBySessionName: vi.fn().mockReturnValue(ok(null)),
   findAll: vi.fn().mockReturnValue(ok([])),

@@ -643,6 +643,13 @@ export class TestWorkerRepository implements WorkerRepository {
     return ok(undefined);
   }
 
+  updateTaskId(registration: WorkerRegistration): Result<void, Error> {
+    // Atomic in the real impl; in the test double, delete + set is sufficient.
+    this.workers.delete(registration.workerId);
+    this.workers.set(registration.workerId, registration);
+    return ok(undefined);
+  }
+
   findByTaskId(taskId: TaskId): Result<WorkerRegistration | null, Error> {
     for (const reg of this.workers.values()) {
       if (reg.taskId === taskId) return ok(reg);
