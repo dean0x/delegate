@@ -181,233 +181,6 @@ describe('parseOrchestrateInitArgs - template flag', () => {
 // Agent Adapter — buildInteractiveArgs
 // ============================================================================
 
-vi.mock('child_process', async (importOriginal) => {
-  const original = (await importOriginal()) as Record<string, unknown>;
-  return { ...original, spawn: vi.fn(), spawnSync: vi.fn() };
-});
-
-vi.mock('../../src/core/agents', async (importOriginal) => {
-  const original = (await importOriginal()) as Record<string, unknown>;
-  return { ...original, isCommandInPath: vi.fn().mockReturnValue(true) };
-});
-
-import type { ChildProcess } from 'child_process';
-import { spawn } from 'child_process';
-import { isCommandInPath } from '../../src/core/agents.js';
-import type { Configuration } from '../../src/core/configuration.js';
-import { ClaudeAdapter } from '../../src/implementations/claude-adapter.js';
-import { CodexAdapter } from '../../src/implementations/codex-adapter.js';
-
-const mockSpawn = vi.mocked(spawn);
-const mockIsCommandInPath = vi.mocked(isCommandInPath);
-
-const testConfig: Configuration = {
-  maxOutputBuffer: 10485760,
-  timeout: 300000,
-  killGracePeriodMs: 5000,
-  cpuCoresReserved: 1,
-  memoryReserve: 536870912,
-  logLevel: 'info',
-  maxListenersPerEvent: 50,
-  maxTotalSubscriptions: 500,
-};
-
-function createMockChildProcess(pid: number): ChildProcess {
-  return {
-    pid,
-    stdout: { on: vi.fn() },
-    stderr: { on: vi.fn() },
-    on: vi.fn(),
-    kill: vi.fn(),
-  } as unknown as ChildProcess;
-}
-
-describe('buildInteractiveArgs - Claude', () => {
-  let adapter: ClaudeAdapter;
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockIsCommandInPath.mockReturnValue(true);
-    adapter = new ClaudeAdapter(testConfig, 'claude');
-  });
-  afterEach(() => adapter.dispose());
-
-  it('should omit --print flag', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).not.toContain('--print');
-  });
-
-  it('should omit --output-format json', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).not.toContain('--output-format');
-    expect(args).not.toContain('json');
-  });
-
-  it('should include --dangerously-skip-permissions', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).toContain('--dangerously-skip-permissions');
-  });
-
-  it('should include model when provided', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace', model: 'opus-4' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).toContain('--model');
-    expect(args).toContain('opus-4');
-  });
-
-  it('should use -- separator before prompt', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    const separatorIdx = args!.indexOf('--');
-    expect(separatorIdx).toBeGreaterThan(-1);
-    expect(args![separatorIdx + 1]).toBe('test prompt');
-  });
-
-  it('should not include --json-schema', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).not.toContain('--json-schema');
-  });
-});
-
-describe('buildInteractiveArgs - Codex', () => {
-  let adapter: CodexAdapter;
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockIsCommandInPath.mockReturnValue(true);
-    adapter = new CodexAdapter(testConfig, 'codex');
-  });
-  afterEach(() => adapter.dispose());
-
-  it('should omit --quiet', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).not.toContain('--quiet');
-  });
-
-  it('should include --full-auto', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).toContain('--full-auto');
-  });
-
-  it('should include model when provided', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace', model: 'o3' });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).toContain('--model');
-    expect(args).toContain('o3');
-  });
-});
-
-// ============================================================================
-// spawnInteractive — shared behavior
-// ============================================================================
-
-describe('spawnInteractive - shared behavior', () => {
-  let adapter: ClaudeAdapter;
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockIsCommandInPath.mockReturnValue(true);
-    adapter = new ClaudeAdapter(testConfig, 'claude');
-  });
-  afterEach(() => adapter.dispose());
-
-  it('should call spawn with stdio: inherit', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const spawnOptions = mockSpawn.mock.calls[0][2] as { stdio: string };
-    expect(spawnOptions.stdio).toBe('inherit');
-  });
-
-  it('should not set AUTOBEAT_WORKER env', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({ prompt: 'test prompt', workingDirectory: '/workspace' });
-
-    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-    expect(spawnOptions.env.AUTOBEAT_WORKER).toBeUndefined();
-  });
-
-  it('should set AUTOBEAT_ORCHESTRATOR_ID when provided', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({
-      prompt: 'test prompt',
-      workingDirectory: '/workspace',
-      orchestratorId: 'orchestrator-12345678-1234-1234-1234-123456789012',
-    });
-
-    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
-    expect(spawnOptions.env.AUTOBEAT_ORCHESTRATOR_ID).toBe('orchestrator-12345678-1234-1234-1234-123456789012');
-  });
-
-  it('should return error when CLI binary not found', () => {
-    mockIsCommandInPath.mockReturnValue(false);
-
-    const result = adapter.spawnInteractive({ prompt: 'test', workingDirectory: '/workspace' });
-
-    expect(result.ok).toBe(false);
-  });
-
-  it('should include system prompt args', () => {
-    const mockChild = createMockChildProcess(1234);
-    mockSpawn.mockReturnValue(mockChild);
-
-    adapter.spawnInteractive({
-      prompt: 'test prompt',
-      workingDirectory: '/workspace',
-      systemPrompt: 'You are a helpful assistant',
-    });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).toContain('--append-system-prompt');
-    expect(args).toContain('You are a helpful assistant');
-  });
-});
-
 // ============================================================================
 // OrchestrationManagerService — createInteractiveOrchestration
 // ============================================================================
@@ -419,7 +192,7 @@ vi.mock('../../src/utils/git-state.js', () => ({
   validateGitRefName: vi.fn().mockReturnValue({ ok: true, value: undefined }),
 }));
 
-import { OrchestratorId, OrchestratorStatus } from '../../src/core/domain.js';
+import { OrchestratorId, OrchestratorStatus, updateOrchestration } from '../../src/core/domain.js';
 import { Database } from '../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../src/implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from '../../src/implementations/orchestration-repository.js';
@@ -612,10 +385,10 @@ describe('cancelOrchestration - interactive mode', () => {
     if (!createResult.ok) return;
     createdStateFiles.push(createResult.value.orchestration.stateFilePath);
 
-    const pidResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 99999);
-    expect(pidResult.ok).toBe(true);
-    if (!pidResult.ok) return;
-    expect(pidResult.value).toBe(true);
+    // Seed a PID directly via the repo to simulate a pre-Phase-5 orchestration row
+    // (updateInteractiveOrchestrationPid was the public API for this; now removed).
+    const withPid = updateOrchestration(createResult.value.orchestration, { pid: 99999 });
+    await orchestrationRepo.update(withPid);
 
     const cancelResult = await service.cancelOrchestration(createResult.value.orchestration.id);
     expect(cancelResult.ok).toBe(true);
@@ -810,10 +583,73 @@ describe('finalizeInteractiveOrchestration', () => {
 });
 
 // ============================================================================
-// updateInteractiveOrchestrationPid — PID validation
+// Migration v25
 // ============================================================================
 
-describe('updateInteractiveOrchestrationPid - PID validation', () => {
+describe('migration v25 - mode and pid columns', () => {
+  it('should add mode column with NULL default', () => {
+    const db = new Database(':memory:');
+    const rawDb = db.getDatabase();
+    const columns = rawDb.pragma('table_info(orchestrations)') as Array<{ name: string; dflt_value: string | null }>;
+    const modeCol = columns.find((c) => c.name === 'mode');
+    expect(modeCol).toBeDefined();
+    expect(modeCol!.dflt_value).toBe('NULL');
+    db.close();
+  });
+
+  it('should add pid column with NULL default', () => {
+    const db = new Database(':memory:');
+    const rawDb = db.getDatabase();
+    const columns = rawDb.pragma('table_info(orchestrations)') as Array<{ name: string; dflt_value: string | null }>;
+    const pidCol = columns.find((c) => c.name === 'pid');
+    expect(pidCol).toBeDefined();
+    expect(pidCol!.dflt_value).toBe('NULL');
+    db.close();
+  });
+
+  it('should be at schema version 30', () => {
+    const db = new Database(':memory:');
+    expect(db.getSchemaVersion()).toBe(30);
+    db.close();
+  });
+});
+
+// ============================================================================
+// Migration v30 — session_name column on orchestrations
+// ============================================================================
+
+describe('migration v30 - session_name column on orchestrations', () => {
+  it('should add session_name column (nullable TEXT)', () => {
+    const db = new Database(':memory:');
+    const rawDb = db.getDatabase();
+    const columns = rawDb.pragma('table_info(orchestrations)') as Array<{
+      name: string;
+      type: string;
+      notnull: number;
+      dflt_value: string | null;
+    }>;
+    const col = columns.find((c) => c.name === 'session_name');
+    expect(col).toBeDefined();
+    expect(col!.type).toBe('TEXT');
+    expect(col!.notnull).toBe(0); // nullable
+    db.close();
+  });
+
+  it('should create idx_orchestrations_session_name index', () => {
+    const db = new Database(':memory:');
+    const rawDb = db.getDatabase();
+    const indexes = rawDb.pragma('index_list(orchestrations)') as Array<{ name: string }>;
+    const idx = indexes.find((i) => i.name === 'idx_orchestrations_session_name');
+    expect(idx).toBeDefined();
+    db.close();
+  });
+});
+
+// ============================================================================
+// updateInteractiveOrchestrationSessionName
+// ============================================================================
+
+describe('updateInteractiveOrchestrationSessionName', () => {
   let db: Database;
   let orchestrationRepo: SQLiteOrchestrationRepository;
   let eventBus: TestEventBus;
@@ -844,70 +680,39 @@ describe('updateInteractiveOrchestrationPid - PID validation', () => {
     createdStateFiles.length = 0;
   });
 
-  it('should accept a valid positive integer PID', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test PID' });
-    expect(createResult.ok).toBe(true);
-    if (!createResult.ok) return;
-    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
-
-    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 12345);
-    expect(updateResult.ok).toBe(true);
-    if (!updateResult.ok) return;
-    expect(updateResult.value).toBe(true);
-  });
-
-  it('should reject PID of zero', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test PID zero' });
-    expect(createResult.ok).toBe(true);
-    if (!createResult.ok) return;
-    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
-
-    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 0);
-    expect(updateResult.ok).toBe(false);
-    if (updateResult.ok) return;
-    expect(updateResult.error.message).toContain('Invalid PID');
-  });
-
-  it('should reject a negative PID', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test negative PID' });
-    expect(createResult.ok).toBe(true);
-    if (!createResult.ok) return;
-    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
-
-    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, -1);
-    expect(updateResult.ok).toBe(false);
-    if (updateResult.ok) return;
-    expect(updateResult.error.message).toContain('Invalid PID');
-  });
-
-  it('should reject a non-integer PID (float)', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test float PID' });
-    expect(createResult.ok).toBe(true);
-    if (!createResult.ok) return;
-    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
-
-    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 3.14);
-    expect(updateResult.ok).toBe(false);
-    if (updateResult.ok) return;
-    expect(updateResult.error.message).toContain('Invalid PID');
-  });
-
-  it('should persist a valid PID to DB', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test persist PID' });
+  it('should store session name and set pid=0 sentinel', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test session name' });
     expect(createResult.ok).toBe(true);
     if (!createResult.ok) return;
     createdStateFiles.push(createResult.value.orchestration.stateFilePath);
     const id = createResult.value.orchestration.id;
 
-    const pidResult = await service.updateInteractiveOrchestrationPid(id, 99999);
-    expect(pidResult.ok).toBe(true);
-    if (!pidResult.ok) return;
-    expect(pidResult.value).toBe(true);
+    const updateResult = await service.updateInteractiveOrchestrationSessionName(id, 'beat-task-testid-abcdef');
+    expect(updateResult.ok).toBe(true);
+    if (!updateResult.ok) return;
+    expect(updateResult.value).toBe(true);
 
     const dbResult = await orchestrationRepo.findById(id);
     expect(dbResult.ok).toBe(true);
     if (!dbResult.ok) return;
-    expect(dbResult.value!.pid).toBe(99999);
+    expect(dbResult.value!.sessionName).toBe('beat-task-testid-abcdef');
+    // pid=0 sentinel (tmux worker convention from migration v29)
+    expect(dbResult.value!.pid).toBe(0);
+  });
+
+  it('should reject empty session name', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test empty session name' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+
+    const updateResult = await service.updateInteractiveOrchestrationSessionName(
+      createResult.value.orchestration.id,
+      '',
+    );
+    expect(updateResult.ok).toBe(false);
+    if (updateResult.ok) return;
+    expect(updateResult.error.message).toContain('sessionName must be a non-empty string');
   });
 
   it('should return false when orchestration already cancelled', async () => {
@@ -920,48 +725,158 @@ describe('updateInteractiveOrchestrationPid - PID validation', () => {
     const cancelResult = await service.cancelOrchestration(id);
     expect(cancelResult.ok).toBe(true);
 
-    const pidResult = await service.updateInteractiveOrchestrationPid(id, 12345);
-    expect(pidResult.ok).toBe(true);
-    if (!pidResult.ok) return;
-    expect(pidResult.value).toBe(false);
+    const updateResult = await service.updateInteractiveOrchestrationSessionName(id, 'beat-task-xxx');
+    expect(updateResult.ok).toBe(true);
+    if (!updateResult.ok) return;
+    expect(updateResult.value).toBe(false);
 
     const dbResult = await orchestrationRepo.findById(id);
     expect(dbResult.ok).toBe(true);
     if (!dbResult.ok) return;
-    expect(dbResult.value!.pid).toBeUndefined();
+    expect(dbResult.value!.sessionName).toBeUndefined();
     expect(dbResult.value!.status).toBe('cancelled');
   });
 });
 
 // ============================================================================
-// Migration v25
+// cancelOrchestration — session_name path (Phase 5 tmux destroy)
 // ============================================================================
 
-describe('migration v25 - mode and pid columns', () => {
-  it('should add mode column with NULL default', () => {
-    const db = new Database(':memory:');
-    const rawDb = db.getDatabase();
-    const columns = rawDb.pragma('table_info(orchestrations)') as Array<{ name: string; dflt_value: string | null }>;
-    const modeCol = columns.find((c) => c.name === 'mode');
-    expect(modeCol).toBeDefined();
-    expect(modeCol!.dflt_value).toBe('NULL');
+describe('cancelOrchestration - session_name tmux destroy path', () => {
+  let db: Database;
+  let orchestrationRepo: SQLiteOrchestrationRepository;
+  let eventBus: TestEventBus;
+  let logger: TestLogger;
+  let service: OrchestrationManagerService;
+  const createdStateFiles: string[] = [];
+  const config = createTestConfiguration({ defaultAgent: 'claude' });
+
+  afterEach(() => {
     db.close();
+    for (const f of createdStateFiles) {
+      try {
+        unlinkSync(f);
+      } catch {
+        /* ignore */
+      }
+    }
+    createdStateFiles.length = 0;
   });
 
-  it('should add pid column with NULL default', () => {
-    const db = new Database(':memory:');
-    const rawDb = db.getDatabase();
-    const columns = rawDb.pragma('table_info(orchestrations)') as Array<{ name: string; dflt_value: string | null }>;
-    const pidCol = columns.find((c) => c.name === 'pid');
-    expect(pidCol).toBeDefined();
-    expect(pidCol!.dflt_value).toBe('NULL');
-    db.close();
+  it('should call tmuxSessionManager.destroySession when session_name is set', async () => {
+    const mockDestroySession = vi.fn().mockReturnValue({ ok: true, value: undefined });
+    const mockTmuxSessionManager = {
+      isAlive: vi.fn(),
+      sendControlKeys: vi.fn(),
+      listSessions: vi.fn(),
+      destroySession: mockDestroySession,
+    };
+
+    db = new Database(':memory:');
+    const loopRepo = new SQLiteLoopRepository(db);
+    orchestrationRepo = new SQLiteOrchestrationRepository(db);
+    eventBus = new TestEventBus();
+    logger = new TestLogger();
+    const loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
+    service = new OrchestrationManagerService({
+      eventBus,
+      logger,
+      orchestrationRepo,
+      loopService,
+      config,
+      tmuxSessionManager: mockTmuxSessionManager,
+    });
+
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test session cancel' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    const sessionNameResult = await service.updateInteractiveOrchestrationSessionName(id, 'beat-task-test-session');
+    expect(sessionNameResult.ok).toBe(true);
+
+    const cancelResult = await service.cancelOrchestration(id);
+    expect(cancelResult.ok).toBe(true);
+
+    expect(mockDestroySession).toHaveBeenCalledWith('beat-task-test-session');
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    expect(dbResult.value!.status).toBe('cancelled');
   });
 
-  it('should be at schema version 29', () => {
-    const db = new Database(':memory:');
-    expect(db.getSchemaVersion()).toBe(29);
-    db.close();
+  it('should fall back to SIGTERM when no session_name but pid > 0', async () => {
+    // No tmuxSessionManager — forces the pre-Phase-5 SIGTERM path
+    db = new Database(':memory:');
+    const loopRepo = new SQLiteLoopRepository(db);
+    orchestrationRepo = new SQLiteOrchestrationRepository(db);
+    eventBus = new TestEventBus();
+    logger = new TestLogger();
+    const loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
+    service = new OrchestrationManagerService({ eventBus, logger, orchestrationRepo, loopService, config });
+
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test PID cancel' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    // Seed a PID directly via the repo to simulate a pre-Phase-5 orchestration row
+    // (updateInteractiveOrchestrationPid was the public API for this; now removed).
+    // PID 99999 virtually guaranteed not to exist — ESRCH; cancel must still succeed.
+    const withPid = updateOrchestration(createResult.value.orchestration, { pid: 99999 });
+    await orchestrationRepo.update(withPid);
+
+    const cancelResult = await service.cancelOrchestration(id);
+    expect(cancelResult.ok).toBe(true);
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    expect(dbResult.value!.status).toBe('cancelled');
+  });
+
+  it('should succeed even when destroySession returns an error', async () => {
+    const mockTmuxSessionManager = {
+      isAlive: vi.fn(),
+      sendControlKeys: vi.fn(),
+      listSessions: vi.fn(),
+      destroySession: vi.fn().mockReturnValue({
+        ok: false,
+        error: { message: 'session already gone', code: 'SYSTEM_ERROR' },
+      }),
+    };
+
+    db = new Database(':memory:');
+    const loopRepo = new SQLiteLoopRepository(db);
+    orchestrationRepo = new SQLiteOrchestrationRepository(db);
+    eventBus = new TestEventBus();
+    logger = new TestLogger();
+    const loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
+    service = new OrchestrationManagerService({
+      eventBus,
+      logger,
+      orchestrationRepo,
+      loopService,
+      config,
+      tmuxSessionManager: mockTmuxSessionManager,
+    });
+
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test destroy error' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    await service.updateInteractiveOrchestrationSessionName(id, 'beat-task-gone-session');
+
+    const cancelResult = await service.cancelOrchestration(id);
+    // Cancel should succeed even if destroy failed (session may already be gone)
+    expect(cancelResult.ok).toBe(true);
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    expect(dbResult.value!.status).toBe('cancelled');
   });
 });
 

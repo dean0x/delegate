@@ -3,8 +3,6 @@
  * All implementations should be injected, not instantiated directly
  */
 
-import { ChildProcess } from 'child_process';
-import { SpawnOptions } from './agents.js';
 import {
   ActivityEntry,
   Loop,
@@ -59,19 +57,6 @@ export interface TaskQueue {
 }
 
 /**
- * Process spawning abstraction
- *
- * ARCHITECTURE: Widened in v1.3.0 to accept a SpawnOptions bag instead of
- * 4 positional params. This preserves orchestratorId and jsonSchema through
- * the ProcessSpawnerAdapter shim — both fields were silently dropped before
- * the refactor. See #139 review (batch-D-process-spawner).
- */
-export interface ProcessSpawner {
-  spawn(options: SpawnOptions): Result<{ process: ChildProcess; pid: number }>;
-  kill(pid: number): Result<void>;
-}
-
-/**
  * System resource monitoring
  */
 export interface ResourceMonitor {
@@ -102,6 +87,12 @@ export interface WorkerPool {
   getWorkers(): Result<readonly Worker[]>;
   getWorkerCount(): number;
   getWorkerForTask(taskId: TaskId): Result<Worker | null>;
+  /**
+   * Destroy and remove the persistent session registered under the given key.
+   * Called by LoopHandler when a loop completes, fails terminally, or is cancelled.
+   * No-op if no session is registered for the key.
+   */
+  cleanupPersistentSession(key: string): void;
 }
 
 /**
@@ -579,6 +570,18 @@ export interface TaskEnqueuer {
 export interface WorkerRepository {
   register(registration: WorkerRegistration): Result<void>;
   unregister(workerId: WorkerId): Result<void>;
+  /**
+   * Atomically replace the task ID for a worker registration.
+   *
+   * Deletes the existing row for workerId and inserts a new row with the updated taskId
+   * in a single SQLite transaction. This prevents the gap that exists between separate
+   * unregister() + register() calls, where a crash would leave the tmux session
+   * invisible to RecoveryManager.
+   *
+   * DECISION: Used by reuseSession() (in-place remap branch) to update DB state
+   * when a persistent session is reused for a new loop iteration without re-spawning.
+   */
+  updateTaskId(registration: WorkerRegistration): Result<void>;
   findByTaskId(taskId: TaskId): Result<WorkerRegistration | null>;
   /**
    * Find a worker registration by its tmux session name.
@@ -892,15 +895,17 @@ export interface OrchestrationService {
     }>
   >;
   /**
-   * Store the child process PID for remote cancel support.
+   * Store the tmux session name for remote cancel support (Phase 5).
+   * Replaces PID-based cancel for orchestrations that use tmux sessions.
    *
-   * @returns ok(true) if PID was stored (orchestration still RUNNING),
-   *   ok(false) if status already transitioned (e.g., remote cancel won the race —
-   *   caller should kill the child process since cancel couldn't reach it without a PID).
+   * @returns ok(true) if session name was stored (orchestration still RUNNING),
+   *   ok(false) if status already transitioned (remote cancel won the race —
+   *   caller should destroy the session since cancel couldn't reach it).
    */
-  updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<boolean>>;
+  updateInteractiveOrchestrationSessionName(id: OrchestratorId, sessionName: string): Promise<Result<boolean>>;
   /**
-   * Finalize an interactive orchestration after the child process exits (or spawn failure).
+   * Finalize an interactive orchestration after the tmux session ends
+   * (or child process exits for pre-Phase 5), or on spawn failure.
    * Determines terminal status from outcome, updates DB, emits lifecycle event.
    *
    * Idempotency: Uses updateIfStatus(RUNNING) for atomic check-and-set.

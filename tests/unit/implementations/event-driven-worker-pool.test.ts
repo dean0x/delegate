@@ -57,9 +57,6 @@ function createMockAgentRegistry(
     get: vi.fn().mockReturnValue(
       ok({
         provider: 'claude',
-        spawn: vi.fn(),
-        spawnInteractive: vi.fn(),
-        kill: vi.fn(),
         dispose: vi.fn(),
         cleanup: vi.fn(),
         buildTmuxCommand: buildTmuxCommandFn,
@@ -103,6 +100,12 @@ const buildTask = (configure?: (factory: TaskFactory) => void): Task => {
   const factory = new TaskFactory();
   if (configure) configure(factory);
   return { ...factory.build(), agent: 'claude' as const };
+};
+
+const buildPersistentTask = (sessionKey: string, configure?: (factory: TaskFactory) => void): Task => {
+  const factory = new TaskFactory();
+  if (configure) configure(factory);
+  return { ...factory.build(), agent: 'claude' as const, persistentSessionKey: sessionKey };
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -153,7 +156,7 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
     vi.clearAllMocks();
   });
 
-  // ─── AC-1: Uses TmuxConnectorPort (not ChildProcess/ProcessConnector) ─────
+  // ─── AC-1: Uses TmuxConnectorPort ─────
 
   describe('AC-1: TmuxConnectorPort usage', () => {
     it('calls tmuxConnector.spawn on successful spawn', async () => {
@@ -339,9 +342,6 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
         get: vi.fn().mockReturnValue(
           ok({
             provider: 'claude',
-            spawn: vi.fn(),
-            spawnInteractive: vi.fn(),
-            kill: vi.fn(),
             dispose: vi.fn(),
             cleanup: vi.fn(),
             buildTmuxCommand: vi.fn().mockReturnValue(err(buildError)),
@@ -699,9 +699,6 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       (registry.get as ReturnType<typeof vi.fn>).mockReturnValue(
         ok({
           provider: 'claude',
-          spawn: vi.fn(),
-          spawnInteractive: vi.fn(),
-          kill: vi.fn(),
           dispose: vi.fn(),
           cleanup: cleanupFn,
           buildTmuxCommand: vi
@@ -855,6 +852,442 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       await pool.spawn(buildTask());
       await pool.spawn(buildTask());
       expect(pool.getWorkerCount()).toBe(2);
+    });
+  });
+
+  // ─── Phase 5: Persistent session reuse ───────────────────────────────────
+
+  describe('Phase 5: persistent session reuse', () => {
+    it('first spawn with persistentSessionKey creates a fresh session', async () => {
+      const task = buildPersistentTask('loop-abc');
+      const result = await pool.spawn(task);
+      expect(result.ok).toBe(true);
+      expect(tmuxConnector.spawn).toHaveBeenCalledOnce();
+    });
+
+    it('second spawn with same key reuses session (sends /clear then prompt)', async () => {
+      const task1 = buildPersistentTask('loop-abc', (f) => f.withPrompt('iteration 1'));
+      const task2 = buildPersistentTask('loop-abc', (f) => f.withPrompt('iteration 2'));
+
+      await pool.spawn(task1);
+      // Session is alive by default in the mock.
+      // reuseSession() awaits a 300ms settle timer — advance fake timers concurrently.
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // spawn was only called once (for the first iteration)
+      expect(tmuxConnector.spawn).toHaveBeenCalledOnce();
+      // setEnvironment should have been called to update AUTOBEAT_TASK_ID
+      expect(tmuxConnector.setEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionName: expect.stringContaining('beat-') }),
+        'AUTOBEAT_TASK_ID',
+        task2.id,
+      );
+      // sendKeys called for /clear and for the prompt
+      const sendKeysCalls = (tmuxConnector.sendKeys as ReturnType<typeof vi.fn>).mock.calls;
+      expect(sendKeysCalls.some(([, keys]: [unknown, string]) => keys === '/clear\n')).toBe(true);
+      expect(sendKeysCalls.some(([, keys]: [unknown, string]) => keys.includes('iteration 2'))).toBe(true);
+
+      // Behavioral outcome: the worker must be reachable via the new task ID, not the old one.
+      const workerForTask2 = pool.getWorkerForTask(task2.id);
+      expect(workerForTask2.ok).toBe(true);
+      if (!workerForTask2.ok) return;
+      expect(workerForTask2.value).not.toBeNull();
+      const workerForTask1 = pool.getWorkerForTask(task1.id);
+      expect(workerForTask1.ok).toBe(true);
+      if (!workerForTask1.ok) return;
+      expect(workerForTask1.value).toBeNull();
+    });
+
+    it('concurrent spawns with same persistentSessionKey: second falls through to fresh spawn while first reuse is in-progress', async () => {
+      // Tests the reuseInProgress guard. When reuseSession() is executing for a key,
+      // a second concurrent spawn() for the same key must NOT wait for reuse — it falls
+      // through to launchAndRegister (fresh spawn) immediately.
+      const task1 = buildPersistentTask('loop-concurrent', (f) => f.withPrompt('first'));
+      const task2 = buildPersistentTask('loop-concurrent', (f) => f.withPrompt('second'));
+      const task3 = buildPersistentTask('loop-concurrent', (f) => f.withPrompt('concurrent'));
+
+      // Establish the persistent session entry
+      await pool.spawn(task1);
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(1);
+
+      // Now reuse task2 and concurrently spawn task3 (same key) while reuse is in-progress.
+      // task3 should see reuseInProgress and fall through to a fresh spawn.
+      await Promise.all([
+        pool.spawn(task2), // triggers reuseSession — acquires reuseInProgress lock for duration of settle timer
+        pool.spawn(task3), // arrives while lock held — must fall through to fresh spawn
+        vi.advanceTimersByTimeAsync(400), // advance past the 300ms settle timer so reuseSession can complete
+      ]);
+
+      // task2 reused the session (no new tmux spawn for it)
+      // task3 fell through to a fresh spawn → total spawn count = 2 (task1 + task3)
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+    });
+
+    it('second spawn with dead persistent session creates a new fresh session', async () => {
+      const task1 = buildPersistentTask('loop-dead');
+      const task2 = buildPersistentTask('loop-dead');
+
+      await pool.spawn(task1);
+
+      // Simulate session dying
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+
+      await pool.spawn(task2);
+
+      // spawn called twice — once for each task
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+      // /clear NOT sent because the session was dead and a fresh spawn happened
+      const sendKeysCalls = (tmuxConnector.sendKeys as ReturnType<typeof vi.fn>).mock.calls;
+      expect(sendKeysCalls.some(([, keys]: [unknown, string]) => keys === '/clear\n')).toBe(false);
+    });
+
+    it('cleanupPersistentSession destroys the session and removes it from the map', async () => {
+      const task = buildPersistentTask('loop-cleanup');
+      await pool.spawn(task);
+
+      pool.cleanupPersistentSession('loop-cleanup');
+
+      expect(tmuxConnector.destroy).toHaveBeenCalledOnce();
+
+      // Subsequent spawn for same key should create a new session (not reuse destroyed one)
+      const task2 = buildPersistentTask('loop-cleanup');
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(true));
+      await pool.spawn(task2);
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+    });
+
+    it('cleanupPersistentSession is a no-op when no session is registered for the key', () => {
+      expect(() => pool.cleanupPersistentSession('nonexistent-key')).not.toThrow();
+      expect(tmuxConnector.destroy).not.toHaveBeenCalled();
+    });
+
+    it('killAll destroys all persistent sessions', async () => {
+      const task1 = buildPersistentTask('loop-x');
+      const task2 = buildPersistentTask('loop-y');
+
+      await pool.spawn(task1);
+      await pool.spawn(task2);
+
+      // isAlive: false so kill() skips graceful shutdown
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+
+      await pool.killAll();
+
+      // destroy should have been called for both persistent sessions
+      expect(tmuxConnector.destroy).toHaveBeenCalledTimes(2);
+    });
+
+    it('tasks without persistentSessionKey never reuse a session', async () => {
+      const regular1 = buildTask((f) => f.withPrompt('regular 1'));
+      const regular2 = buildTask((f) => f.withPrompt('regular 2'));
+
+      await pool.spawn(regular1);
+      await pool.spawn(regular2);
+
+      // Both tasks spawn fresh sessions
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+      // setEnvironment never called for non-persistent tasks
+      expect(tmuxConnector.setEnvironment).not.toHaveBeenCalled();
+    });
+
+    it('onOutput callback routes output to the current iteration task, not the original', async () => {
+      // Regression test for stale-closure bug: after reuseSession, output must be
+      // attributed to the new task ID, not the one captured at createCallbacks time.
+      const task1 = buildPersistentTask('loop-output', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-output', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // Simulate output arriving after the session is reused for task2.
+      // task1.id is used here because the mock stores callbacks keyed by the original
+      // spawn task ID — firing on task1.id triggers the session's output handler.
+      tmuxConnector._simulateOutput(task1.id, {
+        sequence: 1,
+        timestamp: '',
+        type: 'stdout',
+        content: 'hello from iter 2',
+      });
+
+      // Output must be captured under task2's ID
+      expect(outputCapture.capture).toHaveBeenCalledWith(task2.id, 'stdout', 'hello from iter 2');
+      // Must NOT have been captured under task1's stale ID for this specific message
+      const calls = (outputCapture.capture as ReturnType<typeof vi.fn>).mock.calls;
+      const capturedUnderTask1 = calls.filter(
+        ([id, , content]: [string, string, string]) => id === task1.id && content === 'hello from iter 2',
+      );
+      expect(capturedUnderTask1).toHaveLength(0);
+    });
+
+    it('onExit callback emits TaskCompleted for the current iteration task after reuse', async () => {
+      // Regression test for stale-closure + stale WorkerState bugs: after reuseSession,
+      // onExit must look up the new taskId (not the original) so TaskCompleted is emitted.
+      const task1 = buildPersistentTask('loop-exit', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-exit', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // Simulate exit for the session (originally registered under task1's ID).
+      // task1.id is used because the mock stores callbacks keyed by the original
+      // spawn task ID — firing on task1.id triggers the session's exit handler.
+      tmuxConnector._simulateExit(task1.id, 0);
+      // Let the async flush + completion chain resolve
+      await vi.advanceTimersByTimeAsync(100);
+
+      // TaskCompleted must be emitted for task2 (the active iteration), not task1
+      const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const completedForTask2 = emitCalls.filter(
+        ([event, payload]: [string, { taskId: string }]) => event === 'TaskCompleted' && payload.taskId === task2.id,
+      );
+      expect(completedForTask2).toHaveLength(1);
+
+      // TaskCompleted must NOT be emitted for the stale task1 ID
+      const completedForTask1 = emitCalls.filter(
+        ([event, payload]: [string, { taskId: string }]) => event === 'TaskCompleted' && payload.taskId === task1.id,
+      );
+      expect(completedForTask1).toHaveLength(0);
+    });
+
+    it('completionHandled is reset to false after session reuse so the new iteration can complete', async () => {
+      // Regression test for stale WorkerState: completionHandled from a previous iteration
+      // must be false after reuse so the new iteration's completion is not silently dropped.
+      const task1 = buildPersistentTask('loop-reset', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-reset', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // Simulate exit twice for the reused session — only the first should emit.
+      // task1.id is used because the mock stores callbacks keyed by the original
+      // spawn task ID — both firings target the same session's exit handler.
+      tmuxConnector._simulateExit(task1.id, 0);
+      await vi.advanceTimersByTimeAsync(100);
+      tmuxConnector._simulateExit(task1.id, 0);
+      await vi.advanceTimersByTimeAsync(100);
+
+      const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const completedEvents = emitCalls.filter(([event]: [string]) => event === 'TaskCompleted');
+      // Exactly one completion event despite two exit signals
+      expect(completedEvents).toHaveLength(1);
+    });
+
+    it('reuseSession failure (setEnvironment error) falls through to fresh spawn rather than propagating error', async () => {
+      // Regression test for design-mismatch bug: setEnvironment failure must cause a fresh
+      // spawn rather than returning an error to the caller.
+      const task1 = buildPersistentTask('loop-fallback', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-fallback', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+
+      // Make setEnvironment fail on the next call (simulates a broken session)
+      (tmuxConnector.setEnvironment as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+        err(new Error('env update failed')),
+      );
+
+      const result = await pool.spawn(task2);
+
+      // Must succeed — fall through to fresh spawn, not propagate the error
+      expect(result.ok).toBe(true);
+      // A second tmux spawn was created for the fresh iteration
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+    });
+
+    // ── B1-1 regression: real-world loop lifecycle ─────────────────────────
+
+    it('B1-1: reuses session after previous iteration completed (WorkerState removed by cleanupWorkerState)', async () => {
+      // Real-world loop lifecycle: task1 completes, onExit → cleanupWorkerState removes
+      // the WorkerState from this.workers. When task2 spawns, reuseSession must re-register
+      // a new WorkerState rather than falling through to a fresh spawn.
+      const task1 = buildPersistentTask('loop-lifecycle', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-lifecycle', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+
+      // Simulate iteration 1 completing: onExit → handleWorkerCompletion → cleanupWorkerState
+      tmuxConnector._simulateExit(task1.id, 0);
+      // Let the async flush chain (flushOutput, outputCapture.clear) settle
+      await vi.advanceTimersByTimeAsync(50);
+
+      // Now spawn iteration 2 — this is where B1-1 manifests.
+      // After cleanupWorkerState, this.workers.get(workerId) === undefined.
+      // The fix re-registers a new WorkerState using the stored taskIdRef + handle.
+      const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // Must succeed and reuse the existing session (not spawn a new tmux session)
+      expect(spawnResult.ok).toBe(true);
+      expect(tmuxConnector.spawn).toHaveBeenCalledOnce(); // only the original spawn for task1
+
+      // The worker must be accessible via the new task ID
+      const workerForTask2 = pool.getWorkerForTask(task2.id);
+      expect(workerForTask2.ok).toBe(true);
+      if (!workerForTask2.ok) return;
+      expect(workerForTask2.value).not.toBeNull();
+
+      // Task1's mapping must be gone (cleaned up by handleWorkerCompletion)
+      const workerForTask1 = pool.getWorkerForTask(task1.id);
+      expect(workerForTask1.ok).toBe(true);
+      if (!workerForTask1.ok) return;
+      expect(workerForTask1.value).toBeNull();
+    });
+
+    it('B1-1: after completion-then-reuse, onExit emits TaskCompleted for iteration 2', async () => {
+      // After B1-1 fix: when task2 reuses a session whose previous WorkerState was cleaned up,
+      // the new WorkerState's onExit callback must emit TaskCompleted for task2.
+      const task1 = buildPersistentTask('loop-lc-exit', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-lc-exit', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      // Iteration 1 completes — cleans up WorkerState
+      tmuxConnector._simulateExit(task1.id, 0);
+      await vi.advanceTimersByTimeAsync(50);
+
+      // Iteration 2 spawns and reuses session
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // Clear emit calls from task1's completion before simulating task2's exit
+      (eventBus.emit as ReturnType<typeof vi.fn>).mockClear();
+
+      // Simulate iteration 2 completing (callbacks still keyed by original taskId in mock)
+      tmuxConnector._simulateExit(task1.id, 0);
+      await vi.advanceTimersByTimeAsync(100);
+
+      const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const completedForTask2 = emitCalls.filter(
+        ([event, payload]: [string, { taskId: string }]) => event === 'TaskCompleted' && payload.taskId === task2.id,
+      );
+      expect(completedForTask2).toHaveLength(1);
+    });
+
+    it('B1-3: heartbeat timer is restarted after session reuse following completion', async () => {
+      // After B1-1 fix, the re-registered WorkerState must have timers set up.
+      // onExit stops flushing + heartbeat before handleWorkerCompletion; without
+      // restarting them, the reused session has no heartbeat updates.
+      const task1 = buildPersistentTask('loop-timers', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-timers', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      // Iteration 1 completes — stops timers
+      tmuxConnector._simulateExit(task1.id, 0);
+      await vi.advanceTimersByTimeAsync(50);
+
+      // Iteration 2 spawns and reuses session
+      const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+      expect(spawnResult.ok).toBe(true);
+
+      // Advance past heartbeat interval (30s) — heartbeat write should fire for reused worker
+      (workerRepository.updateHeartbeat as ReturnType<typeof vi.fn>).mockClear();
+      await vi.advanceTimersByTimeAsync(31_000);
+      // The heartbeat timer must have fired for task2's session
+      expect(workerRepository.updateHeartbeat).toHaveBeenCalled();
+    });
+
+    it('B1-timer-leak: existing timers are cleared before setup calls in in-place remap branch', async () => {
+      // Regression: the else branch (WorkerState still present) called setupTimeoutForWorker,
+      // setupHeartbeatForWorker, and startFlushing without first clearing existing timers.
+      // If the previous task's timeout or heartbeat was still running, those handles were
+      // silently overwritten — leaking setInterval/setTimeout.
+      //
+      // This test verifies that after in-place remap, there is exactly one heartbeat timer
+      // (not two). We use updateHeartbeat call frequency as a proxy: if a leaked timer ran
+      // alongside the new one, it would fire extra calls.
+      //
+      // The else branch runs when WorkerState is still in this.workers at reuse time —
+      // i.e. reuseSession() is called before onExit/cleanupWorkerState has removed it.
+      // We simulate this by NOT simulating task1's exit before spawning task2.
+      const task1 = buildPersistentTask('loop-timer-leak', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-timer-leak', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      // Do NOT simulate task1 exit — WorkerState remains in this.workers map,
+      // so reuseSession() hits the else (in-place remap) branch.
+      const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+      expect(spawnResult.ok).toBe(true);
+
+      // Advance past one full heartbeat interval (30s).
+      // With the fix: exactly one heartbeat fires.
+      // Without the fix: two leaked timers fire simultaneously → two calls.
+      (workerRepository.updateHeartbeat as ReturnType<typeof vi.fn>).mockClear();
+      await vi.advanceTimersByTimeAsync(31_000);
+      // Exactly one heartbeat per interval — no leaked timer running in parallel
+      expect(workerRepository.updateHeartbeat).toHaveBeenCalledTimes(1);
+    });
+
+    it('B1-4: in-place remap clears flushingInProgress for old task so first new-task flush is not skipped', async () => {
+      // B1-4 regression: remapExistingWorkerForReuse must delete the old task's flushingInProgress
+      // entry before updating worker.taskId. Without the delete, an in-flight flush from the
+      // previous iteration could leave a stale entry that blocks the new task's first flush tick.
+      //
+      // This test triggers the in-place remap branch (WorkerState still present — no exit before reuse).
+      // It then verifies that the flush interval fires and calls getOutput for task2's ID on the
+      // first tick, proving the flush was NOT skipped due to a stale flushingInProgress entry.
+      //
+      // Strategy: Mock getOutput to track which taskId was flushed. Advance past one flush interval
+      // and confirm getOutput was called for task2 (not task1, not suppressed).
+      const task1 = buildPersistentTask('loop-b14', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-b14', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      // Do NOT simulate task1 exit — WorkerState stays in this.workers, hitting the in-place
+      // remap branch (remapExistingWorkerForReuse) rather than the re-registration branch.
+      const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+      expect(spawnResult.ok).toBe(true);
+
+      // Arrange: clear getOutput call history from task1 setup, then advance past one flush interval.
+      (outputCapture.getOutput as ReturnType<typeof vi.fn>).mockClear();
+      await vi.advanceTimersByTimeAsync(1_100); // past the 1s flush interval
+
+      // The first flush tick for task2 must NOT be skipped — getOutput must be called for task2.
+      const getOutputCalls = (outputCapture.getOutput as ReturnType<typeof vi.fn>).mock.calls;
+      const flushedForTask2 = getOutputCalls.some(([id]: [string]) => id === task2.id);
+      expect(flushedForTask2).toBe(true);
+    });
+
+    it('B1-5: in-place remap calls updateTaskId with the new task ID (DB re-registration)', async () => {
+      // B1-5 regression: remapExistingWorkerForReuse must call workerRepository.updateTaskId()
+      // to atomically update the DB worker registration from the old task ID to the new task ID.
+      // Without this, the worker row in the DB still references the old task — crash recovery
+      // would try to resume a stale task ID, leading to a ghost worker entry.
+      //
+      // This test triggers the in-place remap branch (WorkerState still present — no exit before reuse).
+      const task1 = buildPersistentTask('loop-b15', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-b15', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      // Do NOT simulate task1 exit — keeps WorkerState in this.workers, hitting in-place remap.
+      const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+      expect(spawnResult.ok).toBe(true);
+
+      // updateTaskId must have been called with task2's ID (the new DB registration).
+      expect(workerRepository.updateTaskId).toHaveBeenCalledWith(expect.objectContaining({ taskId: task2.id }));
+    });
+
+    it('B1-2: sendKeys failure on reuse cleans up WorkerState (falls through to fresh spawn)', async () => {
+      // B1-2: if sendKeys fails after worker state is remapped, cleanupWorkerState must be
+      // called to clear timers and remove the worker from maps — preventing orphaned callbacks.
+      // The call falls through to a fresh spawn.
+      const task1 = buildPersistentTask('loop-sendkeys-fail', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-sendkeys-fail', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+
+      // Make sendKeys fail on the prompt send inside reuseSession.
+      // The mock is installed AFTER task1's spawn, so call counts restart from 0.
+      // sendKeys call order from this point: (1) /clear in reuseSession,
+      // (2) task2 prompt in reuseSession — fail on call 2.
+      // Subsequent calls (fresh spawn prompt) must succeed so the fallback completes.
+      (tmuxConnector.sendKeys as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(ok(undefined)) // call 1: /clear succeeds
+        .mockReturnValueOnce(err(new Error('pipe broken'))); // call 2: prompt fails → fallthrough
+
+      const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // Must fall through to fresh spawn (ok result, 2 total spawns)
+      expect(spawnResult.ok).toBe(true);
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+
+      // The persistent session must be destroyed (cleanupPersistentSession called after cleanupWorkerState)
+      expect(tmuxConnector.destroy).toHaveBeenCalled();
     });
   });
 });

@@ -3,95 +3,26 @@
  * Tests for network timeouts, disconnections, and recovery
  *
  * ARCHITECTURE: These tests validate proper handling of network-related failures
+ * via the EventBus and general retry/latency patterns. Worker-level spawn
+ * failures are tested at the tmux layer (tmux-connector.test.ts).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task, Worker } from '../../../src/core/domain';
-import { BUFFER_SIZES, ERROR_MESSAGES, TIMEOUTS, WAIT_FOR } from '../../constants';
-import { TaskFactory, WorkerFactory } from '../../fixtures/factories';
-import { TestEventBus, TestProcessSpawner } from '../../fixtures/test-doubles';
-
-// Minimal SpawnOptions for TestProcessSpawner tests
-const testSpawnOptions = { prompt: 'test', workingDirectory: '/tmp' } as const;
+import { BUFFER_SIZES, TIMEOUTS } from '../../constants';
+import { WorkerFactory } from '../../fixtures/factories';
+import { TestEventBus } from '../../fixtures/test-doubles';
 
 describe('Network Failure Scenarios', () => {
-  let taskFactory: TaskFactory;
   let workerFactory: WorkerFactory;
-  let processSpawner: TestProcessSpawner;
   let eventBus: TestEventBus;
 
   beforeEach(() => {
-    taskFactory = new TaskFactory();
     workerFactory = new WorkerFactory();
-    processSpawner = new TestProcessSpawner();
     eventBus = new TestEventBus();
   });
 
   afterEach(() => {
-    processSpawner.clear();
     eventBus.dispose();
-  });
-
-  describe('Process Communication Failures', () => {
-    it('should handle process spawn timeout', () => {
-      // Set up spawn to hang
-      const timeoutError = new Error('spawn ETIMEDOUT');
-      processSpawner.setSpawnError(timeoutError);
-
-      const result = processSpawner.spawn(testSpawnOptions);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain('ETIMEDOUT');
-        expect(result.error.message).toContain('spawn');
-        expect(result.error).toBeInstanceOf(Error);
-        expect(result.error.message).toBe(timeoutError.message);
-      }
-    });
-
-    it('should handle process disconnection', () => {
-      const spawnResult = processSpawner.spawn(testSpawnOptions);
-      expect(spawnResult.ok).toBe(true);
-
-      if (spawnResult.ok) {
-        const { pid, process } = spawnResult.value;
-        const pidKey = pid.toString();
-
-        expect(pidKey).toBeTruthy();
-        expect(typeof pidKey).toBe('string');
-        expect(process).toBeDefined();
-
-        // Simulate process disconnection
-        processSpawner.simulateExit(pidKey, -1);
-
-        // Verify process is marked as killed
-        expect(processSpawner.isProcessKilled(pidKey)).toBe(true);
-      }
-    });
-
-    it('should handle stdout/stderr pipe broken', () => {
-      const spawnResult = processSpawner.spawn(testSpawnOptions);
-
-      expect(spawnResult.ok).toBe(true);
-      if (spawnResult.ok) {
-        const pidKey = spawnResult.value.pid.toString();
-
-        expect(pidKey).toBeTruthy();
-        expect(processSpawner.isProcessKilled(pidKey)).toBe(false);
-
-        // Simulate broken pipe by sending data after process exit
-        processSpawner.simulateExit(pidKey, 1);
-        expect(processSpawner.isProcessKilled(pidKey)).toBe(true);
-
-        // This should not throw
-        expect(() => {
-          processSpawner.simulateOutput(pidKey, 'stdout', 'data after exit');
-        }).not.toThrow();
-
-        // Process should remain killed
-        expect(processSpawner.isProcessKilled(pidKey)).toBe(true);
-      }
-    });
   });
 
   describe('Event Bus Communication Failures', () => {
@@ -154,38 +85,6 @@ describe('Network Failure Scenarios', () => {
       // After timeout, worker should be considered unresponsive
       if (now - lastHeartbeat > heartbeatTimeout) {
         expect(isUnresponsive).toBe(true);
-      }
-    });
-
-    it('should handle worker output buffer overflow', () => {
-      const spawnResult = processSpawner.spawn(testSpawnOptions);
-
-      if (spawnResult.ok) {
-        const pidKey = spawnResult.value.pid.toString();
-
-        // Simulate massive output
-        const hugeOutput = 'x'.repeat(10 * 1024 * 1024); // 10MB
-
-        // This should handle gracefully
-        processSpawner.simulateOutput(pidKey, 'stdout', hugeOutput);
-
-        // Process should still be alive
-        expect(processSpawner.isProcessKilled(pidKey)).toBe(false);
-      }
-    });
-
-    it('should handle worker sudden death', () => {
-      const spawnResult = processSpawner.spawn(testSpawnOptions);
-
-      if (spawnResult.ok) {
-        const { pid, process } = spawnResult.value;
-        const pidKey = pid.toString();
-
-        // Simulate SIGKILL
-        process.kill();
-
-        // Worker should be marked as killed
-        expect(processSpawner.isProcessKilled(pidKey)).toBe(true);
       }
     });
   });
@@ -339,39 +238,6 @@ describe('Network Failure Scenarios', () => {
   });
 
   describe('Edge Cases', () => {
-    it('should handle ECONNRESET errors', () => {
-      processSpawner.setSpawnError(new Error('spawn ECONNRESET'));
-
-      const result = processSpawner.spawn(testSpawnOptions);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain('ECONNRESET');
-      }
-    });
-
-    it('should handle EPIPE errors', () => {
-      processSpawner.setSpawnError(new Error('write EPIPE'));
-
-      const result = processSpawner.spawn(testSpawnOptions);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain('EPIPE');
-      }
-    });
-
-    it('should handle DNS resolution failures', () => {
-      processSpawner.setSpawnError(new Error('getaddrinfo ENOTFOUND'));
-
-      const result = processSpawner.spawn(testSpawnOptions);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain('ENOTFOUND');
-      }
-    });
-
     it('should handle maximum retry exceeded', async () => {
       let attempts = 0;
       const maxRetries = 3;

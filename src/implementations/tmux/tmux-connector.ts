@@ -25,6 +25,7 @@ import { err, ok } from '../../core/result.js';
 import type { TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
 import type {
   OutputMessage,
+  SetupShimConfig,
   SpawnCallbacks,
   StalenessConfig,
   TmuxConnectorPort,
@@ -132,10 +133,15 @@ export class TmuxConnector implements TmuxConnectorPort {
   /**
    * Spawns a new managed tmux session.
    * 1. Validates tmux availability
-   * 2. Generates the wrapper script
+   * 2. Generates the wrapper script (or setup shim for persistent mode)
    * 3. Starts fs.watch watchers (BEFORE session launch to avoid race)
    * 4. Creates the tmux session running the wrapper
    * 5. Starts (or restarts) the shared staleness timer
+   *
+   * DESIGN DECISION (Phase 5): When rawConfig.persistent=true, a setup shim is used
+   * instead of the wrapper pipeline. The agent runs as an interactive REPL — no --print,
+   * no piping. Output is captured via the Stop hook; completion via per-iteration sentinels.
+   * The session remains alive across iterations; WorkerPool manages reuse.
    */
   spawn(rawConfig: TmuxSpawnCoreConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
     // TmuxSpawnConfig extends TmuxSpawnCoreConfig (the port interface type) and adds
@@ -163,7 +169,22 @@ export class TmuxConnector implements TmuxConnectorPort {
     const validationResult = this.deps.validator.validate();
     if (!validationResult.ok) return validationResult;
 
-    // 2. Generate wrapper
+    // 2. Generate wrapper or setup shim depending on mode
+    if (config.persistent) {
+      const shimConfig: SetupShimConfig = {
+        taskId: config.taskId,
+        sessionsDir: config.sessionsDir,
+        agentCommand: config.command,
+        agentArgs: config.agentArgs,
+      };
+      const shimResult = this.deps.hooks.generateSetupShim(shimConfig);
+      if (!shimResult.ok) return shimResult;
+      const shim = shimResult.value;
+
+      return this.createAndRegisterSession(config, shim.shimPath, shim.messagesDir, shim.sessionDir, callbacks);
+    }
+
+    // Non-persistent (default): wrapper pipeline mode
     const manifestResult = this.deps.hooks.generateWrapper({
       taskId: config.taskId,
       agent: config.agent,
@@ -287,6 +308,14 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   isAlive(handle: TmuxHandle): Result<boolean, AutobeatError> {
     return this.deps.sessionManager.isAlive(handle.sessionName);
+  }
+
+  /**
+   * Delegates setEnvironment to the session manager.
+   * Used by WorkerPool for persistent session reuse (Phase 5).
+   */
+  setEnvironment(handle: TmuxHandle, varName: string, value: string): Result<void, AutobeatError> {
+    return this.deps.sessionManager.setSessionEnvironment(handle.sessionName, varName, value);
   }
 
   getActiveHandles(): TmuxHandle[] {

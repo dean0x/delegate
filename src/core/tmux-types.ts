@@ -82,6 +82,20 @@ export interface TmuxSpawnCoreConfig {
   readonly command: string;
   /** CLI arguments to pass to the agent */
   readonly agentArgs: readonly string[];
+  /**
+   * Optional environment variables to inject into the session.
+   * buildTmuxCommand() populates this (e.g. AUTOBEAT_WORKER=true).
+   * Callers that need to strip or override variables (e.g. interactive
+   * orchestrator removing AUTOBEAT_WORKER) can spread and override this field.
+   */
+  readonly env?: Record<string, string>;
+  /**
+   * Persistent session mode (Phase 5).
+   * When true: agent runs interactively (no --print), output captured via Stop hook,
+   * completion detected via per-iteration sentinel files. Used for loop iteration reuse.
+   * When false/absent: existing --print + wrapper pipeline mode.
+   */
+  readonly persistent?: boolean;
 }
 
 // ─── Port interfaces ──────────────────────────────────────────────────────────
@@ -142,6 +156,13 @@ export interface TmuxConnectorPort {
    */
   sendControlKeys(handle: TmuxHandle, keys: string): Result<void, AutobeatError>;
   isAlive(handle: TmuxHandle): Result<boolean, AutobeatError>;
+  /**
+   * Set a named environment variable in a running tmux session.
+   * Used by WorkerPool for persistent session reuse — updates AUTOBEAT_TASK_ID
+   * so the Stop hook attributes output to the new iteration's task ID.
+   * Implementation: `tmux set-environment -t <sessionName> <varName> <value>`
+   */
+  setEnvironment(handle: TmuxHandle, varName: string, value: string): Result<void, AutobeatError>;
   getActiveHandles(): TmuxHandle[];
   dispose(): void;
 }

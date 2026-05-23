@@ -2890,3 +2890,149 @@ describe('LoopHandler - Behavioral Tests', () => {
     });
   });
 });
+
+// ─── Phase 5: Persistent session key tests ───────────────────────────────────
+
+describe('LoopHandler — Phase 5: persistent session key', () => {
+  let eventBus: InMemoryEventBus;
+  let loopRepo: SQLiteLoopRepository;
+  let taskRepo: SQLiteTaskRepository;
+  let database: Database;
+  let logger: TestLogger;
+  let mockCheckpointRepo: ReturnType<typeof createMockCheckpointRepo>;
+  let mockEvaluator: ExitConditionEvaluator & { evaluate: ReturnType<typeof vi.fn> };
+  let cleanupPersistentSession: ReturnType<typeof vi.fn>;
+
+  function createMockCheckpointRepoLocal() {
+    return {
+      findLatest: vi.fn().mockResolvedValue({ ok: true, value: null }),
+      save: vi.fn().mockResolvedValue({ ok: true, value: null }),
+      findAll: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      deleteByTask: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
+    };
+  }
+
+  beforeEach(async () => {
+    logger = new TestLogger();
+    const config = createTestConfiguration();
+    eventBus = new InMemoryEventBus(config, logger);
+    database = new Database(':memory:');
+    loopRepo = new SQLiteLoopRepository(database);
+    taskRepo = new SQLiteTaskRepository(database);
+    mockCheckpointRepo = createMockCheckpointRepoLocal();
+    mockEvaluator = { evaluate: vi.fn().mockResolvedValue({ passed: false, exitCode: 1 }) };
+    cleanupPersistentSession = vi.fn();
+
+    const mockWorkerPool = {
+      spawn: vi.fn().mockResolvedValue({ ok: true, value: {} }),
+      kill: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
+      killAll: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
+      getWorker: vi.fn().mockReturnValue({ ok: true, value: null }),
+      getWorkers: vi.fn().mockReturnValue({ ok: true, value: [] }),
+      getWorkerCount: vi.fn().mockReturnValue(0),
+      getWorkerForTask: vi.fn().mockReturnValue({ ok: true, value: null }),
+      cleanupPersistentSession,
+    };
+
+    const handlerResult = await LoopHandler.create({
+      loopRepo,
+      taskRepo,
+      checkpointRepo: mockCheckpointRepo,
+      eventBus,
+      database,
+      exitConditionEvaluator: mockEvaluator,
+      logger,
+      workerPool: mockWorkerPool as unknown as Parameters<typeof LoopHandler.create>[0]['workerPool'],
+    });
+    if (!handlerResult.ok) {
+      throw new Error(`Failed to create LoopHandler: ${handlerResult.error.message}`);
+    }
+  });
+
+  afterEach(() => {
+    eventBus.dispose();
+    database.close();
+  });
+
+  async function createAndEmitLoop(overrides: Partial<Parameters<typeof createLoop>[0]> = {}) {
+    const loop = createLoop(
+      {
+        prompt: 'Run tests',
+        strategy: LoopStrategy.RETRY,
+        exitCondition: 'test -f /tmp/done',
+        maxIterations: 5,
+        maxConsecutiveFailures: 3,
+        cooldownMs: 0,
+        freshContext: false,
+        evalTimeout: 60000,
+        ...overrides,
+      },
+      '/tmp',
+    );
+    await eventBus.emit('LoopCreated', { loop });
+    await flushEventLoop();
+    return loop;
+  }
+
+  async function getLatestTaskId(loopId: LoopId): Promise<TaskId | undefined> {
+    const result = await loopRepo.getIterations(loopId, 1);
+    if (!result.ok || result.value.length === 0) return undefined;
+    return result.value[0]?.taskId;
+  }
+
+  it('sets persistentSessionKey to loop-{loopId} on tasks emitted via TaskDelegated', async () => {
+    // Capture the TaskDelegated event to inspect the in-memory task object.
+    // persistentSessionKey is NOT persisted to DB (in-memory only), so we must
+    // check via the event rather than a DB round-trip.
+    const delegatedTasks: Array<{ persistentSessionKey?: string }> = [];
+    eventBus.subscribe('TaskDelegated', (event: { task: { persistentSessionKey?: string } }) => {
+      delegatedTasks.push(event.task);
+      return ok(undefined);
+    });
+
+    const loop = await createAndEmitLoop();
+    await flushEventLoop();
+
+    expect(delegatedTasks.length).toBeGreaterThan(0);
+    expect(delegatedTasks[0]?.persistentSessionKey).toBe(`loop-${loop.id}`);
+  });
+
+  it('calls cleanupPersistentSession when loop completes (exit condition passes)', async () => {
+    // Exit condition passes immediately — loop terminates
+    mockEvaluator.evaluate.mockResolvedValue({ passed: true, exitCode: 0 });
+
+    const loop = await createAndEmitLoop();
+    const task1Id = await getLatestTaskId(loop.id);
+
+    await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+    await flushEventLoop();
+
+    expect(cleanupPersistentSession).toHaveBeenCalledWith(`loop-${loop.id}`);
+  });
+
+  it('calls cleanupPersistentSession when loop hits maxIterations', async () => {
+    mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+    const loop = await createAndEmitLoop({ maxIterations: 2, maxConsecutiveFailures: 10 });
+
+    const task1Id = await getLatestTaskId(loop.id);
+    await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+    await flushEventLoop();
+
+    const task2Id = await getLatestTaskId(loop.id);
+    await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+    await flushEventLoop();
+
+    // maxIterations=2 reached — loop terminates and persistent session is cleaned up
+    expect(cleanupPersistentSession).toHaveBeenCalledWith(`loop-${loop.id}`);
+  });
+
+  it('calls cleanupPersistentSession when loop is cancelled', async () => {
+    const loop = await createAndEmitLoop();
+
+    await eventBus.emit('LoopCancelled', { loopId: loop.id });
+    await flushEventLoop();
+
+    expect(cleanupPersistentSession).toHaveBeenCalledWith(`loop-${loop.id}`);
+  });
+});

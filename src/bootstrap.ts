@@ -22,7 +22,6 @@ import {
   OutputCapture,
   OutputRepository,
   PipelineRepository,
-  ProcessSpawner,
   ResourceMonitor,
   ScheduleRepository,
   ScheduleService,
@@ -70,8 +69,6 @@ export function deriveModeFlags(mode: BootstrapMode): ModeFlags {
     skipRecovery: mode === 'cli',
     // DECISION: Proxy starts in any mode that spawns workers ('server', 'run').
     // Skipped in 'cli' mode (management commands that never spawn workers).
-    // The processSpawner guard is separate — checked at the call site because
-    // it's an options check, not a mode-derived flag.
     skipProxy: mode === 'cli',
   };
 }
@@ -79,13 +76,17 @@ export function deriveModeFlags(mode: BootstrapMode): ModeFlags {
 export interface BootstrapOptions {
   /** Bootstrap mode controlling which subsystems are initialized (default: 'server') */
   mode?: BootstrapMode;
-  /** Custom ProcessSpawner (e.g., NoOpProcessSpawner for tests) */
-  processSpawner?: ProcessSpawner;
   /** Custom ResourceMonitor (e.g., TestResourceMonitor for tests) */
   resourceMonitor?: ResourceMonitor;
   /** Custom TmuxConnectorPort (e.g., MockTmuxConnector for tests without tmux installed) */
   tmuxConnector?: TmuxConnectorPort;
-  /** Custom AgentRegistry (e.g., createTmuxAgentRegistry() for tests) — overrides processSpawner */
+  /**
+   * Custom exec function for tmux commands (e.g., injected mock for tests that need to
+   * simulate missing or outdated tmux without mocking child_process at module level).
+   * When omitted, defaults to spawnSync-based exec.
+   */
+  tmuxExec?: ExecFn;
+  /** Custom AgentRegistry (e.g., createTmuxAgentRegistry() for tests) */
   agentRegistry?: AgentRegistry;
   /**
    * Custom Logger instance — when provided, this logger is used instead of the
@@ -101,7 +102,7 @@ import { MCPAdapter } from './adapters/mcp-adapter.js';
 
 // Core
 import type { AgentRegistry } from './core/agents.js';
-import type { TmuxConnectorPort } from './core/tmux-types.js';
+import type { TmuxConnectorPort, TmuxSessionManagerCorePort } from './core/tmux-types.js';
 // Implementations
 import { InMemoryAgentRegistry } from './implementations/agent-registry.js';
 import { SQLiteCheckpointRepository } from './implementations/checkpoint-repository.js';
@@ -116,7 +117,6 @@ import { SQLiteOrchestrationRepository } from './implementations/orchestration-r
 import { BufferedOutputCapture } from './implementations/output-capture.js';
 import { SQLiteOutputRepository } from './implementations/output-repository.js';
 import { SQLitePipelineRepository } from './implementations/pipeline-repository.js';
-import { ProcessSpawnerAdapter } from './implementations/process-spawner-adapter.js';
 import { SystemResourceMonitor } from './implementations/resource-monitor.js';
 import { SQLiteScheduleRepository } from './implementations/schedule-repository.js';
 import { PriorityTaskQueue } from './implementations/task-queue.js';
@@ -378,13 +378,21 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   // Register OrchestrationService for orchestrator mode (v0.9.0)
   // Cancel cascade (v1.3.0) is handled by AttributedTaskCancellationHandler via OrchestrationCancelled event.
+  // Phase 5: tmuxSessionManager injected for interactive orchestration session cancel support.
+  // The tmuxSessionManager resolves lazily — it is registered later in bootstrap but the
+  // factory does not run until orchestrationService is first resolved.
   container.registerSingleton('orchestrationService', () => {
+    // Attempt to resolve tmuxSessionManager; absent in test environments or when a
+    // custom TmuxConnectorPort was injected without a separate session manager.
+    const tmuxSessionManagerResult = container.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
+    const tmuxSessionManager = tmuxSessionManagerResult.ok ? tmuxSessionManagerResult.value : undefined;
     return new OrchestrationManagerService({
       eventBus: getFromContainer<EventBus>(container, 'eventBus'),
       logger: getFromContainer<Logger>(container, 'logger').child({ module: 'OrchestrationManager' }),
       orchestrationRepo: getFromContainer<OrchestrationRepository>(container, 'orchestrationRepository'),
       loopService: getFromContainer<LoopService>(container, 'loopService'),
       config,
+      tmuxSessionManager,
     });
   });
 
@@ -409,8 +417,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // and factory functions are synchronous. Eager start ensures consistency.
   //
   // DECISION: Proxy starts in server and run modes (both spawn workers).
-  // Skipped in cli mode (management commands that never spawn workers) and
-  // when a processSpawner is injected (tests with mock spawners).
+  // Skipped in cli mode (management commands that never spawn workers).
   //
   // DECISION: Proxy failure is fatal when config exists. The user
   // explicitly configured proxy — falling back to direct Anthropic API
@@ -419,7 +426,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // ============================================================================
   let proxyPort: number | undefined;
 
-  if (!options.processSpawner && !skipProxy) {
+  if (!skipProxy) {
     const claudeConfig = loadAgentConfig('claude');
     // DECISION: Skip proxy startup when runtime is set — runtime (e.g. ollama) handles
     // API routing itself, so the translation proxy is not needed and would conflict.
@@ -446,18 +453,13 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   }
 
   // Register AgentRegistry for multi-agent support (v0.5.0)
-  // ARCHITECTURE: If a custom ProcessSpawner is injected (tests), wrap it in a
-  // compatibility adapter. Otherwise, register all 4 agent adapters.
-  // If a translation proxy is active (proxyPort set), use ProxiedClaudeAdapter.
+  // ARCHITECTURE: Use injected AgentRegistry if provided (tests inject a mock registry).
+  // Otherwise register Claude + Codex adapters; use ProxiedClaudeAdapter when
+  // the translation proxy is active.
   container.registerSingleton('agentRegistry', () => {
     if (options.agentRegistry) {
       logger.info('Using injected AgentRegistry');
       return options.agentRegistry;
-    }
-    if (options.processSpawner) {
-      logger.info('Using ProcessSpawnerAdapter for injected ProcessSpawner');
-      const adapter = new ProcessSpawnerAdapter(options.processSpawner);
-      return new InMemoryAgentRegistry([adapter]);
     }
 
     const configResult = container.get<Configuration>('config');
@@ -511,10 +513,15 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // DECISION: Shared exec function for all tmux components — spawnSync with shell: true
   // so compound commands work correctly. Single allocation — reused by validator,
   // session manager, and (indirectly) the connector via its deps.
-  const tmuxExec: ExecFn = (cmd) => {
-    const result = spawnSync(cmd, { shell: true, encoding: 'utf8', timeout: 10_000 });
-    return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status ?? -1 };
-  };
+  // DECISION: options.tmuxExec injection point allows tests to provide a custom exec
+  // without mocking child_process at module level (which pollutes other test files in
+  // non-isolated vitest mode).
+  const tmuxExec: ExecFn =
+    options.tmuxExec ??
+    ((cmd) => {
+      const result = spawnSync(cmd, { shell: true, encoding: 'utf8', timeout: 10_000 });
+      return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status ?? -1 };
+    });
 
   let tmuxSessionManager: TmuxSessionManager | undefined;
 
@@ -542,6 +549,25 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     });
   }
 
+  // Eager tmux validation: fail fast on server/run startup if tmux is missing or too old.
+  // Skipped when a connector is injected (tests) or in CLI mode (no worker spawning needed).
+  // DECISION: Validate once at bootstrap rather than at first spawn to surface misconfiguration
+  // immediately (fail-fast) instead of allowing the server to start and then silently reject tasks.
+  if (!options.tmuxConnector && mode !== 'cli') {
+    const validationResult = new TmuxValidator({ exec: tmuxExec }).validate();
+    if (!validationResult.ok) {
+      return err(
+        new AutobeatError(
+          ErrorCode.SYSTEM_ERROR,
+          `tmux validation failed: ${validationResult.error.message}\n\n` +
+            '  tmux >= 3.0 is required for background task execution.\n' +
+            '  Install: brew install tmux (macOS) or apt-get install tmux (Linux)\n',
+        ),
+      );
+    }
+    logger.info('tmux validated', { version: validationResult.value.version });
+  }
+
   // sessionsDir lives alongside the database file (e.g. ~/.autobeat/sessions/)
   // DECISION: Colocation with DB ensures sessions data is managed with the same
   // lifecycle and backup/migration considerations as the rest of autobeat state.
@@ -550,6 +576,9 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     return err(new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Failed to get database for sessionsDir computation'));
   }
   const sessionsDir = path.join(path.dirname(dbResult.value.getPath()), 'sessions');
+  // Register sessionsDir as a value so CLI commands (e.g. orchestrate --interactive)
+  // can resolve it from the container when they need to build tmux session configs.
+  container.registerValue('sessionsDir', sessionsDir);
 
   // Register worker pool (Phase 3: uses TmuxConnectorPort + sessionsDir)
   container.registerSingleton('workerPool', () => {

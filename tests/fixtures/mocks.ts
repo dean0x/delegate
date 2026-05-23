@@ -1,13 +1,11 @@
 import type { EventEmitter } from 'events';
 import { vi } from 'vitest';
-import type { SpawnOptions } from '../../src/core/agents';
 import type { Task, TaskId, Worker, WorkerOptions } from '../../src/core/domain';
 import type {
   EventBus,
   Logger,
   OutputCapture,
   OutputRepository,
-  ProcessSpawner,
   ResourceMonitor,
   TaskQueue,
   TaskRepository,
@@ -76,14 +74,6 @@ export const createMockTaskRepository = (): TaskRepository => ({
   findByStatus: vi.fn(async (status: Task['status']): Promise<Result<Task[]>> => ({ ok: true, value: [] })),
 });
 
-export const createMockProcessSpawner = (): ProcessSpawner => ({
-  spawn: vi.fn((_options: SpawnOptions) => ({
-    ok: true as const,
-    value: { process: {} as ReturnType<typeof import('child_process').spawn>, pid: 12345 },
-  })),
-  kill: vi.fn((_pid: number) => ({ ok: true as const, value: undefined })),
-});
-
 export const createMockOutputCapture = (): OutputCapture => ({
   capture: vi.fn(async (workerId: string, data: string): Promise<Result<void>> => ({ ok: true, value: undefined })),
   getOutput: vi.fn(async (workerId: string): Promise<Result<string>> => ({ ok: true, value: '' })),
@@ -117,6 +107,7 @@ export const createMockTaskQueue = (): TaskQueue => ({
 export const createMockWorkerRepository = (): WorkerRepository => ({
   register: vi.fn().mockReturnValue(ok(undefined)),
   unregister: vi.fn().mockReturnValue(ok(undefined)),
+  updateTaskId: vi.fn().mockReturnValue(ok(undefined)),
   findByTaskId: vi.fn().mockReturnValue(ok(null)),
   findBySessionName: vi.fn().mockReturnValue(ok(null)),
   findAll: vi.fn().mockReturnValue(ok([])),
@@ -171,6 +162,7 @@ export const createMockTmuxConnector = (opts?: { autoComplete?: boolean }): Mock
     sendKeys: vi.fn().mockReturnValue(ok(undefined)),
     sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
     isAlive: vi.fn().mockReturnValue(ok(true)),
+    setEnvironment: vi.fn().mockReturnValue(ok(undefined)),
     getActiveHandles: vi.fn().mockReturnValue([]),
     dispose: vi.fn(),
 

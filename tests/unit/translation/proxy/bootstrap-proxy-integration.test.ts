@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrap, deriveModeFlags } from '../../../../src/bootstrap.js';
 import { _testSetConfigDir } from '../../../../src/core/configuration.js';
 import { loadProxyConfig } from '../../../../src/translation/proxy/proxy-manager.js';
+import { createMockTmuxConnector } from '../../../fixtures/mocks.js';
 
 describe('loadProxyConfig', () => {
   let tempDir: string;
@@ -190,7 +191,7 @@ describe('proxy startup by bootstrap mode', () => {
 
   it('starts proxy in run mode when proxy config exists', async () => {
     await writeFile(join(tempDir, 'config.json'), JSON.stringify(proxyConfig));
-    const result = await bootstrap({ mode: 'run' });
+    const result = await bootstrap({ mode: 'run', tmuxConnector: createMockTmuxConnector() });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const container = result.value;
@@ -216,7 +217,7 @@ describe('proxy startup by bootstrap mode', () => {
 
   it('container.dispose() stops proxy cleanly', async () => {
     await writeFile(join(tempDir, 'config.json'), JSON.stringify(proxyConfig));
-    const result = await bootstrap({ mode: 'run' });
+    const result = await bootstrap({ mode: 'run', tmuxConnector: createMockTmuxConnector() });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const container = result.value;
@@ -240,7 +241,7 @@ describe('proxy startup by bootstrap mode', () => {
       },
     };
     await writeFile(join(tempDir, 'config.json'), JSON.stringify(configWithRuntime));
-    const result = await bootstrap({ mode: 'run' });
+    const result = await bootstrap({ mode: 'run', tmuxConnector: createMockTmuxConnector() });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const container = result.value;

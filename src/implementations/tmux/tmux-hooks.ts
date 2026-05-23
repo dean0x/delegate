@@ -22,7 +22,7 @@ import { tmuxHookFailed } from '../../core/errors.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import { singleQuoteToken } from './tmux-shell-utils.js';
-import type { TmuxHooksPort, WrapperConfig, WrapperManifest } from './types.js';
+import type { SetupShimConfig, SetupShimManifest, TmuxHooksPort, WrapperConfig, WrapperManifest } from './types.js';
 import { SAFE_PATH_REGEX, SENTINEL_DONE, SENTINEL_EXIT, SESSION_NAME_REGEX, TASK_ID_REGEX } from './types.js';
 
 /** Octal permission bits for session directories and scripts (owner read/write/execute only) */
@@ -130,7 +130,7 @@ trap _sentinel_guard EXIT
 # written. pipefail remains active (set via -o pipefail above) so PIPESTATUS[0]
 # reflects the agent exit code correctly.
 set +e
-${config.agentCommand} ${agentArgs} 2>&1 | while IFS= read -r line; do
+${singleQuoteToken(config.agentCommand)} ${agentArgs} 2>&1 | while IFS= read -r line; do
   SEQ=$(next_seq)
   TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
   ESCAPED=$(printf '%s' "$line" | jq -Rs .)
@@ -152,6 +152,50 @@ fi
 ${communicationBlock}
 
 exit "$EXIT_CODE"
+`;
+}
+
+/**
+ * Generates the setup shim script for a persistent interactive session.
+ *
+ * The shim initialises the messages directory and sequence counter, then
+ * exec-replaces itself with the agent running in interactive REPL mode
+ * (no --print). Output capture is handled by the agent's Stop hook, which
+ * writes message JSON files and per-iteration sentinel files.
+ *
+ * SECURITY: All paths and command values are single-quoted. agentCommand
+ * is validated against SAFE_PATH_REGEX before embedding.
+ */
+function buildSetupShim(config: SetupShimConfig): string {
+  // Defense-in-depth: validate agentCommand even though generateSetupShim() validates
+  // before calling this function. Guards against future callers bypassing the outer check.
+  if (!SAFE_PATH_REGEX.test(config.agentCommand)) {
+    throw new Error(`unsafe agentCommand in buildSetupShim: ${config.agentCommand}`);
+  }
+
+  const sessionDir = path.join(config.sessionsDir, config.taskId);
+  const agentArgs = config.agentArgs.map(singleQuoteToken).join(' ');
+  const sessionDirToken = singleQuoteToken(sessionDir);
+
+  return `#!/bin/bash
+set -euo pipefail
+
+SESSIONS_DIR=${sessionDirToken}
+MESSAGES_DIR="$SESSIONS_DIR/messages"
+SEQ_FILE="$SESSIONS_DIR/.seq"
+
+# Initialise session directory structure and sequence counter.
+mkdir -p "$MESSAGES_DIR"
+echo 0 > "$SEQ_FILE"
+
+# Set env vars for the Stop hook.
+export AUTOBEAT_WORKER=true
+export AUTOBEAT_TASK_ID=${singleQuoteToken(config.taskId)}
+export AUTOBEAT_SESSIONS_DIR=${singleQuoteToken(config.sessionsDir)}
+
+# exec-replace this shell with the agent REPL (interactive mode, no output piping).
+# The agent owns the tmux session from this point forward.
+exec ${singleQuoteToken(config.agentCommand)} ${agentArgs}
 `;
 }
 
@@ -222,6 +266,46 @@ export class TmuxHooks implements TmuxHooksPort {
       messagesDir,
       seqFilePath,
     });
+  }
+
+  /**
+   * Generates the session directory and setup shim for a persistent interactive session.
+   * The shim initialises the messages directory and seq file, then execs the agent
+   * interactively (no --print). Output is captured via the Stop hook mechanism.
+   */
+  generateSetupShim(config: SetupShimConfig): Result<SetupShimManifest, AutobeatError> {
+    const baseCheck = this.validateBaseInputs('generateSetupShim', config.taskId, config.sessionsDir);
+    if (!baseCheck.ok) return baseCheck;
+
+    // SECURITY: Validate agentCommand against SAFE_PATH_REGEX before embedding
+    if (!SAFE_PATH_REGEX.test(config.agentCommand)) {
+      return err(
+        tmuxHookFailed('generateSetupShim', `unsafe agentCommand: ${config.agentCommand}`, {
+          taskId: config.taskId,
+          agentCommand: config.agentCommand,
+        }),
+      );
+    }
+
+    const sessionDir = path.join(config.sessionsDir, config.taskId);
+    const messagesDir = path.join(sessionDir, 'messages');
+    const shimPath = path.join(sessionDir, 'setup-shim.sh');
+
+    try {
+      // Create session root directory and messages subdirectory.
+      // The shim script itself will re-init these at runtime, but we create them
+      // here so TmuxConnector can set up fs.watch watchers before session launch.
+      this.deps.mkdirSync(sessionDir, { recursive: true, mode: FILE_MODE });
+      this.deps.mkdirSync(messagesDir, { recursive: true, mode: FILE_MODE });
+
+      const shimContent = buildSetupShim(config);
+      this.deps.writeFile(shimPath, shimContent, { mode: FILE_MODE });
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      return err(tmuxHookFailed('generateSetupShim', reason, { taskId: config.taskId, sessionDir }));
+    }
+
+    return ok({ shimPath, sessionDir, messagesDir });
   }
 
   /**

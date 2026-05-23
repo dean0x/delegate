@@ -123,19 +123,6 @@ export const createMockWorkerPool = () => ({
   size: () => 0,
 });
 
-export const createMockProcessSpawner = () => ({
-  spawn: () =>
-    Promise.resolve({
-      ok: true,
-      value: {
-        id: 'worker-123',
-        process: { pid: 12345 },
-      },
-    }),
-  kill: () => Promise.resolve({ ok: true, value: undefined }),
-  sendInput: () => Promise.resolve({ ok: true, value: undefined }),
-});
-
 export const createMockResourceMonitor = () => ({
   getResources: () =>
     Promise.resolve({

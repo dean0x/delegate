@@ -7,8 +7,9 @@
  * ARCHITECTURE: Uses real bootstrap, real EventBus, real SQLite (temp file-based DB)
  * Pattern: Matches task-dependencies.test.ts integration test conventions
  *
- * NOTE: NoOpProcessSpawner causes tasks to complete immediately (exit code 0).
- * For testing failure paths, we emit TaskFailed events manually.
+ * NOTE: MockTmuxConnector with autoComplete:true causes tasks to complete
+ * immediately (exit code 0). For testing failure paths, we emit TaskFailed
+ * events manually.
  */
 
 import { mkdtemp, rm } from 'fs/promises';
@@ -94,8 +95,9 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
   });
 
   /**
-   * Helper: Delegate a task and wait for it to complete via NoOpProcessSpawner
-   * NoOpProcessSpawner emits exit code 0 immediately, so task goes queued -> running -> completed
+   * Helper: Delegate a task and wait for it to complete via MockTmuxConnector
+   * MockTmuxConnector (autoComplete:true) emits exit code 0 immediately, so task
+   * goes queued -> running -> completed
    */
   async function delegateAndWaitForCompletion(prompt: string): Promise<Task> {
     // Set up completion listener before delegating to capture the async exit
@@ -109,7 +111,7 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(`Delegate failed: ${result.error.message}`);
 
-    // Wait for NoOpProcessSpawner's setImmediate exit → TaskCompleted
+    // Wait for MockTmuxConnector's auto-complete exit → TaskCompleted
     await completedPromise;
     await flushEventLoop();
 
@@ -136,7 +138,7 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
       if (!checkpointResult.ok) return;
 
       // Checkpoint may or may not exist depending on whether the task was
-      // persisted before checkpoint handler runs. With NoOpProcessSpawner
+      // persisted before checkpoint handler runs. With MockTmuxConnector
       // exit is nearly instant, so the task should be in the repo.
       if (checkpointResult.value) {
         expect(checkpointResult.value.taskId).toBe(task.id);
@@ -148,9 +150,9 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
       // Delegate a task so it gets persisted
       const task = await delegateAndWaitForCompletion('Will be failed manually');
 
-      // The task auto-completed via NoOpProcessSpawner, but we can still test
+      // The task auto-completed via MockTmuxConnector, but we can still test
       // the failure checkpoint path by emitting TaskFailed for a new task
-      // Wait for auto-completion from NoOpProcessSpawner before emitting manual failure
+      // Wait for auto-completion from MockTmuxConnector before emitting manual failure
       const autoCompletePromise = waitForEvent(eventBus, 'TaskCompleted');
       const failTask = await taskManager.delegate({
         prompt: 'Failure checkpoint test',
@@ -170,7 +172,7 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
 
       const failCheckpointPromise = waitForEvent(eventBus, 'CheckpointCreated');
 
-      // Manually emit TaskFailed event (since NoOpProcessSpawner always exits 0)
+      // Manually emit TaskFailed event (since MockTmuxConnector always exits 0)
       await eventBus.emit('TaskFailed', {
         taskId: failTask.value.id,
         error: new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Simulated test failure'),
@@ -199,7 +201,7 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
       // Step 1: Create and complete a task
       const originalTask = await delegateAndWaitForCompletion('Original task for resume test');
 
-      // Step 2: Delete auto-created checkpoint (NoOpProcessSpawner produces no output,
+      // Step 2: Delete auto-created checkpoint (MockTmuxConnector produces no output,
       // so auto-checkpoint lacks the rich context this test needs), then save one with
       // explicit data. Without deletion, findLatest may return the empty auto-checkpoint
       // when both share the same created_at millisecond.
@@ -298,7 +300,7 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
       expect(delegateResult.ok).toBe(true);
       if (!delegateResult.ok) return;
 
-      // With NoOpProcessSpawner the task may already be completed by now.
+      // With MockTmuxConnector the task may already be completed by now.
       // To test validation, we need a task in running/queued state.
       // The best we can do is try immediately before the event loop processes completion.
       // If the task already completed, this test validates the error message pattern.
@@ -307,8 +309,8 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
       });
 
       // If task is still running/queued, this should fail with INVALID_OPERATION
-      // If task already completed (due to NoOpProcessSpawner timing), resume should succeed
-      // We check both outcomes since timing is non-deterministic with NoOpProcessSpawner
+      // If task already completed (due to MockTmuxConnector timing), resume should succeed
+      // We check both outcomes since timing is non-deterministic with MockTmuxConnector
       if (!resumeResult.ok) {
         expect(resumeResult.error.message).toMatch(/cannot be resumed/i);
       }
@@ -348,7 +350,7 @@ describe('Integration: Task Resumption - End-to-End Flow', () => {
       expect(firstResume.retryCount).toBe(1);
       expect(firstResume.retryOf).toBe(originalTask.id);
 
-      // Wait for first resume task to complete via NoOpProcessSpawner
+      // Wait for first resume task to complete via MockTmuxConnector
       await resumeCompletedPromise;
       await flushEventLoop();
 

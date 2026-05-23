@@ -32,6 +32,7 @@ import {
   writeStateFile,
 } from '../core/orchestrator-state.js';
 import { err, ok, type Result } from '../core/result.js';
+import type { TmuxSessionManagerCorePort } from '../core/tmux-types.js';
 import { validatePath } from '../utils/validation.js';
 import { buildGoalEvalPrompt, buildOrchestratorPrompt } from './orchestrator-prompt.js';
 
@@ -41,6 +42,13 @@ export interface OrchestrationManagerServiceDeps {
   readonly orchestrationRepo: OrchestrationRepository;
   readonly loopService: LoopService;
   readonly config: Configuration;
+  /**
+   * Optional: TmuxSessionManagerCorePort for direct session destroy by name in the cancel path.
+   * Destroy-by-name is used instead of the connector's destroy(handle) because the cancel
+   * path runs in a different process/instance where the session is not actively tracked.
+   * When omitted, cancel falls back to PID-based SIGTERM.
+   */
+  readonly tmuxSessionManager?: TmuxSessionManagerCorePort;
 }
 
 export class OrchestrationManagerService implements OrchestrationService {
@@ -49,6 +57,7 @@ export class OrchestrationManagerService implements OrchestrationService {
   private readonly orchestrationRepo: OrchestrationRepository;
   private readonly loopService: LoopService;
   private readonly config: Configuration;
+  private readonly tmuxSessionManager: TmuxSessionManagerCorePort | undefined;
 
   constructor(deps: OrchestrationManagerServiceDeps) {
     this.eventBus = deps.eventBus;
@@ -56,6 +65,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     this.orchestrationRepo = deps.orchestrationRepo;
     this.loopService = deps.loopService;
     this.config = deps.config;
+    this.tmuxSessionManager = deps.tmuxSessionManager;
     this.logger.debug('OrchestrationManagerService initialized');
   }
 
@@ -425,23 +435,24 @@ export class OrchestrationManagerService implements OrchestrationService {
     return ok({ orchestration, systemPrompt: systemPromptWithAddendum, userPrompt: finalUserPrompt });
   }
 
-  async updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<boolean>> {
-    if (!Number.isInteger(pid) || pid <= 0) {
-      return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, `Invalid PID: ${pid}. PID must be a positive integer.`, { pid }),
-      );
+  async updateInteractiveOrchestrationSessionName(id: OrchestratorId, sessionName: string): Promise<Result<boolean>> {
+    if (!sessionName || sessionName.trim().length === 0) {
+      return err(new AutobeatError(ErrorCode.INVALID_INPUT, 'sessionName must be a non-empty string', { sessionName }));
     }
 
     const lookupResult = await this.getOrchestration(id);
     if (!lookupResult.ok) return lookupResult;
 
-    const updated = updateOrchestration(lookupResult.value, { pid });
+    // Use pid=0 sentinel (tmux worker convention from migration v29) to mark this as a tmux
+    // orchestration — remote cancel checks sessionName first, so pid sentinel is for
+    // liveness disambiguation only.
+    const updated = updateOrchestration(lookupResult.value, { sessionName, pid: 0 });
     const updateResult = await this.orchestrationRepo.updateIfStatus(updated, OrchestratorStatus.RUNNING);
     if (!updateResult.ok) return err(updateResult.error);
     if (!updateResult.value) {
-      this.logger.info('Orchestration already transitioned from RUNNING — PID update skipped', {
+      this.logger.info('Orchestration already transitioned from RUNNING — session name update skipped', {
         orchestratorId: id,
-        pid,
+        sessionName,
       });
     }
     return ok(updateResult.value);
@@ -572,10 +583,27 @@ export class OrchestrationManagerService implements OrchestrationService {
     this.logger.info('Cancelling orchestration', { orchestratorId: id, reason });
 
     if (orchestration.mode === 'interactive') {
-      // Interactive mode: send SIGTERM to stored PID, then update DB directly.
-      // Guard ensures only positive integer PIDs reach process.kill —
-      // defensive against rows written before the PID validation was added.
-      if (orchestration.pid && Number.isInteger(orchestration.pid) && orchestration.pid > 0) {
+      // Interactive mode: prefer tmux session destroy (Phase 5), fall back to SIGTERM (pre-Phase 5).
+      // Backward compat: orchestrations that have session_name use tmux destroy;
+      // orchestrations that only have pid > 0 (spawned before Phase 5) use SIGTERM.
+      if (orchestration.sessionName && this.tmuxSessionManager) {
+        // Phase 5: destroy the tmux session by name directly.
+        // TmuxSessionManagerCorePort.destroySession is idempotent — returns ok even if session
+        // is already gone. The cancel path is called from a different process instance where
+        // the session is not actively tracked (so connector destroy would no-op).
+        const destroyResult = this.tmuxSessionManager.destroySession(orchestration.sessionName);
+        if (!destroyResult.ok) {
+          this.logger.warn('tmux session destroy returned error during cancel (session may already be gone)', {
+            orchestratorId: id,
+            sessionName: orchestration.sessionName,
+            error: destroyResult.error.message,
+          });
+          // Proceed with DB update even if destroy failed — session may already be gone
+        }
+      } else if (orchestration.pid && Number.isInteger(orchestration.pid) && orchestration.pid > 0) {
+        // Pre-Phase 5 fallback: send SIGTERM to stored PID.
+        // Guard ensures only positive integer PIDs reach process.kill —
+        // defensive against rows written before the PID validation was added.
         try {
           process.kill(orchestration.pid, 'SIGTERM');
         } catch {

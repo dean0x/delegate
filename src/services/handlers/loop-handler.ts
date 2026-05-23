@@ -41,6 +41,7 @@ import type {
   SyncTaskOperations,
   TaskRepository,
   TransactionRunner,
+  WorkerPool,
 } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
 import {
@@ -93,6 +94,14 @@ export interface LoopHandlerDeps {
   readonly database: TransactionRunner;
   readonly exitConditionEvaluator: ExitConditionEvaluator;
   readonly logger: Logger;
+  /**
+   * WorkerPool injected for persistent session cleanup (Phase 5).
+   * When a loop completes, fails terminally, or is cancelled, LoopHandler calls
+   * workerPool.cleanupPersistentSession("loop-{loopId}") to tear down the
+   * long-lived tmux REPL session. Optional for backward compatibility with tests
+   * that do not exercise persistent session cleanup.
+   */
+  readonly workerPool?: WorkerPool;
 }
 
 /**
@@ -119,6 +128,7 @@ export class LoopHandler extends BaseEventHandler {
   private readonly eventBus: EventBus;
   private readonly database: TransactionRunner;
   private readonly exitConditionEvaluator: ExitConditionEvaluator;
+  private readonly workerPool: WorkerPool | undefined;
 
   /**
    * Private constructor - use LoopHandler.create() instead
@@ -132,6 +142,7 @@ export class LoopHandler extends BaseEventHandler {
     this.eventBus = deps.eventBus;
     this.database = deps.database;
     this.exitConditionEvaluator = deps.exitConditionEvaluator;
+    this.workerPool = deps.workerPool;
   }
 
   /**
@@ -486,6 +497,9 @@ export class LoopHandler extends BaseEventHandler {
         }
       }
 
+      // Phase 5: Destroy the persistent tmux session for this loop (if any).
+      this.cleanupLoopPersistentSession(loopId);
+
       this.logger.info('Loop cancelled', { loopId, reason });
 
       return ok(undefined);
@@ -712,11 +726,16 @@ export class LoopHandler extends BaseEventHandler {
       prompt = await this.enrichPromptWithGitContext(loop, iterationNumber, prompt);
     }
 
-    // Create task from template
+    // Create task from template.
+    // DESIGN DECISION (Phase 5): All single-task iterations set persistentSessionKey so
+    // WorkerPool can reuse the agent REPL across iterations. /clear is sent between
+    // iterations to reset context. Pipeline steps do NOT set this key (different agents
+    // or working directories per step make session reuse unsafe).
     const task = createTask({
       ...loop.taskTemplate,
       prompt,
       workingDirectory: loop.workingDirectory,
+      persistentSessionKey: `loop-${loopId}`,
     });
 
     // Build iteration record
@@ -1311,6 +1330,11 @@ export class LoopHandler extends BaseEventHandler {
       this.cooldownTimers.delete(loop.id);
     }
 
+    // Phase 5: Destroy the persistent tmux session for this loop.
+    // Single-task iterations reuse a long-lived agent REPL — tear it down when the
+    // loop reaches a terminal state so the tmux session is not orphaned.
+    this.cleanupLoopPersistentSession(loop.id);
+
     await this.eventBus.emit('LoopCompleted', {
       loopId: loop.id,
       reason,
@@ -1323,6 +1347,14 @@ export class LoopHandler extends BaseEventHandler {
       totalIterations: loop.currentIteration,
       bestScore: loop.bestScore,
     });
+  }
+
+  /**
+   * Tear down the persistent tmux session for a loop (Phase 5).
+   * No-op if workerPool is not injected or no session exists for this loop.
+   */
+  private cleanupLoopPersistentSession(loopId: LoopId): void {
+    this.workerPool?.cleanupPersistentSession(`loop-${loopId}`);
   }
 
   /**

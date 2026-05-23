@@ -14,7 +14,6 @@ import { _testSetConfigDir, saveAgentConfig } from '../../../src/core/configurat
 import { ErrorCode } from '../../../src/core/errors';
 import { ClaudeAdapter } from '../../../src/implementations/claude-adapter';
 import { CodexAdapter } from '../../../src/implementations/codex-adapter';
-import { ProcessSpawnerAdapter } from '../../../src/implementations/process-spawner-adapter';
 
 // Mock child_process.spawn (needed by BaseAgentAdapter import chain)
 vi.mock('child_process', () => ({
@@ -408,23 +407,6 @@ describe('buildTmuxCommand() — missing taskId guard', () => {
   });
 });
 
-// ─── ProcessSpawnerAdapter ──────────────────────────────────────────────────
-
-describe('buildTmuxCommand() — ProcessSpawnerAdapter', () => {
-  it('returns err with INVALID_OPERATION', () => {
-    const mockSpawner = {
-      spawn: vi.fn(),
-      kill: vi.fn(),
-    };
-    const adapter = new ProcessSpawnerAdapter(mockSpawner);
-    const result = adapter.buildTmuxCommand(baseOptions);
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.code).toBe(ErrorCode.INVALID_OPERATION);
-  });
-});
-
 // ─── Unsupported provider guard ─────────────────────────────────────────────
 
 describe('buildTmuxCommand() — unsupported provider guard', () => {
@@ -434,12 +416,6 @@ describe('buildTmuxCommand() — unsupported provider guard', () => {
     class FakeAdapter extends BaseAgentAdapter {
       // biome-ignore lint/suspicious/noExplicitAny: testing with an intentionally invalid provider
       readonly provider = 'unknown-agent' as any;
-      protected buildArgs() {
-        return [];
-      }
-      protected buildInteractiveArgs() {
-        return [];
-      }
       protected get envPrefixesToStrip() {
         return [];
       }

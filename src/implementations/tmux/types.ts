@@ -230,6 +230,39 @@ export interface TmuxSessionManagerPort {
   listSessions(): Result<TmuxSessionInfo[], AutobeatError>;
   /** Read the value of a named environment variable from a running tmux session. */
   getSessionEnvironment(name: string, varName: string): Result<string | undefined, AutobeatError>;
+  /**
+   * Set a named environment variable in a running tmux session.
+   * Used by WorkerPool to update AUTOBEAT_TASK_ID when reusing a persistent session.
+   * Implementation: `tmux set-environment -t <name> <varName> <value>`
+   */
+  setSessionEnvironment(name: string, varName: string, value: string): Result<void, AutobeatError>;
+}
+
+/**
+ * Configuration for generating a setup shim for a persistent interactive session.
+ * Used when persistent=true — the agent runs as an interactive REPL.
+ */
+export interface SetupShimConfig {
+  /** Task identifier */
+  readonly taskId: TaskId;
+  /** Base directory for session data */
+  readonly sessionsDir: string;
+  /** Agent executable path or name */
+  readonly agentCommand: string;
+  /** Arguments to pass to the agent (interactive mode — no --print) */
+  readonly agentArgs: readonly string[];
+}
+
+/**
+ * Paths to all artifacts produced by generateSetupShim()
+ */
+export interface SetupShimManifest {
+  /** Path to the generated setup shim shell script */
+  readonly shimPath: string;
+  /** Task-specific session directory (sessionsDir/taskId) */
+  readonly sessionDir: string;
+  /** Directory where output JSON messages are written */
+  readonly messagesDir: string;
 }
 
 /**
@@ -238,6 +271,12 @@ export interface TmuxSessionManagerPort {
  */
 export interface TmuxHooksPort {
   generateWrapper(config: WrapperConfig): Result<WrapperManifest, AutobeatError>;
+  /**
+   * Generates the session directory and setup shim for a persistent interactive session.
+   * The shim initialises the messages directory and seq file, then execs the agent
+   * interactively (no --print). Output is captured via the Stop hook mechanism.
+   */
+  generateSetupShim(config: SetupShimConfig): Result<SetupShimManifest, AutobeatError>;
   cleanup(taskId: TaskId, sessionsDir: string): Result<void, AutobeatError>;
 }
 

@@ -123,6 +123,12 @@ export interface Task {
   // Validated against DB on receipt — dropped silently if orchestration not found.
   readonly orchestratorId?: OrchestratorId;
 
+  // Persistent session reuse (Phase 5): in-memory only — not persisted to DB.
+  // When set, WorkerPool reuses the existing tmux session for this key rather than
+  // creating a new one. Used by LoopHandler to keep the agent REPL alive across iterations.
+  // Value convention: "loop-{loopId}" — unique per loop, shared across all its iterations.
+  readonly persistentSessionKey?: string;
+
   // Timestamps and results
   readonly createdAt: number;
   readonly updatedAt?: number;
@@ -219,6 +225,11 @@ export interface TaskRequest {
   // Orchestration attribution (v1.3.0): orchestration that spawned this task
   // Passed through CLI env var (AUTOBEAT_ORCHESTRATOR_ID) or MCP metadata field.
   readonly orchestratorId?: OrchestratorId;
+
+  // Persistent session reuse (Phase 5): in-memory only — not persisted to DB.
+  // When set, WorkerPool reuses the existing tmux session for this key rather than
+  // creating a new one. Used by LoopHandler to set "loop-{loopId}" for all iterations.
+  readonly persistentSessionKey?: string;
 }
 
 export interface TaskUpdate {
@@ -281,6 +292,9 @@ export const createTask = (request: TaskRequest): Task => {
 
     // Orchestration attribution (v1.3.0)
     orchestratorId: request.orchestratorId,
+
+    // Persistent session reuse (Phase 5): in-memory only
+    persistentSessionKey: request.persistentSessionKey,
 
     createdAt: now,
     updatedAt: now,
@@ -803,6 +817,13 @@ export interface Orchestration {
   readonly status: OrchestratorStatus;
   readonly mode?: OrchestratorMode;
   readonly pid?: number;
+  /**
+   * tmux session name for interactive orchestrations that use tmux (Phase 5).
+   * Nullable — only set when mode='interactive' and the session was spawned via tmux.
+   * cancelOrchestration() uses this to destroy the tmux session; falls back to pid (SIGTERM)
+   * for orchestrations spawned before Phase 5.
+   */
+  readonly sessionName?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly completedAt?: number;
