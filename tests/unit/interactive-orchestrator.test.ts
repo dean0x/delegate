@@ -192,7 +192,7 @@ vi.mock('../../src/utils/git-state.js', () => ({
   validateGitRefName: vi.fn().mockReturnValue({ ok: true, value: undefined }),
 }));
 
-import { OrchestratorId, OrchestratorStatus } from '../../src/core/domain.js';
+import { OrchestratorId, OrchestratorStatus, updateOrchestration } from '../../src/core/domain.js';
 import { Database } from '../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../src/implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from '../../src/implementations/orchestration-repository.js';
@@ -385,10 +385,10 @@ describe('cancelOrchestration - interactive mode', () => {
     if (!createResult.ok) return;
     createdStateFiles.push(createResult.value.orchestration.stateFilePath);
 
-    const pidResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 99999);
-    expect(pidResult.ok).toBe(true);
-    if (!pidResult.ok) return;
-    expect(pidResult.value).toBe(true);
+    // Seed a PID directly via the repo to simulate a pre-Phase-5 orchestration row
+    // (updateInteractiveOrchestrationPid was the public API for this; now removed).
+    const withPid = updateOrchestration(createResult.value.orchestration, { pid: 99999 });
+    await orchestrationRepo.update(withPid);
 
     const cancelResult = await service.cancelOrchestration(createResult.value.orchestration.id);
     expect(cancelResult.ok).toBe(true);
@@ -579,130 +579,6 @@ describe('finalizeInteractiveOrchestration', () => {
 
     expect(eventBus.getEventCount('OrchestrationCancelled')).toBe(0);
     expect(eventBus.getEventCount('OrchestrationCompleted')).toBe(0);
-  });
-});
-
-// ============================================================================
-// updateInteractiveOrchestrationPid — PID validation
-// ============================================================================
-
-describe('updateInteractiveOrchestrationPid - PID validation', () => {
-  let db: Database;
-  let orchestrationRepo: SQLiteOrchestrationRepository;
-  let eventBus: TestEventBus;
-  let logger: TestLogger;
-  let service: OrchestrationManagerService;
-  const createdStateFiles: string[] = [];
-  const config = createTestConfiguration({ defaultAgent: 'claude' });
-
-  beforeEach(() => {
-    db = new Database(':memory:');
-    const loopRepo = new SQLiteLoopRepository(db);
-    orchestrationRepo = new SQLiteOrchestrationRepository(db);
-    eventBus = new TestEventBus();
-    logger = new TestLogger();
-    const loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
-    service = new OrchestrationManagerService({ eventBus, logger, orchestrationRepo, loopService, config });
-  });
-
-  afterEach(() => {
-    db.close();
-    for (const f of createdStateFiles) {
-      try {
-        unlinkSync(f);
-      } catch {
-        /* ignore */
-      }
-    }
-    createdStateFiles.length = 0;
-  });
-
-  it('should accept a valid positive integer PID', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test PID' });
-    expect(createResult.ok).toBe(true);
-    if (!createResult.ok) return;
-    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
-
-    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 12345);
-    expect(updateResult.ok).toBe(true);
-    if (!updateResult.ok) return;
-    expect(updateResult.value).toBe(true);
-  });
-
-  it('should reject PID of zero', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test PID zero' });
-    expect(createResult.ok).toBe(true);
-    if (!createResult.ok) return;
-    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
-
-    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 0);
-    expect(updateResult.ok).toBe(false);
-    if (updateResult.ok) return;
-    expect(updateResult.error.message).toContain('Invalid PID');
-  });
-
-  it('should reject a negative PID', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test negative PID' });
-    expect(createResult.ok).toBe(true);
-    if (!createResult.ok) return;
-    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
-
-    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, -1);
-    expect(updateResult.ok).toBe(false);
-    if (updateResult.ok) return;
-    expect(updateResult.error.message).toContain('Invalid PID');
-  });
-
-  it('should reject a non-integer PID (float)', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test float PID' });
-    expect(createResult.ok).toBe(true);
-    if (!createResult.ok) return;
-    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
-
-    const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 3.14);
-    expect(updateResult.ok).toBe(false);
-    if (updateResult.ok) return;
-    expect(updateResult.error.message).toContain('Invalid PID');
-  });
-
-  it('should persist a valid PID to DB', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test persist PID' });
-    expect(createResult.ok).toBe(true);
-    if (!createResult.ok) return;
-    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
-    const id = createResult.value.orchestration.id;
-
-    const pidResult = await service.updateInteractiveOrchestrationPid(id, 99999);
-    expect(pidResult.ok).toBe(true);
-    if (!pidResult.ok) return;
-    expect(pidResult.value).toBe(true);
-
-    const dbResult = await orchestrationRepo.findById(id);
-    expect(dbResult.ok).toBe(true);
-    if (!dbResult.ok) return;
-    expect(dbResult.value!.pid).toBe(99999);
-  });
-
-  it('should return false when orchestration already cancelled', async () => {
-    const createResult = await service.createInteractiveOrchestration({ goal: 'Test cancel race' });
-    expect(createResult.ok).toBe(true);
-    if (!createResult.ok) return;
-    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
-    const id = createResult.value.orchestration.id;
-
-    const cancelResult = await service.cancelOrchestration(id);
-    expect(cancelResult.ok).toBe(true);
-
-    const pidResult = await service.updateInteractiveOrchestrationPid(id, 12345);
-    expect(pidResult.ok).toBe(true);
-    if (!pidResult.ok) return;
-    expect(pidResult.value).toBe(false);
-
-    const dbResult = await orchestrationRepo.findById(id);
-    expect(dbResult.ok).toBe(true);
-    if (!dbResult.ok) return;
-    expect(dbResult.value!.pid).toBeUndefined();
-    expect(dbResult.value!.status).toBe('cancelled');
   });
 });
 
@@ -946,8 +822,11 @@ describe('cancelOrchestration - session_name tmux destroy path', () => {
     createdStateFiles.push(createResult.value.orchestration.stateFilePath);
     const id = createResult.value.orchestration.id;
 
-    // Set a PID that doesn't exist (ESRCH) — cancel should still succeed
-    await service.updateInteractiveOrchestrationPid(id, 99999);
+    // Seed a PID directly via the repo to simulate a pre-Phase-5 orchestration row
+    // (updateInteractiveOrchestrationPid was the public API for this; now removed).
+    // PID 99999 virtually guaranteed not to exist — ESRCH; cancel must still succeed.
+    const withPid = updateOrchestration(createResult.value.orchestration, { pid: 99999 });
+    await orchestrationRepo.update(withPid);
 
     const cancelResult = await service.cancelOrchestration(id);
     expect(cancelResult.ok).toBe(true);

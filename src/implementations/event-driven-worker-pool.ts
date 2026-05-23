@@ -109,10 +109,18 @@ export interface EventDrivenWorkerPoolDeps {
  * Entry in the persistent session map.
  * DESIGN DECISION (Phase 5): WorkerId is stored so reuseSession can look up the
  * WorkerState and update its task reference when reusing for a new iteration.
+ *
+ * DESIGN DECISION (Phase 5 fix — B1-1): taskIdRef and agentProvider are stored here
+ * so they survive cleanupWorkerState(). After a loop iteration completes, onExit →
+ * handleWorkerCompletion → cleanupWorkerState removes the WorkerState from this.workers,
+ * but the tmux session itself stays alive. The next iteration's reuseSession() needs
+ * the ref to re-register a new WorkerState without recreating the tmux callbacks.
  */
 interface PersistentSessionEntry {
   readonly handle: TmuxHandle;
   readonly workerId: WorkerId;
+  readonly taskIdRef: TaskIdRef;
+  readonly agentProvider: string;
 }
 
 /**
@@ -274,12 +282,19 @@ export class EventDrivenWorkerPool implements WorkerPool {
       cleanupFn,
     });
 
-    // After successful fresh spawn with a persistent key, register in persistentSessions map
+    // After successful fresh spawn with a persistent key, register in persistentSessions map.
+    // Store taskIdRef and agentProvider so reuseSession() can re-register a WorkerState
+    // after cleanupWorkerState() removes it at the end of each loop iteration (B1-1 fix).
     if (result.ok && psk) {
       const workerId = WorkerId(`worker-beat-${task.id}`);
       const worker = this.workers.get(workerId);
       if (worker) {
-        this.persistentSessions.set(psk, { handle: worker.handle, workerId: worker.id });
+        this.persistentSessions.set(psk, {
+          handle: worker.handle,
+          workerId: worker.id,
+          taskIdRef,
+          agentProvider,
+        });
       }
     }
 
@@ -296,16 +311,29 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * 4. Wait 300ms for /clear to settle
    * 5. Remap worker state to the new task:
    *    a. Update taskIdRef.current so callbacks route events to the new task ID
-   *    b. Overwrite task/taskId on WorkerState in-place
+   *    b. Re-register WorkerState if cleanupWorkerState already removed it (B1-1 fix)
+   *       OR overwrite task/taskId on the existing WorkerState in-place
    *    c. Reset completionHandled to false (G2 guard for the new iteration)
    *    d. Update taskToWorker map (remove old task → workerId, add new)
-   * 6. Send new prompt via sendKeys
-   * 7. Release reuse lock
+   *    e. Clean up flushingInProgress for the old task ID (B1-4 fix)
+   *    f. Update DB registration for the new task ID (B1-5 fix)
+   * 6. Restart flushing, heartbeat, and timeout timers (B1-3 fix)
+   * 7. Send new prompt via sendKeys
+   * 8. Release reuse lock
    *
    * DESIGN DECISION (Phase 5): On any failure, fall through to fresh spawn by
    * destroying the stale session and removing it from persistentSessions. This
    * prevents the loop from stalling on a broken persistent session.
    * Returns ok(null) to signal "fall through to fresh spawn"; ok(Worker) on success.
+   *
+   * B1-1 fix: WorkerState is gone after every loop iteration (cleanupWorkerState removes
+   * it on completion). Re-register using the handle + taskIdRef stored in the entry.
+   * B1-2 fix: On sendKeys failure, call cleanupWorkerState before destroying the session
+   * so orphaned timers are cleared and the stale workerId is removed from maps.
+   * B1-3 fix: After remapping, restart flushing, heartbeat, and timeout — onExit stopped
+   * them before calling handleWorkerCompletion, and they are not auto-restarted on reuse.
+   * B1-4 fix: Delete the old task's flushingInProgress entry before updating taskId.
+   * B1-5 fix: Update DB worker registration from old task ID to new task ID.
    */
   private async reuseSession(
     task: Task,
@@ -315,7 +343,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
   ): Promise<Result<Worker | null>> {
     this.reuseInProgress.add(key);
     try {
-      const { handle, workerId } = entry;
+      const { handle, workerId, taskIdRef, agentProvider } = entry;
 
       this.logger.info('Reusing persistent tmux session for loop iteration', {
         taskId: task.id,
@@ -352,39 +380,101 @@ export class EventDrivenWorkerPool implements WorkerPool {
       // Wait for /clear to settle before registering new output handler
       await new Promise<void>((resolve) => setTimeout(resolve, CLEAR_SETTLE_MS));
 
-      // Re-map the existing worker entry to the new task.
-      // The existing WorkerState handle stays the same — only task tracking changes.
-      const existingWorker = this.workers.get(workerId);
-      if (!existingWorker) {
-        // Worker was cleaned up between liveness check and reuse — spawn fresh
-        this.logger.warn('Persistent session worker state missing — spawning fresh', {
+      // B1-1 fix: After a loop iteration completes, onExit → handleWorkerCompletion →
+      // cleanupWorkerState removes the WorkerState from this.workers. The tmux session
+      // remains alive, but this.workers.get(workerId) returns undefined on the next spawn.
+      // If the WorkerState is gone, re-register it using the handle and taskIdRef stored
+      // in the PersistentSessionEntry (which survives cleanupWorkerState).
+      let worker = this.workers.get(workerId);
+      if (!worker) {
+        this.logger.info('Re-registering WorkerState for reused persistent session', {
           taskId: task.id,
           key,
+          sessionName: handle.sessionName,
         });
-        this.persistentSessions.delete(key);
-        return ok(null);
+        // Update the taskIdRef (stored in the entry) to the new task ID before
+        // re-registering so the callbacks immediately route to the correct task.
+        taskIdRef.current = task.id;
+        const regResult = this.registerWorker(task, handle, agentProvider, taskIdRef);
+        if (!regResult.ok) {
+          this.logger.warn('Failed to re-register worker for reused session — spawning fresh', {
+            taskId: task.id,
+            key,
+            error: regResult.error.message,
+          });
+          this.persistentSessions.delete(key);
+          return ok(null);
+        }
+        worker = regResult.value;
+        // Start timers for the freshly-registered worker (B1-3 fix applies here too).
+        this.setupTimeoutForWorker(worker);
+        this.setupHeartbeatForWorker(worker);
+        this.startFlushing(worker);
+      } else {
+        // WorkerState still present (e.g. reuse called before onExit cleanup — unlikely
+        // in steady state but possible in tests). Remap in-place as before.
+
+        // B1-4 fix: Remove the old task's in-flight flush entry before updating taskId.
+        // The startFlushing closure reads worker.taskId on each tick; deleting the old
+        // entry prevents a spurious "already in progress" skip on the first new-task flush.
+        const prevTaskId = worker.taskId;
+        this.flushingInProgress.delete(prevTaskId);
+
+        // Update taskToWorker so future lookups find the worker via the new taskId.
+        this.taskToWorker.delete(prevTaskId);
+        this.taskToWorker.set(task.id, workerId);
+
+        // Update the mutable task ID ref so the callbacks (onOutput, onExit) route
+        // events to the new task ID from this point forward.
+        worker.taskIdRef.current = task.id;
+
+        // Update the worker state with the new task and reset the completion guard.
+        // completionHandled from the previous iteration must be cleared so the new
+        // iteration's completion event is not silently dropped (G2 guard).
+        worker.task = task;
+        worker.taskId = task.id;
+        worker.completionHandled = false;
+
+        // B1-5 fix: Update DB registration from old task ID to new task ID.
+        // If the server crashes between reuse and the next heartbeat, RecoveryManager
+        // would otherwise see a stale task ID for this worker.
+        const unregResult = this.workerRepository.unregister(workerId);
+        if (!unregResult.ok) {
+          this.logger.warn('Failed to unregister old task from DB during session reuse', {
+            workerId,
+            prevTaskId,
+            error: unregResult.error.message,
+          });
+        }
+        const reregResult = this.workerRepository.register({
+          workerId,
+          taskId: task.id,
+          pid: 0,
+          ownerPid: process.pid,
+          agent: agentProvider,
+          startedAt: Date.now(),
+          sessionName: handle.sessionName,
+        });
+        if (!reregResult.ok) {
+          this.logger.warn('Failed to re-register new task in DB during session reuse', {
+            workerId,
+            taskId: task.id,
+            error: reregResult.error.message,
+          });
+        }
+
+        // B1-3 fix: Restart timers stopped by the previous iteration's onExit callback.
+        // onExit stops flushing and the heartbeat timer before calling handleWorkerCompletion.
+        // Without restarting them, the reused session has no periodic output flushing,
+        // no heartbeat updates, and no task timeout enforcement.
+        this.setupTimeoutForWorker(worker);
+        this.setupHeartbeatForWorker(worker);
+        this.startFlushing(worker);
       }
 
-      // Capture the previous iteration's task ID before overwriting state.
-      const prevTaskId = existingWorker.taskId;
-
-      // Update taskToWorker so future lookups find the worker via the new taskId.
-      // Remove the old mapping (previous iteration's taskId → workerId).
-      this.taskToWorker.delete(prevTaskId);
-      this.taskToWorker.set(task.id, workerId);
-
-      // Update the mutable task ID ref so the callbacks (onOutput, onExit) route
-      // events to the new task ID from this point forward.
-      existingWorker.taskIdRef.current = task.id;
-
-      // Update the worker state with the new task and reset the completion guard.
-      // completionHandled from the previous iteration must be cleared so the new
-      // iteration's completion event is not silently dropped (G2 guard).
-      existingWorker.task = task;
-      existingWorker.taskId = task.id;
-      existingWorker.completionHandled = false;
-
-      // Send new prompt
+      // B1-2 fix: Worker state is now fully remapped. If sendKeys fails, clean up the
+      // WorkerState (clears timers and removes from maps) before destroying the session,
+      // preventing orphaned callbacks from firing against the new task ID.
       const sendResult = this.tmuxConnector.sendKeys(handle, prompt + '\n');
       if (!sendResult.ok) {
         this.logger.warn('Failed to send prompt to reused session — destroying, will spawn fresh', {
@@ -392,6 +482,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
           key,
           error: sendResult.error.message,
         });
+        this.cleanupWorkerState(workerId, task.id);
         this.cleanupPersistentSession(key);
         return ok(null);
       }
@@ -402,7 +493,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
         key,
       });
 
-      return ok(existingWorker);
+      return ok(worker);
     } finally {
       this.reuseInProgress.delete(key);
     }

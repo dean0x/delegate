@@ -435,28 +435,6 @@ export class OrchestrationManagerService implements OrchestrationService {
     return ok({ orchestration, systemPrompt: systemPromptWithAddendum, userPrompt: finalUserPrompt });
   }
 
-  async updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<boolean>> {
-    if (!Number.isInteger(pid) || pid <= 0) {
-      return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, `Invalid PID: ${pid}. PID must be a positive integer.`, { pid }),
-      );
-    }
-
-    const lookupResult = await this.getOrchestration(id);
-    if (!lookupResult.ok) return lookupResult;
-
-    const updated = updateOrchestration(lookupResult.value, { pid });
-    const updateResult = await this.orchestrationRepo.updateIfStatus(updated, OrchestratorStatus.RUNNING);
-    if (!updateResult.ok) return err(updateResult.error);
-    if (!updateResult.value) {
-      this.logger.info('Orchestration already transitioned from RUNNING — PID update skipped', {
-        orchestratorId: id,
-        pid,
-      });
-    }
-    return ok(updateResult.value);
-  }
-
   async updateInteractiveOrchestrationSessionName(id: OrchestratorId, sessionName: string): Promise<Result<boolean>> {
     if (!sessionName || sessionName.trim().length === 0) {
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, 'sessionName must be a non-empty string', { sessionName }));
