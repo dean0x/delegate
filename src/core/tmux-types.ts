@@ -83,6 +83,13 @@ export interface TmuxSpawnCoreConfig {
   /** CLI arguments to pass to the agent */
   readonly agentArgs: readonly string[];
   /**
+   * Optional environment variables to inject into the session.
+   * buildTmuxCommand() populates this (e.g. AUTOBEAT_WORKER=true).
+   * Callers that need to strip or override variables (e.g. interactive
+   * orchestrator removing AUTOBEAT_WORKER) can spread and override this field.
+   */
+  readonly env?: Record<string, string>;
+  /**
    * Persistent session mode (Phase 5).
    * When true: agent runs interactively (no --print), output captured via Stop hook,
    * completion detected via per-iteration sentinel files. Used for loop iteration reuse.
