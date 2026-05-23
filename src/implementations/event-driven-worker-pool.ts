@@ -73,6 +73,9 @@ interface TaskIdRef {
  * taskId and task are declared as mutable (no readonly) so reuseSession() can update
  * them in-place when remapping the session to a new loop iteration. Worker.taskId is
  * readonly in the base interface; WorkerState widens it here to allow mutation.
+ *
+ * @internal Not part of the public WorkerPool API — internal implementation detail.
+ * External consumers receive Worker (where taskId is readonly), not WorkerState.
  */
 interface WorkerState extends Worker {
   readonly handle: TmuxHandle;
@@ -237,35 +240,14 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const cleanupFn = task.systemPrompt ? (taskId: string) => adapter.cleanup(taskId) : undefined;
 
     // Step 5b: Check for persistent session reuse (Phase 5).
-    // Use early returns to keep nesting shallow — each guard exits when it cannot reuse.
+    // tryReuseSession() handles the existence/liveness/reuse chain and returns a Worker on
+    // success, or null to signal "fall through to fresh spawn". Extracted to keep nesting flat.
     const psk = task.persistentSessionKey;
-    if (psk && !this.reuseInProgress.has(psk)) {
-      const existing = this.persistentSessions.get(psk);
-      if (existing) {
-        const aliveResult = this.tmuxConnector.isAlive(existing.handle);
-        if (aliveResult.ok && aliveResult.value) {
-          // Attempt reuse. ok(null) sentinel means "fall through to fresh spawn".
-          const reuseResult = await this.reuseSession(task, psk, existing, prompt);
-          if (reuseResult.ok && reuseResult.value !== null) {
-            return ok(reuseResult.value);
-          }
-          // null sentinel or error — fall through to fresh spawn below
-        } else {
-          // Session is dead — clean up stale entry and fall through to fresh spawn
-          this.logger.info('Persistent session dead — spawning fresh', {
-            taskId: task.id,
-            persistentSessionKey: psk,
-            sessionName: existing.handle.sessionName,
-          });
-          this.persistentSessions.delete(psk);
-        }
+    if (psk) {
+      const reused = await this.tryReuseSession(task, psk, prompt);
+      if (reused !== null) {
+        return ok(reused);
       }
-    } else if (psk) {
-      // reuseInProgress is set for this key — concurrent spawn falls through to fresh session
-      this.logger.warn('Concurrent reuse attempt for persistent session key — spawning fresh', {
-        taskId: task.id,
-        persistentSessionKey: psk,
-      });
     }
 
     // Steps 6-10: spawn session, register, wire timers, send prompt
@@ -299,6 +281,53 @@ export class EventDrivenWorkerPool implements WorkerPool {
     }
 
     return result;
+  }
+
+  /**
+   * Check whether an existing persistent session can be reused for the given task.
+   *
+   * Guards (each returns null to fall through to fresh spawn):
+   * - reuseInProgress for this key → concurrent spawn, fall through immediately
+   * - no entry in persistentSessions → first iteration, fall through
+   * - session not alive → delete stale entry, fall through
+   * - reuseSession() returns null sentinel or error → fall through
+   *
+   * Returns the reused Worker on success, or null to signal "spawn fresh".
+   * Extracted from spawn() to keep its nesting shallow.
+   */
+  private async tryReuseSession(task: Task, psk: string, prompt: string): Promise<Worker | null> {
+    if (this.reuseInProgress.has(psk)) {
+      // Concurrent spawn for the same key — fall through to fresh session immediately
+      this.logger.warn('Concurrent reuse attempt for persistent session key — spawning fresh', {
+        taskId: task.id,
+        persistentSessionKey: psk,
+      });
+      return null;
+    }
+
+    const existing = this.persistentSessions.get(psk);
+    if (!existing) {
+      return null; // First iteration — no session to reuse
+    }
+
+    const aliveResult = this.tmuxConnector.isAlive(existing.handle);
+    if (!aliveResult.ok || !aliveResult.value) {
+      // Session is dead — clean up stale entry and fall through to fresh spawn
+      this.logger.info('Persistent session dead — spawning fresh', {
+        taskId: task.id,
+        persistentSessionKey: psk,
+        sessionName: existing.handle.sessionName,
+      });
+      this.persistentSessions.delete(psk);
+      return null;
+    }
+
+    // Session is alive — attempt reuse. ok(null) sentinel means "fall through to fresh spawn".
+    const reuseResult = await this.reuseSession(task, psk, existing, prompt);
+    if (reuseResult.ok && reuseResult.value !== null) {
+      return reuseResult.value;
+    }
+    return null; // null sentinel or error — fall through to fresh spawn
   }
 
   /**
