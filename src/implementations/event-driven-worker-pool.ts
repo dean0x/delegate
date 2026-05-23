@@ -268,8 +268,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Store taskIdRef and agentProvider so reuseSession() can re-register a WorkerState
     // after cleanupWorkerState() removes it at the end of each loop iteration (B1-1 fix).
     if (result.ok && psk) {
-      const workerId = WorkerId(`worker-beat-${task.id}`);
-      const worker = this.workers.get(workerId);
+      const worker = this.workers.get(result.value.id);
       if (worker) {
         this.persistentSessions.set(psk, {
           handle: worker.handle,

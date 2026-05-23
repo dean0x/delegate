@@ -1002,7 +1002,12 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       // Simulate output arriving after the session is reused for task2.
       // task1.id is used here because the mock stores callbacks keyed by the original
       // spawn task ID — firing on task1.id triggers the session's output handler.
-      tmuxConnector._simulateOutput(task1.id, { type: 'stdout', content: 'hello from iter 2' });
+      tmuxConnector._simulateOutput(task1.id, {
+        sequence: 1,
+        timestamp: '',
+        type: 'stdout',
+        content: 'hello from iter 2',
+      });
 
       // Output must be captured under task2's ID
       expect(outputCapture.capture).toHaveBeenCalledWith(task2.id, 'stdout', 'hello from iter 2');
