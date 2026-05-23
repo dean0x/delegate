@@ -130,7 +130,7 @@ trap _sentinel_guard EXIT
 # written. pipefail remains active (set via -o pipefail above) so PIPESTATUS[0]
 # reflects the agent exit code correctly.
 set +e
-${config.agentCommand} ${agentArgs} 2>&1 | while IFS= read -r line; do
+${singleQuoteToken(config.agentCommand)} ${agentArgs} 2>&1 | while IFS= read -r line; do
   SEQ=$(next_seq)
   TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
   ESCAPED=$(printf '%s' "$line" | jq -Rs .)
@@ -195,7 +195,7 @@ export AUTOBEAT_SESSIONS_DIR=${singleQuoteToken(config.sessionsDir)}
 
 # exec-replace this shell with the agent REPL (interactive mode, no output piping).
 # The agent owns the tmux session from this point forward.
-exec ${config.agentCommand} ${agentArgs}
+exec ${singleQuoteToken(config.agentCommand)} ${agentArgs}
 `;
 }
 

@@ -498,7 +498,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
         key,
         error: regResult.error.message,
       });
-      this.persistentSessions.delete(key);
+      this.cleanupPersistentSession(key);
       return regResult;
     }
 
