@@ -11,7 +11,7 @@
 import { spawn as nodeSpawn, spawnSync } from 'child_process';
 import type { AgentAdapter, AgentProvider, AgentRegistry } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
-import type { Orchestration } from '../../core/domain.js';
+import type { Orchestration, OrchestratorId } from '../../core/domain.js';
 import type { OrchestrationService } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
 import type { TmuxConnectorPort, TmuxHandle, TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
@@ -270,6 +270,117 @@ async function spawnAndDeliverPrompt(ctx: SpawnPromptContext): Promise<SpawnedSe
   return { handle, agentState, exitPromise };
 }
 
+/** Maximum time to wait for the onExit callback after the tmux session ends. */
+const EXIT_CALLBACK_DEADLINE_MS = 2000;
+
+// ============================================================================
+// Phase 4: Attach, handle SIGINT, wait for exit, and finalize
+// ============================================================================
+
+interface AttachAndFinalizeContext {
+  readonly handle: TmuxHandle;
+  readonly agentState: { exitCode: number | null; exited: boolean };
+  readonly exitPromise: Promise<void>;
+  readonly tmuxConnector: TmuxConnectorPort;
+  readonly orchestrationService: OrchestrationService;
+  readonly orchestrationId: OrchestratorId;
+  readonly adapter: AgentAdapter;
+  readonly container: Container;
+}
+
+/**
+ * Phase 4 of the interactive orchestrator lifecycle.
+ *
+ * Installs SIGINT handling (first Ctrl+C interrupts gracefully, second force-kills),
+ * attaches the terminal to the tmux session, waits for detach or exit,
+ * finalizes the orchestration record, reports status, and calls process.exit.
+ *
+ * DECISION: Calls process.exit directly (CLI pattern — no recovery possible after attach).
+ */
+async function attachAndFinalize(ctx: AttachAndFinalizeContext): Promise<never> {
+  const { handle, agentState, exitPromise, tmuxConnector, orchestrationService, orchestrationId, adapter, container } =
+    ctx;
+
+  let cancelled = false;
+  let sigintCount = 0;
+
+  const originalSigintHandlers = process.listeners('SIGINT');
+  process.removeAllListeners('SIGINT');
+  process.on('SIGINT', () => {
+    sigintCount++;
+    cancelled = true;
+    if (sigintCount >= 2) {
+      // Second Ctrl+C: force-destroy the tmux session.
+      tmuxConnector.destroy(handle);
+    } else {
+      // First Ctrl+C: send C-c to the session to interrupt the agent gracefully.
+      tmuxConnector.sendControlKeys(handle, 'C-c');
+    }
+  });
+
+  ui.info(`\nLaunching interactive session: ${handle.sessionName}`);
+  ui.info('Use Ctrl+B D to detach and leave the session running in the background.\n');
+
+  // Attach to the tmux session (blocks until user detaches or session ends).
+  // stdio: 'inherit' gives the user full terminal control inside tmux.
+  const attachProcess = nodeSpawn('tmux', ['attach-session', '-t', handle.sessionName], {
+    stdio: 'inherit',
+  });
+
+  const attachExitCode = await new Promise<number | null>((resolve) => {
+    attachProcess.on('exit', (code) => resolve(code));
+  });
+
+  process.removeAllListeners('SIGINT');
+  for (const handler of originalSigintHandlers) {
+    process.on('SIGINT', handler as NodeJS.SignalsListener);
+  }
+
+  // Determine whether the session ended or the user detached.
+  // attach-session exits with code 0 on both detach and session termination.
+  // Check liveness to distinguish the two cases.
+  const aliveResult = tmuxConnector.isAlive(handle);
+  const sessionStillAlive = aliveResult.ok && aliveResult.value;
+
+  if (sessionStillAlive) {
+    // User detached (Ctrl+B D). The orchestration is still running in the background.
+    ui.info('\nDetached from session. Orchestration continues running in the background.');
+    ui.info(`To reattach: tmux attach-session -t ${handle.sessionName}`);
+    ui.info(`To cancel:   beat orchestrate cancel ${orchestrationId}`);
+    adapter.cleanup(orchestrationId);
+    await container.dispose();
+    process.exit(0);
+  }
+
+  // Session ended (agent exited or was killed).
+  // Wait briefly for the onExit callback to fire if it hasn't yet.
+  // Use event-driven resolution: exitPromise resolves when onExit fires;
+  // race against EXIT_CALLBACK_DEADLINE_MS to avoid blocking indefinitely.
+  if (!agentState.exited) {
+    await Promise.race([exitPromise, new Promise<void>((resolve) => setTimeout(resolve, EXIT_CALLBACK_DEADLINE_MS))]);
+  }
+
+  const finalizeResult = await orchestrationService.finalizeInteractiveOrchestration(orchestrationId, {
+    exitCode: agentState.exited ? agentState.exitCode : attachExitCode,
+    cancelled,
+  });
+  if (!finalizeResult.ok) {
+    ui.info(`Warning: failed to finalize orchestration: ${finalizeResult.error.message}`);
+  }
+
+  if (cancelled) {
+    ui.info('\nOrchestration cancelled.');
+  } else if (agentState.exitCode === 0 || (agentState.exitCode === null && attachExitCode === 0)) {
+    ui.success('\nOrchestration completed.');
+  } else {
+    ui.error(`\nOrchestration failed (exit code: ${agentState.exitCode ?? attachExitCode}).`);
+  }
+
+  adapter.cleanup(orchestrationId);
+  await container.dispose();
+  process.exit(agentState.exitCode ?? attachExitCode ?? 1);
+}
+
 // ============================================================================
 // Interactive mode handler (blocking via tmux attach-session)
 // ============================================================================
@@ -364,86 +475,18 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
       process.exit(0);
     }
 
-    // Phase 4: Attach, handle SIGINT, and finalize
-    let cancelled = false;
-    let sigintCount = 0;
-
-    const originalSigintHandlers = process.listeners('SIGINT');
-    process.removeAllListeners('SIGINT');
-    process.on('SIGINT', () => {
-      sigintCount++;
-      cancelled = true;
-      if (sigintCount >= 2) {
-        // Second Ctrl+C: force-destroy the tmux session.
-        tmuxConnector.destroy(handle);
-      } else {
-        // First Ctrl+C: send C-c to the session to interrupt the agent gracefully.
-        tmuxConnector.sendControlKeys(handle, 'C-c');
-      }
+    // Phase 4: Attach, handle SIGINT, wait for exit, and finalize.
+    // Calls process.exit — this await never returns.
+    await attachAndFinalize({
+      handle,
+      agentState,
+      exitPromise,
+      tmuxConnector,
+      orchestrationService,
+      orchestrationId: orchestration.id,
+      adapter,
+      container,
     });
-
-    ui.info(`\nLaunching interactive session: ${handle.sessionName}`);
-    ui.info('Use Ctrl+B D to detach and leave the session running in the background.\n');
-
-    // Attach to the tmux session (blocks until user detaches or session ends).
-    // stdio: 'inherit' gives the user full terminal control inside tmux.
-    const attachProcess = nodeSpawn('tmux', ['attach-session', '-t', handle.sessionName], {
-      stdio: 'inherit',
-    });
-
-    const attachExitCode = await new Promise<number | null>((resolve) => {
-      attachProcess.on('exit', (code) => resolve(code));
-    });
-
-    process.removeAllListeners('SIGINT');
-    for (const handler of originalSigintHandlers) {
-      process.on('SIGINT', handler as NodeJS.SignalsListener);
-    }
-
-    // Determine whether the session ended or the user detached.
-    // attach-session exits with code 0 on both detach and session termination.
-    // Check liveness to distinguish the two cases.
-    const aliveResult = tmuxConnector.isAlive(handle);
-    const sessionStillAlive = aliveResult.ok && aliveResult.value;
-
-    if (sessionStillAlive) {
-      // User detached (Ctrl+B D). The orchestration is still running in the background.
-      ui.info('\nDetached from session. Orchestration continues running in the background.');
-      ui.info(`To reattach: tmux attach-session -t ${handle.sessionName}`);
-      ui.info(`To cancel:   beat orchestrate cancel ${orchestration.id}`);
-      adapter.cleanup(orchestration.id);
-      await container.dispose();
-      process.exit(0);
-    }
-
-    // Session ended (agent exited or was killed).
-    // Wait briefly for the onExit callback to fire if it hasn't yet.
-    // Use event-driven resolution: exitPromise resolves when onExit fires;
-    // race against a 2000ms deadline to avoid blocking indefinitely.
-    if (!agentState.exited) {
-      await Promise.race([exitPromise, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
-    }
-
-    const finalizeResult = await orchestrationService.finalizeInteractiveOrchestration(orchestration.id, {
-      exitCode: agentState.exited ? agentState.exitCode : attachExitCode,
-      cancelled,
-    });
-    if (!finalizeResult.ok) {
-      ui.info(`Warning: failed to finalize orchestration: ${finalizeResult.error.message}`);
-    }
-
-    if (cancelled) {
-      ui.info('\nOrchestration cancelled.');
-    } else if (agentState.exitCode === 0 || (agentState.exitCode === null && attachExitCode === 0)) {
-      ui.success('\nOrchestration completed.');
-    } else {
-      ui.error(`\nOrchestration failed (exit code: ${agentState.exitCode ?? attachExitCode}).`);
-    }
-
-    adapter.cleanup(orchestration.id);
-
-    await container.dispose();
-    process.exit(agentState.exitCode ?? attachExitCode ?? 1);
   } catch (error) {
     s.stop('Failed');
     ui.error(errorMessage(error));
