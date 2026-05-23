@@ -121,7 +121,15 @@ export interface EventDrivenWorkerPoolDeps {
  */
 interface PersistentSessionEntry {
   readonly handle: TmuxHandle;
-  readonly workerId: WorkerId;
+  /**
+   * The worker ID for the current iteration's WorkerState.
+   *
+   * Not readonly: reRegisterWorkerForReuse() creates a new WorkerState with a new
+   * workerId (worker-beat-{newTaskId}) and updates this field so subsequent reuse
+   * lookups (this.workers.get(entry.workerId)) resolve the live WorkerState instead
+   * of always falling into the B1-1 re-registration path.
+   */
+  workerId: WorkerId;
   /**
    * Shared mutable ref between the entry and the current WorkerState for this session.
    * reuseSession() updates taskIdRef.current to the new task ID before registering the
@@ -436,6 +444,9 @@ export class EventDrivenWorkerPool implements WorkerPool {
       // B1-2 fix: Worker state is now fully remapped. If sendKeys fails, clean up the
       // WorkerState (clears timers and removes from maps) before destroying the session,
       // preventing orphaned callbacks from firing against the new task ID.
+      // Use worker.id (not the destructured workerId) because reRegisterWorkerForReuse
+      // creates a new WorkerState with a new ID and updates entry.workerId, making the
+      // locally destructured workerId stale for the re-registration branch.
       const sendResult = this.tmuxConnector.sendKeys(handle, prompt + '\n');
       if (!sendResult.ok) {
         this.logger.warn('Failed to send prompt to reused session — destroying, will spawn fresh', {
@@ -443,7 +454,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
           key,
           error: sendResult.error.message,
         });
-        this.cleanupWorkerState(workerId, task.id);
+        this.cleanupWorkerState(worker.id, task.id);
         this.cleanupPersistentSession(key);
         return ok(null);
       }
@@ -468,11 +479,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * PersistentSessionEntry, then wires timers. Returns the new WorkerState on success,
    * or err() when registration fails (caller falls through to fresh spawn).
    */
-  private reRegisterWorkerForReuse(
-    task: Task,
-    key: string,
-    entry: PersistentSessionEntry,
-  ): Result<WorkerState> {
+  private reRegisterWorkerForReuse(task: Task, key: string, entry: PersistentSessionEntry): Result<WorkerState> {
     const { handle, taskIdRef, agentProvider } = entry;
 
     this.logger.info('Re-registering WorkerState for reused persistent session', {
@@ -496,6 +503,11 @@ export class EventDrivenWorkerPool implements WorkerPool {
     }
 
     const worker = regResult.value;
+    // Update the entry's workerId so subsequent reuseSession() calls resolve the live
+    // WorkerState via this.workers.get(entry.workerId) instead of always entering B1-1
+    // re-registration. Without this update, every iteration after the first uses a stale
+    // workerId that no longer exists in this.workers.
+    entry.workerId = worker.id;
     // Start timers for the freshly-registered worker (B1-3 fix applies here too).
     this.setupTimeoutForWorker(worker);
     this.setupHeartbeatForWorker(worker);

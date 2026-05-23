@@ -1213,6 +1213,55 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       expect(workerRepository.updateHeartbeat).toHaveBeenCalledTimes(1);
     });
 
+    it('B1-4: in-place remap clears flushingInProgress for old task so first new-task flush is not skipped', async () => {
+      // B1-4 regression: remapExistingWorkerForReuse must delete the old task's flushingInProgress
+      // entry before updating worker.taskId. Without the delete, an in-flight flush from the
+      // previous iteration could leave a stale entry that blocks the new task's first flush tick.
+      //
+      // This test triggers the in-place remap branch (WorkerState still present — no exit before reuse).
+      // It then verifies that the flush interval fires and calls getOutput for task2's ID on the
+      // first tick, proving the flush was NOT skipped due to a stale flushingInProgress entry.
+      //
+      // Strategy: Mock getOutput to track which taskId was flushed. Advance past one flush interval
+      // and confirm getOutput was called for task2 (not task1, not suppressed).
+      const task1 = buildPersistentTask('loop-b14', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-b14', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      // Do NOT simulate task1 exit — WorkerState stays in this.workers, hitting the in-place
+      // remap branch (remapExistingWorkerForReuse) rather than the re-registration branch.
+      const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+      expect(spawnResult.ok).toBe(true);
+
+      // Arrange: clear getOutput call history from task1 setup, then advance past one flush interval.
+      (outputCapture.getOutput as ReturnType<typeof vi.fn>).mockClear();
+      await vi.advanceTimersByTimeAsync(1_100); // past the 1s flush interval
+
+      // The first flush tick for task2 must NOT be skipped — getOutput must be called for task2.
+      const getOutputCalls = (outputCapture.getOutput as ReturnType<typeof vi.fn>).mock.calls;
+      const flushedForTask2 = getOutputCalls.some(([id]: [string]) => id === task2.id);
+      expect(flushedForTask2).toBe(true);
+    });
+
+    it('B1-5: in-place remap calls updateTaskId with the new task ID (DB re-registration)', async () => {
+      // B1-5 regression: remapExistingWorkerForReuse must call workerRepository.updateTaskId()
+      // to atomically update the DB worker registration from the old task ID to the new task ID.
+      // Without this, the worker row in the DB still references the old task — crash recovery
+      // would try to resume a stale task ID, leading to a ghost worker entry.
+      //
+      // This test triggers the in-place remap branch (WorkerState still present — no exit before reuse).
+      const task1 = buildPersistentTask('loop-b15', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-b15', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+      // Do NOT simulate task1 exit — keeps WorkerState in this.workers, hitting in-place remap.
+      const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+      expect(spawnResult.ok).toBe(true);
+
+      // updateTaskId must have been called with task2's ID (the new DB registration).
+      expect(workerRepository.updateTaskId).toHaveBeenCalledWith(expect.objectContaining({ taskId: task2.id }));
+    });
+
     it('B1-2: sendKeys failure on reuse cleans up WorkerState (falls through to fresh spawn)', async () => {
       // B1-2: if sendKeys fails after worker state is remapped, cleanupWorkerState must be
       // called to clear timers and remove the worker from maps — preventing orphaned callbacks.
@@ -1226,14 +1275,10 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       // The mock is installed AFTER task1's spawn, so call counts restart from 0.
       // sendKeys call order from this point: (1) /clear in reuseSession,
       // (2) task2 prompt in reuseSession — fail on call 2.
-      let sendKeysCallCount = 0;
-      (tmuxConnector.sendKeys as ReturnType<typeof vi.fn>).mockImplementation(() => {
-        sendKeysCallCount++;
-        if (sendKeysCallCount === 2) {
-          return err(new Error('pipe broken'));
-        }
-        return ok(undefined);
-      });
+      // Subsequent calls (fresh spawn prompt) must succeed so the fallback completes.
+      (tmuxConnector.sendKeys as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(ok(undefined)) // call 1: /clear succeeds
+        .mockReturnValueOnce(err(new Error('pipe broken'))); // call 2: prompt fails → fallthrough
 
       const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
 
