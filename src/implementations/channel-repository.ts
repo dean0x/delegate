@@ -211,11 +211,11 @@ export class SQLiteChannelRepository implements ChannelRepository {
   }
 
   async updateRound(id: ChannelId, round: number): Promise<Result<void>> {
-    if (!Number.isInteger(round) || round < 0) {
-      throw new Error(`updateRound: round must be a non-negative integer, got ${round}`);
-    }
     return tryCatchAsync(
       async () => {
+        if (!Number.isInteger(round) || round < 0) {
+          throw new Error(`updateRound: round must be a non-negative integer, got ${round}`);
+        }
         this.updateRoundStmt.run(round, Date.now(), id);
       },
       operationErrorHandler('update channel round', { channelId: id, round }),

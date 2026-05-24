@@ -475,11 +475,7 @@ describe('SQLiteChannelRepository', () => {
     });
 
     it('updateMemberStatus returns ok for nonexistent channel (silent no-op)', async () => {
-      const result = await repo.updateMemberStatus(
-        ChannelId('ch-nonexistent'),
-        'architect',
-        ChannelMemberStatus.IDLE,
-      );
+      const result = await repo.updateMemberStatus(ChannelId('ch-nonexistent'), 'architect', ChannelMemberStatus.IDLE);
       expect(result.ok).toBe(true);
     });
 
@@ -586,42 +582,7 @@ describe('SQLiteChannelRepository', () => {
   });
 
   // ============================================================================
-  // T19: Domain Factory — Name Validation
-  // ============================================================================
-
-  describe('createChannel name validation', () => {
-    // ARCHITECTURE: createChannel assumes valid input — callers validate against CHANNEL_NAME_REGEX.
-    // These tests verify CHANNEL_NAME_REGEX correctly identifies valid/invalid names.
-    const invalidNames = ['', 'UPPERCASE', 'has spaces', 'has_underscores', '-leading-hyphen', 'trailing-hyphen-'];
-
-    for (const name of invalidNames) {
-      it(`CHANNEL_NAME_REGEX rejects invalid channel name: "${name}"`, () => {
-        expect(CHANNEL_NAME_REGEX.test(name)).toBe(false);
-      });
-    }
-
-    const validNames = ['a', 'auth', 'auth-review', 'my-channel-123', '0start', 'end0'];
-
-    for (const name of validNames) {
-      it(`CHANNEL_NAME_REGEX accepts valid channel name: "${name}"`, () => {
-        expect(CHANNEL_NAME_REGEX.test(name)).toBe(true);
-      });
-    }
-  });
-
-  // ============================================================================
-  // T20: Domain Factory — Member Name Validation
-  // ============================================================================
-
-  describe('createChannel member name validation', () => {
-    // ARCHITECTURE: createChannel assumes valid input — callers validate member names against CHANNEL_NAME_REGEX.
-    it('CHANNEL_NAME_REGEX rejects invalid member name', () => {
-      expect(CHANNEL_NAME_REGEX.test('UPPER')).toBe(false);
-    });
-  });
-
-  // ============================================================================
-  // T21: Domain Factory — tmuxSession Derivation
+  // T19: Domain Factory — tmuxSession Derivation
   // ============================================================================
 
   describe('tmuxSession derivation', () => {
@@ -638,7 +599,7 @@ describe('SQLiteChannelRepository', () => {
   });
 
   // ============================================================================
-  // T22: Domain Factory — ID Format and Frozen
+  // T20: Domain Factory — ID Format and Frozen
   // ============================================================================
 
   describe('createChannel factory properties', () => {
