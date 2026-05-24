@@ -460,6 +460,47 @@ describe('SQLiteChannelRepository', () => {
   });
 
   // ============================================================================
+  // T15b: No-Op Updates — Non-Existent Channel/Member
+  // ============================================================================
+
+  describe('no-op updates (nonexistent targets)', () => {
+    it('updateStatus returns ok for nonexistent channel (silent no-op)', async () => {
+      const result = await repo.updateStatus(ChannelId('ch-nonexistent'), ChannelStatus.PAUSED);
+      expect(result.ok).toBe(true);
+    });
+
+    it('updateRound returns ok for nonexistent channel (silent no-op)', async () => {
+      const result = await repo.updateRound(ChannelId('ch-nonexistent'), 3);
+      expect(result.ok).toBe(true);
+    });
+
+    it('updateMemberStatus returns ok for nonexistent channel (silent no-op)', async () => {
+      const result = await repo.updateMemberStatus(
+        ChannelId('ch-nonexistent'),
+        'architect',
+        ChannelMemberStatus.IDLE,
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('updateMemberStatus returns ok for nonexistent member in existing channel (silent no-op)', async () => {
+      const channel = buildChannel({ name: 'noop-member-test' });
+      await repo.save(channel);
+
+      const result = await repo.updateMemberStatus(channel.id, 'no-such-member', ChannelMemberStatus.IDLE);
+      expect(result.ok).toBe(true);
+
+      // Existing members are unaffected
+      const found = await repo.findById(channel.id);
+      expect(found.ok).toBe(true);
+      if (!found.ok) throw new Error('unexpected');
+      for (const member of found.value!.members) {
+        expect(member.status).toBe(ChannelMemberStatus.ACTIVE);
+      }
+    });
+  });
+
+  // ============================================================================
   // T16: Zero Members — Save and Retrieve
   // ============================================================================
 
