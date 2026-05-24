@@ -266,18 +266,12 @@ describe('SQLiteChannelRepository', () => {
     });
 
     it('rejects negative round value', async () => {
-      const channel = buildChannel();
-      await repo.save(channel);
-
-      const result = await repo.updateRound(channel.id, -1);
+      const result = await repo.updateRound(ChannelId('ch-any'), -1);
       expect(result.ok).toBe(false);
     });
 
     it('rejects fractional round value', async () => {
-      const channel = buildChannel();
-      await repo.save(channel);
-
-      const result = await repo.updateRound(channel.id, 2.5);
+      const result = await repo.updateRound(ChannelId('ch-any'), 2.5);
       expect(result.ok).toBe(false);
     });
   });

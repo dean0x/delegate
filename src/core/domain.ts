@@ -1076,8 +1076,8 @@ export enum ChannelMemberStatus {
 
 /**
  * Message routing strategy for a channel.
- * broadcast   = messages go to all members
- * directed    = sent to a specific named member
+ * broadcast = messages go to all members
+ * directed = sent to a specific named member
  * round-robin = members take turns in fixed order
  */
 export type CommunicationMode = 'broadcast' | 'directed' | 'round-robin';
@@ -1171,9 +1171,9 @@ export const createChannel = (request: ChannelCreateRequest): Channel => {
 
 /**
  * Immutable update helper for channels.
- * Returns a frozen copy of channel with given fields replaced and updatedAt advanced.
- * ARCHITECTURE: Assumes valid input — callers must validate status transitions and
- * round values before calling. Same convention as updateTask / updateSchedule / updateLoop.
+ * ARCHITECTURE: Returns new frozen object, never mutates input. Assumes valid input —
+ * callers must validate status transitions and round values before calling.
+ * Pattern: Follows updateSchedule() / updateLoop() convention
  */
 export const updateChannel = (channel: Channel, updates: Partial<Omit<Channel, 'id'>>): Channel => {
   return Object.freeze({
