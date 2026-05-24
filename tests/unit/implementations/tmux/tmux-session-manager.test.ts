@@ -537,4 +537,112 @@ describe('TmuxSessionManager.setSessionEnvironment()', () => {
     // Value must be wrapped in single quotes
     expect(cmd).toMatch(/'task-abc'/);
   });
+
+  // ─── pasteContent ─────────────────────────────────────────────────────────────
+
+  describe('pasteContent', () => {
+    let writeFileSync: ReturnType<typeof vi.fn>;
+    let unlinkSync: ReturnType<typeof vi.fn>;
+    let pasteManager: TmuxSessionManager;
+
+    beforeEach(() => {
+      writeFileSync = vi.fn();
+      unlinkSync = vi.fn();
+      pasteManager = new TmuxSessionManager({
+        exec: exec as ExecFn,
+        writeFileSync: writeFileSync as (path: string, content: string) => void,
+        unlinkSync: unlinkSync as (path: string) => void,
+      });
+    });
+
+    it('writes content to a temp file and loads it into the named buffer', () => {
+      const result = pasteManager.pasteContent('beat-channel-test-member', 'hello world');
+      expect(result.ok).toBe(true);
+      // writeFileSync must be called with content
+      expect(writeFileSync).toHaveBeenCalledOnce();
+      const [writtenPath, writtenContent] = writeFileSync.mock.calls[0] as [string, string];
+      expect(writtenContent).toBe('hello world');
+      // Temp file path must be in tmpdir
+      expect(writtenPath).toContain('beat-channel-');
+    });
+
+    it('calls load-buffer, paste-buffer, and delete-buffer in order', () => {
+      pasteManager.pasteContent('beat-channel-test-member', 'some message');
+      const cmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
+      expect(cmds.some((c) => c.includes('load-buffer'))).toBe(true);
+      expect(cmds.some((c) => c.includes('paste-buffer'))).toBe(true);
+      expect(cmds.some((c) => c.includes('delete-buffer'))).toBe(true);
+
+      // Verify order: load → paste → delete
+      const loadIdx = cmds.findIndex((c) => c.includes('load-buffer'));
+      const pasteIdx = cmds.findIndex((c) => c.includes('paste-buffer'));
+      const deleteIdx = cmds.findIndex((c) => c.includes('delete-buffer'));
+      expect(loadIdx).toBeLessThan(pasteIdx);
+      expect(pasteIdx).toBeLessThan(deleteIdx);
+    });
+
+    it('paste-buffer targets the correct session name', () => {
+      pasteManager.pasteContent('beat-channel-review-agent', 'content');
+      const cmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
+      const pasteCmd = cmds.find((c) => c.includes('paste-buffer'));
+      expect(pasteCmd).toBeDefined();
+      expect(pasteCmd).toContain("'beat-channel-review-agent'");
+    });
+
+    it('uses the beat-channel named buffer for load and paste', () => {
+      pasteManager.pasteContent('beat-channel-test-member', 'content');
+      const cmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
+      const loadCmd = cmds.find((c) => c.includes('load-buffer'));
+      const pasteCmd = cmds.find((c) => c.includes('paste-buffer'));
+      expect(loadCmd).toContain("'beat-channel'");
+      expect(pasteCmd).toContain("'beat-channel'");
+    });
+
+    it('cleans up temp file even when load-buffer fails', () => {
+      exec.mockReturnValueOnce({ stdout: '', stderr: 'load failed', status: 1 });
+      const result = pasteManager.pasteContent('beat-channel-test-member', 'content');
+      expect(result.ok).toBe(false);
+      // unlinkSync must have been called despite failure
+      expect(unlinkSync).toHaveBeenCalledOnce();
+    });
+
+    it('cleans up temp file on success', () => {
+      pasteManager.pasteContent('beat-channel-test-member', 'content');
+      expect(unlinkSync).toHaveBeenCalledOnce();
+    });
+
+    it('returns TMUX_SESSION_FAILED when load-buffer fails', () => {
+      exec.mockReturnValueOnce({ stdout: '', stderr: 'no server running', status: 1 });
+      const result = pasteManager.pasteContent('beat-channel-test-member', 'content');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    });
+
+    it('returns TMUX_SESSION_FAILED when paste-buffer fails', () => {
+      exec
+        .mockReturnValueOnce({ stdout: '', stderr: '', status: 0 }) // load-buffer succeeds
+        .mockReturnValueOnce({ stdout: '', stderr: 'no session', status: 1 }); // paste-buffer fails
+      const result = pasteManager.pasteContent('beat-channel-test-member', 'content');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    });
+
+    it('rejects session names that do not match SESSION_NAME_REGEX', () => {
+      const result = pasteManager.pasteContent('not-a-beat-session', 'content');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    });
+
+    it('delivers content with special characters ($, backticks, newlines) literally', () => {
+      const specialContent = 'echo $HOME\n`id`\nHello World!';
+      const result = pasteManager.pasteContent('beat-channel-test-member', specialContent);
+      expect(result.ok).toBe(true);
+      // The content is written to a file — no shell expansion occurs on content itself
+      const [, writtenContent] = writeFileSync.mock.calls[0] as [string, string];
+      expect(writtenContent).toBe(specialContent);
+    });
+  });
 });

@@ -163,6 +163,18 @@ export interface TmuxConnectorPort {
    * Implementation: `tmux set-environment -t <sessionName> <varName> <value>`
    */
   setEnvironment(handle: TmuxHandle, varName: string, value: string): Result<void, AutobeatError>;
+  /**
+   * Delivers content to a tmux session using load-buffer / paste-buffer pattern.
+   * Writes content to a named buffer to avoid shell expansion on special characters
+   * (unlike sendKeys, which shells out with quoting that can still expand metacharacters).
+   *
+   * Flow: load-buffer -b beat-channel < content → paste-buffer -b beat-channel -t session → delete-buffer -b beat-channel
+   *
+   * DESIGN DECISION (Phase 7): Channel members receive multi-line agent output via
+   * paste-buffer rather than send-keys to guarantee literal delivery regardless of
+   * shell metacharacters ($, `, \n, etc.) in the content.
+   */
+  pasteContent(handle: TmuxHandle, content: string): Result<void, AutobeatError>;
   getActiveHandles(): TmuxHandle[];
   dispose(): void;
 }

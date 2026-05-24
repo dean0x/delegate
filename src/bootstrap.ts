@@ -536,7 +536,17 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   if (options.tmuxConnector) {
     container.registerValue('tmuxConnector', options.tmuxConnector);
   } else {
-    tmuxSessionManager = new TmuxSessionManager({ exec: tmuxExec });
+    tmuxSessionManager = new TmuxSessionManager({
+      exec: tmuxExec,
+      writeFileSync: (p, c) => fs.writeFileSync(p, c, 'utf8'),
+      unlinkSync: (p) => {
+        try {
+          fs.unlinkSync(p);
+        } catch {
+          /* best-effort cleanup */
+        }
+      },
+    });
     container.registerValue('tmuxSessionManager', tmuxSessionManager);
     const sessionManager = tmuxSessionManager;
     container.registerSingleton('tmuxConnector', () => {

@@ -318,6 +318,14 @@ export class TmuxConnector implements TmuxConnectorPort {
     return this.deps.sessionManager.setSessionEnvironment(handle.sessionName, varName, value);
   }
 
+  /**
+   * Delivers content to a session via load-buffer / paste-buffer.
+   * Delegates to session manager. Used by ChannelManager (Phase 7) for literal message delivery.
+   */
+  pasteContent(handle: TmuxHandle, content: string): Result<void, AutobeatError> {
+    return this.deps.sessionManager.pasteContent(handle.sessionName, content);
+  }
+
   getActiveHandles(): TmuxHandle[] {
     return Array.from(this.activeSessions.values()).map((s) => s.handle);
   }

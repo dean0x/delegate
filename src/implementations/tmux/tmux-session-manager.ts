@@ -10,6 +10,8 @@
  * single quotes to prevent breaking the shell quoting context.
  */
 
+import * as os from 'os';
+import * as path from 'path';
 import type { AutobeatError } from '../../core/errors.js';
 import { tmuxSendKeysFailed, tmuxSessionFailed } from '../../core/errors.js';
 import type { Result } from '../../core/result.js';
@@ -25,6 +27,19 @@ import { MAX_CONCURRENT_SESSIONS, SAFE_PATH_REGEX, SESSION_NAME_REGEX } from './
 export interface TmuxSessionManagerDeps {
   exec: ExecFn;
   maxConcurrentSessions?: number;
+  /**
+   * Optional synchronous file write — used by pasteContent() to write content to a
+   * temp file before loading it into the tmux buffer. When omitted, pasteContent()
+   * falls back to a Node.js built-in require (safe in production; injected in tests).
+   * DESIGN DECISION (Phase 7): Injected to keep TmuxSessionManager fully unit-testable
+   * without touching the real filesystem in tests.
+   */
+  writeFileSync?: (path: string, content: string) => void;
+  /**
+   * Optional synchronous file delete — used by pasteContent() to remove the temp file
+   * after loading. Must always execute, even on error (cleanup in finally block).
+   */
+  unlinkSync?: (path: string) => void;
 }
 
 /** Default terminal dimensions if not specified */
@@ -39,6 +54,9 @@ const SESSION_NOT_FOUND_PATTERNS = ["can't find session", 'no server running', '
 
 /** Valid POSIX environment variable name: must start with letter or underscore */
 const POSIX_ENV_VAR_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Named tmux buffer used for channel message delivery (load-buffer / paste-buffer) */
+const CHANNEL_BUFFER_NAME = 'beat-channel';
 
 /** Maximum byte length for an environment variable value — protects against oversized inputs */
 const MAX_ENV_VALUE_LENGTH = 4096;
@@ -329,6 +347,88 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
     if (isNaN(created) || isNaN(width) || isNaN(height)) return null;
 
     return { name, created, attached: attachedStr === '1', width, height };
+  }
+
+  /**
+   * Delivers content to a tmux session using load-buffer / paste-buffer without shell expansion.
+   *
+   * DESIGN DECISION (Phase 7): Uses a named buffer (beat-channel) rather than send-keys
+   * so that content with special characters ($, `, newlines) is delivered literally.
+   *
+   * Flow:
+   *   1. Write content to a temp file (avoids shell arg-length limits and expansion)
+   *   2. tmux load-buffer -b beat-channel <tempFile>
+   *   3. tmux paste-buffer -b beat-channel -t sessionName
+   *   4. tmux delete-buffer -b beat-channel
+   *   5. Remove temp file (always, via finally block)
+   *
+   * SECURITY: tempFile path is constructed from os.tmpdir() + randomUUID — safe for
+   * single-quoting into a shell command. Session name is validated against SESSION_NAME_REGEX.
+   */
+  pasteContent(sessionName: string, content: string): Result<void, AutobeatError> {
+    const nameCheck = validateSessionName(sessionName, 'pasteContent');
+    if (!nameCheck.ok) return nameCheck;
+
+    // Resolve injected or built-in fs ops
+    const writeFileSync =
+      this.deps.writeFileSync ??
+      // ARCHITECTURE EXCEPTION: Dynamic require used as fallback when no writeFileSync
+      // is injected. Production callers (bootstrap.ts) always inject real fs.writeFileSync.
+      // This fallback ensures the class is usable without injection (e.g., legacy callers).
+      // biome-ignore lint/performance/noBarrelFile: built-in module, not a barrel
+      ((p: string, c: string) => {
+        // biome-ignore lint/style/noRestrictedGlobals: intentional dynamic import fallback
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        require('node:fs').writeFileSync(p, c, 'utf8');
+      });
+    const unlinkSync =
+      this.deps.unlinkSync ??
+      ((p: string) => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          require('node:fs').unlinkSync(p);
+        } catch {
+          /* best-effort cleanup */
+        }
+      });
+
+    const tempFile = path.join(os.tmpdir(), `beat-channel-${crypto.randomUUID()}.txt`);
+    try {
+      writeFileSync(tempFile, content);
+
+      const escapedTempFile = escapeForSingleQuotes(tempFile);
+
+      // Load content into named buffer (< redirect reads file without shell expansion of content)
+      const loadResult = this.deps.exec(
+        `tmux load-buffer -b '${CHANNEL_BUFFER_NAME}' '${escapedTempFile}'`,
+      );
+      if (loadResult.status !== 0) {
+        return err(
+          tmuxSessionFailed('pasteContent:load-buffer', loadResult.stderr || loadResult.stdout, {
+            sessionName,
+          }),
+        );
+      }
+
+      // Paste buffer into the target session
+      const pasteResult = this.deps.exec(
+        `tmux paste-buffer -b '${CHANNEL_BUFFER_NAME}' -t '${sessionName}'`,
+      );
+      if (pasteResult.status !== 0) {
+        return err(
+          tmuxSessionFailed('pasteContent:paste-buffer', pasteResult.stderr || pasteResult.stdout, {
+            sessionName,
+          }),
+        );
+      }
+
+      // Delete the named buffer (best-effort — don't fail if it's already gone)
+      this.deps.exec(`tmux delete-buffer -b '${CHANNEL_BUFFER_NAME}'`);
+
+      return ok(undefined);
+    } finally {
+      unlinkSync(tempFile);
+    }
   }
 
   /**
