@@ -1074,8 +1074,19 @@ export enum ChannelMemberStatus {
   DESTROYED = 'destroyed',
 }
 
+/**
+ * Message routing strategy for a channel.
+ * broadcast   = messages go to all members
+ * directed    = sent to a specific named member
+ * round-robin = members take turns in fixed order
+ */
 export type CommunicationMode = 'broadcast' | 'directed' | 'round-robin';
 
+/**
+ * A named agent participant within a channel.
+ * ARCHITECTURE: tmuxSession is derived as beat-channel-{channelName}-{memberName} at creation
+ * time via createChannel() — never set independently. joinedAt is epoch milliseconds.
+ */
 export interface ChannelMember {
   readonly name: string;
   readonly agent: AgentProvider;
@@ -1085,6 +1096,12 @@ export interface ChannelMember {
   readonly joinedAt: number;
 }
 
+/**
+ * Persistent multi-agent communication channel.
+ * Owns its members and tracks conversation rounds.
+ * ARCHITECTURE: createdAt and updatedAt are epoch milliseconds (Date.now()).
+ * currentRound starts at 0; maxRounds caps the session length (1–10000).
+ */
 export interface Channel {
   readonly id: ChannelId;
   readonly name: string;
@@ -1152,6 +1169,12 @@ export const createChannel = (request: ChannelCreateRequest): Channel => {
   });
 };
 
+/**
+ * Immutable update helper for channels.
+ * Returns a frozen copy of channel with given fields replaced and updatedAt advanced.
+ * ARCHITECTURE: Assumes valid input — callers must validate status transitions and
+ * round values before calling. Same convention as updateTask / updateSchedule / updateLoop.
+ */
 export const updateChannel = (channel: Channel, updates: Partial<Omit<Channel, 'id'>>): Channel => {
   return Object.freeze({
     ...channel,
