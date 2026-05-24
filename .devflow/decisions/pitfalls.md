@@ -1,4 +1,4 @@
-<!-- TL;DR: 2 pitfalls. Key: PF-001, PF-002 -->
+<!-- TL;DR: 3 pitfalls. Key: PF-001, PF-002, PF-003 -->
 # Known Pitfalls
 
 Area-specific gotchas, fragile areas, and past bugs.
@@ -20,3 +20,12 @@ Area-specific gotchas, fragile areas, and past bugs.
 - **Resolution**: before proposing migration or deprecation scaffolding, verify whether anyone actually uses the feature. If adoption is zero or negligible, a clean break is always preferable.
 - **Status**: Active
 - **Source**: self-learning:obs_f8b3r7
+
+## PF-003: Always verify and checkout the feature branch before starting implementation — commits can accidentally land on main
+
+- **Area**: git workflow / branch discipline
+- **Issue**: Assistant began implementing Phase 6 channel domain feature directly on `main` without first creating and checking out the feature branch, causing two feature commits to land on main
+- **Impact**: Required a local `git reset --hard HEAD~2` + branch creation to recover. Safe only because changes had not been pushed upstream. If already pushed, this would require force-push or revert commits.
+- **Resolution**: Before writing any feature code, run `git branch --show-current` and verify the branch. If not on the expected feature branch, create and checkout it explicitly. When the plan or issue specifies a branch name (e.g. `feat/181-channel-domain-persistence`), use it verbatim from the start.
+- **Status**: Active
+- **Source**: sidecar:obs_a4f7c2
