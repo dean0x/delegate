@@ -44,7 +44,7 @@ import {
   WorkerId,
   WorkerRegistration,
 } from './domain.js';
-import { AutobeatEvent, BaseEvent, EventHandler } from './events/events.js';
+import { AutobeatEvent, BaseEvent, type ChannelDestroyReason, EventHandler } from './events/events.js';
 import { Result } from './result.js';
 
 /**
@@ -1050,8 +1050,8 @@ export interface ChannelService {
    * Destroy a channel, killing all member sessions.
    * Returns err(INVALID_INPUT) if channel not found or already DESTROYED.
    */
-  destroyChannel(channelId: ChannelId, reason?: string): Promise<Result<void>>;
-  /** Pause a ACTIVE channel (suppress routing while members continue running). */
+  destroyChannel(channelId: ChannelId, reason?: ChannelDestroyReason): Promise<Result<void>>;
+  /** Pause an ACTIVE channel (suppress routing while members continue running). */
   pauseChannel(channelId: ChannelId): Promise<Result<void>>;
   /** Resume a PAUSED channel. */
   resumeChannel(channelId: ChannelId): Promise<Result<void>>;

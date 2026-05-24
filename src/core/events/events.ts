@@ -318,10 +318,13 @@ export interface ChannelCreatedEvent extends BaseEvent {
   communicationMode?: CommunicationMode;
 }
 
+/** Reason why a channel was destroyed — used in both the event and the service interface. */
+export type ChannelDestroyReason = 'user-requested' | 'max-rounds-reached' | 'all-members-crashed';
+
 export interface ChannelDestroyedEvent extends BaseEvent {
   type: 'ChannelDestroyed';
   channelId: ChannelId;
-  reason: 'user-requested' | 'max-rounds-reached' | 'all-members-crashed';
+  reason: ChannelDestroyReason;
 }
 
 export interface ChannelMessageSentEvent extends BaseEvent {

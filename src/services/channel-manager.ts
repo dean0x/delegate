@@ -34,6 +34,7 @@ import {
 } from '../core/domain.js';
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
+import type { ChannelDestroyReason } from '../core/events/events.js';
 import type { ChannelRepository, ChannelService, Logger } from '../core/interfaces.js';
 import { err, ok, type Result } from '../core/result.js';
 import type { TmuxConnectorPort, TmuxHandle } from '../core/tmux-types.js';
@@ -242,7 +243,7 @@ export class ChannelManager implements ChannelService {
     return ok(channel);
   }
 
-  async destroyChannel(channelId: ChannelId, reason?: string): Promise<Result<void>> {
+  async destroyChannel(channelId: ChannelId, reason?: ChannelDestroyReason): Promise<Result<void>> {
     const channelResult = await this.channelRepository.findById(channelId);
     if (!channelResult.ok) return channelResult;
     const channel = channelResult.value;
@@ -285,8 +286,7 @@ export class ChannelManager implements ChannelService {
     this.cleanupInMemory(channelId);
 
     // Emit ChannelDestroyed
-    const destroyReason =
-      (reason as 'user-requested' | 'max-rounds-reached' | 'all-members-crashed') ?? 'user-requested';
+    const destroyReason: ChannelDestroyReason = reason ?? 'user-requested';
     await this.eventBus.emit('ChannelDestroyed', { channelId, reason: destroyReason });
 
     this.logger.info('Channel destroyed', { channelId, reason: destroyReason });
@@ -489,7 +489,7 @@ export class ChannelManager implements ChannelService {
 
         // Rebuild round-robin turn tracking
         if (channel.communicationMode === 'round-robin') {
-          const sorted = aliveMembers.sort((a, b) => a.joinedAt - b.joinedAt);
+          const sorted = [...aliveMembers].sort((a, b) => a.joinedAt - b.joinedAt);
           const first = sorted[0];
           if (first) this.currentTurn.set(channel.id, first.name);
         }
@@ -631,8 +631,15 @@ export class ChannelManager implements ChannelService {
         sessionName: handle.sessionName,
         error: pasteResult.error.message,
       });
+      return; // Skip Enter — no content was pasted
     }
-    this.tmuxConnector.sendControlKeys(handle, 'Enter');
+    const enterResult = this.tmuxConnector.sendControlKeys(handle, 'Enter');
+    if (!enterResult.ok) {
+      this.logger.warn('Failed to send Enter after paste', {
+        sessionName: handle.sessionName,
+        error: enterResult.error.message,
+      });
+    }
   }
 
   /**
