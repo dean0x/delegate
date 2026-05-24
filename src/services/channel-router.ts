@@ -88,15 +88,11 @@ export class ChannelRouter {
     }
 
     // broadcast and directed both use broadcast-to-active-excluding-sender as base
-    const activeTargets = members.filter(
-      (m) => m.name !== senderName && m.status === ChannelMemberStatus.ACTIVE,
-    );
+    const activeTargets = members.filter((m) => m.name !== senderName && m.status === ChannelMemberStatus.ACTIVE);
 
     if (communicationMode === 'directed' && directedTo !== undefined) {
       // Attempt to route to the specified member
-      const targetMember = members.find(
-        (m) => m.name === directedTo && m.status === ChannelMemberStatus.ACTIVE,
-      );
+      const targetMember = members.find((m) => m.name === directedTo && m.status === ChannelMemberStatus.ACTIVE);
       if (targetMember) {
         return ok({
           targets: [{ memberName: targetMember.name, tmuxSession: targetMember.tmuxSession }],

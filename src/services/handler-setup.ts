@@ -10,6 +10,7 @@ import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
 import { EventHandlerRegistry } from '../core/events/handlers.js';
 import {
+  ChannelRepository,
   CheckpointRepository,
   DependencyRepository,
   Logger,
@@ -37,6 +38,7 @@ import { CompositeExitConditionEvaluator } from './composite-exit-condition-eval
 import { ShellExitConditionEvaluator } from './exit-condition-evaluator.js';
 import { FeedforwardEvaluator } from './feedforward-evaluator.js';
 import { AttributedTaskCancellationHandler } from './handlers/attributed-task-cancellation-handler.js';
+import { ChannelHandler } from './handlers/channel-handler.js';
 import { CheckpointHandler } from './handlers/checkpoint-handler.js';
 import { DependencyHandler } from './handlers/dependency-handler.js';
 import { LoopHandler } from './handlers/loop-handler.js';
@@ -75,6 +77,8 @@ export interface HandlerDependencies {
   readonly taskManager?: TaskManager;
   /** Optional — enables pipeline lifecycle tracking (Phase A: Dashboard Visibility Overhaul) */
   readonly pipelineRepository?: PipelineRepository;
+  /** Optional — enables channel round tracking and termination enforcement (Phase 7, epic #175) */
+  readonly channelRepository?: ChannelRepository;
 }
 
 /**
@@ -98,6 +102,8 @@ export interface HandlerSetupResult {
   readonly attributedTaskCancellationHandler?: AttributedTaskCancellationHandler;
   /** PipelineHandler — pipeline lifecycle tracking (Phase A: Dashboard Visibility Overhaul) */
   readonly pipelineHandler?: PipelineHandler;
+  /** ChannelHandler — round tracking and maxRounds termination enforcement (Phase 7, epic #175) */
+  readonly channelHandler?: ChannelHandler;
 }
 
 /**
@@ -206,6 +212,10 @@ export function extractHandlerDependencies(container: Container): Result<Handler
   const pipelineRepositoryResult = getDependency<PipelineRepository>(container, 'pipelineRepository');
   const pipelineRepository = pipelineRepositoryResult.ok ? pipelineRepositoryResult.value : undefined;
 
+  // Optional: ChannelRepository for ChannelHandler (graceful if not registered)
+  const channelRepositoryResult = getDependency<ChannelRepository>(container, 'channelRepository');
+  const channelRepository = channelRepositoryResult.ok ? channelRepositoryResult.value : undefined;
+
   return ok({
     config: configResult.value,
     logger: loggerResult.value,
@@ -226,6 +236,7 @@ export function extractHandlerDependencies(container: Container): Result<Handler
     usageRepository,
     taskManager,
     pipelineRepository,
+    channelRepository,
   });
 }
 
@@ -514,6 +525,26 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     }
   }
 
+  // 12. Channel Handler — round tracking and maxRounds termination (Phase 7, epic #175)
+  // ARCHITECTURE: Optional — only created if channelRepository is registered.
+  // Best-effort: failures are logged but never block other handlers.
+  let channelHandler: ChannelHandler | undefined;
+  if (deps.channelRepository) {
+    const channelHandlerResult = await ChannelHandler.create({
+      channelRepository: deps.channelRepository,
+      eventBus,
+      logger: childLogger('ChannelHandler'),
+    });
+    if (!channelHandlerResult.ok) {
+      // Non-fatal: log warning but continue without channel round tracking
+      setupLogger.warn('Failed to create ChannelHandler', {
+        error: channelHandlerResult.error.message,
+      });
+    } else {
+      channelHandler = channelHandlerResult.value;
+    }
+  }
+
   setupLogger.info('Event handlers initialized successfully', {
     standardHandlers: standardHandlers.length,
     totalHandlers:
@@ -522,7 +553,8 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
       (orchestrationHandler ? 1 : 0) +
       (usageCaptureHandler ? 1 : 0) +
       (attributedTaskCancellationHandler ? 1 : 0) +
-      (pipelineHandler ? 1 : 0),
+      (pipelineHandler ? 1 : 0) +
+      (channelHandler ? 1 : 0),
   });
 
   return ok({
@@ -535,5 +567,6 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     usageCaptureHandler,
     attributedTaskCancellationHandler,
     pipelineHandler,
+    channelHandler,
   });
 }

@@ -4,8 +4,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ChannelMemberStatus, ChannelStatus } from '../../../src/core/domain.js';
 import type { Channel, ChannelMember } from '../../../src/core/domain.js';
+import { ChannelMemberStatus, ChannelStatus } from '../../../src/core/domain.js';
 import { ChannelRouter } from '../../../src/services/channel-router.js';
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -20,10 +20,7 @@ function makeMember(name: string, status: ChannelMemberStatus = ChannelMemberSta
   };
 }
 
-function makeChannel(
-  members: ChannelMember[],
-  communicationMode?: 'broadcast' | 'directed' | 'round-robin',
-): Channel {
+function makeChannel(members: ChannelMember[], communicationMode?: 'broadcast' | 'directed' | 'round-robin'): Channel {
   return {
     id: 'ch-test-id' as Channel['id'],
     name: 'test-channel',

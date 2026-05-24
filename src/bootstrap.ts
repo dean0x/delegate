@@ -12,6 +12,8 @@ import { Container } from './core/container.js';
 import { AutobeatError, ErrorCode } from './core/errors.js';
 import { EventBus, InMemoryEventBus } from './core/events/event-bus.js';
 import {
+  ChannelRepository,
+  ChannelService,
   CheckpointRepository,
   DependencyRepository,
   Logger,
@@ -131,6 +133,7 @@ import { SQLiteUsageRepository } from './implementations/usage-repository.js';
 import { SQLiteWorkerRepository } from './implementations/worker-repository.js';
 
 // Services
+import { ChannelManager } from './services/channel-manager.js';
 import { extractHandlerDependencies, setupEventHandlers } from './services/handler-setup.js';
 import { LoopManagerService } from './services/loop-manager.js';
 import { OrchestrationManagerService } from './services/orchestration-manager.js';
@@ -361,6 +364,25 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     const dbResult = container.get<Database>('database');
     if (!dbResult.ok) throw new Error('Failed to get database for ChannelRepository');
     return new SQLiteChannelRepository(dbResult.value);
+  });
+
+  // Register ChannelService for multi-agent channel orchestration (Phase 7, epic #182)
+  // ARCHITECTURE: ChannelManager is the primary entry point for all channel operations.
+  // Lazy singleton — factory does not run until channelService is first resolved.
+  // DECISION: sessionsDir resolves lazily inside the factory because it is registered
+  // later in bootstrap (post-tmux-validation). The factory only runs when channelService
+  // is first resolved (after bootstrap is complete), so the ordering is safe.
+  container.registerSingleton('channelService', () => {
+    const sessionsDir = getFromContainer<string>(container, 'sessionsDir');
+    return new ChannelManager({
+      eventBus: getFromContainer<EventBus>(container, 'eventBus'),
+      logger: getFromContainer<Logger>(container, 'logger').child({ module: 'ChannelManager' }),
+      channelRepository: getFromContainer<ChannelRepository>(container, 'channelRepository'),
+      config,
+      tmuxConnector: getFromContainer<TmuxConnectorPort>(container, 'tmuxConnector'),
+      agentRegistry: getFromContainer<AgentRegistry>(container, 'agentRegistry'),
+      sessionsDir,
+    });
   });
 
   // Register ScheduleService for schedule management (v0.4.0)
@@ -718,6 +740,19 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       recovery.recover().then((result) => {
         if (!result.ok) {
           logger.error('Recovery failed', result.error);
+        }
+      });
+    }
+
+    // Channel recovery — re-attach to alive member sessions, mark dead members DESTROYED
+    // ARCHITECTURE: Fire-and-forget; runs after task recovery to avoid race on tmux session names.
+    // Skipped in cli mode (no tmux sessions are managed by CLI commands).
+    const channelServiceResult = container.get<ChannelService>('channelService');
+    if (channelServiceResult.ok) {
+      const channelService = channelServiceResult.value as ChannelManager;
+      channelService.recoverChannels().then((result) => {
+        if (!result.ok) {
+          logger.error('Channel recovery failed', result.error);
         }
       });
     }

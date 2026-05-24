@@ -399,9 +399,7 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
       const escapedTempFile = escapeForSingleQuotes(tempFile);
 
       // Load content into named buffer (< redirect reads file without shell expansion of content)
-      const loadResult = this.deps.exec(
-        `tmux load-buffer -b '${CHANNEL_BUFFER_NAME}' '${escapedTempFile}'`,
-      );
+      const loadResult = this.deps.exec(`tmux load-buffer -b '${CHANNEL_BUFFER_NAME}' '${escapedTempFile}'`);
       if (loadResult.status !== 0) {
         return err(
           tmuxSessionFailed('pasteContent:load-buffer', loadResult.stderr || loadResult.stdout, {
@@ -411,9 +409,7 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
       }
 
       // Paste buffer into the target session
-      const pasteResult = this.deps.exec(
-        `tmux paste-buffer -b '${CHANNEL_BUFFER_NAME}' -t '${sessionName}'`,
-      );
+      const pasteResult = this.deps.exec(`tmux paste-buffer -b '${CHANNEL_BUFFER_NAME}' -t '${sessionName}'`);
       if (pasteResult.status !== 0) {
         return err(
           tmuxSessionFailed('pasteContent:paste-buffer', pasteResult.stderr || pasteResult.stdout, {
