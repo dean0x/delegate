@@ -1223,6 +1223,42 @@ export class Database implements TransactionRunner {
           );
         },
       },
+      {
+        version: 31,
+        description: 'Add channels and channel_members tables (Phase 6, epic #175)',
+        up: (db) => {
+          db.exec(`
+            CREATE TABLE channels (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL UNIQUE,
+              communication_mode TEXT CHECK(communication_mode IS NULL OR communication_mode IN ('broadcast', 'directed', 'round-robin')),
+              topic TEXT,
+              status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'completed', 'destroyed')),
+              max_rounds INTEGER,
+              current_round INTEGER NOT NULL DEFAULT 0,
+              created_by TEXT,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE channel_members (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              agent TEXT NOT NULL CHECK(agent IN ('claude', 'codex')),
+              system_prompt TEXT,
+              tmux_session TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'idle', 'destroyed')),
+              joined_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX idx_channels_status ON channels(status);
+            CREATE INDEX idx_channels_updated_at ON channels(updated_at);
+            CREATE INDEX idx_channel_members_channel_id ON channel_members(channel_id);
+            CREATE UNIQUE INDEX idx_channel_members_name ON channel_members(channel_id, name);
+          `);
+        },
+      },
     ];
   }
 

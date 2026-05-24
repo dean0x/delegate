@@ -4,7 +4,7 @@
  */
 
 import { AgentProvider } from './agents.js';
-import { AutobeatError } from './errors.js';
+import { AutobeatError, ErrorCode } from './errors.js';
 
 export type TaskId = string & { readonly __brand: 'TaskId' };
 export type WorkerId = string & { readonly __brand: 'WorkerId' };
@@ -12,6 +12,7 @@ export type ScheduleId = string & { readonly __brand: 'ScheduleId' };
 export type LoopId = string & { readonly __brand: 'LoopId' };
 export type OrchestratorId = string & { readonly __brand: 'OrchestratorId' };
 export type PipelineId = string & { readonly __brand: 'PipelineId' };
+export type ChannelId = string & { readonly __brand: 'ChannelId' };
 
 export const TaskId = (id: string): TaskId => id as TaskId;
 export const WorkerId = (id: string): WorkerId => id as WorkerId;
@@ -19,6 +20,7 @@ export const ScheduleId = (id: string): ScheduleId => id as ScheduleId;
 export const LoopId = (id: string): LoopId => id as LoopId;
 export const OrchestratorId = (id: string): OrchestratorId => id as OrchestratorId;
 export const PipelineId = (id: string): PipelineId => id as PipelineId;
+export const ChannelId = (id: string): ChannelId => id as ChannelId;
 
 export enum Priority {
   P0 = 'P0', // Critical
@@ -1039,5 +1041,100 @@ export const createPipeline = (request: PipelineEntityRequest): Pipeline => {
     systemPrompt: request.systemPrompt,
     createdAt: now,
     updatedAt: now,
+  });
+};
+
+// ─── Channel primitives (Phase 6, epic #175) ────────────────────────────────
+
+export const CHANNEL_NAME_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+export type ChannelStatus = 'active' | 'paused' | 'completed' | 'destroyed';
+export type ChannelMemberStatus = 'active' | 'idle' | 'destroyed';
+export type CommunicationMode = 'broadcast' | 'directed' | 'round-robin';
+
+export interface ChannelMember {
+  readonly name: string;
+  readonly agent: AgentProvider;
+  readonly systemPrompt?: string;
+  readonly tmuxSession: string;
+  readonly status: ChannelMemberStatus;
+  readonly joinedAt: number;
+}
+
+export interface Channel {
+  readonly id: ChannelId;
+  readonly name: string;
+  readonly members: readonly ChannelMember[];
+  readonly communicationMode?: CommunicationMode;
+  readonly topic?: string;
+  readonly status: ChannelStatus;
+  readonly maxRounds?: number;
+  readonly currentRound: number;
+  readonly createdBy?: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface ChannelMemberRequest {
+  readonly name: string;
+  readonly agent: AgentProvider;
+  readonly systemPrompt?: string;
+}
+
+export interface ChannelCreateRequest {
+  readonly name: string;
+  readonly members: readonly ChannelMemberRequest[];
+  readonly communicationMode?: CommunicationMode;
+  readonly topic?: string;
+  readonly maxRounds?: number;
+  readonly createdBy?: string;
+}
+
+export const createChannel = (request: ChannelCreateRequest): Channel => {
+  if (!CHANNEL_NAME_REGEX.test(request.name)) {
+    throw new AutobeatError(
+      ErrorCode.INVALID_INPUT,
+      `Invalid channel name "${request.name}": must match ${CHANNEL_NAME_REGEX}`,
+    );
+  }
+
+  const now = Date.now();
+  const members: readonly ChannelMember[] = request.members.map((m) => {
+    if (!CHANNEL_NAME_REGEX.test(m.name)) {
+      throw new AutobeatError(
+        ErrorCode.INVALID_INPUT,
+        `Invalid member name "${m.name}": must match ${CHANNEL_NAME_REGEX}`,
+      );
+    }
+    return Object.freeze({
+      name: m.name,
+      agent: m.agent,
+      systemPrompt: m.systemPrompt,
+      tmuxSession: `beat-channel-${request.name}-${m.name}`,
+      status: 'active' as const,
+      joinedAt: now,
+    });
+  });
+
+  return Object.freeze({
+    id: ChannelId(`ch-${crypto.randomUUID()}`),
+    name: request.name,
+    members,
+    communicationMode: request.communicationMode,
+    topic: request.topic,
+    status: 'active' as const,
+    maxRounds: request.maxRounds,
+    currentRound: 0,
+    createdBy: request.createdBy,
+    createdAt: now,
+    updatedAt: now,
+  });
+};
+
+export const updateChannel = (channel: Channel, updates: Partial<Omit<Channel, 'id'>>): Channel => {
+  return Object.freeze({
+    ...channel,
+    ...updates,
+    updatedAt: Date.now(),
   });
 };

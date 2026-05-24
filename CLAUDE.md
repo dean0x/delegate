@@ -258,6 +258,9 @@ Safety nets that exist in the codebase but are not part of the manual release st
 - `loops.convergence_enabled` column: nullable INTEGER default 1 for opt-out convergence (migration v27)
 - `loops.judge_agent` CHECK constraint updated: removes 'gemini' from allowed values; `tasks.agent` NULLed for any existing 'gemini' rows (migration v28)
 - `workers.session_name` column: nullable TEXT for tmux session name tracking; index `idx_workers_session_name`; pid=0 sentinel for tmux workers (migration v29)
+- `orchestrations.session_name` column: nullable TEXT for interactive tmux session tracking (migration v30)
+- `channels` table: channel definitions, communication mode, rounds, status (migration v31)
+- `channel_members` table: per-member agent/session/status within a channel (migration v31)
 
 ### Dependencies
 
@@ -318,6 +321,7 @@ Quick reference for common operations:
 | Translation codecs | `src/translation/codecs/` |
 | Translation middleware | `src/translation/middleware/` |
 | Pipeline repository | `src/implementations/pipeline-repository.ts` |
+| Channel repository | `src/implementations/channel-repository.ts` |
 | Pipeline handler | `src/services/handlers/pipeline-handler.ts` |
 | Interactive orchestrator | `src/cli/commands/orchestrate-interactive.ts` |
 
