@@ -143,6 +143,14 @@ export class SQLiteChannelRepository implements ChannelRepository {
   // Channel CRUD (async, wrapped in tryCatchAsync)
   // ============================================================================
 
+  /**
+   * Persists a channel and all its members in a single transaction.
+   *
+   * Member count is bounded by the service layer before save() is called.
+   * Channels with large member sets (e.g. thousands) would execute a proportional
+   * number of INSERT statements. The service layer must enforce MAX_CHANNEL_MEMBERS
+   * before invoking save() to keep transaction size predictable.
+   */
   async save(channel: Channel): Promise<Result<void>> {
     return tryCatchAsync(
       async () => {
@@ -210,11 +218,19 @@ export class SQLiteChannelRepository implements ChannelRepository {
     );
   }
 
+  /**
+   * Updates the current round counter for a channel.
+   *
+   * CALLER OBLIGATION: Caller must ensure `round` does not exceed the channel's
+   * `maxRounds` value. This repository layer does not perform that check to avoid
+   * an extra DB read on every round increment. Enforce the upper bound at the
+   * service layer before calling this method.
+   */
   async updateRound(id: ChannelId, round: number): Promise<Result<void>> {
     return tryCatchAsync(
       async () => {
         if (!Number.isInteger(round) || round < 0) {
-          throw new Error(`updateRound: round must be a non-negative integer, got ${round}`);
+          throw new Error(`updateRound: round must be a non-negative integer, got ${round} (type: ${typeof round})`);
         }
         this.updateRoundStmt.run(round, Date.now(), id);
       },
@@ -303,6 +319,16 @@ export class SQLiteChannelRepository implements ChannelRepository {
     };
   }
 
+  /**
+   * Converts a raw DB row to a Channel domain object, loading members via a
+   * separate query.
+   *
+   * N+1 LOAD: Each call issues a separate `findMembersByChannelIdStmt` query.
+   * findAll(100) = 101 queries total. Acceptable for Phase 6 baseline — channels
+   * are bounded by DEFAULT_LIMIT=100 and member counts are small in practice.
+   * Optimize to a single batch IN-clause fetch if findAll/findByStatus become
+   * hot paths under production load.
+   */
   private rowToChannel(row: ChannelRow): Channel {
     const validated = ChannelRowSchema.parse(row);
     const memberRows = this.findMembersByChannelIdStmt.all(validated.id) as ChannelMemberRow[];

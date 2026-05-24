@@ -79,7 +79,7 @@ describe('SQLiteChannelRepository', () => {
       expect(found.name).toBe('auth-review');
       expect(found.communicationMode).toBe('directed');
       expect(found.topic).toBe('Auth module review');
-      expect(found.status).toBe('active');
+      expect(found.status).toBe(ChannelStatus.ACTIVE);
       expect(found.maxRounds).toBe(5);
       expect(found.currentRound).toBe(0);
       expect(found.createdBy).toBe('task-123');
@@ -92,7 +92,7 @@ describe('SQLiteChannelRepository', () => {
       expect(m1.agent).toBe('claude');
       expect(m1.systemPrompt).toBe('You are an architect');
       expect(m1.tmuxSession).toBe('beat-channel-auth-review-architect');
-      expect(m1.status).toBe('active');
+      expect(m1.status).toBe(ChannelMemberStatus.ACTIVE);
       expect(m1.joinedAt).toBe(channel.members[0].joinedAt);
 
       expect(m2.name).toBe('reviewer');
@@ -264,6 +264,22 @@ describe('SQLiteChannelRepository', () => {
       expect(found.value!.currentRound).toBe(5);
       expect(found.value!.updatedAt).toBeGreaterThanOrEqual(channel.updatedAt);
     });
+
+    it('rejects negative round value', async () => {
+      const channel = buildChannel();
+      await repo.save(channel);
+
+      const result = await repo.updateRound(channel.id, -1);
+      expect(result.ok).toBe(false);
+    });
+
+    it('rejects fractional round value', async () => {
+      const channel = buildChannel();
+      await repo.save(channel);
+
+      const result = await repo.updateRound(channel.id, 2.5);
+      expect(result.ok).toBe(false);
+    });
   });
 
   // ============================================================================
@@ -298,7 +314,7 @@ describe('SQLiteChannelRepository', () => {
       expect(added!.agent).toBe('codex');
       expect(added!.systemPrompt).toBe('Help with testing');
       expect(added!.tmuxSession).toBe('beat-channel-add-member-test-new-agent');
-      expect(added!.status).toBe('active');
+      expect(added!.status).toBe(ChannelMemberStatus.ACTIVE);
     });
   });
 
@@ -350,7 +366,7 @@ describe('SQLiteChannelRepository', () => {
 
       for (const member of found.value!.members) {
         expect(member.tmuxSession).toMatch(/^beat-channel-eager-test-/);
-        expect(member.status).toBe('active');
+        expect(member.status).toBe(ChannelMemberStatus.ACTIVE);
         expect(member.joinedAt).toBeGreaterThan(0);
       }
     });
@@ -651,6 +667,18 @@ describe('SQLiteChannelRepository', () => {
       expect(CHANNEL_NAME_REGEX.test('has_underscore')).toBe(false);
       expect(CHANNEL_NAME_REGEX.test('HAS-UPPER')).toBe(false);
       expect(CHANNEL_NAME_REGEX.test('has space')).toBe(false);
+    });
+
+    it('accepts name at the 64-char maximum boundary', () => {
+      const name = 'a' + 'b'.repeat(63); // 64 chars
+      expect(name).toHaveLength(64);
+      expect(CHANNEL_NAME_REGEX.test(name)).toBe(true);
+    });
+
+    it('rejects name exceeding the 64-char maximum', () => {
+      const name = 'a' + 'b'.repeat(64); // 65 chars
+      expect(name).toHaveLength(65);
+      expect(CHANNEL_NAME_REGEX.test(name)).toBe(false);
     });
   });
 
