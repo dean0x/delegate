@@ -4,6 +4,8 @@ import {
   type Channel,
   ChannelId,
   type ChannelMember,
+  ChannelMemberStatus,
+  ChannelStatus,
   createChannel,
   updateChannel,
 } from '../../../src/core/domain.js';
@@ -41,7 +43,7 @@ describe('SQLiteChannelRepository', () => {
       name: 'new-member',
       agent: 'claude' as const,
       tmuxSession: 'beat-channel-test-new-member',
-      status: 'active' as const,
+      status: ChannelMemberStatus.ACTIVE,
       joinedAt: Date.now(),
       ...overrides,
     });
@@ -175,20 +177,20 @@ describe('SQLiteChannelRepository', () => {
       await repo.save(ch2);
       await repo.save(ch3);
 
-      await repo.updateStatus(ch1.id, 'paused');
-      await repo.updateStatus(ch2.id, 'paused');
+      await repo.updateStatus(ch1.id, ChannelStatus.PAUSED);
+      await repo.updateStatus(ch2.id, ChannelStatus.PAUSED);
 
-      const activeResult = await repo.findByStatus('active');
+      const activeResult = await repo.findByStatus(ChannelStatus.ACTIVE);
       expect(activeResult.ok).toBe(true);
       if (!activeResult.ok) throw new Error('unexpected');
       expect(activeResult.value).toHaveLength(1);
 
-      const pausedResult = await repo.findByStatus('paused');
+      const pausedResult = await repo.findByStatus(ChannelStatus.PAUSED);
       expect(pausedResult.ok).toBe(true);
       if (!pausedResult.ok) throw new Error('unexpected');
       expect(pausedResult.value).toHaveLength(2);
 
-      const destroyedResult = await repo.findByStatus('destroyed');
+      const destroyedResult = await repo.findByStatus(ChannelStatus.DESTROYED);
       expect(destroyedResult.ok).toBe(true);
       if (!destroyedResult.ok) throw new Error('unexpected');
       expect(destroyedResult.value).toHaveLength(0);
@@ -233,13 +235,13 @@ describe('SQLiteChannelRepository', () => {
       const channel = buildChannel();
       await repo.save(channel);
 
-      const result = await repo.updateStatus(channel.id, 'paused');
+      const result = await repo.updateStatus(channel.id, ChannelStatus.PAUSED);
       expect(result.ok).toBe(true);
 
       const found = await repo.findById(channel.id);
       expect(found.ok).toBe(true);
       if (!found.ok) throw new Error('unexpected');
-      expect(found.value!.status).toBe('paused');
+      expect(found.value!.status).toBe(ChannelStatus.PAUSED);
       expect(found.value!.updatedAt).toBeGreaterThanOrEqual(channel.updatedAt);
     });
   });
@@ -309,14 +311,14 @@ describe('SQLiteChannelRepository', () => {
       const channel = buildChannel({ name: 'member-status-test' });
       await repo.save(channel);
 
-      const result = await repo.updateMemberStatus(channel.id, 'architect', 'idle');
+      const result = await repo.updateMemberStatus(channel.id, 'architect', ChannelMemberStatus.IDLE);
       expect(result.ok).toBe(true);
 
       const found = await repo.findById(channel.id);
       expect(found.ok).toBe(true);
       if (!found.ok) throw new Error('unexpected');
       const architect = found.value!.members.find((m) => m.name === 'architect');
-      expect(architect!.status).toBe('idle');
+      expect(architect!.status).toBe(ChannelMemberStatus.IDLE);
     });
   });
 
@@ -369,8 +371,8 @@ describe('SQLiteChannelRepository', () => {
       await repo.save(ch3);
       await repo.save(ch4);
 
-      await repo.updateStatus(ch3.id, 'paused');
-      await repo.updateStatus(ch4.id, 'destroyed');
+      await repo.updateStatus(ch3.id, ChannelStatus.PAUSED);
+      await repo.updateStatus(ch4.id, ChannelStatus.DESTROYED);
 
       const countResult = await repo.count();
       expect(countResult.ok).toBe(true);
@@ -547,20 +549,21 @@ describe('SQLiteChannelRepository', () => {
   // ============================================================================
 
   describe('createChannel name validation', () => {
+    // ARCHITECTURE: createChannel assumes valid input — callers validate against CHANNEL_NAME_REGEX.
+    // These tests verify CHANNEL_NAME_REGEX correctly identifies valid/invalid names.
     const invalidNames = ['', 'UPPERCASE', 'has spaces', 'has_underscores', '-leading-hyphen', 'trailing-hyphen-'];
 
     for (const name of invalidNames) {
-      it(`rejects invalid channel name: "${name}"`, () => {
-        expect(() => createChannel({ name, members: [] })).toThrow();
+      it(`CHANNEL_NAME_REGEX rejects invalid channel name: "${name}"`, () => {
+        expect(CHANNEL_NAME_REGEX.test(name)).toBe(false);
       });
     }
 
     const validNames = ['a', 'auth', 'auth-review', 'my-channel-123', '0start', 'end0'];
 
     for (const name of validNames) {
-      it(`accepts valid channel name: "${name}"`, () => {
-        const channel = createChannel({ name, members: [] });
-        expect(channel.name).toBe(name);
+      it(`CHANNEL_NAME_REGEX accepts valid channel name: "${name}"`, () => {
+        expect(CHANNEL_NAME_REGEX.test(name)).toBe(true);
       });
     }
   });
@@ -570,13 +573,9 @@ describe('SQLiteChannelRepository', () => {
   // ============================================================================
 
   describe('createChannel member name validation', () => {
-    it('rejects invalid member name', () => {
-      expect(() =>
-        createChannel({
-          name: 'test',
-          members: [{ name: 'UPPER', agent: 'claude' }],
-        }),
-      ).toThrow();
+    // ARCHITECTURE: createChannel assumes valid input — callers validate member names against CHANNEL_NAME_REGEX.
+    it('CHANNEL_NAME_REGEX rejects invalid member name', () => {
+      expect(CHANNEL_NAME_REGEX.test('UPPER')).toBe(false);
     });
   });
 
@@ -606,7 +605,7 @@ describe('SQLiteChannelRepository', () => {
       const channel = createChannel({ name: 'test', members: [] });
 
       expect(channel.id).toMatch(/^ch-[0-9a-f-]{36}$/);
-      expect(channel.status).toBe('active');
+      expect(channel.status).toBe(ChannelStatus.ACTIVE);
       expect(channel.currentRound).toBe(0);
       expect(Object.isFrozen(channel)).toBe(true);
     });
@@ -619,9 +618,9 @@ describe('SQLiteChannelRepository', () => {
   describe('updateChannel', () => {
     it('returns frozen updated channel with new updatedAt', () => {
       const channel = createChannel({ name: 'update-test', members: [] });
-      const updated = updateChannel(channel, { status: 'paused', currentRound: 3 });
+      const updated = updateChannel(channel, { status: ChannelStatus.PAUSED, currentRound: 3 });
 
-      expect(updated.status).toBe('paused');
+      expect(updated.status).toBe(ChannelStatus.PAUSED);
       expect(updated.currentRound).toBe(3);
       expect(updated.id).toBe(channel.id);
       expect(updated.name).toBe(channel.name);

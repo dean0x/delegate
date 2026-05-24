@@ -1046,10 +1046,34 @@ export const createPipeline = (request: PipelineEntityRequest): Pipeline => {
 
 // ─── Channel primitives (Phase 6, epic #175) ────────────────────────────────
 
-export const CHANNEL_NAME_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+/**
+ * Validates channel and member names: lowercase alphanumeric with interior hyphens, max 64 chars.
+ * Max 64 chars leaves room for the beat-channel-{name}-{member} tmux session name prefix and
+ * suffix within tmux's 256-byte TMUX_NAME_MAX.
+ */
+export const CHANNEL_NAME_REGEX = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/;
 
-export type ChannelStatus = 'active' | 'paused' | 'completed' | 'destroyed';
-export type ChannelMemberStatus = 'active' | 'idle' | 'destroyed';
+/**
+ * Channel lifecycle status.
+ * ARCHITECTURE: Enum matches all other entity status types (TaskStatus, ScheduleStatus, etc.)
+ */
+export enum ChannelStatus {
+  ACTIVE = 'active',
+  PAUSED = 'paused',
+  COMPLETED = 'completed',
+  DESTROYED = 'destroyed',
+}
+
+/**
+ * Channel member lifecycle status.
+ * ARCHITECTURE: Enum matches all other entity status types
+ */
+export enum ChannelMemberStatus {
+  ACTIVE = 'active',
+  IDLE = 'idle',
+  DESTROYED = 'destroyed',
+}
+
 export type CommunicationMode = 'broadcast' | 'directed' | 'round-robin';
 
 export interface ChannelMember {
@@ -1086,35 +1110,32 @@ export interface ChannelCreateRequest {
   readonly members: readonly ChannelMemberRequest[];
   readonly communicationMode?: CommunicationMode;
   readonly topic?: string;
+  /**
+   * Maximum conversation rounds before the channel transitions to COMPLETED.
+   * Precondition: must be in range 1–10000. Validated at the service/MCP boundary.
+   */
   readonly maxRounds?: number;
   readonly createdBy?: string;
 }
 
+/**
+ * Constructs a Channel from a validated request.
+ * ARCHITECTURE: Assumes valid input — callers must validate name against CHANNEL_NAME_REGEX
+ * and maxRounds range (1–10000) before calling. Follows createTask/createSchedule/createLoop
+ * convention of no internal validation.
+ */
 export const createChannel = (request: ChannelCreateRequest): Channel => {
-  if (!CHANNEL_NAME_REGEX.test(request.name)) {
-    throw new AutobeatError(
-      ErrorCode.INVALID_INPUT,
-      `Invalid channel name "${request.name}": must match ${CHANNEL_NAME_REGEX}`,
-    );
-  }
-
   const now = Date.now();
-  const members: readonly ChannelMember[] = request.members.map((m) => {
-    if (!CHANNEL_NAME_REGEX.test(m.name)) {
-      throw new AutobeatError(
-        ErrorCode.INVALID_INPUT,
-        `Invalid member name "${m.name}": must match ${CHANNEL_NAME_REGEX}`,
-      );
-    }
-    return Object.freeze({
+  const members: readonly ChannelMember[] = request.members.map((m) =>
+    Object.freeze({
       name: m.name,
       agent: m.agent,
       systemPrompt: m.systemPrompt,
       tmuxSession: `beat-channel-${request.name}-${m.name}`,
-      status: 'active' as const,
+      status: ChannelMemberStatus.ACTIVE,
       joinedAt: now,
-    });
-  });
+    }),
+  );
 
   return Object.freeze({
     id: ChannelId(`ch-${crypto.randomUUID()}`),
@@ -1122,7 +1143,7 @@ export const createChannel = (request: ChannelCreateRequest): Channel => {
     members,
     communicationMode: request.communicationMode,
     topic: request.topic,
-    status: 'active' as const,
+    status: ChannelStatus.ACTIVE,
     maxRounds: request.maxRounds,
     currentRound: 0,
     createdBy: request.createdBy,

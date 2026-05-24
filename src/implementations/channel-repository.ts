@@ -12,8 +12,8 @@ import {
   type Channel,
   ChannelId,
   type ChannelMember,
-  type ChannelMemberStatus,
-  type ChannelStatus,
+  ChannelMemberStatus,
+  ChannelStatus,
   type CommunicationMode,
 } from '../core/domain.js';
 import { operationErrorHandler } from '../core/errors.js';

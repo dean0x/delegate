@@ -314,7 +314,7 @@ export interface ChannelCreatedEvent extends BaseEvent {
   type: 'ChannelCreated';
   channelId: ChannelId;
   name: string;
-  members: string[];
+  members: readonly string[];
   communicationMode?: CommunicationMode;
 }
 
