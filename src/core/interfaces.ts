@@ -6,6 +6,7 @@
 import {
   ActivityEntry,
   Channel,
+  ChannelCreateRequest,
   ChannelId,
   ChannelMember,
   ChannelMemberStatus,
@@ -1027,6 +1028,45 @@ export interface ChannelRepository {
   delete(id: ChannelId): Promise<Result<void>>;
   count(): Promise<Result<number>>;
   countByStatus(): Promise<Result<Record<string, number>>>;
+}
+
+/**
+ * Service interface for Channel lifecycle management.
+ * ARCHITECTURE: Pure Result pattern — no exceptions in service logic.
+ * Pattern: Service layer sits above the repository and tmux connector,
+ *   owned by ChannelManager. Follows ScheduleService / LoopService convention.
+ *
+ * ADR-001: Channel names are validated against CHANNEL_NAME_REGEX, which is
+ * constructed to be a valid tmux SESSION_NAME_REGEX suffix — no transformation
+ * is needed when building beat-channel-{name}-{member} session names.
+ */
+export interface ChannelService {
+  /**
+   * Create a new channel and spawn member sessions.
+   * Returns err(INVALID_INPUT) on name conflict, invalid name, or invalid members.
+   */
+  createChannel(request: ChannelCreateRequest): Promise<Result<Channel>>;
+  /**
+   * Destroy a channel, killing all member sessions.
+   * Returns err(INVALID_INPUT) if channel not found or already DESTROYED.
+   */
+  destroyChannel(channelId: ChannelId, reason?: string): Promise<Result<void>>;
+  /** Pause a ACTIVE channel (suppress routing while members continue running). */
+  pauseChannel(channelId: ChannelId): Promise<Result<void>>;
+  /** Resume a PAUSED channel. */
+  resumeChannel(channelId: ChannelId): Promise<Result<void>>;
+  /**
+   * Deliver a message to the channel from an external caller.
+   * targetMember — if provided, deliver to that specific member only.
+   * Returns err(INVALID_INPUT) if channel is paused or target member unknown.
+   */
+  sendMessage(channelId: ChannelId, message: string, targetMember?: string): Promise<Result<void>>;
+  /** Fetch a channel by ID. Returns null if not found. */
+  getChannel(channelId: ChannelId): Promise<Result<Channel | null>>;
+  /** Fetch a channel by name. Returns null if not found. */
+  getChannelByName(name: string): Promise<Result<Channel | null>>;
+  /** List channels, optionally filtered by status. */
+  listChannels(status?: ChannelStatus, limit?: number, offset?: number): Promise<Result<readonly Channel[]>>;
 }
 
 // Re-export for convenience (consumers can import from interfaces instead of domain)
