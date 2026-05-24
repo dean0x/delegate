@@ -3,7 +3,7 @@
   "features": {
     "tmux-runtime": {
       "name": "Tmux Runtime Layer",
-      "description": "Use when implementing tmux-based worker processes, adding new agent types to the tmux runtime, debugging session lifecycle or output capture, tracing the pre-exit flush mechanism, or understanding the fs.watch sentinel completion pattern. Keywords: tmux, session, worker, spawn, wrapper, sentinel, staleness, fs.watch, send-keys, output capture, jq, flushPendingFiles, readdirSync.",
+      "description": "Use when implementing tmux-based worker processes, adding new agent types to the tmux runtime, debugging session lifecycle or output capture, tracing the pre-exit flush mechanism, or understanding the fs.watch sentinel completion pattern. Keywords: tmux, session, worker, spawn, wrapper, sentinel, staleness, fs.watch, send-keys, output capture, jq, flushPendingFiles, readdirSync, persistent, setup shim, core/tmux-types.",
       "directories": [
         "src/implementations/tmux/",
         "tests/unit/implementations/tmux/",
@@ -16,14 +16,15 @@
         "src/implementations/tmux/tmux-hooks.ts",
         "src/implementations/tmux/tmux-connector.ts",
         "src/implementations/tmux/index.ts",
-        "src/core/errors.ts"
+        "src/core/errors.ts",
+        "src/core/tmux-types.ts"
       ],
-      "lastUpdated": "2026-05-17T11:18:43.687Z",
+      "lastUpdated": "2026-05-24T11:59:17.410Z",
       "createdBy": "devflow-knowledge"
     },
     "tmux-infrastructure": {
       "name": "Tmux Abstraction Layer",
-      "description": "Use when working on the tmux abstraction layer (Phase 1 of the tmux migration epic), wiring TmuxConnector into agent adapters (Phase 2) or WorkerPool (Phase 3), or extending agent support via TmuxAgentType. Keywords: tmux, abstraction, connector, hooks, session manager, validator, sentinel, debounce, flush, agent type, jq, wrapper script, sequence ordering, TmuxAgentType.",
+      "description": "Use when working on the tmux abstraction layer, wiring TmuxConnector into agent adapters (Phase 2) or WorkerPool (Phase 3), extending agent support via TmuxAgentType, or understanding the core/tmux-types.ts port boundary. Keywords: tmux, abstraction, connector, hooks, session manager, validator, sentinel, debounce, flush, agent type, jq, wrapper script, setup shim, persistent, sequence ordering, TmuxAgentType, TmuxSpawnCoreConfig, TmuxConnectorPort, core/tmux-types.",
       "directories": [
         "src/implementations/tmux",
         "tests/unit/implementations/tmux",
@@ -37,9 +38,10 @@
         "src/implementations/tmux/tmux-validator.ts",
         "src/implementations/tmux/tmux-shell-utils.ts",
         "src/implementations/tmux/index.ts",
-        "src/core/errors.ts"
+        "src/core/errors.ts",
+        "src/core/tmux-types.ts"
       ],
-      "lastUpdated": "2026-05-18T14:55:05.797Z",
+      "lastUpdated": "2026-05-24T11:59:23.711Z",
       "createdBy": "devflow-knowledge"
     }
   }

@@ -5,6 +5,11 @@
 
 import {
   ActivityEntry,
+  Channel,
+  ChannelId,
+  ChannelMember,
+  ChannelMemberStatus,
+  ChannelStatus,
   Loop,
   LoopCreateRequest,
   LoopId,
@@ -1002,6 +1007,26 @@ export interface PipelineRepository {
    * Used by PipelineHandler to populate stepTaskIds when a scheduled step's task is first delegated.
    */
   findActiveByStepScheduleId(scheduleId: ScheduleId): Promise<Result<readonly Pipeline[]>>;
+}
+
+/**
+ * Repository interface for Channel entities.
+ * ARCHITECTURE: Pure Result pattern, no exceptions.
+ * Pattern: Repository pattern — channels + members in separate tables with eager loading.
+ */
+export interface ChannelRepository {
+  save(channel: Channel): Promise<Result<void>>;
+  findById(id: ChannelId): Promise<Result<Channel | null>>;
+  findByName(name: string): Promise<Result<Channel | null>>;
+  findAll(limit?: number, offset?: number): Promise<Result<readonly Channel[]>>;
+  findByStatus(status: ChannelStatus, limit?: number, offset?: number): Promise<Result<readonly Channel[]>>;
+  updateStatus(id: ChannelId, status: ChannelStatus): Promise<Result<void>>;
+  updateRound(id: ChannelId, round: number): Promise<Result<void>>;
+  addMember(channelId: ChannelId, member: ChannelMember): Promise<Result<void>>;
+  updateMemberStatus(channelId: ChannelId, memberName: string, status: ChannelMemberStatus): Promise<Result<void>>;
+  delete(id: ChannelId): Promise<Result<void>>;
+  count(): Promise<Result<number>>;
+  countByStatus(): Promise<Result<Record<string, number>>>;
 }
 
 // Re-export for convenience (consumers can import from interfaces instead of domain)

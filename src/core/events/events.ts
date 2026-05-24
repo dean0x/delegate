@@ -6,6 +6,8 @@
  */
 
 import {
+  ChannelId,
+  CommunicationMode,
   Loop,
   LoopId,
   LoopIteration,
@@ -306,6 +308,46 @@ export interface PipelineCancelledEvent extends BaseEvent {
   pipelineId: PipelineId;
 }
 
+// ─── Channel lifecycle events ────────────────────────────────────────────────
+
+export interface ChannelCreatedEvent extends BaseEvent {
+  type: 'ChannelCreated';
+  channelId: ChannelId;
+  name: string;
+  members: readonly string[];
+  communicationMode?: CommunicationMode;
+}
+
+export interface ChannelDestroyedEvent extends BaseEvent {
+  type: 'ChannelDestroyed';
+  channelId: ChannelId;
+  reason: 'user-requested' | 'max-rounds-reached' | 'all-members-crashed';
+}
+
+export interface ChannelMessageSentEvent extends BaseEvent {
+  type: 'ChannelMessageSent';
+  channelId: ChannelId;
+  from: string;
+  to: string | 'all';
+  round: number;
+}
+
+export interface ChannelMemberCrashedEvent extends BaseEvent {
+  type: 'ChannelMemberCrashed';
+  channelId: ChannelId;
+  memberName: string;
+}
+
+export interface ChannelPausedEvent extends BaseEvent {
+  type: 'ChannelPaused';
+  channelId: ChannelId;
+}
+
+export interface ChannelResumedEvent extends BaseEvent {
+  type: 'ChannelResumed';
+  channelId: ChannelId;
+}
+
 /**
  * Union type of all events
  */
@@ -358,7 +400,14 @@ export type AutobeatEvent =
   | PipelineStepCompletedEvent
   | PipelineCompletedEvent
   | PipelineFailedEvent
-  | PipelineCancelledEvent;
+  | PipelineCancelledEvent
+  // Channel lifecycle events
+  | ChannelCreatedEvent
+  | ChannelDestroyedEvent
+  | ChannelMessageSentEvent
+  | ChannelMemberCrashedEvent
+  | ChannelPausedEvent
+  | ChannelResumedEvent;
 
 /**
  * Event handler function type

@@ -4,7 +4,7 @@
  */
 
 import { AgentProvider } from './agents.js';
-import { AutobeatError } from './errors.js';
+import { AutobeatError, ErrorCode } from './errors.js';
 
 export type TaskId = string & { readonly __brand: 'TaskId' };
 export type WorkerId = string & { readonly __brand: 'WorkerId' };
@@ -12,6 +12,7 @@ export type ScheduleId = string & { readonly __brand: 'ScheduleId' };
 export type LoopId = string & { readonly __brand: 'LoopId' };
 export type OrchestratorId = string & { readonly __brand: 'OrchestratorId' };
 export type PipelineId = string & { readonly __brand: 'PipelineId' };
+export type ChannelId = string & { readonly __brand: 'ChannelId' };
 
 export const TaskId = (id: string): TaskId => id as TaskId;
 export const WorkerId = (id: string): WorkerId => id as WorkerId;
@@ -19,6 +20,7 @@ export const ScheduleId = (id: string): ScheduleId => id as ScheduleId;
 export const LoopId = (id: string): LoopId => id as LoopId;
 export const OrchestratorId = (id: string): OrchestratorId => id as OrchestratorId;
 export const PipelineId = (id: string): PipelineId => id as PipelineId;
+export const ChannelId = (id: string): ChannelId => id as ChannelId;
 
 export enum Priority {
   P0 = 'P0', // Critical
@@ -1039,5 +1041,144 @@ export const createPipeline = (request: PipelineEntityRequest): Pipeline => {
     systemPrompt: request.systemPrompt,
     createdAt: now,
     updatedAt: now,
+  });
+};
+
+// ─── Channel primitives (Phase 6, epic #175) ────────────────────────────────
+
+/**
+ * Validates channel and member names: lowercase alphanumeric with interior hyphens, max 64 chars.
+ * Max 64 chars leaves room for the beat-channel-{name}-{member} tmux session name prefix and
+ * suffix within tmux's 256-byte TMUX_NAME_MAX.
+ */
+export const CHANNEL_NAME_REGEX = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/;
+
+/**
+ * Channel lifecycle status.
+ * ARCHITECTURE: Enum matches all other entity status types (TaskStatus, ScheduleStatus, etc.)
+ */
+export enum ChannelStatus {
+  ACTIVE = 'active',
+  PAUSED = 'paused',
+  COMPLETED = 'completed',
+  DESTROYED = 'destroyed',
+}
+
+/**
+ * Channel member lifecycle status.
+ * ARCHITECTURE: Enum matches all other entity status types
+ */
+export enum ChannelMemberStatus {
+  ACTIVE = 'active',
+  IDLE = 'idle',
+  DESTROYED = 'destroyed',
+}
+
+/**
+ * Message routing strategy for a channel.
+ * broadcast = messages go to all members
+ * directed = sent to a specific named member
+ * round-robin = members take turns in fixed order
+ */
+export type CommunicationMode = 'broadcast' | 'directed' | 'round-robin';
+
+/**
+ * A named agent participant within a channel.
+ * ARCHITECTURE: tmuxSession is derived as beat-channel-{channelName}-{memberName} at creation
+ * time via createChannel() — never set independently. joinedAt is epoch milliseconds.
+ */
+export interface ChannelMember {
+  readonly name: string;
+  readonly agent: AgentProvider;
+  readonly systemPrompt?: string;
+  readonly tmuxSession: string;
+  readonly status: ChannelMemberStatus;
+  readonly joinedAt: number;
+}
+
+/**
+ * Persistent multi-agent communication channel.
+ * Owns its members and tracks conversation rounds.
+ * ARCHITECTURE: createdAt and updatedAt are epoch milliseconds (Date.now()).
+ * currentRound starts at 0; maxRounds caps the session length (1–10000).
+ */
+export interface Channel {
+  readonly id: ChannelId;
+  readonly name: string;
+  readonly members: readonly ChannelMember[];
+  readonly communicationMode?: CommunicationMode;
+  readonly topic?: string;
+  readonly status: ChannelStatus;
+  readonly maxRounds?: number;
+  readonly currentRound: number;
+  readonly createdBy?: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface ChannelMemberRequest {
+  readonly name: string;
+  readonly agent: AgentProvider;
+  readonly systemPrompt?: string;
+}
+
+export interface ChannelCreateRequest {
+  readonly name: string;
+  readonly members: readonly ChannelMemberRequest[];
+  readonly communicationMode?: CommunicationMode;
+  readonly topic?: string;
+  /**
+   * Maximum conversation rounds before the channel transitions to COMPLETED.
+   * Precondition: must be in range 1–10000. Validated at the service/MCP boundary.
+   */
+  readonly maxRounds?: number;
+  readonly createdBy?: string;
+}
+
+/**
+ * Constructs a Channel from a validated request.
+ * ARCHITECTURE: Assumes valid input — callers must validate name against CHANNEL_NAME_REGEX
+ * and maxRounds range (1–10000) before calling. Follows createTask/createSchedule/createLoop
+ * convention of no internal validation.
+ */
+export const createChannel = (request: ChannelCreateRequest): Channel => {
+  const now = Date.now();
+  const members: readonly ChannelMember[] = request.members.map((m) =>
+    Object.freeze({
+      name: m.name,
+      agent: m.agent,
+      systemPrompt: m.systemPrompt,
+      tmuxSession: `beat-channel-${request.name}-${m.name}`,
+      status: ChannelMemberStatus.ACTIVE,
+      joinedAt: now,
+    }),
+  );
+
+  return Object.freeze({
+    id: ChannelId(`ch-${crypto.randomUUID()}`),
+    name: request.name,
+    members,
+    communicationMode: request.communicationMode,
+    topic: request.topic,
+    status: ChannelStatus.ACTIVE,
+    maxRounds: request.maxRounds,
+    currentRound: 0,
+    createdBy: request.createdBy,
+    createdAt: now,
+    updatedAt: now,
+  });
+};
+
+/**
+ * Immutable update helper for channels.
+ * ARCHITECTURE: Returns new frozen object, never mutates input. Assumes valid input —
+ * callers must validate status transitions and round values before calling.
+ * Pattern: Follows updateSchedule() / updateLoop() convention
+ */
+export const updateChannel = (channel: Channel, updates: Partial<Omit<Channel, 'id'>>): Channel => {
+  return Object.freeze({
+    ...channel,
+    ...updates,
+    updatedAt: Date.now(),
   });
 };
