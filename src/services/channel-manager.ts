@@ -19,7 +19,6 @@
  * transformation is needed when building beat-channel-{name}-{member}.
  */
 
-import * as process from 'process';
 import type { AgentRegistry } from '../core/agents.js';
 import type { Configuration } from '../core/configuration.js';
 import {
@@ -32,12 +31,11 @@ import {
   ChannelStatus,
   createChannel,
   type TaskId,
-  updateChannel,
 } from '../core/domain.js';
-import { AutobeatError, ErrorCode, operationErrorHandler } from '../core/errors.js';
+import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
 import type { ChannelRepository, ChannelService, Logger } from '../core/interfaces.js';
-import { err, ok, type Result, tryCatchAsync } from '../core/result.js';
+import { err, ok, type Result } from '../core/result.js';
 import type { TmuxConnectorPort, TmuxHandle } from '../core/tmux-types.js';
 import { ChannelRouter } from './channel-router.js';
 
@@ -114,7 +112,7 @@ export class ChannelManager implements ChannelService {
 
   constructor(deps: ChannelManagerDeps) {
     this.eventBus = deps.eventBus;
-    this.logger = deps.logger.child ? deps.logger.child({ module: 'ChannelManager' }) : deps.logger;
+    this.logger = deps.logger;
     this.channelRepository = deps.channelRepository;
     this.config = deps.config;
     this.tmuxConnector = deps.tmuxConnector;
@@ -396,11 +394,11 @@ export class ChannelManager implements ChannelService {
         }
       } else {
         // Fallback: deliver to all active members
-        await this.broadcastToActiveMembers(channel, message, 'external');
+        await this.broadcastToActiveMembers(channel, message);
       }
     } else {
       // broadcast / directed / no mode: deliver to all active members
-      await this.broadcastToActiveMembers(channel, message, 'external');
+      await this.broadcastToActiveMembers(channel, message);
     }
 
     await this.eventBus.emit('ChannelMessageSent', {
@@ -518,10 +516,12 @@ export class ChannelManager implements ChannelService {
     this.messageQueues.clear();
 
     for (const handle of this.memberHandles.values()) {
-      try {
-        this.tmuxConnector.destroy(handle);
-      } catch {
-        /* best-effort */
+      const result = this.tmuxConnector.destroy(handle);
+      if (!result.ok) {
+        this.logger.warn('Failed to destroy session during dispose', {
+          sessionName: handle.sessionName,
+          error: result.error.message,
+        });
       }
     }
     this.memberHandles.clear();
@@ -638,7 +638,7 @@ export class ChannelManager implements ChannelService {
   /**
    * Broadcast a message to all active members in a channel.
    */
-  private async broadcastToActiveMembers(channel: Channel, content: string, _from: string): Promise<void> {
+  private async broadcastToActiveMembers(channel: Channel, content: string): Promise<void> {
     for (const member of channel.members) {
       if (member.status === ChannelMemberStatus.ACTIVE) {
         const handle = this.memberHandles.get(this.handleKey(channel.id, member.name));

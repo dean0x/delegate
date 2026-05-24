@@ -153,7 +153,6 @@ export class ChannelHandler extends BaseEventHandler {
           if (seenFirst) {
             // The first member has spoken again → full cycle completed → increment round
             roundComplete = true;
-            this.rrFirstMemberSeen.set(channelId, true); // Still the first for next round
           } else {
             // First time we see the first member — record it but don't increment yet
             this.rrFirstMemberSeen.set(channelId, true);
@@ -167,9 +166,8 @@ export class ChannelHandler extends BaseEventHandler {
         const participants = this.roundParticipants.get(channelId)!;
         participants.add(from);
 
-        const activeMemberNames = new Set(activeMembers.map((m) => m.name));
         // Round is complete when every active member has spoken at least once
-        const allSpoken = [...activeMemberNames].every((name) => participants.has(name));
+        const allSpoken = activeMembers.every((m) => participants.has(m.name));
         if (allSpoken) {
           roundComplete = true;
           participants.clear();
@@ -219,29 +217,26 @@ export class ChannelHandler extends BaseEventHandler {
         participants.delete(memberName);
       }
 
-      // If this was the first member in round-robin, advance to next active member
-      if (this.rrFirstMember.get(channelId) === memberName) {
-        const channelResult = await this.channelRepository.findById(channelId);
-        if (channelResult.ok && channelResult.value) {
-          const activeMembers = channelResult.value.members
-            .filter((m) => m.name !== memberName && m.status === ChannelMemberStatus.ACTIVE)
-            .sort((a, b) => a.joinedAt - b.joinedAt);
-          if (activeMembers[0]) {
-            this.rrFirstMember.set(channelId, activeMembers[0].name);
-            this.rrFirstMemberSeen.set(channelId, false);
-          } else {
-            this.rrFirstMember.delete(channelId);
-          }
-        }
-      }
-
-      // Fetch updated channel to check all-members-dead condition
+      // Fetch updated channel (reflects the crash) for both round-robin tracking and all-dead check
       const channelResult = await this.channelRepository.findById(channelId);
       if (!channelResult.ok) return channelResult;
       const channel = channelResult.value;
       if (!channel) return ok(undefined);
 
-      // After updateMemberStatus, check current members in the DB (now reflects the crash)
+      // If the crashed member was the round-robin first, advance to next active member
+      if (this.rrFirstMember.get(channelId) === memberName) {
+        const nextFirst = channel.members
+          .filter((m) => m.name !== memberName && m.status === ChannelMemberStatus.ACTIVE)
+          .sort((a, b) => a.joinedAt - b.joinedAt)[0];
+        if (nextFirst) {
+          this.rrFirstMember.set(channelId, nextFirst.name);
+          this.rrFirstMemberSeen.set(channelId, false);
+        } else {
+          this.rrFirstMember.delete(channelId);
+        }
+      }
+
+      // Check whether all members are now dead (the crash reflects the DB state)
       const allDead = channel.members.every((m) =>
         m.name === memberName ? true : m.status === ChannelMemberStatus.DESTROYED,
       );

@@ -12,8 +12,7 @@
 
 import type { Channel, ChannelMember } from '../core/domain.js';
 import { ChannelMemberStatus } from '../core/domain.js';
-import type { AutobeatError } from '../core/errors.js';
-import { AutobeatError as AutobeatErrorClass, ErrorCode } from '../core/errors.js';
+import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { err, ok, type Result } from '../core/result.js';
 
 /**
@@ -75,7 +74,7 @@ export class ChannelRouter {
     const senderExists = members.some((m) => m.name === senderName);
     if (!senderExists) {
       return err(
-        new AutobeatErrorClass(
+        new AutobeatError(
           ErrorCode.INVALID_INPUT,
           `Sender '${senderName}' is not a member of channel '${channel.name}'`,
           { senderName, channelId: channel.id },
@@ -103,7 +102,7 @@ export class ChannelRouter {
 
     if (activeTargets.length === 0) {
       return err(
-        new AutobeatErrorClass(
+        new AutobeatError(
           ErrorCode.INVALID_INPUT,
           `No active targets in channel '${channel.name}' for sender '${senderName}'`,
           { senderName, channelId: channel.id },
@@ -123,7 +122,7 @@ export class ChannelRouter {
     const nextMember = ChannelRouter.nextRoundRobinMember(channel.members, senderName);
     if (nextMember === undefined) {
       return err(
-        new AutobeatErrorClass(
+        new AutobeatError(
           ErrorCode.INVALID_INPUT,
           `No active next member for round-robin in channel '${channel.name}'`,
           { senderName, channelId: channel.id },
@@ -134,11 +133,9 @@ export class ChannelRouter {
     const targetMember = channel.members.find((m) => m.name === nextMember);
     if (!targetMember) {
       return err(
-        new AutobeatErrorClass(
-          ErrorCode.SYSTEM_ERROR,
-          `Round-robin next member '${nextMember}' not found in members list`,
-          { channelId: channel.id },
-        ),
+        new AutobeatError(ErrorCode.SYSTEM_ERROR, `Round-robin next member '${nextMember}' not found in members list`, {
+          channelId: channel.id,
+        }),
       );
     }
 
