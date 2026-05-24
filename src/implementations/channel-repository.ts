@@ -92,7 +92,6 @@ export class SQLiteChannelRepository implements ChannelRepository {
   private readonly findMembersByChannelIdStmt: SQLite.Statement;
   private readonly updateStatusStmt: SQLite.Statement;
   private readonly updateRoundStmt: SQLite.Statement;
-  private readonly addMemberStmt: SQLite.Statement;
   private readonly updateMemberStatusStmt: SQLite.Statement;
   private readonly deleteStmt: SQLite.Statement;
   private readonly countStmt: SQLite.Statement;
@@ -128,11 +127,6 @@ export class SQLiteChannelRepository implements ChannelRepository {
     this.updateStatusStmt = this.db.prepare(`UPDATE channels SET status = ?, updated_at = ? WHERE id = ?`);
 
     this.updateRoundStmt = this.db.prepare(`UPDATE channels SET current_round = ?, updated_at = ? WHERE id = ?`);
-
-    this.addMemberStmt = this.db.prepare(`
-      INSERT INTO channel_members (channel_id, name, agent, system_prompt, tmux_session, status, joined_at)
-      VALUES (@channel_id, @name, @agent, @system_prompt, @tmux_session, @status, @joined_at)
-    `);
 
     this.updateMemberStatusStmt = this.db.prepare(
       `UPDATE channel_members SET status = ? WHERE channel_id = ? AND name = ?`,
@@ -187,20 +181,20 @@ export class SQLiteChannelRepository implements ChannelRepository {
   }
 
   async findAll(limit?: number, offset?: number): Promise<Result<readonly Channel[]>> {
+    const effectiveLimit = limit ?? SQLiteChannelRepository.DEFAULT_LIMIT;
+    const effectiveOffset = offset ?? 0;
     return tryCatchAsync(async () => {
-      const rows = this.findAllStmt.all(limit ?? SQLiteChannelRepository.DEFAULT_LIMIT, offset ?? 0) as ChannelRow[];
+      const rows = this.findAllStmt.all(effectiveLimit, effectiveOffset) as ChannelRow[];
       return rows.map((row) => this.rowToChannel(row));
     }, operationErrorHandler('find all channels'));
   }
 
   async findByStatus(status: ChannelStatus, limit?: number, offset?: number): Promise<Result<readonly Channel[]>> {
+    const effectiveLimit = limit ?? SQLiteChannelRepository.DEFAULT_LIMIT;
+    const effectiveOffset = offset ?? 0;
     return tryCatchAsync(
       async () => {
-        const rows = this.findByStatusStmt.all(
-          status,
-          limit ?? SQLiteChannelRepository.DEFAULT_LIMIT,
-          offset ?? 0,
-        ) as ChannelRow[];
+        const rows = this.findByStatusStmt.all(status, effectiveLimit, effectiveOffset) as ChannelRow[];
         return rows.map((row) => this.rowToChannel(row));
       },
       operationErrorHandler('find channels by status', { status }),
@@ -217,6 +211,9 @@ export class SQLiteChannelRepository implements ChannelRepository {
   }
 
   async updateRound(id: ChannelId, round: number): Promise<Result<void>> {
+    if (!Number.isInteger(round) || round < 0) {
+      throw new Error(`updateRound: round must be a non-negative integer, got ${round}`);
+    }
     return tryCatchAsync(
       async () => {
         this.updateRoundStmt.run(round, Date.now(), id);
@@ -228,7 +225,7 @@ export class SQLiteChannelRepository implements ChannelRepository {
   async addMember(channelId: ChannelId, member: ChannelMember): Promise<Result<void>> {
     return tryCatchAsync(
       async () => {
-        this.addMemberStmt.run(this.memberToDbFormat(channelId, member));
+        this.saveMemberStmt.run(this.memberToDbFormat(channelId, member));
       },
       operationErrorHandler('add channel member', { channelId, memberName: member.name }),
     );
@@ -315,7 +312,7 @@ export class SQLiteChannelRepository implements ChannelRepository {
       id: ChannelId(validated.id),
       name: validated.name,
       members: Object.freeze(members),
-      communicationMode: validated.communication_mode as CommunicationMode | undefined,
+      communicationMode: validated.communication_mode ?? undefined,
       topic: validated.topic ?? undefined,
       status: validated.status as ChannelStatus,
       maxRounds: validated.max_rounds ?? undefined,
