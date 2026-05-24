@@ -375,9 +375,7 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
       // ARCHITECTURE EXCEPTION: Dynamic require used as fallback when no writeFileSync
       // is injected. Production callers (bootstrap.ts) always inject real fs.writeFileSync.
       // This fallback ensures the class is usable without injection (e.g., legacy callers).
-      // biome-ignore lint/performance/noBarrelFile: built-in module, not a barrel
       ((p: string, c: string) => {
-        // biome-ignore lint/style/noRestrictedGlobals: intentional dynamic import fallback
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         require('node:fs').writeFileSync(p, c, 'utf8');
       });
