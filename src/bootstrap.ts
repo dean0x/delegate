@@ -105,6 +105,7 @@ import type { AgentRegistry } from './core/agents.js';
 import type { TmuxConnectorPort, TmuxSessionManagerCorePort } from './core/tmux-types.js';
 // Implementations
 import { InMemoryAgentRegistry } from './implementations/agent-registry.js';
+import { SQLiteChannelRepository } from './implementations/channel-repository.js';
 import { SQLiteCheckpointRepository } from './implementations/checkpoint-repository.js';
 import { ClaudeAdapter } from './implementations/claude-adapter.js';
 import { CodexAdapter } from './implementations/codex-adapter.js';
@@ -353,6 +354,13 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     const dbResult = container.get<Database>('database');
     if (!dbResult.ok) throw new Error('Failed to get database for PipelineRepository');
     return new SQLitePipelineRepository(dbResult.value);
+  });
+
+  // Register ChannelRepository for multi-agent channel persistence (Phase 6, epic #175)
+  container.registerSingleton('channelRepository', () => {
+    const dbResult = container.get<Database>('database');
+    if (!dbResult.ok) throw new Error('Failed to get database for ChannelRepository');
+    return new SQLiteChannelRepository(dbResult.value);
   });
 
   // Register ScheduleService for schedule management (v0.4.0)
