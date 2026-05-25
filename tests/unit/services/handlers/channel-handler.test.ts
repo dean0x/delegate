@@ -222,6 +222,42 @@ describe('ChannelHandler', () => {
 
       expect(repo.updateRound).toHaveBeenCalledWith('ch-rr', 1);
     });
+
+    it('correctly tracks two consecutive round completions', async () => {
+      const channel = makeChannel('ch-rr-multi', ['a', 'b', 'c'], 'round-robin', 5);
+      const repo = makeChannelRepo(channel);
+      await createHandler(repo);
+
+      // Round 0 → 1: first member A completes the first cycle (A B C A)
+      for (const speaker of ['a', 'b', 'c', 'a']) {
+        await eventBus.emit('ChannelMessageSent', {
+          channelId: 'ch-rr-multi' as ChannelId,
+          from: speaker,
+          to: 'all',
+          round: 0,
+        });
+      }
+      await flushEventLoop();
+
+      expect(repo.updateRound).toHaveBeenCalledWith('ch-rr-multi', 1);
+
+      // Round 1 → 2: B C then A again completes the second cycle (B C A)
+      // After round increment, rrFirstMemberSeen is reset to false.
+      // A is still the first member. Next time A speaks after being seen again = round 2.
+      for (const speaker of ['b', 'c', 'a']) {
+        await eventBus.emit('ChannelMessageSent', {
+          channelId: 'ch-rr-multi' as ChannelId,
+          from: speaker,
+          to: 'all',
+          round: 1,
+        });
+      }
+      await flushEventLoop();
+
+      // updateRound should have been called twice total: once for round 1, once for round 2
+      expect(repo.updateRound).toHaveBeenCalledTimes(2);
+      expect(repo.updateRound).toHaveBeenNthCalledWith(2, 'ch-rr-multi', 2);
+    });
   });
 
   // ─── maxRounds termination ───────────────────────────────────────────────────
@@ -403,9 +439,25 @@ describe('ChannelHandler', () => {
   // ─── Cleanup ─────────────────────────────────────────────────────────────────
 
   describe('ChannelDestroyed cleanup', () => {
-    it('clears round tracking state when channel is destroyed', async () => {
+    it('skips messages for DESTROYED channels after round tracking state is cleared', async () => {
       const channel = makeChannel('ch-cleanup', ['a', 'b'], 'broadcast', 5);
-      const repo = makeChannelRepo(channel);
+      // Use a mutable channels map so updateStatus reflects the destroyed state
+      const channels = new Map<string, Channel>([['ch-cleanup', channel]]);
+      const repo: ChannelRepository = {
+        ...makeChannelRepo(channel),
+        findById: vi.fn().mockImplementation(async (id: ChannelId) => ok(channels.get(id) ?? null)),
+        updateRound: vi.fn().mockImplementation(async (id: ChannelId, round: number) => {
+          const ch = channels.get(id);
+          if (ch) channels.set(id, { ...ch, currentRound: round });
+          return ok(undefined);
+        }),
+        updateStatus: vi.fn().mockImplementation(async (id: ChannelId, status: ChannelStatus) => {
+          const ch = channels.get(id);
+          if (ch) channels.set(id, { ...ch, status });
+          return ok(undefined);
+        }),
+      };
+
       await createHandler(repo);
 
       // A speaks (add to tracking set)
@@ -417,23 +469,24 @@ describe('ChannelHandler', () => {
       });
       await flushEventLoop();
 
-      // Destroy channel
+      // Mark the channel as DESTROYED in the repo (simulates what ChannelManager does on destroy)
+      await repo.updateStatus('ch-cleanup' as ChannelId, ChannelStatus.DESTROYED);
+
+      // Destroy channel — clears ChannelHandler's in-memory tracking state
       await eventBus.emit('ChannelDestroyed', {
         channelId: 'ch-cleanup' as ChannelId,
         reason: 'user-requested',
       });
       await flushEventLoop();
 
-      // After destroy, emitting another message should not trigger a round increment
-      // (because the tracking state was cleared — the handler won't find the channel
-      // participants set and will treat it as a fresh channel)
+      // After destroy, messages for this channel must be skipped:
+      // handler checks channel.status !== 'active' and returns early
       await eventBus.emit('ChannelMessageSent', {
         channelId: 'ch-cleanup' as ChannelId,
         from: 'a',
         to: 'all',
         round: 0,
       });
-      // B speaks too
       await eventBus.emit('ChannelMessageSent', {
         channelId: 'ch-cleanup' as ChannelId,
         from: 'b',
@@ -442,13 +495,9 @@ describe('ChannelHandler', () => {
       });
       await flushEventLoop();
 
-      // The round should be updated once (when fresh tracking completes after destroy)
-      // OR zero times (if the handler skips destroyed channels) — either is acceptable.
-      // The key assertion is that the tracking set was cleared on destroy.
-      // We verify indirectly by checking that updateRound was called exactly once
-      // (the first complete round before destroy) OR not at all (if handler skips DESTROYED).
-      const roundCalls = (repo.updateRound as ReturnType<typeof vi.fn>).mock.calls.length;
-      expect(roundCalls).toBeLessThanOrEqual(2); // Not infinitely incrementing
+      // updateRound must never have been called — no round completed before destroy
+      // (only A had spoken, not B), and post-destroy messages are skipped
+      expect(repo.updateRound).not.toHaveBeenCalled();
     });
   });
 });

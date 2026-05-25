@@ -133,46 +133,10 @@ export class ChannelHandler extends BaseEventHandler {
       const { communicationMode, maxRounds } = channel;
       const activeMembers = channel.members.filter((m) => m.status === ChannelMemberStatus.ACTIVE);
 
-      let roundComplete = false;
-
-      if (communicationMode === 'round-robin') {
-        // Initialize first-member tracking if not set
-        if (!this.rrFirstMember.has(channelId)) {
-          const sorted = [...activeMembers].sort((a, b) => a.joinedAt - b.joinedAt);
-          const first = sorted[0];
-          if (first) {
-            this.rrFirstMember.set(channelId, first.name);
-            this.rrFirstMemberSeen.set(channelId, false);
-          }
-        }
-
-        const firstMember = this.rrFirstMember.get(channelId);
-        const seenFirst = this.rrFirstMemberSeen.get(channelId) ?? false;
-
-        if (from === firstMember) {
-          if (seenFirst) {
-            // The first member has spoken again → full cycle completed → increment round
-            roundComplete = true;
-          } else {
-            // First time we see the first member — record it but don't increment yet
-            this.rrFirstMemberSeen.set(channelId, true);
-          }
-        }
-      } else {
-        // broadcast / directed: all active members must speak
-        if (!this.roundParticipants.has(channelId)) {
-          this.roundParticipants.set(channelId, new Set());
-        }
-        const participants = this.roundParticipants.get(channelId)!;
-        participants.add(from);
-
-        // Round is complete when every active member has spoken at least once
-        const allSpoken = activeMembers.every((m) => participants.has(m.name));
-        if (allSpoken) {
-          roundComplete = true;
-          participants.clear();
-        }
-      }
+      const roundComplete =
+        communicationMode === 'round-robin'
+          ? this.checkRoundRobinComplete(channelId, from, activeMembers)
+          : this.checkBroadcastRoundComplete(channelId, from, activeMembers);
 
       if (!roundComplete) return ok(undefined);
 
@@ -194,6 +158,60 @@ export class ChannelHandler extends BaseEventHandler {
 
       return ok(undefined);
     });
+  }
+
+  /**
+   * Check whether a round-robin round is complete for the given channel.
+   * A round completes when the first active member speaks a second time (full cycle).
+   * Returns true when the round is complete.
+   */
+  private checkRoundRobinComplete(
+    channelId: ChannelId,
+    from: string,
+    activeMembers: { name: string; joinedAt: number }[],
+  ): boolean {
+    // Initialize first-member tracking if not set
+    if (!this.rrFirstMember.has(channelId)) {
+      const first = [...activeMembers].sort((a, b) => a.joinedAt - b.joinedAt)[0];
+      if (first) {
+        this.rrFirstMember.set(channelId, first.name);
+        this.rrFirstMemberSeen.set(channelId, false);
+      }
+    }
+
+    const firstMember = this.rrFirstMember.get(channelId);
+    if (from !== firstMember) return false;
+
+    const seenFirst = this.rrFirstMemberSeen.get(channelId) ?? false;
+    if (seenFirst) {
+      // The first member has spoken again → full cycle completed
+      return true;
+    }
+
+    // First time we see the first member — record it but don't increment yet
+    this.rrFirstMemberSeen.set(channelId, true);
+    return false;
+  }
+
+  /**
+   * Check whether a broadcast/directed round is complete for the given channel.
+   * A round completes when every active member has spoken at least once.
+   * Resets the participation set on completion.
+   * Returns true when the round is complete.
+   */
+  private checkBroadcastRoundComplete(channelId: ChannelId, from: string, activeMembers: { name: string }[]): boolean {
+    if (!this.roundParticipants.has(channelId)) {
+      this.roundParticipants.set(channelId, new Set());
+    }
+    const participants = this.roundParticipants.get(channelId)!;
+    participants.add(from);
+
+    const allSpoken = activeMembers.every((m) => participants.has(m.name));
+    if (allSpoken) {
+      participants.clear();
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -224,17 +242,7 @@ export class ChannelHandler extends BaseEventHandler {
       if (!channel) return ok(undefined);
 
       // If the crashed member was the round-robin first, advance to next active member
-      if (this.rrFirstMember.get(channelId) === memberName) {
-        const nextFirst = channel.members
-          .filter((m) => m.name !== memberName && m.status === ChannelMemberStatus.ACTIVE)
-          .sort((a, b) => a.joinedAt - b.joinedAt)[0];
-        if (nextFirst) {
-          this.rrFirstMember.set(channelId, nextFirst.name);
-          this.rrFirstMemberSeen.set(channelId, false);
-        } else {
-          this.rrFirstMember.delete(channelId);
-        }
-      }
+      this.adjustRoundRobinAfterCrash(channelId, memberName, channel.members);
 
       // Check whether all members are now dead (the crash reflects the DB state)
       const allDead = channel.members.every((m) =>
@@ -252,6 +260,29 @@ export class ChannelHandler extends BaseEventHandler {
 
       return ok(undefined);
     });
+  }
+
+  /**
+   * If the crashed member was the round-robin first member, advance to the next active member.
+   * Clears the tracking entirely if no active members remain.
+   */
+  private adjustRoundRobinAfterCrash(
+    channelId: ChannelId,
+    crashedMemberName: string,
+    members: readonly { name: string; status: ChannelMemberStatus; joinedAt: number }[],
+  ): void {
+    if (this.rrFirstMember.get(channelId) !== crashedMemberName) return;
+
+    const nextFirst = members
+      .filter((m) => m.name !== crashedMemberName && m.status === ChannelMemberStatus.ACTIVE)
+      .sort((a, b) => a.joinedAt - b.joinedAt)[0];
+
+    if (nextFirst) {
+      this.rrFirstMember.set(channelId, nextFirst.name);
+      this.rrFirstMemberSeen.set(channelId, false);
+    } else {
+      this.rrFirstMember.delete(channelId);
+    }
   }
 
   /**

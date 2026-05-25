@@ -163,6 +163,7 @@ export const createMockTmuxConnector = (opts?: { autoComplete?: boolean }): Mock
     sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
     isAlive: vi.fn().mockReturnValue(ok(true)),
     setEnvironment: vi.fn().mockReturnValue(ok(undefined)),
+    pasteContent: vi.fn().mockReturnValue(ok(undefined)),
     getActiveHandles: vi.fn().mockReturnValue([]),
     dispose: vi.fn(),
 
