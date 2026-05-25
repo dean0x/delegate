@@ -2,7 +2,8 @@
  * ChannelManager — channel lifecycle management service
  *
  * ARCHITECTURE: Service layer for multi-agent channel orchestration.
- * Pattern: Constructor-injected dependencies; all public methods return Result.
+ * Pattern: Factory pattern (ChannelManager.create()) for async initialization — constructor
+ *   only assigns dependencies; subscribeToEvents() surfaces subscription failures.
  * Rationale: Owns TmuxHandles for channel member sessions directly (bypassing WorkerPool).
  *   Uses a per-channel async queue to serialize message routing and prevent interleaving.
  *   Recovery re-attaches to live sessions on startup.
@@ -83,8 +84,12 @@ class SerialQueue {
    * (best-effort drain — callers must not rely on full completion).
    */
   async drain(timeoutMs = 5_000): Promise<void> {
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs);
+    });
     await Promise.race([this.chain, timeout]);
+    clearTimeout(timer);
   }
 }
 
@@ -142,7 +147,7 @@ export class ChannelManager implements ChannelService {
    */
   private readonly channelCache = new Map<string, Channel>();
 
-  constructor(deps: ChannelManagerDeps) {
+  private constructor(deps: ChannelManagerDeps) {
     this.eventBus = deps.eventBus;
     this.logger = deps.logger;
     this.channelRepository = deps.channelRepository;
@@ -151,30 +156,68 @@ export class ChannelManager implements ChannelService {
     this.tmuxSessionManager = deps.tmuxSessionManager;
     this.agentRegistry = deps.agentRegistry;
     this.sessionsDir = deps.sessionsDir;
+  }
 
+  /**
+   * Factory method — creates a fully initialized ChannelManager with event subscriptions.
+   * ARCHITECTURE: Factory pattern guarantees subscriptions are established before use
+   *   and surfaces failures via Result instead of silently failing in a constructor.
+   *   Pattern matches ChannelHandler, ScheduleHandler, LoopHandler.
+   */
+  static create(deps: ChannelManagerDeps): Result<ChannelManager, AutobeatError> {
+    const manager = new ChannelManager(deps);
+
+    const subscribeResult = manager.subscribeToEvents();
+    if (!subscribeResult.ok) return subscribeResult;
+
+    manager.logger.debug('ChannelManager initialized');
+    return ok(manager);
+  }
+
+  /**
+   * Subscribe to all relevant channel lifecycle events.
+   * ARCHITECTURE: Called by factory after construction; checks all subscribe Results.
+   */
+  private subscribeToEvents(): Result<void, AutobeatError> {
     // Subscribe to ChannelDestroyed so that event-driven destroy paths (max-rounds-reached,
     // all-members-crashed) trigger session teardown and DB status update.
     // DESIGN DECISION: destroyChannel() updates DB before emitting, so when our own destroy
     // path fires this handler the status is already DESTROYED — we skip. Only the
     // ChannelHandler-initiated paths (where DB is still ACTIVE) need handling here.
-    this.eventBus.subscribe('ChannelDestroyed', async (event: ChannelDestroyedEvent) => {
+    const destroyedResult = this.eventBus.subscribe('ChannelDestroyed', async (event: ChannelDestroyedEvent) => {
       await this.handleChannelDestroyedEvent(event).catch((e: unknown) => {
-        this.logger.warn('Failed to handle ChannelDestroyed event', {
-          channelId: event.channelId,
-          error: e instanceof Error ? e.message : String(e),
-        });
+        const error = e instanceof Error ? e : new Error(String(e));
+        this.logger.error('Failed to handle ChannelDestroyed event', error, { channelId: event.channelId });
       });
     });
+    if (!destroyedResult.ok) {
+      return err(
+        new AutobeatError(
+          ErrorCode.SYSTEM_ERROR,
+          `ChannelManager: failed to subscribe to ChannelDestroyed: ${destroyedResult.error.message}`,
+          { error: destroyedResult.error },
+        ),
+      );
+    }
 
     // Invalidate the channel cache when a member crashes so that the next
     // routeAndDeliverMessage call sees the updated member status (DESTROYED).
     // ChannelHandler writes the status update to DB; we must not serve stale
     // membership data from channelCache after that point.
-    this.eventBus.subscribe('ChannelMemberCrashed', async (event: ChannelMemberCrashedEvent) => {
+    const crashedResult = this.eventBus.subscribe('ChannelMemberCrashed', async (event: ChannelMemberCrashedEvent) => {
       this.channelCache.delete(event.channelId);
     });
+    if (!crashedResult.ok) {
+      return err(
+        new AutobeatError(
+          ErrorCode.SYSTEM_ERROR,
+          `ChannelManager: failed to subscribe to ChannelMemberCrashed: ${crashedResult.error.message}`,
+          { error: crashedResult.error },
+        ),
+      );
+    }
 
-    this.logger.debug('ChannelManager initialized');
+    return ok(undefined);
   }
 
   // ─── ChannelService interface ─────────────────────────────────────────────
@@ -506,7 +549,15 @@ export class ChannelManager implements ChannelService {
       // All members dead — mark channel DESTROYED
       this.logger.warn('Recovery: all channel members dead, destroying channel', { channelId: channel.id });
       await this.channelRepository.updateStatus(channel.id, ChannelStatus.DESTROYED);
-      await this.eventBus.emit('ChannelDestroyed', { channelId: channel.id, reason: 'all-members-crashed' });
+      const emitResult = await this.eventBus.emit('ChannelDestroyed', {
+        channelId: channel.id,
+        reason: 'all-members-crashed',
+      });
+      if (!emitResult.ok) {
+        this.logger.error('Failed to emit ChannelDestroyed during recovery', emitResult.error, {
+          channelId: channel.id,
+        });
+      }
       return;
     }
 
@@ -946,11 +997,8 @@ export class ChannelManager implements ChannelService {
         memberName,
       })
       .catch((e: unknown) => {
-        this.logger.warn('Failed to emit ChannelMemberCrashed', {
-          channelId,
-          memberName,
-          error: e instanceof Error ? e.message : String(e),
-        });
+        const error = e instanceof Error ? e : new Error(String(e));
+        this.logger.error('Failed to emit ChannelMemberCrashed', error, { channelId, memberName });
       });
   }
 

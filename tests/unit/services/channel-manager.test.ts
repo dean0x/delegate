@@ -166,7 +166,7 @@ describe('ChannelManager', () => {
     agentRegistry = createMockAgentRegistry();
     channelRepo = createMockChannelRepo();
 
-    manager = new ChannelManager({
+    const managerResult = ChannelManager.create({
       eventBus,
       logger,
       channelRepository: channelRepo,
@@ -175,6 +175,10 @@ describe('ChannelManager', () => {
       agentRegistry: agentRegistry as ReturnType<typeof createMockAgentRegistry>,
       sessionsDir,
     });
+    if (!managerResult.ok) {
+      throw new Error(`Failed to create ChannelManager: ${managerResult.error.message}`);
+    }
+    manager = managerResult.value;
   });
 
   afterEach(() => {
@@ -798,7 +802,7 @@ describe('ChannelManager', () => {
         return ok([]);
       });
 
-      const localManager = new ChannelManager({
+      const localManagerResult = ChannelManager.create({
         eventBus: localEventBus,
         logger,
         channelRepository: localChannelRepo,
@@ -808,6 +812,10 @@ describe('ChannelManager', () => {
         sessionsDir,
         tmuxSessionManager: sessionManagerMock,
       });
+      if (!localManagerResult.ok) {
+        throw new Error(`Failed to create ChannelManager: ${localManagerResult.error.message}`);
+      }
+      const localManager = localManagerResult.value;
 
       await localManager.recoverChannels();
       await flushEventLoop();
@@ -859,7 +867,7 @@ describe('ChannelManager', () => {
       // Session alive via per-member fallback
       (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(true));
 
-      const localManager = new ChannelManager({
+      const localManagerResult = ChannelManager.create({
         eventBus: localEventBus,
         logger,
         channelRepository: localChannelRepo,
@@ -869,6 +877,10 @@ describe('ChannelManager', () => {
         sessionsDir,
         tmuxSessionManager: failingSessionManager,
       });
+      if (!localManagerResult.ok) {
+        throw new Error(`Failed to create ChannelManager: ${localManagerResult.error.message}`);
+      }
+      const localManager = localManagerResult.value;
 
       await localManager.recoverChannels();
 

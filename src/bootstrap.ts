@@ -378,7 +378,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     // Absent in test environments where the tmux stack is not registered.
     const tmuxSessionManagerResult = container.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
     const tmuxSessionManager = tmuxSessionManagerResult.ok ? tmuxSessionManagerResult.value : undefined;
-    return new ChannelManager({
+    const createResult = ChannelManager.create({
       eventBus: getFromContainer<EventBus>(container, 'eventBus'),
       logger: getFromContainer<Logger>(container, 'logger').child({ module: 'ChannelManager' }),
       channelRepository: getFromContainer<ChannelRepository>(container, 'channelRepository'),
@@ -388,6 +388,10 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       sessionsDir,
       tmuxSessionManager,
     });
+    if (!createResult.ok) {
+      throw new Error(`Failed to create ChannelManager: ${createResult.error.message}`);
+    }
+    return createResult.value;
   });
 
   // Register ScheduleService for schedule management (v0.4.0)
