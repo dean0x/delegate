@@ -145,88 +145,23 @@ export class ChannelManager implements ChannelService {
   // ─── ChannelService interface ─────────────────────────────────────────────
 
   async createChannel(request: ChannelCreateRequest): Promise<Result<Channel>> {
-    // 1. Validate name
-    if (!CHANNEL_NAME_REGEX.test(request.name)) {
-      const truncatedName = request.name.slice(0, 64);
-      return err(
-        new AutobeatError(
-          ErrorCode.INVALID_INPUT,
-          `Invalid channel name '${truncatedName}': must match ${CHANNEL_NAME_REGEX}`,
-          {
-            name: request.name,
-          },
-        ),
-      );
-    }
-
-    // 2. Check name uniqueness
-    const existingResult = await this.channelRepository.findByName(request.name);
-    if (!existingResult.ok) return existingResult;
-    if (existingResult.value !== null) {
-      return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, `Channel name '${request.name}' already exists`, {
-          name: request.name,
-        }),
-      );
-    }
-
-    // 3. Validate member count (1–10)
-    if (request.members.length === 0 || request.members.length > 10) {
-      return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, `Channel must have 1–10 members (got ${request.members.length})`, {
-          memberCount: request.members.length,
-        }),
-      );
-    }
-
-    // 4. Validate member names: unique, match CHANNEL_NAME_REGEX
-    const memberNames = request.members.map((m) => m.name);
-    const uniqueNames = new Set(memberNames);
-    if (uniqueNames.size !== memberNames.length) {
-      return err(new AutobeatError(ErrorCode.INVALID_INPUT, 'Channel member names must be unique'));
-    }
-    for (const name of memberNames) {
-      if (!CHANNEL_NAME_REGEX.test(name)) {
-        return err(
-          new AutobeatError(ErrorCode.INVALID_INPUT, `Invalid member name '${name}': must match ${CHANNEL_NAME_REGEX}`),
-        );
-      }
-    }
-
-    // 5. Multi-agent channels require maxRounds
-    if (request.members.length >= 2 && request.maxRounds === undefined) {
-      return err(
-        new AutobeatError(
-          ErrorCode.INVALID_INPUT,
-          'Multi-agent channels (≥2 members) require maxRounds to be specified',
-        ),
-      );
-    }
+    // 1–5. Validate request fields
+    const validationResult = await this.validateCreateRequest(request);
+    if (!validationResult.ok) return validationResult;
 
     // 6. Create domain object
     const channel = createChannel(request);
 
-    // 7. Spawn member sessions
-    const spawnedHandles: Array<{ memberName: string; handle: TmuxHandle }> = [];
-    for (const member of request.members) {
-      const spawnResult = await this.spawnMemberSession(channel.name, member);
-      if (!spawnResult.ok) {
-        // Rollback: destroy already-spawned sessions
-        await this.destroyHandles(spawnedHandles.map((s) => s.handle));
-        return spawnResult;
-      }
-      spawnedHandles.push({ memberName: member.name, handle: spawnResult.value });
-    }
+    // 7. Spawn member sessions (with rollback on failure)
+    const spawnResult = await this.spawnMembersWithRollback(channel.name, request.members);
+    if (!spawnResult.ok) return spawnResult;
+    const spawnedHandles = spawnResult.value;
 
     // 8. Register in-memory state
     for (const { memberName, handle } of spawnedHandles) {
       this.memberHandles.set(this.handleKey(channel.id, memberName), handle);
     }
-
-    // Initialize per-channel queue
     this.messageQueues.set(channel.id, new SerialQueue());
-
-    // Initialize round-robin turn to first member (by joinedAt order)
     if (request.communicationMode === 'round-robin' && channel.members.length > 0) {
       const sorted = [...channel.members].sort((a, b) => a.joinedAt - b.joinedAt);
       const first = sorted[0];
@@ -236,7 +171,6 @@ export class ChannelManager implements ChannelService {
     // 9. Persist channel
     const saveResult = await this.channelRepository.save(channel);
     if (!saveResult.ok) {
-      // Rollback sessions
       await this.destroyHandles(spawnedHandles.map((s) => s.handle));
       this.cleanupInMemory(channel.id);
       return saveResult;
@@ -250,10 +184,7 @@ export class ChannelManager implements ChannelService {
       communicationMode: channel.communicationMode,
     });
     if (!emitResult.ok) {
-      this.logger.error('Failed to emit ChannelCreated event', emitResult.error, {
-        channelId: channel.id,
-      });
-      // Rollback: sessions already spawned, channel saved — clean up both
+      this.logger.error('Failed to emit ChannelCreated event', emitResult.error, { channelId: channel.id });
       await this.destroyHandles(spawnedHandles.map((s) => s.handle));
       this.cleanupInMemory(channel.id);
       return err(emitResult.error);
@@ -391,62 +322,19 @@ export class ChannelManager implements ChannelService {
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Channel '${channelId}' not found or destroyed`));
     }
 
-    // Validate targetMember if provided
-    if (targetMember !== undefined) {
-      const member = channel.members.find((m) => m.name === targetMember && m.status === ChannelMemberStatus.ACTIVE);
-      if (!member) {
-        return err(
-          new AutobeatError(
-            ErrorCode.INVALID_INPUT,
-            `Target member '${targetMember}' not found or not active in channel '${channelId}'`,
-          ),
-        );
-      }
+    const dispatchResult = await this.dispatchMessage(channel, message, targetMember);
+    if (!dispatchResult.ok) return dispatchResult;
 
-      const handle = this.memberHandles.get(this.handleKey(channelId, member.name));
-      if (handle) {
-        await this.deliverMessage(handle, message);
-      }
-
-      const targetEmitResult = await this.eventBus.emit('ChannelMessageSent', {
-        channelId,
-        from: 'external',
-        to: targetMember,
-        round: channel.currentRound,
-      });
-      if (!targetEmitResult.ok) {
-        this.logger.error('Failed to emit ChannelMessageSent event', targetEmitResult.error, { channelId });
-        return err(targetEmitResult.error);
-      }
-      return ok(undefined);
-    }
-
-    // Route based on communication mode
-    if (channel.communicationMode === 'round-robin') {
-      const currentTurn = this.currentTurn.get(channelId);
-      if (currentTurn) {
-        const handle = this.memberHandles.get(this.handleKey(channelId, currentTurn));
-        if (handle) {
-          await this.deliverMessage(handle, message);
-        }
-      } else {
-        // Fallback: deliver to all active members
-        await this.broadcastToActiveMembers(channel, message);
-      }
-    } else {
-      // broadcast / directed / no mode: deliver to all active members
-      await this.broadcastToActiveMembers(channel, message);
-    }
-
-    const broadcastEmitResult = await this.eventBus.emit('ChannelMessageSent', {
+    const to = targetMember ?? 'all';
+    const emitResult = await this.eventBus.emit('ChannelMessageSent', {
       channelId,
       from: 'external',
-      to: 'all',
+      to,
       round: channel.currentRound,
     });
-    if (!broadcastEmitResult.ok) {
-      this.logger.error('Failed to emit ChannelMessageSent event', broadcastEmitResult.error, { channelId });
-      return err(broadcastEmitResult.error);
+    if (!emitResult.ok) {
+      this.logger.error('Failed to emit ChannelMessageSent event', emitResult.error, { channelId });
+      return err(emitResult.error);
     }
     return ok(undefined);
   }
@@ -480,71 +368,71 @@ export class ChannelManager implements ChannelService {
     const channels = [...activeResult.value, ...pausedResult.value];
 
     for (const channel of channels) {
-      const aliveMembers: ChannelMember[] = [];
-      const deadMembers: ChannelMember[] = [];
-
-      for (const member of channel.members) {
-        if (member.status === ChannelMemberStatus.DESTROYED) continue;
-
-        // Check if the tmux session is alive
-        // DECISION: TmuxHandle.taskId is typed as TaskId (task domain), but isAlive() only
-        // uses sessionName — taskId is not transmitted to tmux. A sentinel TaskId derived
-        // from the channel id is used so the branded type is satisfied without a double-cast.
-        const fakeHandle: TmuxHandle = {
-          sessionName: member.tmuxSession,
-          taskId: TaskId(channel.id),
-          sessionsDir: this.sessionsDir,
-        };
-
-        const aliveResult = this.tmuxConnector.isAlive(fakeHandle);
-        if (aliveResult.ok && aliveResult.value) {
-          aliveMembers.push(member);
-          // Rebuild in-memory handle reference
-          this.memberHandles.set(this.handleKey(channel.id, member.name), fakeHandle);
-        } else {
-          deadMembers.push(member);
-        }
-      }
-
-      if (
-        aliveMembers.length === 0 &&
-        channel.members.filter((m) => m.status !== ChannelMemberStatus.DESTROYED).length > 0
-      ) {
-        // All members dead — mark channel DESTROYED
-        this.logger.warn('Recovery: all channel members dead, destroying channel', { channelId: channel.id });
-        await this.channelRepository.updateStatus(channel.id, ChannelStatus.DESTROYED);
-        await this.eventBus.emit('ChannelDestroyed', {
-          channelId: channel.id,
-          reason: 'all-members-crashed',
-        });
-      } else {
-        // Mark dead members as DESTROYED
-        for (const member of deadMembers) {
-          await this.channelRepository.updateMemberStatus(channel.id, member.name, ChannelMemberStatus.DESTROYED);
-        }
-
-        // Rebuild in-memory state for the channel
-        this.messageQueues.set(channel.id, new SerialQueue());
-        if (channel.status === ChannelStatus.PAUSED) {
-          this.pausedChannels.add(channel.id);
-        }
-
-        // Rebuild round-robin turn tracking
-        if (channel.communicationMode === 'round-robin') {
-          const sorted = [...aliveMembers].sort((a, b) => a.joinedAt - b.joinedAt);
-          const first = sorted[0];
-          if (first) this.currentTurn.set(channel.id, first.name);
-        }
-
-        this.logger.info('Recovery: channel state rebuilt', {
-          channelId: channel.id,
-          aliveCount: aliveMembers.length,
-          deadCount: deadMembers.length,
-        });
-      }
+      await this.recoverSingleChannel(channel);
     }
 
     return ok(undefined);
+  }
+
+  /**
+   * Recover a single channel: classify members as alive/dead, then either destroy
+   * the channel (all members dead) or rebuild its in-memory state (some alive).
+   */
+  private async recoverSingleChannel(channel: Channel): Promise<void> {
+    const aliveMembers: ChannelMember[] = [];
+    const deadMembers: ChannelMember[] = [];
+
+    for (const member of channel.members) {
+      if (member.status === ChannelMemberStatus.DESTROYED) continue;
+
+      // DECISION: TmuxHandle.taskId is typed as TaskId (task domain), but isAlive() only
+      // uses sessionName — taskId is not transmitted to tmux. A sentinel TaskId derived
+      // from the channel id is used so the branded type is satisfied without a double-cast.
+      const fakeHandle: TmuxHandle = {
+        sessionName: member.tmuxSession,
+        taskId: TaskId(channel.id),
+        sessionsDir: this.sessionsDir,
+      };
+
+      const aliveResult = this.tmuxConnector.isAlive(fakeHandle);
+      if (aliveResult.ok && aliveResult.value) {
+        aliveMembers.push(member);
+        this.memberHandles.set(this.handleKey(channel.id, member.name), fakeHandle);
+      } else {
+        deadMembers.push(member);
+      }
+    }
+
+    const nonDestroyedCount = channel.members.filter((m) => m.status !== ChannelMemberStatus.DESTROYED).length;
+    if (aliveMembers.length === 0 && nonDestroyedCount > 0) {
+      // All members dead — mark channel DESTROYED
+      this.logger.warn('Recovery: all channel members dead, destroying channel', { channelId: channel.id });
+      await this.channelRepository.updateStatus(channel.id, ChannelStatus.DESTROYED);
+      await this.eventBus.emit('ChannelDestroyed', { channelId: channel.id, reason: 'all-members-crashed' });
+      return;
+    }
+
+    // Mark dead members as DESTROYED
+    for (const member of deadMembers) {
+      await this.channelRepository.updateMemberStatus(channel.id, member.name, ChannelMemberStatus.DESTROYED);
+    }
+
+    // Rebuild in-memory state
+    this.messageQueues.set(channel.id, new SerialQueue());
+    if (channel.status === ChannelStatus.PAUSED) {
+      this.pausedChannels.add(channel.id);
+    }
+    if (channel.communicationMode === 'round-robin') {
+      const sorted = [...aliveMembers].sort((a, b) => a.joinedAt - b.joinedAt);
+      const first = sorted[0];
+      if (first) this.currentTurn.set(channel.id, first.name);
+    }
+
+    this.logger.info('Recovery: channel state rebuilt', {
+      channelId: channel.id,
+      aliveCount: aliveMembers.length,
+      deadCount: deadMembers.length,
+    });
   }
 
   /**
@@ -572,6 +460,90 @@ export class ChannelManager implements ChannelService {
   }
 
   // ─── Private helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Validate a createChannel request (steps 1–5).
+   * Returns err on the first validation failure.
+   */
+  private async validateCreateRequest(request: ChannelCreateRequest): Promise<Result<void>> {
+    // 1. Validate channel name
+    if (!CHANNEL_NAME_REGEX.test(request.name)) {
+      const truncatedName = request.name.slice(0, 64);
+      return err(
+        new AutobeatError(
+          ErrorCode.INVALID_INPUT,
+          `Invalid channel name '${truncatedName}': must match ${CHANNEL_NAME_REGEX}`,
+          { name: request.name },
+        ),
+      );
+    }
+
+    // 2. Check name uniqueness
+    const existingResult = await this.channelRepository.findByName(request.name);
+    if (!existingResult.ok) return existingResult;
+    if (existingResult.value !== null) {
+      return err(
+        new AutobeatError(ErrorCode.INVALID_INPUT, `Channel name '${request.name}' already exists`, {
+          name: request.name,
+        }),
+      );
+    }
+
+    // 3. Validate member count (1–10)
+    if (request.members.length === 0 || request.members.length > 10) {
+      return err(
+        new AutobeatError(ErrorCode.INVALID_INPUT, `Channel must have 1–10 members (got ${request.members.length})`, {
+          memberCount: request.members.length,
+        }),
+      );
+    }
+
+    // 4. Validate member names: unique, match CHANNEL_NAME_REGEX
+    const memberNames = request.members.map((m) => m.name);
+    const uniqueNames = new Set(memberNames);
+    if (uniqueNames.size !== memberNames.length) {
+      return err(new AutobeatError(ErrorCode.INVALID_INPUT, 'Channel member names must be unique'));
+    }
+    for (const name of memberNames) {
+      if (!CHANNEL_NAME_REGEX.test(name)) {
+        return err(
+          new AutobeatError(ErrorCode.INVALID_INPUT, `Invalid member name '${name}': must match ${CHANNEL_NAME_REGEX}`),
+        );
+      }
+    }
+
+    // 5. Multi-agent channels require maxRounds
+    if (request.members.length >= 2 && request.maxRounds === undefined) {
+      return err(
+        new AutobeatError(
+          ErrorCode.INVALID_INPUT,
+          'Multi-agent channels (≥2 members) require maxRounds to be specified',
+        ),
+      );
+    }
+
+    return ok(undefined);
+  }
+
+  /**
+   * Spawn tmux sessions for all channel members.
+   * On any failure, destroys already-spawned sessions before returning the error.
+   */
+  private async spawnMembersWithRollback(
+    channelName: string,
+    members: ChannelCreateRequest['members'],
+  ): Promise<Result<Array<{ memberName: string; handle: TmuxHandle }>>> {
+    const spawnedHandles: Array<{ memberName: string; handle: TmuxHandle }> = [];
+    for (const member of members) {
+      const spawnResult = await this.spawnMemberSession(channelName, member);
+      if (!spawnResult.ok) {
+        await this.destroyHandles(spawnedHandles.map((s) => s.handle));
+        return spawnResult;
+      }
+      spawnedHandles.push({ memberName: member.name, handle: spawnResult.value });
+    }
+    return ok(spawnedHandles);
+  }
 
   /**
    * Spawn a tmux session for a single channel member.
@@ -639,6 +611,50 @@ export class ChannelManager implements ChannelService {
     });
 
     return spawnResult as Result<TmuxHandle>;
+  }
+
+  /**
+   * Route and deliver an external message to the appropriate member(s).
+   * Returns err if targetMember is specified but not found or not active.
+   * Targeted delivery: sends to the named member only.
+   * Round-robin: sends to the current turn member (or broadcasts as fallback).
+   * Broadcast/directed/other: delivers to all active members.
+   */
+  private async dispatchMessage(channel: Channel, message: string, targetMember?: string): Promise<Result<void>> {
+    if (targetMember !== undefined) {
+      const member = channel.members.find((m) => m.name === targetMember && m.status === ChannelMemberStatus.ACTIVE);
+      if (!member) {
+        return err(
+          new AutobeatError(
+            ErrorCode.INVALID_INPUT,
+            `Target member '${targetMember}' not found or not active in channel '${channel.id}'`,
+          ),
+        );
+      }
+      const handle = this.memberHandles.get(this.handleKey(channel.id, member.name));
+      if (handle) {
+        await this.deliverMessage(handle, message);
+      }
+      return ok(undefined);
+    }
+
+    if (channel.communicationMode === 'round-robin') {
+      const currentTurn = this.currentTurn.get(channel.id);
+      if (currentTurn) {
+        const handle = this.memberHandles.get(this.handleKey(channel.id, currentTurn));
+        if (handle) {
+          await this.deliverMessage(handle, message);
+        }
+      } else {
+        // Fallback: deliver to all active members
+        await this.broadcastToActiveMembers(channel, message);
+      }
+    } else {
+      // broadcast / directed / no mode: deliver to all active members
+      await this.broadcastToActiveMembers(channel, message);
+    }
+
+    return ok(undefined);
   }
 
   /**
@@ -711,7 +727,6 @@ export class ChannelManager implements ChannelService {
    * Finds the channel by session name, routes the message, and emits the event.
    */
   private handleMemberOutputAsync(sessionName: string, memberName: string, content: string): void {
-    // Find the channel for this member from active handles
     const channelId = this.findChannelIdBySession(sessionName);
     if (!channelId) return;
 
@@ -719,60 +734,7 @@ export class ChannelManager implements ChannelService {
     if (!queue) return;
 
     queue.enqueue(
-      async () => {
-        // Skip if channel is paused
-        if (this.pausedChannels.has(channelId)) return;
-
-        const channelResult = await this.channelRepository.findById(channelId);
-        if (!channelResult.ok || !channelResult.value) return;
-        const channel = channelResult.value;
-
-        // Parse directed target from content
-        const directedTarget = ChannelRouter.parseDirectedTarget(content);
-        const directedTo = directedTarget?.targetName;
-        const deliveryContent = directedTarget?.cleanMessage ?? content;
-
-        // Route message
-        const routeResult = ChannelRouter.route(channel, memberName, directedTo);
-        if (!routeResult.ok) {
-          this.logger.debug('No routing targets for member output', {
-            channelId,
-            memberName,
-            error: routeResult.error.message,
-          });
-          return;
-        }
-
-        const { targets, nextTurnMember } = routeResult.value;
-
-        // Deliver to each target
-        for (const target of targets) {
-          const handle = this.memberHandles.get(this.handleKey(channelId, target.memberName));
-          if (handle) {
-            await this.deliverMessage(handle, deliveryContent);
-          }
-        }
-
-        // Update round-robin turn
-        if (nextTurnMember) {
-          this.currentTurn.set(channelId, nextTurnMember);
-        }
-
-        // Emit ChannelMessageSent
-        const toValue = targets.length === 1 ? targets[0]!.memberName : 'all';
-        const routedEmitResult = await this.eventBus.emit('ChannelMessageSent', {
-          channelId,
-          from: memberName,
-          to: toValue,
-          round: channel.currentRound,
-        });
-        if (!routedEmitResult.ok) {
-          this.logger.error('Failed to emit ChannelMessageSent event', routedEmitResult.error, {
-            channelId,
-            memberName,
-          });
-        }
-      },
+      () => this.routeAndDeliverMessage(channelId, memberName, content),
       (e: unknown) => {
         this.logger.warn('Unhandled error in channel message queue task', {
           channelId,
@@ -781,6 +743,62 @@ export class ChannelManager implements ChannelService {
         });
       },
     );
+  }
+
+  /**
+   * Full message-routing pipeline for a single queued agent output.
+   * Parses directed-target syntax, routes via ChannelRouter, delivers to targets,
+   * updates round-robin turn state, and emits ChannelMessageSent.
+   */
+  private async routeAndDeliverMessage(channelId: ChannelId, memberName: string, content: string): Promise<void> {
+    if (this.pausedChannels.has(channelId)) return;
+
+    const channelResult = await this.channelRepository.findById(channelId);
+    if (!channelResult.ok || !channelResult.value) return;
+    const channel = channelResult.value;
+
+    // Parse directed target from content
+    const directedTarget = ChannelRouter.parseDirectedTarget(content);
+    const directedTo = directedTarget?.targetName;
+    const deliveryContent = directedTarget?.cleanMessage ?? content;
+
+    // Route message
+    const routeResult = ChannelRouter.route(channel, memberName, directedTo);
+    if (!routeResult.ok) {
+      this.logger.debug('No routing targets for member output', {
+        channelId,
+        memberName,
+        error: routeResult.error.message,
+      });
+      return;
+    }
+
+    const { targets, nextTurnMember } = routeResult.value;
+
+    // Deliver to each target
+    for (const target of targets) {
+      const handle = this.memberHandles.get(this.handleKey(channelId, target.memberName));
+      if (handle) {
+        await this.deliverMessage(handle, deliveryContent);
+      }
+    }
+
+    // Update round-robin turn
+    if (nextTurnMember) {
+      this.currentTurn.set(channelId, nextTurnMember);
+    }
+
+    // Emit ChannelMessageSent
+    const toValue = targets.length === 1 ? targets[0]!.memberName : 'all';
+    const routedEmitResult = await this.eventBus.emit('ChannelMessageSent', {
+      channelId,
+      from: memberName,
+      to: toValue,
+      round: channel.currentRound,
+    });
+    if (!routedEmitResult.ok) {
+      this.logger.error('Failed to emit ChannelMessageSent event', routedEmitResult.error, { channelId, memberName });
+    }
   }
 
   /**
