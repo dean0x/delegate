@@ -372,13 +372,13 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // DECISION: sessionsDir resolves lazily inside the factory because it is registered
   // later in bootstrap (post-tmux-validation). The factory only runs when channelService
   // is first resolved (after bootstrap is complete), so the ordering is safe.
-  container.registerSingleton('channelService', () => {
+  container.registerSingleton('channelService', async () => {
     const sessionsDir = getFromContainer<string>(container, 'sessionsDir');
     // Attempt to resolve tmuxSessionManager for batch liveness checks during recovery.
     // Absent in test environments where the tmux stack is not registered.
     const tmuxSessionManagerResult = container.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
     const tmuxSessionManager = tmuxSessionManagerResult.ok ? tmuxSessionManagerResult.value : undefined;
-    const createResult = ChannelManager.create({
+    const createResult = await ChannelManager.create({
       eventBus: getFromContainer<EventBus>(container, 'eventBus'),
       logger: getFromContainer<Logger>(container, 'logger').child({ module: 'ChannelManager' }),
       channelRepository: getFromContainer<ChannelRepository>(container, 'channelRepository'),

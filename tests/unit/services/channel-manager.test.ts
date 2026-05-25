@@ -166,7 +166,7 @@ describe('ChannelManager', () => {
     agentRegistry = createMockAgentRegistry();
     channelRepo = createMockChannelRepo();
 
-    const managerResult = ChannelManager.create({
+    const managerResult = await ChannelManager.create({
       eventBus,
       logger,
       channelRepository: channelRepo,
@@ -846,7 +846,7 @@ describe('ChannelManager', () => {
         return ok([]);
       });
 
-      const localManagerResult = ChannelManager.create({
+      const localManagerResult = await ChannelManager.create({
         eventBus: localEventBus,
         logger,
         channelRepository: localChannelRepo,
@@ -951,7 +951,7 @@ describe('ChannelManager', () => {
       // Session alive via per-member fallback
       vi.mocked(tmuxConnector.isAlive).mockReturnValue(ok(true));
 
-      const localManagerResult = ChannelManager.create({
+      const localManagerResult = await ChannelManager.create({
         eventBus: localEventBus,
         logger,
         channelRepository: localChannelRepo,

@@ -163,9 +163,9 @@ export class ChannelManager implements ChannelService {
    * Factory method — creates a fully initialized ChannelManager with event subscriptions.
    * ARCHITECTURE: Factory pattern guarantees subscriptions are established before use
    *   and surfaces failures via Result instead of silently failing in a constructor.
-   *   Pattern matches ChannelHandler, ScheduleHandler, LoopHandler.
+   *   Pattern matches ChannelHandler, ScheduleHandler, LoopHandler (async Promise<Result>).
    */
-  static create(deps: ChannelManagerDeps): Result<ChannelManager, AutobeatError> {
+  static async create(deps: ChannelManagerDeps): Promise<Result<ChannelManager, AutobeatError>> {
     const manager = new ChannelManager(deps);
 
     const subscribeResult = manager.subscribeToEvents();
@@ -482,10 +482,12 @@ export class ChannelManager implements ChannelService {
    * Called during bootstrap recovery phase (server/run mode only).
    */
   async recoverChannels(): Promise<Result<void>> {
-    const activeResult = await this.channelRepository.findByStatus(ChannelStatus.ACTIVE);
+    // Issue both status queries in parallel — independent reads, SQLite WAL supports concurrent reads
+    const [activeResult, pausedResult] = await Promise.all([
+      this.channelRepository.findByStatus(ChannelStatus.ACTIVE),
+      this.channelRepository.findByStatus(ChannelStatus.PAUSED),
+    ]);
     if (!activeResult.ok) return activeResult;
-
-    const pausedResult = await this.channelRepository.findByStatus(ChannelStatus.PAUSED);
     if (!pausedResult.ok) return pausedResult;
 
     const channels = [...activeResult.value, ...pausedResult.value];
@@ -863,10 +865,8 @@ export class ChannelManager implements ChannelService {
         }
       }
     } else {
-      // broadcast / directed / no-mode: deliver to all
-      for (const { handle } of spawnedHandles) {
-        await this.deliverMessage(handle, topic);
-      }
+      // broadcast / directed / no-mode: deliver to all in parallel — independent sessions
+      await Promise.all(spawnedHandles.map(({ handle }) => this.deliverMessage(handle, topic)));
     }
   }
 
@@ -970,13 +970,16 @@ export class ChannelManager implements ChannelService {
 
     const { targets, nextTurnMember } = routeResult.value;
 
-    // Deliver to each target
+    // Deliver to all targets in parallel — each target has an independent tmux session
+    // so concurrent pasteContent+Enter calls do not interfere with each other.
+    const deliveries: Promise<void>[] = [];
     for (const target of targets) {
       const handle = this.memberHandles.get(this.handleKey(channelId, target.memberName));
       if (handle) {
-        await this.deliverMessage(handle, deliveryContent);
+        deliveries.push(this.deliverMessage(handle, deliveryContent));
       }
     }
+    await Promise.all(deliveries);
 
     // Update round-robin turn
     if (nextTurnMember) {
