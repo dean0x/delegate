@@ -193,9 +193,9 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
     // Inject caller-provided env vars, then the auto vars (auto vars win on conflict)
     const allEnv: Record<string, string> = { ...(callerEnv ?? {}), ...autoVars };
 
-    // Filter to valid POSIX env var keys with value length cap, then batch to avoid N+1 spawns
+    // Filter to valid POSIX env var keys with value byte-length cap, then batch to avoid N+1 spawns
     const validEntries = Object.entries(allEnv).filter(
-      ([key, value]) => POSIX_ENV_VAR_REGEX.test(key) && value.length <= MAX_ENV_VALUE_LENGTH,
+      ([key, value]) => POSIX_ENV_VAR_REGEX.test(key) && Buffer.byteLength(value, 'utf8') <= MAX_ENV_VALUE_LENGTH,
     );
 
     if (validEntries.length === 0) return true;
@@ -470,7 +470,7 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
       );
     }
 
-    if (value.length > MAX_ENV_VALUE_LENGTH) {
+    if (Buffer.byteLength(value, 'utf8') > MAX_ENV_VALUE_LENGTH) {
       return err(
         tmuxSessionFailed(
           'setSessionEnvironment',

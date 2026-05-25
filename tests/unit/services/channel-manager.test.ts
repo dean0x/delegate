@@ -255,7 +255,7 @@ describe('ChannelManager', () => {
         updatedAt: Date.now(),
       };
       channelRepo._channels.set('ch-existing', existingChannel);
-      (channelRepo.findByName as ReturnType<typeof vi.fn>).mockImplementation(async (name: string) => {
+      vi.mocked(channelRepo.findByName).mockImplementation(async (name: string) => {
         const found = [...channelRepo._channels.values()].find((c) => c.name === name);
         return ok(found ?? null);
       });
@@ -362,7 +362,7 @@ describe('ChannelManager', () => {
     it('rolls back spawned sessions when a later member spawn fails', async () => {
       // First spawn succeeds, second fails
       let spawnCallCount = 0;
-      (tmuxConnector.spawn as ReturnType<typeof vi.fn>).mockImplementation(
+      vi.mocked(tmuxConnector.spawn).mockImplementation(
         (config: { name: string; taskId: string; sessionsDir: string }) => {
           spawnCallCount++;
           if (spawnCallCount === 1) {
@@ -392,7 +392,7 @@ describe('ChannelManager', () => {
     });
 
     it('rolls back spawned sessions and cleans up in-memory state when save() fails', async () => {
-      (channelRepo.save as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      vi.mocked(channelRepo.save).mockResolvedValueOnce({
         ok: false,
         error: new Error('DB write failed'),
       });
@@ -478,8 +478,8 @@ describe('ChannelManager', () => {
       const channelId = createResult.value.id;
 
       // Clear prior destroy/status calls from channel creation
-      (tmuxConnector.destroy as ReturnType<typeof vi.fn>).mockClear();
-      (channelRepo.updateStatus as ReturnType<typeof vi.fn>).mockClear();
+      vi.mocked(tmuxConnector.destroy).mockClear();
+      vi.mocked(channelRepo.updateStatus).mockClear();
 
       // Emit ChannelDestroyed with reason 'max-rounds-reached' — simulates ChannelHandler
       // initiating a destroy while DB is still ACTIVE (channel not yet marked DESTROYED).
@@ -533,7 +533,7 @@ describe('ChannelManager', () => {
       if (!createResult.ok) return;
 
       // Clear spawn-time calls (topic delivery if any)
-      (tmuxConnector.pasteContent as ReturnType<typeof vi.fn>).mockClear();
+      vi.mocked(tmuxConnector.pasteContent).mockClear();
 
       const sendResult = await manager.sendMessage(createResult.value.id, 'hello everyone');
       expect(sendResult.ok).toBe(true);
@@ -559,14 +559,14 @@ describe('ChannelManager', () => {
       expect(createResult.ok).toBe(true);
       if (!createResult.ok) return;
 
-      (tmuxConnector.pasteContent as ReturnType<typeof vi.fn>).mockClear();
+      vi.mocked(tmuxConnector.pasteContent).mockClear();
 
       const sendResult = await manager.sendMessage(createResult.value.id, 'hello b only', 'b');
       expect(sendResult.ok).toBe(true);
 
       // Only 1 member (b) should receive it
       expect(tmuxConnector.pasteContent).toHaveBeenCalledOnce();
-      const call = (tmuxConnector.pasteContent as ReturnType<typeof vi.fn>).mock.calls[0] as [MockTmuxHandle, string];
+      const call = vi.mocked(tmuxConnector.pasteContent).mock.calls[0] as [MockTmuxHandle, string];
       expect(call[0].sessionName).toContain('b');
     });
 
@@ -745,13 +745,13 @@ describe('ChannelManager', () => {
       };
 
       channelRepo._channels.set('ch-dead-recovery', deadChannel);
-      (channelRepo.findByStatus as ReturnType<typeof vi.fn>).mockImplementation(async (status: ChannelStatus) => {
+      vi.mocked(channelRepo.findByStatus).mockImplementation(async (status: ChannelStatus) => {
         if (status === ChannelStatus.ACTIVE) return ok([deadChannel]);
         return ok([]);
       });
 
       // Sessions are dead
-      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(false));
+      vi.mocked(tmuxConnector.isAlive).mockReturnValue(ok(false));
 
       const destroyedEvents: unknown[] = [];
       eventBus.subscribe('ChannelDestroyed', async (e) => destroyedEvents.push(e));
@@ -783,13 +783,13 @@ describe('ChannelManager', () => {
       };
 
       channelRepo._channels.set('ch-alive-recovery', aliveChannel);
-      (channelRepo.findByStatus as ReturnType<typeof vi.fn>).mockImplementation(async (status: ChannelStatus) => {
+      vi.mocked(channelRepo.findByStatus).mockImplementation(async (status: ChannelStatus) => {
         if (status === ChannelStatus.ACTIVE) return ok([aliveChannel]);
         return ok([]);
       });
 
       // Sessions are alive
-      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(true));
+      vi.mocked(tmuxConnector.isAlive).mockReturnValue(ok(true));
 
       const destroyedEvents: unknown[] = [];
       eventBus.subscribe('ChannelDestroyed', async (e) => destroyedEvents.push(e));
@@ -841,7 +841,7 @@ describe('ChannelManager', () => {
       const config = createTestConfiguration();
       const localEventBus = new InMemoryEventBus(config, logger);
       const localChannelRepo = createMockChannelRepo();
-      (localChannelRepo.findByStatus as ReturnType<typeof vi.fn>).mockImplementation(async (status: ChannelStatus) => {
+      vi.mocked(localChannelRepo.findByStatus).mockImplementation(async (status: ChannelStatus) => {
         if (status === ChannelStatus.ACTIVE) return ok([mixedChannel]);
         return ok([]);
       });
@@ -895,13 +895,13 @@ describe('ChannelManager', () => {
       };
 
       channelRepo._channels.set('ch-paused-recovery', pausedChannel);
-      (channelRepo.findByStatus as ReturnType<typeof vi.fn>).mockImplementation(async (status: ChannelStatus) => {
+      vi.mocked(channelRepo.findByStatus).mockImplementation(async (status: ChannelStatus) => {
         if (status === ChannelStatus.PAUSED) return ok([pausedChannel]);
         return ok([]);
       });
 
       // Sessions are alive
-      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(true));
+      vi.mocked(tmuxConnector.isAlive).mockReturnValue(ok(true));
 
       await manager.recoverChannels();
       await flushEventLoop();
@@ -944,12 +944,12 @@ describe('ChannelManager', () => {
       const config = createTestConfiguration();
       const localEventBus = new InMemoryEventBus(config, logger);
       const localChannelRepo = createMockChannelRepo();
-      (localChannelRepo.findByStatus as ReturnType<typeof vi.fn>).mockImplementation(async (status: ChannelStatus) => {
+      vi.mocked(localChannelRepo.findByStatus).mockImplementation(async (status: ChannelStatus) => {
         if (status === ChannelStatus.ACTIVE) return ok([channel]);
         return ok([]);
       });
       // Session alive via per-member fallback
-      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(true));
+      vi.mocked(tmuxConnector.isAlive).mockReturnValue(ok(true));
 
       const localManagerResult = ChannelManager.create({
         eventBus: localEventBus,
@@ -995,7 +995,7 @@ describe('ChannelManager', () => {
       });
 
       // Clear destroy calls from any prior test setup
-      (tmuxConnector.destroy as ReturnType<typeof vi.fn>).mockClear();
+      vi.mocked(tmuxConnector.destroy).mockClear();
 
       manager.dispose();
 
