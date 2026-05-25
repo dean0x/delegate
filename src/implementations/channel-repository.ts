@@ -260,6 +260,25 @@ export class SQLiteChannelRepository implements ChannelRepository {
     );
   }
 
+  async batchUpdateMemberStatuses(
+    channelId: ChannelId,
+    memberNames: readonly string[],
+    status: ChannelMemberStatus,
+  ): Promise<Result<void>> {
+    if (memberNames.length === 0) return { ok: true, value: undefined };
+    return tryCatchAsync(
+      async () => {
+        const batchUpdate = this.db.transaction(() => {
+          for (const memberName of memberNames) {
+            this.updateMemberStatusStmt.run(status, channelId, memberName);
+          }
+        });
+        batchUpdate();
+      },
+      operationErrorHandler('batch update channel member statuses', { channelId, status }),
+    );
+  }
+
   async delete(id: ChannelId): Promise<Result<void>> {
     return tryCatchAsync(
       async () => {

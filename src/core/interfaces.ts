@@ -1025,6 +1025,17 @@ export interface ChannelRepository {
   updateRound(id: ChannelId, round: number): Promise<Result<void>>;
   addMember(channelId: ChannelId, member: ChannelMember): Promise<Result<void>>;
   updateMemberStatus(channelId: ChannelId, memberName: string, status: ChannelMemberStatus): Promise<Result<void>>;
+  /**
+   * Update multiple channel members to the same status in a single transaction.
+   * Used by recoverChannels() to batch-mark dead members as DESTROYED without
+   * issuing N individual UPDATE statements.
+   * No-op when memberNames is empty.
+   */
+  batchUpdateMemberStatuses(
+    channelId: ChannelId,
+    memberNames: readonly string[],
+    status: ChannelMemberStatus,
+  ): Promise<Result<void>>;
   delete(id: ChannelId): Promise<Result<void>>;
   count(): Promise<Result<number>>;
   countByStatus(): Promise<Result<Record<string, number>>>;

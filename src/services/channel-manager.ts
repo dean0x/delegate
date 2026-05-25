@@ -37,7 +37,7 @@ import { EventBus } from '../core/events/event-bus.js';
 import type { ChannelDestroyedEvent, ChannelDestroyReason, ChannelMemberCrashedEvent } from '../core/events/events.js';
 import type { ChannelRepository, ChannelService, Logger } from '../core/interfaces.js';
 import { err, ok, type Result } from '../core/result.js';
-import type { TmuxConnectorPort, TmuxHandle } from '../core/tmux-types.js';
+import type { TmuxConnectorPort, TmuxHandle, TmuxSessionManagerCorePort } from '../core/tmux-types.js';
 import { ChannelRouter } from './channel-router.js';
 
 /**
@@ -96,6 +96,14 @@ export interface ChannelManagerDeps {
   readonly tmuxConnector: TmuxConnectorPort;
   readonly agentRegistry: AgentRegistry;
   readonly sessionsDir: string;
+  /**
+   * Optional session manager for batch liveness checks during recovery.
+   * When provided, recoverChannels() calls listSessions() once and builds a
+   * Set<string> for O(1) membership tests — reducing N sequential tmux
+   * has-session execs to a single call. Falls back to per-member isAlive()
+   * when absent (e.g. in tests that do not need the optimisation).
+   */
+  readonly tmuxSessionManager?: TmuxSessionManagerCorePort;
 }
 
 export class ChannelManager implements ChannelService {
@@ -104,6 +112,7 @@ export class ChannelManager implements ChannelService {
   private readonly channelRepository: ChannelRepository;
   private readonly config: Configuration;
   private readonly tmuxConnector: TmuxConnectorPort;
+  private readonly tmuxSessionManager: TmuxSessionManagerCorePort | undefined;
   private readonly agentRegistry: AgentRegistry;
   private readonly sessionsDir: string;
 
@@ -139,6 +148,7 @@ export class ChannelManager implements ChannelService {
     this.channelRepository = deps.channelRepository;
     this.config = deps.config;
     this.tmuxConnector = deps.tmuxConnector;
+    this.tmuxSessionManager = deps.tmuxSessionManager;
     this.agentRegistry = deps.agentRegistry;
     this.sessionsDir = deps.sessionsDir;
 
@@ -428,8 +438,21 @@ export class ChannelManager implements ChannelService {
 
     const channels = [...activeResult.value, ...pausedResult.value];
 
+    // Batch liveness check: one listSessions() exec instead of N sequential has-session
+    // calls — same pattern RecoveryManager uses. Falls back to per-member isAlive()
+    // when tmuxSessionManager is absent (e.g. test environments).
+    let aliveSessionNames: Set<string> | undefined;
+    if (this.tmuxSessionManager) {
+      const listResult = this.tmuxSessionManager.listSessions();
+      if (listResult.ok) {
+        aliveSessionNames = new Set(listResult.value.map((s) => s.name));
+      }
+      // If listSessions() fails (no tmux server running), aliveSessionNames stays
+      // undefined and recoverSingleChannel falls back to per-member isAlive().
+    }
+
     for (const channel of channels) {
-      await this.recoverSingleChannel(channel);
+      await this.recoverSingleChannel(channel, aliveSessionNames);
     }
 
     return ok(undefined);
@@ -438,8 +461,13 @@ export class ChannelManager implements ChannelService {
   /**
    * Recover a single channel: classify members as alive/dead, then either destroy
    * the channel (all members dead) or rebuild its in-memory state (some alive).
+   *
+   * @param aliveSessionNames - Optional pre-built Set of live tmux session names from a
+   *   single listSessions() call in recoverChannels(). When provided, liveness is checked
+   *   via O(1) Set membership instead of a per-member tmux has-session exec. When absent,
+   *   falls back to individual isAlive() calls.
    */
-  private async recoverSingleChannel(channel: Channel): Promise<void> {
+  private async recoverSingleChannel(channel: Channel, aliveSessionNames?: Set<string>): Promise<void> {
     const aliveMembers: ChannelMember[] = [];
     const deadMembers: ChannelMember[] = [];
 
@@ -455,8 +483,15 @@ export class ChannelManager implements ChannelService {
         sessionsDir: this.sessionsDir,
       };
 
-      const aliveResult = this.tmuxConnector.isAlive(fakeHandle);
-      if (aliveResult.ok && aliveResult.value) {
+      // Use the batch session set when available (O(1)); fall back to per-member exec.
+      const isAlive = aliveSessionNames
+        ? aliveSessionNames.has(member.tmuxSession)
+        : (() => {
+            const result = this.tmuxConnector.isAlive(fakeHandle);
+            return result.ok && result.value;
+          })();
+
+      if (isAlive) {
         aliveMembers.push(member);
         this.memberHandles.set(this.handleKey(channel.id, member.name), fakeHandle);
         this.sessionToChannel.set(member.tmuxSession, channel.id);
@@ -474,9 +509,11 @@ export class ChannelManager implements ChannelService {
       return;
     }
 
-    // Mark dead members as DESTROYED
-    for (const member of deadMembers) {
-      await this.channelRepository.updateMemberStatus(channel.id, member.name, ChannelMemberStatus.DESTROYED);
+    // Batch-update dead members to DESTROYED in one transaction — avoids N individual
+    // UPDATE statements when multiple members are dead across channels on recovery.
+    if (deadMembers.length > 0) {
+      const deadNames = deadMembers.map((m) => m.name);
+      await this.channelRepository.batchUpdateMemberStatuses(channel.id, deadNames, ChannelMemberStatus.DESTROYED);
     }
 
     // Rebuild in-memory state

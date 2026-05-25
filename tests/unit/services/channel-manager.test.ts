@@ -128,6 +128,19 @@ function createMockChannelRepo(initialChannels: Channel[] = []): ChannelReposito
         }
         return ok(undefined);
       }),
+    batchUpdateMemberStatuses: vi
+      .fn()
+      .mockImplementation(async (id: string, memberNames: string[], status: ChannelMemberStatus) => {
+        const ch = channels.get(id);
+        if (ch) {
+          const nameSet = new Set(memberNames);
+          channels.set(id, {
+            ...ch,
+            members: ch.members.map((m) => (nameSet.has(m.name) ? { ...m, status } : m)),
+          });
+        }
+        return ok(undefined);
+      }),
     delete: vi.fn().mockResolvedValue(ok(undefined)),
     count: vi.fn().mockResolvedValue(ok(0)),
     countByStatus: vi.fn().mockResolvedValue(ok({})),
@@ -339,7 +352,11 @@ describe('ChannelManager', () => {
         (config: { name: string; taskId: string; sessionsDir: string }) => {
           spawnCallCount++;
           if (spawnCallCount === 1) {
-            return ok<MockTmuxHandle>({ sessionName: config.name, taskId: config.taskId, sessionsDir: config.sessionsDir });
+            return ok<MockTmuxHandle>({
+              sessionName: config.name,
+              taskId: config.taskId,
+              sessionsDir: config.sessionsDir,
+            });
           }
           return { ok: false, error: new Error('Spawn failed on second member') };
         },
@@ -734,6 +751,132 @@ describe('ChannelManager', () => {
 
       // Channel was alive — should not be destroyed
       expect(destroyedEvents).toHaveLength(0);
+    });
+
+    it('uses batch listSessions() when tmuxSessionManager is provided', async () => {
+      // Two members — one alive, one dead
+      const mixedChannel: Channel = {
+        id: ChannelId('ch-mixed-recovery'),
+        name: 'mixed-channel',
+        members: [
+          {
+            name: 'alive-member',
+            agent: 'claude',
+            tmuxSession: 'beat-channel-mixed-channel-alive-member',
+            status: ChannelMemberStatus.ACTIVE,
+            joinedAt: Date.now(),
+          },
+          {
+            name: 'dead-member',
+            agent: 'claude',
+            tmuxSession: 'beat-channel-mixed-channel-dead-member',
+            status: ChannelMemberStatus.ACTIVE,
+            joinedAt: Date.now(),
+          },
+        ],
+        communicationMode: undefined,
+        status: ChannelStatus.ACTIVE,
+        currentRound: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const sessionManagerMock = {
+        isAlive: vi.fn(),
+        sendControlKeys: vi.fn(),
+        listSessions: vi
+          .fn()
+          .mockReturnValue(ok([{ name: 'beat-channel-mixed-channel-alive-member', created: Date.now() / 1000 }])),
+        destroySession: vi.fn(),
+      };
+
+      const config = createTestConfiguration();
+      const localEventBus = new InMemoryEventBus(config, logger);
+      const localChannelRepo = createMockChannelRepo();
+      (localChannelRepo.findByStatus as ReturnType<typeof vi.fn>).mockImplementation(async (status: ChannelStatus) => {
+        if (status === ChannelStatus.ACTIVE) return ok([mixedChannel]);
+        return ok([]);
+      });
+
+      const localManager = new ChannelManager({
+        eventBus: localEventBus,
+        logger,
+        channelRepository: localChannelRepo,
+        config,
+        tmuxConnector: tmuxConnector as ReturnType<typeof createMockTmuxConnector>,
+        agentRegistry: agentRegistry as ReturnType<typeof createMockAgentRegistry>,
+        sessionsDir,
+        tmuxSessionManager: sessionManagerMock,
+      });
+
+      await localManager.recoverChannels();
+      await flushEventLoop();
+
+      // listSessions() called once — not N times
+      expect(sessionManagerMock.listSessions).toHaveBeenCalledOnce();
+      // isAlive on the connector should NOT have been called (batch path used instead)
+      expect(tmuxConnector.isAlive).not.toHaveBeenCalled();
+      // Dead member batch-updated via batchUpdateMemberStatuses
+      expect(localChannelRepo.batchUpdateMemberStatuses).toHaveBeenCalledOnce();
+
+      localManager.dispose();
+    });
+
+    it('falls back to per-member isAlive() when listSessions() fails', async () => {
+      const channel: Channel = {
+        id: ChannelId('ch-fallback-recovery'),
+        name: 'fallback-channel',
+        members: [
+          {
+            name: 'a',
+            agent: 'claude',
+            tmuxSession: 'beat-channel-fallback-channel-a',
+            status: ChannelMemberStatus.ACTIVE,
+            joinedAt: Date.now(),
+          },
+        ],
+        communicationMode: undefined,
+        status: ChannelStatus.ACTIVE,
+        currentRound: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const failingSessionManager = {
+        isAlive: vi.fn(),
+        sendControlKeys: vi.fn(),
+        listSessions: vi.fn().mockReturnValue({ ok: false, error: new Error('no tmux server') }),
+        destroySession: vi.fn(),
+      };
+
+      const config = createTestConfiguration();
+      const localEventBus = new InMemoryEventBus(config, logger);
+      const localChannelRepo = createMockChannelRepo();
+      (localChannelRepo.findByStatus as ReturnType<typeof vi.fn>).mockImplementation(async (status: ChannelStatus) => {
+        if (status === ChannelStatus.ACTIVE) return ok([channel]);
+        return ok([]);
+      });
+      // Session alive via per-member fallback
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(true));
+
+      const localManager = new ChannelManager({
+        eventBus: localEventBus,
+        logger,
+        channelRepository: localChannelRepo,
+        config,
+        tmuxConnector: tmuxConnector as ReturnType<typeof createMockTmuxConnector>,
+        agentRegistry: agentRegistry as ReturnType<typeof createMockAgentRegistry>,
+        sessionsDir,
+        tmuxSessionManager: failingSessionManager,
+      });
+
+      await localManager.recoverChannels();
+
+      // listSessions() was attempted but failed — fallback to isAlive
+      expect(failingSessionManager.listSessions).toHaveBeenCalledOnce();
+      expect(tmuxConnector.isAlive).toHaveBeenCalled();
+
+      localManager.dispose();
     });
   });
 

@@ -374,6 +374,10 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // is first resolved (after bootstrap is complete), so the ordering is safe.
   container.registerSingleton('channelService', () => {
     const sessionsDir = getFromContainer<string>(container, 'sessionsDir');
+    // Attempt to resolve tmuxSessionManager for batch liveness checks during recovery.
+    // Absent in test environments where the tmux stack is not registered.
+    const tmuxSessionManagerResult = container.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
+    const tmuxSessionManager = tmuxSessionManagerResult.ok ? tmuxSessionManagerResult.value : undefined;
     return new ChannelManager({
       eventBus: getFromContainer<EventBus>(container, 'eventBus'),
       logger: getFromContainer<Logger>(container, 'logger').child({ module: 'ChannelManager' }),
@@ -382,6 +386,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       tmuxConnector: getFromContainer<TmuxConnectorPort>(container, 'tmuxConnector'),
       agentRegistry: getFromContainer<AgentRegistry>(container, 'agentRegistry'),
       sessionsDir,
+      tmuxSessionManager,
     });
   });
 

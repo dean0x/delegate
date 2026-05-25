@@ -332,6 +332,50 @@ describe('SQLiteChannelRepository', () => {
     });
   });
 
+  describe('batchUpdateMemberStatuses', () => {
+    it('updates multiple members to the same status in one call', async () => {
+      const channel = buildChannel({
+        name: 'batch-status-test',
+        members: [
+          { name: 'alpha', agent: 'claude' },
+          { name: 'beta', agent: 'claude' },
+          { name: 'gamma', agent: 'claude' },
+        ],
+      });
+      await repo.save(channel);
+
+      const result = await repo.batchUpdateMemberStatuses(channel.id, ['alpha', 'beta'], ChannelMemberStatus.DESTROYED);
+      expect(result.ok).toBe(true);
+
+      const found = await repo.findById(channel.id);
+      expect(found.ok).toBe(true);
+      if (!found.ok) throw new Error('unexpected');
+      const alpha = found.value!.members.find((m) => m.name === 'alpha');
+      const beta = found.value!.members.find((m) => m.name === 'beta');
+      const gamma = found.value!.members.find((m) => m.name === 'gamma');
+      expect(alpha!.status).toBe(ChannelMemberStatus.DESTROYED);
+      expect(beta!.status).toBe(ChannelMemberStatus.DESTROYED);
+      // gamma was not in the batch — status unchanged
+      expect(gamma!.status).toBe(ChannelMemberStatus.ACTIVE);
+    });
+
+    it('is a no-op when memberNames is empty', async () => {
+      const channel = buildChannel({ name: 'batch-noop-test' });
+      await repo.save(channel);
+
+      const result = await repo.batchUpdateMemberStatuses(channel.id, [], ChannelMemberStatus.DESTROYED);
+      expect(result.ok).toBe(true);
+
+      // Members unchanged
+      const found = await repo.findById(channel.id);
+      expect(found.ok).toBe(true);
+      if (!found.ok) throw new Error('unexpected');
+      for (const member of found.value!.members) {
+        expect(member.status).toBe(ChannelMemberStatus.ACTIVE);
+      }
+    });
+  });
+
   // ============================================================================
   // T10: Members — Eager Loading
   // ============================================================================
