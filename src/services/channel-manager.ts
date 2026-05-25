@@ -259,6 +259,13 @@ export class ChannelManager implements ChannelService {
       this.logger.error('Failed to emit ChannelCreated event', emitResult.error, { channelId: channel.id });
       await this.destroyHandles(spawnedHandles.map((s) => s.handle));
       this.cleanupInMemory(channel.id);
+      const deleteResult = await this.channelRepository.delete(channel.id);
+      if (!deleteResult.ok) {
+        this.logger.warn('Failed to delete channel record during ChannelCreated rollback', {
+          channelId: channel.id,
+          error: deleteResult.error.message,
+        });
+      }
       return err(emitResult.error);
     }
 

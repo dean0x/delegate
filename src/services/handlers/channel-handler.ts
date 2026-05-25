@@ -16,7 +16,7 @@
  */
 
 import type { ChannelId } from '../../core/domain.js';
-import { ChannelMemberStatus } from '../../core/domain.js';
+import { ChannelMemberStatus, ChannelStatus } from '../../core/domain.js';
 import { AutobeatError, ErrorCode } from '../../core/errors.js';
 import { EventBus } from '../../core/events/event-bus.js';
 import type {
@@ -128,7 +128,7 @@ export class ChannelHandler extends BaseEventHandler {
       const channelResult = await this.channelRepository.findById(channelId);
       if (!channelResult.ok) return channelResult;
       const channel = channelResult.value;
-      if (!channel || channel.status !== 'active') return ok(undefined);
+      if (!channel || channel.status !== ChannelStatus.ACTIVE) return ok(undefined);
 
       const { communicationMode, maxRounds } = channel;
       const activeMembers = channel.members.filter((m) => m.status === ChannelMemberStatus.ACTIVE);
