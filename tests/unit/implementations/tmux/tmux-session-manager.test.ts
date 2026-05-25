@@ -171,6 +171,26 @@ describe('TmuxSessionManager', () => {
     expect(envStr).not.toContain('LARGE_VAR');
   });
 
+  it('injectEnvironment silently skips multi-byte env value exceeding MAX_ENV_VALUE_LENGTH in bytes even when char count is within limit', () => {
+    // Each CJK character is 3 UTF-8 bytes but 1 JS char. 1366 CJK chars = 4098 bytes > 4096 byte limit.
+    // Using value.length (1366) would pass the 4096 guard; Buffer.byteLength (4098) correctly rejects it.
+    const cjkChar = '中'; // 3 UTF-8 bytes
+    const oversizedByBytes = cjkChar.repeat(1366);
+    expect(Buffer.byteLength(oversizedByBytes, 'utf8')).toBeGreaterThan(4096);
+    expect(oversizedByBytes.length).toBeLessThan(4096);
+    manager.createSession({
+      ...validConfig,
+      env: {
+        SMALL_VAR: 'fits',
+        MULTI_BYTE_VAR: oversizedByBytes,
+      },
+    });
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const envStr = calls.filter((c) => c.includes('set-environment')).join(' ');
+    expect(envStr).toContain('SMALL_VAR');
+    expect(envStr).not.toContain('MULTI_BYTE_VAR');
+  });
+
   it('enforces concurrent session limit when max sessions are active', () => {
     const limitedManager = new TmuxSessionManager({
       exec: listSessionsExec(20) as ExecFn,
@@ -533,6 +553,19 @@ describe('TmuxSessionManager.setSessionEnvironment()', () => {
   it('returns err for value exceeding max length', () => {
     const longValue = 'x'.repeat(5000);
     const result = manager.setSessionEnvironment('beat-task-123', 'MY_VAR', longValue);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('returns err for multi-byte value that exceeds MAX_ENV_VALUE_LENGTH in bytes even when char count is within limit', () => {
+    // Each CJK character is 3 UTF-8 bytes but 1 JS char. 1366 chars = 4098 bytes > 4096 byte limit.
+    // Using value.length (1366) would pass the 4096 guard; Buffer.byteLength (4098) correctly rejects it.
+    const cjkChar = '中'; // 3 UTF-8 bytes
+    const oversizedByBytes = cjkChar.repeat(1366);
+    expect(Buffer.byteLength(oversizedByBytes, 'utf8')).toBeGreaterThan(4096);
+    expect(oversizedByBytes.length).toBeLessThan(4096);
+    const result = manager.setSessionEnvironment('beat-task-123', 'MY_VAR', oversizedByBytes);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
