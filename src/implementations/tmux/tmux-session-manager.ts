@@ -376,11 +376,12 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
     const nameCheck = validateSessionName(sessionName, 'pasteContent');
     if (!nameCheck.ok) return nameCheck;
 
-    if (content.length > MAX_PASTE_CONTENT_LENGTH) {
+    const contentByteLength = Buffer.byteLength(content, 'utf8');
+    if (contentByteLength > MAX_PASTE_CONTENT_LENGTH) {
       return err(
         tmuxSessionFailed(
           'pasteContent',
-          `Content exceeds maximum length (${MAX_PASTE_CONTENT_LENGTH} bytes, got ${content.length})`,
+          `Content exceeds maximum length (${MAX_PASTE_CONTENT_LENGTH} bytes, got ${contentByteLength})`,
           { sessionName },
         ),
       );

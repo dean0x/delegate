@@ -672,7 +672,7 @@ describe('TmuxSessionManager.setSessionEnvironment()', () => {
     });
 
     it('returns TMUX_SESSION_FAILED when content exceeds MAX_PASTE_CONTENT_LENGTH (256 KB)', () => {
-      // 256 KB + 1 byte — just over the limit
+      // 256 KB + 1 byte — just over the limit (ASCII: byte count === char count)
       const oversized = 'x'.repeat(256 * 1024 + 1);
       const result = pasteManager.pasteContent('beat-channel-test-member', oversized);
       expect(result.ok).toBe(false);
@@ -684,9 +684,35 @@ describe('TmuxSessionManager.setSessionEnvironment()', () => {
       expect(exec).not.toHaveBeenCalled();
     });
 
+    it('rejects multi-byte content that exceeds MAX_PASTE_CONTENT_LENGTH in bytes even if char count is within limit', () => {
+      // Each CJK character is 3 bytes in UTF-8 but 1 char in JS string length.
+      // 87382 chars * 3 bytes = 262146 bytes > 256 * 1024 (262144) bytes.
+      // Using content.length would pass (87382 < 262144), but byte check correctly rejects it.
+      const cjkChar = '中'; // '中' — 3 UTF-8 bytes
+      const oversizedByBytes = cjkChar.repeat(87382);
+      expect(Buffer.byteLength(oversizedByBytes, 'utf8')).toBeGreaterThan(256 * 1024);
+      expect(oversizedByBytes.length).toBeLessThan(256 * 1024);
+      const result = pasteManager.pasteContent('beat-channel-test-member', oversizedByBytes);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+      expect(result.error.message).toContain('exceeds maximum length');
+      expect(writeFileSync).not.toHaveBeenCalled();
+      expect(exec).not.toHaveBeenCalled();
+    });
+
     it('allows content at exactly MAX_PASTE_CONTENT_LENGTH (256 KB)', () => {
       const atLimit = 'x'.repeat(256 * 1024);
       const result = pasteManager.pasteContent('beat-channel-test-member', atLimit);
+      expect(result.ok).toBe(true);
+    });
+
+    it('allows multi-byte content whose byte length is exactly MAX_PASTE_CONTENT_LENGTH', () => {
+      // 87381 CJK chars = 262143 bytes < 262144 bytes (256 KB) — within limit
+      const cjkChar = '中'; // '中' — 3 UTF-8 bytes
+      const atByteLimit = cjkChar.repeat(87381);
+      expect(Buffer.byteLength(atByteLimit, 'utf8')).toBeLessThanOrEqual(256 * 1024);
+      const result = pasteManager.pasteContent('beat-channel-test-member', atByteLimit);
       expect(result.ok).toBe(true);
     });
 
