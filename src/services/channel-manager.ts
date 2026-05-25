@@ -615,8 +615,8 @@ export class ChannelManager implements ChannelService {
   private initializeRoundRobinTurn(channelId: ChannelId, members: readonly ChannelMember[]): void {
     if (members.length === 0) return;
     const sorted = [...members].sort((a, b) => a.joinedAt - b.joinedAt);
-    const first = sorted[0];
-    if (first) this.currentTurn.set(channelId, first.name);
+    // Non-null: length guard above ensures sorted is non-empty.
+    this.currentTurn.set(channelId, sorted[0]!.name);
   }
 
   /**

@@ -756,15 +756,19 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     // Channel recovery — re-attach to alive member sessions, mark dead members DESTROYED
     // ARCHITECTURE: Fire-and-forget; runs after task recovery to avoid race on tmux session names.
     // Skipped in cli mode (no tmux sessions are managed by CLI commands).
-    const channelServiceResult = container.get<ChannelService>('channelService');
-    if (channelServiceResult.ok) {
-      const channelService = channelServiceResult.value;
-      channelService.recoverChannels().then((result) => {
+    // DECISION: resolve() is required here (not get()) because ChannelManager.create() is async
+    // (subscribes to events). container.get() rejects async factories before instantiation.
+    container.resolve<ChannelService>('channelService').then((channelServiceResult) => {
+      if (!channelServiceResult.ok) {
+        logger.error('Failed to resolve ChannelService for recovery', channelServiceResult.error);
+        return;
+      }
+      channelServiceResult.value.recoverChannels().then((result) => {
         if (!result.ok) {
           logger.error('Channel recovery failed', result.error);
         }
       });
-    }
+    });
   } else {
     logger.info(`Skipping recovery (mode=${mode})`);
   }
