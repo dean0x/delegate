@@ -304,4 +304,15 @@ describe('ChannelRouter.nextRoundRobinMember()', () => {
     const next = ChannelRouter.nextRoundRobinMember(members, 'a');
     expect(next).toBeUndefined();
   });
+
+  it('returns undefined when only the current speaker is active', () => {
+    // 'a' is active; 'b' and 'c' are DESTROYED — 'a' is the sole active member
+    const members = [
+      { ...makeMember('a'), joinedAt: 1 },
+      { ...makeMember('b', ChannelMemberStatus.DESTROYED), joinedAt: 2 },
+      { ...makeMember('c', ChannelMemberStatus.DESTROYED), joinedAt: 3 },
+    ];
+    const next = ChannelRouter.nextRoundRobinMember(members, 'a');
+    expect(next).toBeUndefined();
+  });
 });

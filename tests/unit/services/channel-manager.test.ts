@@ -331,6 +331,55 @@ describe('ChannelManager', () => {
       // Topic delivered to exactly 1 member (first in round-robin)
       expect(tmuxConnector.pasteContent).toHaveBeenCalledOnce();
     });
+
+    it('rolls back spawned sessions when a later member spawn fails', async () => {
+      // First spawn succeeds, second fails
+      let spawnCallCount = 0;
+      (tmuxConnector.spawn as ReturnType<typeof vi.fn>).mockImplementation(
+        (config: { name: string; taskId: string; sessionsDir: string }) => {
+          spawnCallCount++;
+          if (spawnCallCount === 1) {
+            return ok<MockTmuxHandle>({ sessionName: config.name, taskId: config.taskId, sessionsDir: config.sessionsDir });
+          }
+          return { ok: false, error: new Error('Spawn failed on second member') };
+        },
+      );
+
+      const result = await manager.createChannel({
+        name: 'rollback-spawn',
+        members: [
+          { name: 'first', agent: 'claude' },
+          { name: 'second', agent: 'claude' },
+        ],
+        communicationMode: 'broadcast',
+        maxRounds: 5,
+      });
+
+      expect(result.ok).toBe(false);
+      // The first successfully-spawned session must be destroyed to avoid leaking
+      expect(tmuxConnector.destroy).toHaveBeenCalledOnce();
+    });
+
+    it('rolls back spawned sessions and cleans up in-memory state when save() fails', async () => {
+      (channelRepo.save as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: false,
+        error: new Error('DB write failed'),
+      });
+
+      const result = await manager.createChannel({
+        name: 'rollback-save',
+        members: [
+          { name: 'x', agent: 'claude' },
+          { name: 'y', agent: 'claude' },
+        ],
+        communicationMode: 'broadcast',
+        maxRounds: 5,
+      });
+
+      expect(result.ok).toBe(false);
+      // Both spawned sessions must be destroyed
+      expect(tmuxConnector.destroy).toHaveBeenCalledTimes(2);
+    });
   });
 
   // ─── destroyChannel() ───────────────────────────────────────────────────────
@@ -426,6 +475,10 @@ describe('ChannelManager', () => {
 
       // All 3 members should receive the message
       expect(tmuxConnector.pasteContent).toHaveBeenCalledTimes(3);
+      // Every delivered content must equal the sent message
+      for (const { content } of tmuxConnector._pastedContent) {
+        expect(content).toBe('hello everyone');
+      }
     });
 
     it('delivers message to specific target member when targetMember is provided', async () => {
@@ -681,6 +734,34 @@ describe('ChannelManager', () => {
 
       // Channel was alive — should not be destroyed
       expect(destroyedEvents).toHaveLength(0);
+    });
+  });
+
+  // ─── dispose() ──────────────────────────────────────────────────────────────
+
+  describe('dispose()', () => {
+    it('destroys all member sessions for all active channels', async () => {
+      await manager.createChannel({
+        name: 'dispose-ch-1',
+        members: [
+          { name: 'a', agent: 'claude' },
+          { name: 'b', agent: 'claude' },
+        ],
+        communicationMode: 'broadcast',
+        maxRounds: 5,
+      });
+      await manager.createChannel({
+        name: 'dispose-ch-2',
+        members: [{ name: 'c', agent: 'claude' }],
+      });
+
+      // Clear destroy calls from any prior test setup
+      (tmuxConnector.destroy as ReturnType<typeof vi.fn>).mockClear();
+
+      manager.dispose();
+
+      // 3 sessions total (2 from first channel, 1 from second) must be destroyed
+      expect(tmuxConnector.destroy).toHaveBeenCalledTimes(3);
     });
   });
 });
