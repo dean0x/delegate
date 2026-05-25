@@ -184,7 +184,9 @@ export class ChannelHandler extends BaseEventHandler {
 
     const seenFirst = this.rrFirstMemberSeen.get(channelId) ?? false;
     if (seenFirst) {
-      // The first member has spoken again → full cycle completed
+      // The first member has spoken again → full cycle completed.
+      // Reset so the next cycle requires a fresh first-member detection.
+      this.rrFirstMemberSeen.set(channelId, false);
       return true;
     }
 

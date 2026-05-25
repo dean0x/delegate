@@ -254,10 +254,10 @@ describe('ChannelHandler', () => {
 
       expect(repo.updateRound).toHaveBeenCalledWith('ch-rr-multi', 1);
 
-      // Round 1 → 2: B C then A again completes the second cycle (B C A)
-      // After round increment, rrFirstMemberSeen is reset to false.
-      // A is still the first member. Next time A speaks after being seen again = round 2.
-      for (const speaker of ['b', 'c', 'a']) {
+      // Round 1 → 2: A marks start, B C speak, A completes (A B C A)
+      // After round 0 completion, rrFirstMemberSeen resets to false.
+      // A must speak twice per round: once to mark, once to complete.
+      for (const speaker of ['a', 'b', 'c', 'a']) {
         await eventBus.emit('ChannelMessageSent', {
           channelId: 'ch-rr-multi' as ChannelId,
           from: speaker,
@@ -270,6 +270,36 @@ describe('ChannelHandler', () => {
       // updateRound should have been called twice total: once for round 1, once for round 2
       expect(repo.updateRound).toHaveBeenCalledTimes(2);
       expect(repo.updateRound).toHaveBeenNthCalledWith(2, 'ch-rr-multi', 2);
+    });
+
+    it('does not spuriously complete a round when first member speaks first in new cycle', async () => {
+      const channel = makeChannel('ch-rr-reset', ['a', 'b', 'c'], 'round-robin', 5);
+      const repo = makeChannelRepo(channel);
+      await createHandler(repo);
+
+      // Round 0 → 1: A B C A (normal full cycle)
+      for (const speaker of ['a', 'b', 'c', 'a']) {
+        await eventBus.emit('ChannelMessageSent', {
+          channelId: 'ch-rr-reset' as ChannelId,
+          from: speaker,
+          to: 'all',
+          round: 0,
+        });
+      }
+      await flushEventLoop();
+      expect(repo.updateRound).toHaveBeenCalledTimes(1);
+
+      // Round 1: A speaks first — must NOT immediately complete the round
+      await eventBus.emit('ChannelMessageSent', {
+        channelId: 'ch-rr-reset' as ChannelId,
+        from: 'a',
+        to: 'all',
+        round: 1,
+      });
+      await flushEventLoop();
+
+      // Still only 1 round increment — A speaking first should mark, not complete
+      expect(repo.updateRound).toHaveBeenCalledTimes(1);
     });
   });
 
