@@ -19,7 +19,7 @@
  * transformation is needed when building beat-channel-{name}-{member}.
  */
 
-import type { AgentRegistry } from '../core/agents.js';
+import { type AgentRegistry, isAgentProvider } from '../core/agents.js';
 import type { Configuration } from '../core/configuration.js';
 import {
   CHANNEL_NAME_REGEX,
@@ -30,11 +30,11 @@ import {
   ChannelMemberStatus,
   ChannelStatus,
   createChannel,
-  type TaskId,
+  TaskId,
 } from '../core/domain.js';
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
-import type { ChannelDestroyReason } from '../core/events/events.js';
+import type { ChannelDestroyedEvent, ChannelDestroyReason } from '../core/events/events.js';
 import type { ChannelRepository, ChannelService, Logger } from '../core/interfaces.js';
 import { err, ok, type Result } from '../core/result.js';
 import type { TmuxConnectorPort, TmuxHandle } from '../core/tmux-types.js';
@@ -119,6 +119,20 @@ export class ChannelManager implements ChannelService {
     this.tmuxConnector = deps.tmuxConnector;
     this.agentRegistry = deps.agentRegistry;
     this.sessionsDir = deps.sessionsDir;
+
+    // Subscribe to ChannelDestroyed so that event-driven destroy paths (max-rounds-reached,
+    // all-members-crashed) trigger session teardown and DB status update.
+    // DESIGN DECISION: destroyChannel() updates DB before emitting, so when our own destroy
+    // path fires this handler the status is already DESTROYED — we skip. Only the
+    // ChannelHandler-initiated paths (where DB is still ACTIVE) need handling here.
+    this.eventBus.subscribe('ChannelDestroyed', async (event: ChannelDestroyedEvent) => {
+      await this.handleChannelDestroyedEvent(event).catch((e: unknown) => {
+        this.logger.warn('Failed to handle ChannelDestroyed event', {
+          channelId: event.channelId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      });
+    });
   }
 
   // ─── ChannelService interface ─────────────────────────────────────────────
@@ -447,10 +461,11 @@ export class ChannelManager implements ChannelService {
 
         // Check if the tmux session is alive
         // DECISION: TmuxHandle.taskId is typed as TaskId (task domain), but isAlive() only
-        // uses sessionName — taskId is not transmitted to tmux. Cast via unknown is safe here.
+        // uses sessionName — taskId is not transmitted to tmux. A sentinel TaskId derived
+        // from the channel id is used so the branded type is satisfied without a double-cast.
         const fakeHandle: TmuxHandle = {
           sessionName: member.tmuxSession,
-          taskId: channel.id as unknown as TaskId,
+          taskId: TaskId(channel.id),
           sessionsDir: this.sessionsDir,
         };
 
@@ -539,7 +554,15 @@ export class ChannelManager implements ChannelService {
     channelName: string,
     member: { name: string; agent: string; systemPrompt?: string },
   ): Promise<Result<TmuxHandle>> {
-    const agentResult = this.agentRegistry.get(member.agent as Parameters<typeof this.agentRegistry.get>[0]);
+    if (!isAgentProvider(member.agent)) {
+      return err(
+        new AutobeatError(ErrorCode.INVALID_INPUT, `Agent '${member.agent}' is not a valid agent provider`, {
+          agent: member.agent,
+          memberName: member.name,
+        }),
+      );
+    }
+    const agentResult = this.agentRegistry.get(member.agent);
     if (!agentResult.ok) {
       return err(
         new AutobeatError(ErrorCode.INVALID_INPUT, `Agent '${member.agent}' not found in registry`, {
@@ -554,7 +577,7 @@ export class ChannelManager implements ChannelService {
 
     // Build the tmux spawn config from the agent adapter
     const buildResult = adapter.buildTmuxCommand({
-      taskId: sessionName.replace(/^beat-/, '') as Channel['id'],
+      taskId: TaskId(`channel-${channelName}-${member.name}`),
       prompt: '',
       systemPrompt: member.systemPrompt,
       workingDirectory: process.cwd(),
@@ -672,7 +695,7 @@ export class ChannelManager implements ChannelService {
       // Skip if channel is paused
       if (this.pausedChannels.has(channelId)) return;
 
-      const channelResult = await this.channelRepository.findById(channelId as ChannelId);
+      const channelResult = await this.channelRepository.findById(channelId);
       if (!channelResult.ok || !channelResult.value) return;
       const channel = channelResult.value;
 
@@ -696,7 +719,7 @@ export class ChannelManager implements ChannelService {
 
       // Deliver to each target
       for (const target of targets) {
-        const handle = this.memberHandles.get(this.handleKey(channelId as ChannelId, target.memberName));
+        const handle = this.memberHandles.get(this.handleKey(channelId, target.memberName));
         if (handle) {
           await this.deliverMessage(handle, deliveryContent);
         }
@@ -710,7 +733,7 @@ export class ChannelManager implements ChannelService {
       // Emit ChannelMessageSent
       const toValue = targets.length === 1 ? targets[0]!.memberName : 'all';
       await this.eventBus.emit('ChannelMessageSent', {
-        channelId: channelId as ChannelId,
+        channelId,
         from: memberName,
         to: toValue,
         round: channel.currentRound,
@@ -728,7 +751,7 @@ export class ChannelManager implements ChannelService {
     // Emit crash event — ChannelHandler will handle the cascading logic
     this.eventBus
       .emit('ChannelMemberCrashed', {
-        channelId: channelId as ChannelId,
+        channelId,
         memberName,
       })
       .catch((e: unknown) => {
@@ -741,15 +764,63 @@ export class ChannelManager implements ChannelService {
   }
 
   /**
+   * React to ChannelDestroyed events emitted by ChannelHandler (max-rounds-reached,
+   * all-members-crashed). Performs session teardown and DB status update.
+   *
+   * When destroyChannel() is the initiator it updates DB *before* emitting, so
+   * findById will return status DESTROYED — we skip to avoid double work.
+   * Only ChannelHandler-initiated destroys (DB still ACTIVE or PAUSED) need handling.
+   */
+  private async handleChannelDestroyedEvent(event: ChannelDestroyedEvent): Promise<void> {
+    const { channelId } = event;
+
+    const channelResult = await this.channelRepository.findById(channelId);
+    if (!channelResult.ok || !channelResult.value) return;
+    const channel = channelResult.value;
+
+    // Already DESTROYED — this event was emitted by destroyChannel(); skip.
+    if (channel.status === ChannelStatus.DESTROYED) return;
+
+    // Kill all active member sessions
+    for (const member of channel.members) {
+      if (member.status !== ChannelMemberStatus.DESTROYED) {
+        const handle = this.memberHandles.get(this.handleKey(channelId, member.name));
+        if (handle) {
+          this.tmuxConnector.sendControlKeys(handle, 'C-c');
+          const isAliveResult = this.tmuxConnector.isAlive(handle);
+          if (isAliveResult.ok && isAliveResult.value) {
+            this.tmuxConnector.destroy(handle);
+          }
+        }
+      }
+    }
+
+    // Update DB status
+    const statusResult = await this.channelRepository.updateStatus(channelId, ChannelStatus.DESTROYED);
+    if (!statusResult.ok) {
+      this.logger.warn('Failed to update channel status to DESTROYED after event-driven destroy', {
+        channelId,
+        reason: event.reason,
+        error: statusResult.error.message,
+      });
+    }
+
+    // Clean up in-memory state
+    this.cleanupInMemory(channelId);
+
+    this.logger.info('Channel torn down via event-driven destroy', { channelId, reason: event.reason });
+  }
+
+  /**
    * Find the channel ID that owns a given session name.
    * Scans the memberHandles map — O(N) but N is bounded by max 10 members * channels.
    */
-  private findChannelIdBySession(sessionName: string): string | undefined {
+  private findChannelIdBySession(sessionName: string): ChannelId | undefined {
     for (const [key, handle] of this.memberHandles) {
       if (handle.sessionName === sessionName) {
         // Key format: "channelId:memberName"
         const colonIdx = key.indexOf(':');
-        if (colonIdx !== -1) return key.slice(0, colonIdx);
+        if (colonIdx !== -1) return ChannelId(key.slice(0, colonIdx));
       }
     }
     return undefined;
