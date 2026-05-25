@@ -484,12 +484,13 @@ export class ChannelManager implements ChannelService {
       };
 
       // Use the batch session set when available (O(1)); fall back to per-member exec.
-      const isAlive = aliveSessionNames
-        ? aliveSessionNames.has(member.tmuxSession)
-        : (() => {
-            const result = this.tmuxConnector.isAlive(fakeHandle);
-            return result.ok && result.value;
-          })();
+      let isAlive: boolean;
+      if (aliveSessionNames) {
+        isAlive = aliveSessionNames.has(member.tmuxSession);
+      } else {
+        const aliveResult = this.tmuxConnector.isAlive(fakeHandle);
+        isAlive = aliveResult.ok && aliveResult.value;
+      }
 
       if (isAlive) {
         aliveMembers.push(member);

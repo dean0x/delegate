@@ -18,7 +18,7 @@ import {
 } from '../core/domain.js';
 import { operationErrorHandler } from '../core/errors.js';
 import type { ChannelRepository } from '../core/interfaces.js';
-import { Result, tryCatchAsync } from '../core/result.js';
+import { ok, Result, tryCatchAsync } from '../core/result.js';
 import { Database } from './database.js';
 
 // ============================================================================
@@ -265,7 +265,7 @@ export class SQLiteChannelRepository implements ChannelRepository {
     memberNames: readonly string[],
     status: ChannelMemberStatus,
   ): Promise<Result<void>> {
-    if (memberNames.length === 0) return { ok: true, value: undefined };
+    if (memberNames.length === 0) return ok(undefined);
     return tryCatchAsync(
       async () => {
         const batchUpdate = this.db.transaction(() => {
