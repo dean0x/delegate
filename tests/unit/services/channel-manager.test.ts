@@ -302,6 +302,16 @@ describe('ChannelManager', () => {
       expect(result.ok).toBe(false);
     });
 
+    it('rejects zero members', async () => {
+      const result = await manager.createChannel({
+        name: 'no-members',
+        members: [],
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe('INVALID_INPUT');
+    });
+
     it('rejects multi-agent channel without maxRounds', async () => {
       const result = await manager.createChannel({
         name: 'no-max',
@@ -449,6 +459,40 @@ describe('ChannelManager', () => {
       await flushEventLoop();
 
       expect(destroyedEvents).toHaveLength(1);
+    });
+
+    it('handles ChannelDestroyed event from ChannelHandler when DB is still ACTIVE', async () => {
+      // Create a channel so in-memory handles are registered
+      const createResult = await manager.createChannel({
+        name: 'handler-destroy',
+        members: [
+          { name: 'alice', agent: 'claude' },
+          { name: 'bob', agent: 'claude' },
+        ],
+        communicationMode: 'broadcast',
+        maxRounds: 3,
+      });
+      expect(createResult.ok).toBe(true);
+      if (!createResult.ok) return;
+
+      const channelId = createResult.value.id;
+
+      // Clear prior destroy/status calls from channel creation
+      (tmuxConnector.destroy as ReturnType<typeof vi.fn>).mockClear();
+      (channelRepo.updateStatus as ReturnType<typeof vi.fn>).mockClear();
+
+      // Emit ChannelDestroyed with reason 'max-rounds-reached' — simulates ChannelHandler
+      // initiating a destroy while DB is still ACTIVE (channel not yet marked DESTROYED).
+      await eventBus.emit('ChannelDestroyed', {
+        channelId,
+        reason: 'max-rounds-reached',
+      });
+      await flushEventLoop();
+
+      // ChannelManager must tear down all active member sessions
+      expect(tmuxConnector.destroy).toHaveBeenCalled();
+      // And update DB status to DESTROYED
+      expect(channelRepo.updateStatus).toHaveBeenCalledWith(channelId, ChannelStatus.DESTROYED);
     });
 
     it('returns err(INVALID_INPUT) for already destroyed channel', async () => {
@@ -828,6 +872,46 @@ describe('ChannelManager', () => {
       expect(localChannelRepo.batchUpdateMemberStatuses).toHaveBeenCalledOnce();
 
       localManager.dispose();
+    });
+
+    it('preserves paused state for PAUSED channels with alive sessions after recovery', async () => {
+      const pausedChannel: Channel = {
+        id: ChannelId('ch-paused-recovery'),
+        name: 'paused-channel',
+        members: [
+          {
+            name: 'a',
+            agent: 'claude',
+            tmuxSession: 'beat-channel-paused-channel-a',
+            status: ChannelMemberStatus.ACTIVE,
+            joinedAt: Date.now(),
+          },
+        ],
+        communicationMode: undefined,
+        status: ChannelStatus.PAUSED,
+        currentRound: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      channelRepo._channels.set('ch-paused-recovery', pausedChannel);
+      (channelRepo.findByStatus as ReturnType<typeof vi.fn>).mockImplementation(async (status: ChannelStatus) => {
+        if (status === ChannelStatus.PAUSED) return ok([pausedChannel]);
+        return ok([]);
+      });
+
+      // Sessions are alive
+      (tmuxConnector.isAlive as ReturnType<typeof vi.fn>).mockReturnValue(ok(true));
+
+      await manager.recoverChannels();
+      await flushEventLoop();
+
+      // Channel was PAUSED and alive — sendMessage must return a paused error,
+      // confirming that pausedChannels.add() was called during recovery.
+      const sendResult = await manager.sendMessage(ChannelId('ch-paused-recovery'), 'hello');
+      expect(sendResult.ok).toBe(false);
+      if (sendResult.ok) return;
+      expect(sendResult.error.code).toBe('INVALID_INPUT');
     });
 
     it('falls back to per-member isAlive() when listSessions() fails', async () => {

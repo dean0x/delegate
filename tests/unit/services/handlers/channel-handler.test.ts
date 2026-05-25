@@ -81,6 +81,19 @@ function makeChannelRepo(channel: Channel): ChannelRepository {
         }
         return ok(undefined);
       }),
+    batchUpdateMemberStatuses: vi
+      .fn()
+      .mockImplementation(async (id: ChannelId, memberNames: readonly string[], status: ChannelMemberStatus) => {
+        const ch = channels.get(id);
+        if (ch) {
+          const nameSet = new Set(memberNames);
+          channels.set(id, {
+            ...ch,
+            members: ch.members.map((m) => (nameSet.has(m.name) ? { ...m, status } : m)),
+          });
+        }
+        return ok(undefined);
+      }),
     delete: vi.fn().mockResolvedValue(ok(undefined)),
     count: vi.fn().mockResolvedValue(ok(0)),
     countByStatus: vi.fn().mockResolvedValue(ok({})),
