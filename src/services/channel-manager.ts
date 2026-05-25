@@ -34,7 +34,7 @@ import {
 } from '../core/domain.js';
 import { AutobeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
-import type { ChannelDestroyedEvent, ChannelDestroyReason } from '../core/events/events.js';
+import type { ChannelDestroyedEvent, ChannelDestroyReason, ChannelMemberCrashedEvent } from '../core/events/events.js';
 import type { ChannelRepository, ChannelService, Logger } from '../core/interfaces.js';
 import { err, ok, type Result } from '../core/result.js';
 import type { TmuxConnectorPort, TmuxHandle } from '../core/tmux-types.js';
@@ -115,6 +115,23 @@ export class ChannelManager implements ChannelService {
   private readonly currentTurn = new Map<string, string>();
   /** channelId → per-channel serial queue */
   private readonly messageQueues = new Map<string, SerialQueue>();
+  /**
+   * Reverse lookup: sessionName → channelId.
+   * Maintained alongside memberHandles for O(1) session-to-channel lookup in
+   * handleMemberOutputAsync / handleMemberExitAsync (hot path — called on every
+   * agent output and every session exit).
+   */
+  private readonly sessionToChannel = new Map<string, ChannelId>();
+  /**
+   * In-memory channel metadata cache: channelId → Channel.
+   * Populated on createChannel/recoverChannels; invalidated on member crash
+   * (via ChannelMemberCrashed event) and on channel destroy (via cleanupInMemory).
+   * Eliminates the DB read inside routeAndDeliverMessage for every agent output.
+   * currentRound in the cache may lag the DB by ≤1 round — this is acceptable
+   * because it is only used for informational event payload (ChannelHandler uses
+   * its own tracking, not the round field, for termination logic).
+   */
+  private readonly channelCache = new Map<string, Channel>();
 
   constructor(deps: ChannelManagerDeps) {
     this.eventBus = deps.eventBus;
@@ -139,6 +156,14 @@ export class ChannelManager implements ChannelService {
       });
     });
 
+    // Invalidate the channel cache when a member crashes so that the next
+    // routeAndDeliverMessage call sees the updated member status (DESTROYED).
+    // ChannelHandler writes the status update to DB; we must not serve stale
+    // membership data from channelCache after that point.
+    this.eventBus.subscribe('ChannelMemberCrashed', async (event: ChannelMemberCrashedEvent) => {
+      this.channelCache.delete(event.channelId);
+    });
+
     this.logger.debug('ChannelManager initialized');
   }
 
@@ -153,15 +178,18 @@ export class ChannelManager implements ChannelService {
     const channel = createChannel(request);
 
     // 7. Spawn member sessions (with rollback on failure)
-    const spawnResult = await this.spawnMembersWithRollback(channel.name, request.members);
+    const workingDirectory = request.workingDirectory ?? process.cwd();
+    const spawnResult = await this.spawnMembersWithRollback(channel.name, request.members, workingDirectory);
     if (!spawnResult.ok) return spawnResult;
     const spawnedHandles = spawnResult.value;
 
     // 8. Register in-memory state
     for (const { memberName, handle } of spawnedHandles) {
       this.memberHandles.set(this.handleKey(channel.id, memberName), handle);
+      this.sessionToChannel.set(handle.sessionName, channel.id);
     }
     this.messageQueues.set(channel.id, new SerialQueue());
+    this.channelCache.set(channel.id, channel);
     if (request.communicationMode === 'round-robin' && channel.members.length > 0) {
       const sorted = [...channel.members].sort((a, b) => a.joinedAt - b.joinedAt);
       const first = sorted[0];
@@ -322,20 +350,53 @@ export class ChannelManager implements ChannelService {
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Channel '${channelId}' not found or destroyed`));
     }
 
-    const dispatchResult = await this.dispatchMessage(channel, message, targetMember);
-    if (!dispatchResult.ok) return dispatchResult;
-
-    const to = targetMember ?? 'all';
-    const emitResult = await this.eventBus.emit('ChannelMessageSent', {
-      channelId,
-      from: 'external',
-      to,
-      round: channel.currentRound,
-    });
-    if (!emitResult.ok) {
-      this.logger.error('Failed to emit ChannelMessageSent event', emitResult.error, { channelId });
-      return err(emitResult.error);
+    // Validate targetMember before queuing (fast-fail, no async work needed).
+    if (targetMember !== undefined) {
+      const member = channel.members.find((m) => m.name === targetMember && m.status === ChannelMemberStatus.ACTIVE);
+      if (!member) {
+        return err(
+          new AutobeatError(
+            ErrorCode.INVALID_INPUT,
+            `Target member '${targetMember}' not found or not active in channel '${channelId}'`,
+          ),
+        );
+      }
     }
+
+    // Route through the per-channel SerialQueue so that external sends are
+    // serialized with internal member-output messages. Without this, concurrent
+    // broadcastToActiveMembers calls could interleave with queued routing tasks,
+    // causing members to receive messages out of causal order.
+    const queue = this.messageQueues.get(channelId);
+    if (!queue) {
+      return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Channel '${channelId}' has no message queue`));
+    }
+
+    let dispatchError: Error | undefined;
+    queue.enqueue(async () => {
+      const dispatchResult = await this.dispatchMessage(channel, message, targetMember);
+      if (!dispatchResult.ok) {
+        dispatchError = dispatchResult.error;
+        return;
+      }
+      const to = targetMember ?? 'all';
+      const emitResult = await this.eventBus.emit('ChannelMessageSent', {
+        channelId,
+        from: 'external',
+        to,
+        round: channel.currentRound,
+      });
+      if (!emitResult.ok) {
+        this.logger.error('Failed to emit ChannelMessageSent event', emitResult.error, { channelId });
+      }
+    });
+
+    // Best-effort: wait for the queued task to finish so callers can observe
+    // delivery before the promise resolves. The drain timeout ensures we do not
+    // block indefinitely if a tmux call hangs.
+    await queue.drain(10_000);
+
+    if (dispatchError) return err(dispatchError);
     return ok(undefined);
   }
 
@@ -398,6 +459,7 @@ export class ChannelManager implements ChannelService {
       if (aliveResult.ok && aliveResult.value) {
         aliveMembers.push(member);
         this.memberHandles.set(this.handleKey(channel.id, member.name), fakeHandle);
+        this.sessionToChannel.set(member.tmuxSession, channel.id);
       } else {
         deadMembers.push(member);
       }
@@ -419,6 +481,7 @@ export class ChannelManager implements ChannelService {
 
     // Rebuild in-memory state
     this.messageQueues.set(channel.id, new SerialQueue());
+    this.channelCache.set(channel.id, channel);
     if (channel.status === ChannelStatus.PAUSED) {
       this.pausedChannels.add(channel.id);
     }
@@ -455,6 +518,8 @@ export class ChannelManager implements ChannelService {
       }
     }
     this.memberHandles.clear();
+    this.sessionToChannel.clear();
+    this.channelCache.clear();
     this.pausedChannels.clear();
     this.currentTurn.clear();
   }
@@ -526,22 +591,42 @@ export class ChannelManager implements ChannelService {
   }
 
   /**
-   * Spawn tmux sessions for all channel members.
-   * On any failure, destroys already-spawned sessions before returning the error.
+   * Spawn tmux sessions for all channel members in parallel.
+   * On any failure, destroys all successfully-spawned sessions before returning the error.
+   *
+   * DESIGN DECISION: Promise.allSettled parallelizes the spawn calls so channel creation
+   * latency is max(spawn_i) rather than sum(spawn_i). Each spawnMemberSession is
+   * independent (different session name, no shared state) so concurrent spawns are safe.
    */
   private async spawnMembersWithRollback(
     channelName: string,
     members: ChannelCreateRequest['members'],
+    workingDirectory: string,
   ): Promise<Result<Array<{ memberName: string; handle: TmuxHandle }>>> {
+    const results = await Promise.allSettled(
+      members.map(async (member) => {
+        const spawnResult = await this.spawnMemberSession(channelName, member, workingDirectory);
+        if (!spawnResult.ok) throw spawnResult.error;
+        return { memberName: member.name, handle: spawnResult.value };
+      }),
+    );
+
     const spawnedHandles: Array<{ memberName: string; handle: TmuxHandle }> = [];
-    for (const member of members) {
-      const spawnResult = await this.spawnMemberSession(channelName, member);
-      if (!spawnResult.ok) {
-        await this.destroyHandles(spawnedHandles.map((s) => s.handle));
-        return spawnResult;
+    let firstError: Error | undefined;
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        spawnedHandles.push(result.value);
+      } else {
+        firstError ??= result.reason instanceof Error ? result.reason : new Error(String(result.reason));
       }
-      spawnedHandles.push({ memberName: member.name, handle: spawnResult.value });
     }
+
+    if (firstError) {
+      await this.destroyHandles(spawnedHandles.map((s) => s.handle));
+      return err(firstError);
+    }
+
     return ok(spawnedHandles);
   }
 
@@ -552,6 +637,7 @@ export class ChannelManager implements ChannelService {
   private async spawnMemberSession(
     channelName: string,
     member: { name: string; agent: string; systemPrompt?: string },
+    workingDirectory: string,
   ): Promise<Result<TmuxHandle>> {
     if (!isAgentProvider(member.agent)) {
       return err(
@@ -579,7 +665,7 @@ export class ChannelManager implements ChannelService {
       taskId: TaskId(`channel-${channelName}-${member.name}`),
       prompt: '',
       systemPrompt: member.systemPrompt,
-      workingDirectory: process.cwd(),
+      workingDirectory,
       sessionsDir: this.sessionsDir,
     });
 
@@ -753,9 +839,16 @@ export class ChannelManager implements ChannelService {
   private async routeAndDeliverMessage(channelId: ChannelId, memberName: string, content: string): Promise<void> {
     if (this.pausedChannels.has(channelId)) return;
 
-    const channelResult = await this.channelRepository.findById(channelId);
-    if (!channelResult.ok || !channelResult.value) return;
-    const channel = channelResult.value;
+    // Prefer the in-memory cache (populated at create/recover time, invalidated on member
+    // crash and channel destroy). Fall back to a DB read only when the cache entry is absent
+    // (e.g. first message after a cache invalidation).
+    let channel = this.channelCache.get(channelId);
+    if (!channel) {
+      const channelResult = await this.channelRepository.findById(channelId);
+      if (!channelResult.ok || !channelResult.value) return;
+      channel = channelResult.value;
+      this.channelCache.set(channelId, channel);
+    }
 
     // Parse directed target from content
     const directedTarget = ChannelRouter.parseDirectedTarget(content);
@@ -869,17 +962,10 @@ export class ChannelManager implements ChannelService {
 
   /**
    * Find the channel ID that owns a given session name.
-   * Scans the memberHandles map — O(N) but N is bounded by max 10 members * channels.
+   * O(1) lookup via the sessionToChannel reverse-index maintained alongside memberHandles.
    */
   private findChannelIdBySession(sessionName: string): ChannelId | undefined {
-    for (const [key, handle] of this.memberHandles) {
-      if (handle.sessionName === sessionName) {
-        // Key format: "channelId:memberName"
-        const colonIdx = key.indexOf(':');
-        if (colonIdx !== -1) return ChannelId(key.slice(0, colonIdx));
-      }
-    }
-    return undefined;
+    return this.sessionToChannel.get(sessionName);
   }
 
   /** Destroy a list of TmuxHandles (rollback helper). */
@@ -897,9 +983,10 @@ export class ChannelManager implements ChannelService {
 
   /** Clean up all in-memory state for a channel. */
   private cleanupInMemory(channelId: string): void {
-    // Remove all member handles for this channel
-    for (const key of this.memberHandles.keys()) {
+    // Remove all member handles and session→channel entries for this channel
+    for (const [key, handle] of this.memberHandles) {
       if (key.startsWith(`${channelId}:`)) {
+        this.sessionToChannel.delete(handle.sessionName);
         this.memberHandles.delete(key);
       }
     }
@@ -910,6 +997,7 @@ export class ChannelManager implements ChannelService {
       this.messageQueues.delete(channelId);
     }
 
+    this.channelCache.delete(channelId);
     this.pausedChannels.delete(channelId);
     this.currentTurn.delete(channelId);
   }

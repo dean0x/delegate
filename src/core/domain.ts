@@ -1133,6 +1133,13 @@ export interface ChannelCreateRequest {
    */
   readonly maxRounds?: number;
   readonly createdBy?: string;
+  /**
+   * Working directory for member agent sessions.
+   * Defaults to process.cwd() when omitted.
+   * Mirrors task.workingDirectory — callers should pass the repo root for
+   * channel work to happen in the correct directory.
+   */
+  readonly workingDirectory?: string;
 }
 
 /**
