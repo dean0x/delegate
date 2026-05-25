@@ -355,8 +355,7 @@ describe('ChannelManager', () => {
       const destroyResult = await manager.destroyChannel(channelId, 'user-requested');
       expect(destroyResult.ok).toBe(true);
 
-      // Sessions killed (C-c sent + destroy called)
-      expect(tmuxConnector.sendControlKeys).toHaveBeenCalled();
+      // Sessions force-destroyed directly (no C-c grace period — no timer available)
       expect(tmuxConnector.destroy).toHaveBeenCalled();
 
       // DB status updated

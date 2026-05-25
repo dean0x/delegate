@@ -59,12 +59,12 @@ class SerialQueue {
    * Enqueue a task. Returns a promise that resolves when the task completes.
    * If the queue is closed, the task is silently dropped.
    */
-  enqueue(task: () => Promise<void>): void {
+  enqueue(task: () => Promise<void>, onError?: (e: unknown) => void): void {
     if (this.closed) return;
     this.chain = this.chain.then(() => {
       if (this.closed) return;
-      return task().catch(() => {
-        /* errors already logged by caller */
+      return task().catch((e: unknown) => {
+        onError?.(e);
       });
     });
   }
@@ -77,9 +77,14 @@ class SerialQueue {
     this.closed = true;
   }
 
-  /** Wait for all queued tasks to complete. */
-  drain(): Promise<void> {
-    return this.chain;
+  /**
+   * Wait for all queued tasks to complete, with an optional timeout.
+   * If the timeout elapses before all tasks finish, the promise resolves anyway
+   * (best-effort drain — callers must not rely on full completion).
+   */
+  async drain(timeoutMs = 5_000): Promise<void> {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
+    await Promise.race([this.chain, timeout]);
   }
 }
 
@@ -133,6 +138,8 @@ export class ChannelManager implements ChannelService {
         });
       });
     });
+
+    this.logger.debug('ChannelManager initialized');
   }
 
   // ─── ChannelService interface ─────────────────────────────────────────────
@@ -140,10 +147,11 @@ export class ChannelManager implements ChannelService {
   async createChannel(request: ChannelCreateRequest): Promise<Result<Channel>> {
     // 1. Validate name
     if (!CHANNEL_NAME_REGEX.test(request.name)) {
+      const truncatedName = request.name.slice(0, 64);
       return err(
         new AutobeatError(
           ErrorCode.INVALID_INPUT,
-          `Invalid channel name '${request.name}': must match ${CHANNEL_NAME_REGEX}`,
+          `Invalid channel name '${truncatedName}': must match ${CHANNEL_NAME_REGEX}`,
           {
             name: request.name,
           },
@@ -242,10 +250,13 @@ export class ChannelManager implements ChannelService {
       communicationMode: channel.communicationMode,
     });
     if (!emitResult.ok) {
-      this.logger.warn('Failed to emit ChannelCreated event', {
+      this.logger.error('Failed to emit ChannelCreated event', emitResult.error, {
         channelId: channel.id,
-        error: emitResult.error.message,
       });
+      // Rollback: sessions already spawned, channel saved — clean up both
+      await this.destroyHandles(spawnedHandles.map((s) => s.handle));
+      this.cleanupInMemory(channel.id);
+      return err(emitResult.error);
     }
 
     // 11. Deliver topic if provided
@@ -269,19 +280,15 @@ export class ChannelManager implements ChannelService {
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Channel '${channelId}' is already destroyed`));
     }
 
-    // Kill all active member sessions (C-c → wait → force destroy)
+    // Force-destroy all active member sessions.
+    // DESIGN DECISION: No C-c grace period here — unlike WorkerHandler which uses a 2-second
+    // timer between C-c and force-kill, channel member cleanup has no async delay available
+    // at this point and C-c without a timer has no effect. Go straight to force-destroy.
     for (const member of channel.members) {
       if (member.status !== ChannelMemberStatus.DESTROYED) {
         const handle = this.memberHandles.get(this.handleKey(channelId, member.name));
         if (handle) {
-          this.tmuxConnector.sendControlKeys(handle, 'C-c');
-          // Brief grace period — best-effort, no await on sleep for simplicity
-          // DESIGN DECISION: Synchronous kill flow mirrors WorkerHandler pattern.
-          // The 2s grace is implemented as a post-send delay without blocking the event loop.
-          const isAliveResult = this.tmuxConnector.isAlive(handle);
-          if (isAliveResult.ok && isAliveResult.value) {
-            this.tmuxConnector.destroy(handle);
-          }
+          this.tmuxConnector.destroy(handle);
         }
       }
     }
@@ -301,7 +308,11 @@ export class ChannelManager implements ChannelService {
 
     // Emit ChannelDestroyed
     const destroyReason: ChannelDestroyReason = reason ?? 'user-requested';
-    await this.eventBus.emit('ChannelDestroyed', { channelId, reason: destroyReason });
+    const destroyEmitResult = await this.eventBus.emit('ChannelDestroyed', { channelId, reason: destroyReason });
+    if (!destroyEmitResult.ok) {
+      this.logger.error('Failed to emit ChannelDestroyed event', destroyEmitResult.error, { channelId });
+      return err(destroyEmitResult.error);
+    }
 
     this.logger.info('Channel destroyed', { channelId, reason: destroyReason });
     return ok(undefined);
@@ -328,7 +339,11 @@ export class ChannelManager implements ChannelService {
       return statusResult;
     }
 
-    await this.eventBus.emit('ChannelPaused', { channelId });
+    const pauseEmitResult = await this.eventBus.emit('ChannelPaused', { channelId });
+    if (!pauseEmitResult.ok) {
+      this.logger.error('Failed to emit ChannelPaused event', pauseEmitResult.error, { channelId });
+      return err(pauseEmitResult.error);
+    }
     this.logger.info('Channel paused', { channelId });
     return ok(undefined);
   }
@@ -354,7 +369,11 @@ export class ChannelManager implements ChannelService {
       return statusResult;
     }
 
-    await this.eventBus.emit('ChannelResumed', { channelId });
+    const resumeEmitResult = await this.eventBus.emit('ChannelResumed', { channelId });
+    if (!resumeEmitResult.ok) {
+      this.logger.error('Failed to emit ChannelResumed event', resumeEmitResult.error, { channelId });
+      return err(resumeEmitResult.error);
+    }
     this.logger.info('Channel resumed', { channelId });
     return ok(undefined);
   }
@@ -389,12 +408,16 @@ export class ChannelManager implements ChannelService {
         await this.deliverMessage(handle, message);
       }
 
-      await this.eventBus.emit('ChannelMessageSent', {
+      const targetEmitResult = await this.eventBus.emit('ChannelMessageSent', {
         channelId,
         from: 'external',
         to: targetMember,
         round: channel.currentRound,
       });
+      if (!targetEmitResult.ok) {
+        this.logger.error('Failed to emit ChannelMessageSent event', targetEmitResult.error, { channelId });
+        return err(targetEmitResult.error);
+      }
       return ok(undefined);
     }
 
@@ -415,12 +438,16 @@ export class ChannelManager implements ChannelService {
       await this.broadcastToActiveMembers(channel, message);
     }
 
-    await this.eventBus.emit('ChannelMessageSent', {
+    const broadcastEmitResult = await this.eventBus.emit('ChannelMessageSent', {
       channelId,
       from: 'external',
       to: 'all',
       round: channel.currentRound,
     });
+    if (!broadcastEmitResult.ok) {
+      this.logger.error('Failed to emit ChannelMessageSent event', broadcastEmitResult.error, { channelId });
+      return err(broadcastEmitResult.error);
+    }
     return ok(undefined);
   }
 
@@ -691,54 +718,69 @@ export class ChannelManager implements ChannelService {
     const queue = this.messageQueues.get(channelId);
     if (!queue) return;
 
-    queue.enqueue(async () => {
-      // Skip if channel is paused
-      if (this.pausedChannels.has(channelId)) return;
+    queue.enqueue(
+      async () => {
+        // Skip if channel is paused
+        if (this.pausedChannels.has(channelId)) return;
 
-      const channelResult = await this.channelRepository.findById(channelId);
-      if (!channelResult.ok || !channelResult.value) return;
-      const channel = channelResult.value;
+        const channelResult = await this.channelRepository.findById(channelId);
+        if (!channelResult.ok || !channelResult.value) return;
+        const channel = channelResult.value;
 
-      // Parse directed target from content
-      const directedTarget = ChannelRouter.parseDirectedTarget(content);
-      const directedTo = directedTarget?.targetName;
-      const deliveryContent = directedTarget?.cleanMessage ?? content;
+        // Parse directed target from content
+        const directedTarget = ChannelRouter.parseDirectedTarget(content);
+        const directedTo = directedTarget?.targetName;
+        const deliveryContent = directedTarget?.cleanMessage ?? content;
 
-      // Route message
-      const routeResult = ChannelRouter.route(channel, memberName, directedTo);
-      if (!routeResult.ok) {
-        this.logger.debug('No routing targets for member output', {
+        // Route message
+        const routeResult = ChannelRouter.route(channel, memberName, directedTo);
+        if (!routeResult.ok) {
+          this.logger.debug('No routing targets for member output', {
+            channelId,
+            memberName,
+            error: routeResult.error.message,
+          });
+          return;
+        }
+
+        const { targets, nextTurnMember } = routeResult.value;
+
+        // Deliver to each target
+        for (const target of targets) {
+          const handle = this.memberHandles.get(this.handleKey(channelId, target.memberName));
+          if (handle) {
+            await this.deliverMessage(handle, deliveryContent);
+          }
+        }
+
+        // Update round-robin turn
+        if (nextTurnMember) {
+          this.currentTurn.set(channelId, nextTurnMember);
+        }
+
+        // Emit ChannelMessageSent
+        const toValue = targets.length === 1 ? targets[0]!.memberName : 'all';
+        const routedEmitResult = await this.eventBus.emit('ChannelMessageSent', {
+          channelId,
+          from: memberName,
+          to: toValue,
+          round: channel.currentRound,
+        });
+        if (!routedEmitResult.ok) {
+          this.logger.error('Failed to emit ChannelMessageSent event', routedEmitResult.error, {
+            channelId,
+            memberName,
+          });
+        }
+      },
+      (e: unknown) => {
+        this.logger.warn('Unhandled error in channel message queue task', {
           channelId,
           memberName,
-          error: routeResult.error.message,
+          error: e instanceof Error ? e.message : String(e),
         });
-        return;
-      }
-
-      const { targets, nextTurnMember } = routeResult.value;
-
-      // Deliver to each target
-      for (const target of targets) {
-        const handle = this.memberHandles.get(this.handleKey(channelId, target.memberName));
-        if (handle) {
-          await this.deliverMessage(handle, deliveryContent);
-        }
-      }
-
-      // Update round-robin turn
-      if (nextTurnMember) {
-        this.currentTurn.set(channelId, nextTurnMember);
-      }
-
-      // Emit ChannelMessageSent
-      const toValue = targets.length === 1 ? targets[0]!.memberName : 'all';
-      await this.eventBus.emit('ChannelMessageSent', {
-        channelId,
-        from: memberName,
-        to: toValue,
-        round: channel.currentRound,
-      });
-    });
+      },
+    );
   }
 
   /**
@@ -781,16 +823,12 @@ export class ChannelManager implements ChannelService {
     // Already DESTROYED — this event was emitted by destroyChannel(); skip.
     if (channel.status === ChannelStatus.DESTROYED) return;
 
-    // Kill all active member sessions
+    // Force-destroy all active member sessions (same rationale as destroyChannel — no timer).
     for (const member of channel.members) {
       if (member.status !== ChannelMemberStatus.DESTROYED) {
         const handle = this.memberHandles.get(this.handleKey(channelId, member.name));
         if (handle) {
-          this.tmuxConnector.sendControlKeys(handle, 'C-c');
-          const isAliveResult = this.tmuxConnector.isAlive(handle);
-          if (isAliveResult.ok && isAliveResult.value) {
-            this.tmuxConnector.destroy(handle);
-          }
+          this.tmuxConnector.destroy(handle);
         }
       }
     }
