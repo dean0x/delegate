@@ -36,7 +36,11 @@ describe('TmuxSessionManager', () => {
 
   beforeEach(() => {
     exec = vi.fn().mockReturnValue({ stdout: '', stderr: '', status: 0 } satisfies ExecResult);
-    manager = new TmuxSessionManager({ exec: exec as ExecFn });
+    manager = new TmuxSessionManager({
+      exec: exec as ExecFn,
+      writeFileSync: vi.fn(),
+      unlinkSync: vi.fn(),
+    });
   });
 
   // ─── createSession ───────────────────────────────────────────────────────────
@@ -171,6 +175,8 @@ describe('TmuxSessionManager', () => {
     const limitedManager = new TmuxSessionManager({
       exec: listSessionsExec(20) as ExecFn,
       maxConcurrentSessions: 20,
+      writeFileSync: vi.fn(),
+      unlinkSync: vi.fn(),
     });
     const result = limitedManager.createSession(validConfig);
     expect(result.ok).toBe(false);
@@ -189,6 +195,8 @@ describe('TmuxSessionManager', () => {
         if (cmd.includes('list-sessions')) return { stdout: '', stderr: "can't find session", status: 1 };
         return { stdout: '', stderr: 'duplicate session: beat-task-123', status: 1 };
       }) as ExecFn,
+      writeFileSync: vi.fn(),
+      unlinkSync: vi.fn(),
     });
     const failResult = failManager.createSession(validConfig);
     expect(failResult.ok).toBe(false);
@@ -487,7 +495,7 @@ describe('TmuxSessionManager.setSessionEnvironment()', () => {
 
   beforeEach(() => {
     exec = vi.fn().mockReturnValue({ stdout: '', stderr: '', status: 0 });
-    manager = new TmuxSessionManager({ exec });
+    manager = new TmuxSessionManager({ exec, writeFileSync: vi.fn(), unlinkSync: vi.fn() });
   });
 
   it('calls tmux set-environment with correct arguments', () => {
@@ -589,13 +597,40 @@ describe('TmuxSessionManager.setSessionEnvironment()', () => {
       expect(pasteCmd).toContain("'beat-channel-review-agent'");
     });
 
-    it('uses the beat-channel named buffer for load and paste', () => {
+    it('uses a per-invocation unique buffer name (beat-ch-<uuid>) for load, paste, and delete', () => {
       pasteManager.pasteContent('beat-channel-test-member', 'content');
       const cmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
       const loadCmd = cmds.find((c) => c.includes('load-buffer'));
       const pasteCmd = cmds.find((c) => c.includes('paste-buffer'));
-      expect(loadCmd).toContain("'beat-channel'");
-      expect(pasteCmd).toContain("'beat-channel'");
+      const deleteCmd = cmds.find((c) => c.includes('delete-buffer'));
+      expect(loadCmd).toMatch(/-b 'beat-ch-[0-9a-f]{8}'/);
+      expect(pasteCmd).toMatch(/-b 'beat-ch-[0-9a-f]{8}'/);
+      expect(deleteCmd).toMatch(/-b 'beat-ch-[0-9a-f]{8}'/);
+      // All three must reference the same buffer ID within a single invocation
+      const loadId = loadCmd?.match(/-b '(beat-ch-[0-9a-f]{8})'/)?.[1];
+      const pasteId = pasteCmd?.match(/-b '(beat-ch-[0-9a-f]{8})'/)?.[1];
+      const deleteId = deleteCmd?.match(/-b '(beat-ch-[0-9a-f]{8})'/)?.[1];
+      expect(loadId).toBeDefined();
+      expect(loadId).toBe(pasteId);
+      expect(loadId).toBe(deleteId);
+    });
+
+    it('uses distinct buffer IDs for concurrent calls (no shared global buffer)', () => {
+      // Two sequential calls must produce different buffer IDs
+      pasteManager.pasteContent('beat-channel-test-member', 'first');
+      const firstCmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
+      const firstBufferId = firstCmds.find((c) => c.includes('load-buffer'))?.match(/-b '(beat-ch-[0-9a-f]{8})'/)?.[1];
+
+      exec.mockClear();
+      pasteManager.pasteContent('beat-channel-test-member', 'second');
+      const secondCmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
+      const secondBufferId = secondCmds
+        .find((c) => c.includes('load-buffer'))
+        ?.match(/-b '(beat-ch-[0-9a-f]{8})'/)?.[1];
+
+      expect(firstBufferId).toBeDefined();
+      expect(secondBufferId).toBeDefined();
+      expect(firstBufferId).not.toBe(secondBufferId);
     });
 
     it('cleans up temp file even when load-buffer fails', () => {
@@ -634,6 +669,25 @@ describe('TmuxSessionManager.setSessionEnvironment()', () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    });
+
+    it('returns TMUX_SESSION_FAILED when content exceeds MAX_PASTE_CONTENT_LENGTH (256 KB)', () => {
+      // 256 KB + 1 byte — just over the limit
+      const oversized = 'x'.repeat(256 * 1024 + 1);
+      const result = pasteManager.pasteContent('beat-channel-test-member', oversized);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+      expect(result.error.message).toContain('exceeds maximum length');
+      // No file write or tmux command should have been attempted
+      expect(writeFileSync).not.toHaveBeenCalled();
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it('allows content at exactly MAX_PASTE_CONTENT_LENGTH (256 KB)', () => {
+      const atLimit = 'x'.repeat(256 * 1024);
+      const result = pasteManager.pasteContent('beat-channel-test-member', atLimit);
+      expect(result.ok).toBe(true);
     });
 
     it('delivers content with special characters ($, backticks, newlines) literally', () => {

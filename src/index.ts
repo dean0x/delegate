@@ -88,6 +88,14 @@ async function main() {
         await (workerPoolResult.value as WorkerPool).killAll();
       }
 
+      // Dispose channel manager — closes queues and destroys member sessions.
+      // ARCHITECTURE: dispose() is belt-and-suspenders for in-memory queue cleanup;
+      // sweepTmuxSessions below destroys any remaining sessions not caught here.
+      const channelServiceResult = container?.get('channelService');
+      if (channelServiceResult?.ok) {
+        (channelServiceResult.value as { dispose(): void }).dispose();
+      }
+
       // Belt-and-suspenders session sweep — destroy any remaining beat-* sessions
       // that killAll() may have missed (e.g. sessions that were spawning during shutdown).
       const tmuxSessionManagerResult = container?.get<TmuxSessionManagerCorePort>('tmuxSessionManager');

@@ -3,6 +3,7 @@
  * Skips gracefully if tmux is not available or is below minimum version.
  */
 
+import * as fs from 'fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TmuxSessionManager } from '../../../src/implementations/tmux/tmux-session-manager.js';
 import type { ExecFn } from '../../../src/implementations/tmux/types.js';
@@ -28,7 +29,17 @@ describe('TmuxSessionManager integration — session lifecycle', () => {
   let manager: TmuxSessionManager;
 
   beforeAll(() => {
-    manager = new TmuxSessionManager({ exec: realExec as ExecFn });
+    manager = new TmuxSessionManager({
+      exec: realExec as ExecFn,
+      writeFileSync: (p, c) => fs.writeFileSync(p, c, 'utf8'),
+      unlinkSync: (p) => {
+        try {
+          fs.unlinkSync(p);
+        } catch {
+          /* best-effort */
+        }
+      },
+    });
   });
 
   it('full lifecycle: create → isAlive → sendKeys → destroy', () => {
@@ -101,6 +112,14 @@ describe('TmuxSessionManager integration — session lifecycle', () => {
     const limitedManager = new TmuxSessionManager({
       exec: realExec as ExecFn,
       maxConcurrentSessions: 0, // Artificially small limit
+      writeFileSync: (p, c) => fs.writeFileSync(p, c, 'utf8'),
+      unlinkSync: (p) => {
+        try {
+          fs.unlinkSync(p);
+        } catch {
+          /* best-effort */
+        }
+      },
     });
 
     const result = limitedManager.createSession({
