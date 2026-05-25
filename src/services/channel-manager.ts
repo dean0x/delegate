@@ -238,17 +238,7 @@ export class ChannelManager implements ChannelService {
     const spawnedHandles = spawnResult.value;
 
     // 8. Register in-memory state
-    for (const { memberName, handle } of spawnedHandles) {
-      this.memberHandles.set(this.handleKey(channel.id, memberName), handle);
-      this.sessionToChannel.set(handle.sessionName, channel.id);
-    }
-    this.messageQueues.set(channel.id, new SerialQueue());
-    this.channelCache.set(channel.id, channel);
-    if (request.communicationMode === 'round-robin' && channel.members.length > 0) {
-      const sorted = [...channel.members].sort((a, b) => a.joinedAt - b.joinedAt);
-      const first = sorted[0];
-      if (first) this.currentTurn.set(channel.id, first.name);
-    }
+    this.registerInMemoryState(channel, spawnedHandles);
 
     // 9. Persist channel
     const saveResult = await this.channelRepository.save(channel);
@@ -455,6 +445,11 @@ export class ChannelManager implements ChannelService {
     // Guard against drain timeout racing the enqueued task: if the closure never
     // ran (drain expired before execution), return an explicit error rather than
     // silently reporting ok() for an undelivered message.
+    // ARCHITECTURE: SerialQueue is constructed internally (not injected), so the
+    // 10-second drain timeout cannot be shortened in tests without making
+    // drainTimeoutMs injectable. This guard is verified by inspection — mock
+    // tmuxConnector resolves synchronously so drain() always completes before the
+    // timeout in unit tests. A slow-connector test would require a design change.
     if (!delivered) {
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Message delivery timed out for channel '${channelId}'`));
     }
@@ -522,38 +517,7 @@ export class ChannelManager implements ChannelService {
    *   falls back to individual isAlive() calls.
    */
   private async recoverSingleChannel(channel: Channel, aliveSessionNames?: Set<string>): Promise<void> {
-    const aliveMembers: ChannelMember[] = [];
-    const deadMembers: ChannelMember[] = [];
-
-    for (const member of channel.members) {
-      if (member.status === ChannelMemberStatus.DESTROYED) continue;
-
-      // DECISION: TmuxHandle.taskId is typed as TaskId (task domain), but isAlive() only
-      // uses sessionName — taskId is not transmitted to tmux. A sentinel TaskId derived
-      // from the channel id is used so the branded type is satisfied without a double-cast.
-      const fakeHandle: TmuxHandle = {
-        sessionName: member.tmuxSession,
-        taskId: TaskId(channel.id),
-        sessionsDir: this.sessionsDir,
-      };
-
-      // Use the batch session set when available (O(1)); fall back to per-member exec.
-      let isAlive: boolean;
-      if (aliveSessionNames) {
-        isAlive = aliveSessionNames.has(member.tmuxSession);
-      } else {
-        const aliveResult = this.tmuxConnector.isAlive(fakeHandle);
-        isAlive = aliveResult.ok && aliveResult.value;
-      }
-
-      if (isAlive) {
-        aliveMembers.push(member);
-        this.memberHandles.set(this.handleKey(channel.id, member.name), fakeHandle);
-        this.sessionToChannel.set(member.tmuxSession, channel.id);
-      } else {
-        deadMembers.push(member);
-      }
-    }
+    const { aliveMembers, deadMembers } = this.classifyMemberLiveness(channel, aliveSessionNames);
 
     const nonDestroyedCount = channel.members.filter((m) => m.status !== ChannelMemberStatus.DESTROYED).length;
     if (aliveMembers.length === 0 && nonDestroyedCount > 0) {
@@ -586,9 +550,7 @@ export class ChannelManager implements ChannelService {
       this.pausedChannels.add(channel.id);
     }
     if (channel.communicationMode === 'round-robin') {
-      const sorted = [...aliveMembers].sort((a, b) => a.joinedAt - b.joinedAt);
-      const first = sorted[0];
-      if (first) this.currentTurn.set(channel.id, first.name);
+      this.initializeRoundRobinTurn(channel.id, aliveMembers);
     }
 
     this.logger.info('Recovery: channel state rebuilt', {
@@ -625,6 +587,85 @@ export class ChannelManager implements ChannelService {
   }
 
   // ─── Private helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Register freshly-spawned member handles and the channel itself in the
+   * in-memory maps, and initialize round-robin turn order when applicable.
+   * Called from createChannel after all members are spawned successfully.
+   */
+  private registerInMemoryState(
+    channel: Channel,
+    spawnedHandles: Array<{ memberName: string; handle: TmuxHandle }>,
+  ): void {
+    for (const { memberName, handle } of spawnedHandles) {
+      this.memberHandles.set(this.handleKey(channel.id, memberName), handle);
+      this.sessionToChannel.set(handle.sessionName, channel.id);
+    }
+    this.messageQueues.set(channel.id, new SerialQueue());
+    this.channelCache.set(channel.id, channel);
+    if (channel.communicationMode === 'round-robin' && channel.members.length > 0) {
+      this.initializeRoundRobinTurn(channel.id, channel.members);
+    }
+  }
+
+  /**
+   * Set the initial round-robin turn to the member with the earliest joinedAt
+   * timestamp. Safe to call with an empty members array (no-op).
+   */
+  private initializeRoundRobinTurn(channelId: ChannelId, members: readonly ChannelMember[]): void {
+    if (members.length === 0) return;
+    const sorted = [...members].sort((a, b) => a.joinedAt - b.joinedAt);
+    const first = sorted[0];
+    if (first) this.currentTurn.set(channelId, first.name);
+  }
+
+  /**
+   * Walk a channel's non-destroyed members and classify each as alive or dead
+   * using either the pre-built batch session set (O(1) lookup) or individual
+   * isAlive() exec calls when the set is unavailable.
+   *
+   * Side effect: alive members are registered into memberHandles and
+   * sessionToChannel so callers can proceed directly to state rebuild.
+   */
+  private classifyMemberLiveness(
+    channel: Channel,
+    aliveSessionNames?: Set<string>,
+  ): { aliveMembers: ChannelMember[]; deadMembers: ChannelMember[] } {
+    const aliveMembers: ChannelMember[] = [];
+    const deadMembers: ChannelMember[] = [];
+
+    for (const member of channel.members) {
+      if (member.status === ChannelMemberStatus.DESTROYED) continue;
+
+      // DECISION: TmuxHandle.taskId is typed as TaskId (task domain), but isAlive() only
+      // uses sessionName — taskId is not transmitted to tmux. A sentinel TaskId derived
+      // from the channel id is used so the branded type is satisfied without a double-cast.
+      const fakeHandle: TmuxHandle = {
+        sessionName: member.tmuxSession,
+        taskId: TaskId(channel.id),
+        sessionsDir: this.sessionsDir,
+      };
+
+      // Use the batch session set when available (O(1)); fall back to per-member exec.
+      let isAlive: boolean;
+      if (aliveSessionNames) {
+        isAlive = aliveSessionNames.has(member.tmuxSession);
+      } else {
+        const aliveResult = this.tmuxConnector.isAlive(fakeHandle);
+        isAlive = aliveResult.ok && aliveResult.value;
+      }
+
+      if (isAlive) {
+        aliveMembers.push(member);
+        this.memberHandles.set(this.handleKey(channel.id, member.name), fakeHandle);
+        this.sessionToChannel.set(member.tmuxSession, channel.id);
+      } else {
+        deadMembers.push(member);
+      }
+    }
+
+    return { aliveMembers, deadMembers };
+  }
 
   /**
    * Validate a createChannel request (steps 1–5).
