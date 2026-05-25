@@ -8,7 +8,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { MCPAdapter } from './adapters/mcp-adapter.js';
 import { bootstrap } from './bootstrap.js';
 import { Container } from './core/container.js';
-import { Logger, WorkerPool } from './core/interfaces.js';
+import { ChannelService, Logger, WorkerPool } from './core/interfaces.js';
 import type { TmuxSessionManagerCorePort } from './core/tmux-types.js';
 import { VERSION } from './generated/version.js';
 import { ProxyManager } from './translation/proxy/proxy-manager.js';
@@ -91,9 +91,9 @@ async function main() {
       // Dispose channel manager — closes queues and destroys member sessions.
       // ARCHITECTURE: dispose() is belt-and-suspenders for in-memory queue cleanup;
       // sweepTmuxSessions below destroys any remaining sessions not caught here.
-      const channelServiceResult = container?.get('channelService');
+      const channelServiceResult = container?.get<ChannelService>('channelService');
       if (channelServiceResult?.ok) {
-        (channelServiceResult.value as { dispose(): void }).dispose();
+        channelServiceResult.value.dispose();
       }
 
       // Belt-and-suspenders session sweep — destroy any remaining beat-* sessions

@@ -1078,6 +1078,18 @@ export interface ChannelService {
   getChannelByName(name: string): Promise<Result<Channel | null>>;
   /** List channels, optionally filtered by status. */
   listChannels(status?: ChannelStatus, limit?: number, offset?: number): Promise<Result<readonly Channel[]>>;
+  /**
+   * Re-attach to alive member tmux sessions after a process restart.
+   * Marks members whose sessions are gone as DESTROYED.
+   * ARCHITECTURE: Lifecycle method — called once during bootstrap recovery.
+   */
+  recoverChannels(): Promise<Result<void>>;
+  /**
+   * Release all in-memory resources (queues, handles).
+   * Called during graceful shutdown; idempotent.
+   * ARCHITECTURE: Lifecycle method — counterpart to recoverChannels().
+   */
+  dispose(): void;
 }
 
 // Re-export for convenience (consumers can import from interfaces instead of domain)

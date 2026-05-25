@@ -141,9 +141,10 @@ export class ChannelManager implements ChannelService {
    * Populated on createChannel/recoverChannels; invalidated on member crash
    * (via ChannelMemberCrashed event) and on channel destroy (via cleanupInMemory).
    * Eliminates the DB read inside routeAndDeliverMessage for every agent output.
-   * currentRound in the cache may lag the DB by ≤1 round — this is acceptable
-   * because it is only used for informational event payload (ChannelHandler uses
-   * its own tracking, not the round field, for termination logic).
+   * currentRound in the cache may be arbitrarily stale — it reflects the round
+   * at create/recover time and is never refreshed. This is acceptable because it
+   * is only used for informational event payload (ChannelHandler uses its own
+   * tracking, not the round field, for termination logic).
    */
   private readonly channelCache = new Map<string, Channel>();
 
@@ -426,8 +427,10 @@ export class ChannelManager implements ChannelService {
     }
 
     let dispatchError: Error | undefined;
+    let delivered = false;
     queue.enqueue(async () => {
       const dispatchResult = await this.dispatchMessage(channel, message, targetMember);
+      delivered = true;
       if (!dispatchResult.ok) {
         dispatchError = dispatchResult.error;
         return;
@@ -449,6 +452,12 @@ export class ChannelManager implements ChannelService {
     // block indefinitely if a tmux call hangs.
     await queue.drain(10_000);
 
+    // Guard against drain timeout racing the enqueued task: if the closure never
+    // ran (drain expired before execution), return an explicit error rather than
+    // silently reporting ok() for an undelivered message.
+    if (!delivered) {
+      return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Message delivery timed out for channel '${channelId}'`));
+    }
     if (dispatchError) return err(dispatchError);
     return ok(undefined);
   }
@@ -885,16 +894,20 @@ export class ChannelManager implements ChannelService {
 
   /**
    * Broadcast a message to all active members in a channel.
+   * Delivers in parallel — each member has an independent tmux session so
+   * concurrent pasteContent+Enter calls do not interfere with each other.
    */
   private async broadcastToActiveMembers(channel: Channel, content: string): Promise<void> {
+    const deliveries: Promise<void>[] = [];
     for (const member of channel.members) {
       if (member.status === ChannelMemberStatus.ACTIVE) {
         const handle = this.memberHandles.get(this.handleKey(channel.id, member.name));
         if (handle) {
-          await this.deliverMessage(handle, content);
+          deliveries.push(this.deliverMessage(handle, content));
         }
       }
     }
+    await Promise.all(deliveries);
   }
 
   /**
@@ -1069,12 +1082,18 @@ export class ChannelManager implements ChannelService {
 
   /** Clean up all in-memory state for a channel. */
   private cleanupInMemory(channelId: string): void {
-    // Remove all member handles and session→channel entries for this channel
+    // Remove all member handles and session→channel entries for this channel.
+    // Two-pass to avoid mutating the Map during iteration.
+    const prefix = `${channelId}:`;
+    const keysToDelete: string[] = [];
     for (const [key, handle] of this.memberHandles) {
-      if (key.startsWith(`${channelId}:`)) {
+      if (key.startsWith(prefix)) {
         this.sessionToChannel.delete(handle.sessionName);
-        this.memberHandles.delete(key);
+        keysToDelete.push(key);
       }
+    }
+    for (const key of keysToDelete) {
+      this.memberHandles.delete(key);
     }
 
     const queue = this.messageQueues.get(channelId);

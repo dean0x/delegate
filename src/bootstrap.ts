@@ -758,7 +758,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     // Skipped in cli mode (no tmux sessions are managed by CLI commands).
     const channelServiceResult = container.get<ChannelService>('channelService');
     if (channelServiceResult.ok) {
-      const channelService = channelServiceResult.value as ChannelManager;
+      const channelService = channelServiceResult.value;
       channelService.recoverChannels().then((result) => {
         if (!result.ok) {
           logger.error('Channel recovery failed', result.error);
