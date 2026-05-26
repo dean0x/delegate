@@ -400,6 +400,9 @@ export class ChannelManager implements ChannelService {
     if (!channel || channel.status === ChannelStatus.DESTROYED) {
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Channel '${channelId}' not found or destroyed`));
     }
+    if (channel.status === ChannelStatus.COMPLETED) {
+      return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Channel '${channelId}' is completed`));
+    }
 
     // Validate targetMember before queuing (fast-fail, no async work needed).
     if (targetMember !== undefined) {
@@ -732,6 +735,15 @@ export class ChannelManager implements ChannelService {
           ErrorCode.INVALID_INPUT,
           'Multi-agent channels (≥2 members) require maxRounds to be specified',
         ),
+      );
+    }
+
+    // 5b. Validate maxRounds range when provided
+    if (request.maxRounds !== undefined && (request.maxRounds < 1 || request.maxRounds > 10000)) {
+      return err(
+        new AutobeatError(ErrorCode.INVALID_INPUT, `maxRounds must be between 1 and 10000 (got ${request.maxRounds})`, {
+          maxRounds: request.maxRounds,
+        }),
       );
     }
 
