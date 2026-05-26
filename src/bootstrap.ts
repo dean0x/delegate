@@ -707,10 +707,26 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   });
 
   // Register MCP adapter
-  container.registerSingleton('mcpAdapter', () => {
+  // ARCHITECTURE: channelService is async (ChannelManager.create()), so the mcpAdapter
+  // factory must be async too. container.registerSingleton() supports async factories
+  // via container.resolve() (not container.get()). channelService is optional — if
+  // resolution fails, MCPAdapter is still created with channelService: undefined.
+  container.registerSingleton('mcpAdapter', async () => {
     const taskManagerResult = container.get<TaskManager>('taskManager');
     if (!taskManagerResult.ok) {
       throw new Error(`Failed to get taskManager for MCPAdapter: ${taskManagerResult.error.message}`);
+    }
+
+    // Resolve channelService (async factory). Absent in test environments or if bootstrap failed.
+    let channelService: ChannelService | undefined;
+    const channelServiceResult = await container.resolve<ChannelService>('channelService');
+    if (channelServiceResult.ok) {
+      channelService = channelServiceResult.value;
+    } else {
+      getFromContainer<Logger>(container, 'logger').warn(
+        'MCPAdapter: channelService unavailable, channel tools disabled',
+        { error: channelServiceResult.error.message },
+      );
     }
 
     return new MCPAdapter({
@@ -722,6 +738,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       config,
       orchestrationService: getFromContainer<OrchestrationService>(container, 'orchestrationService'),
       pipelineRepository: getFromContainer<PipelineRepository>(container, 'pipelineRepository'),
+      channelService,
     });
   });
 
