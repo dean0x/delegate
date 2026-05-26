@@ -4232,29 +4232,34 @@ export class MCPAdapter {
   // ─── Channel handlers (Phase 8, epic #183) ─────────────────────────────────
 
   /**
-   * Handle CreateChannel tool call.
-   * Creates a channel and spawns member tmux sessions.
+   * Return the channel service if available, or a ready-to-return error response if not.
+   * All channel handlers call this once and early-return on the error branch.
    */
-  private async handleCreateChannel(args: unknown): Promise<MCPToolResponse> {
-    const parseResult = CreateChannelSchema.safeParse(args);
-    if (!parseResult.success) {
-      return {
-        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
-        isError: true,
-      };
-    }
-
+  private requireChannelService():
+    | { ok: true; service: ChannelService }
+    | { ok: false; response: MCPToolResponse } {
     if (!this.channelService) {
       return {
-        content: [
-          { type: 'text', text: JSON.stringify({ success: false, error: 'Channel service unavailable' }, null, 2) },
-        ],
-        isError: true,
+        ok: false,
+        response: {
+          content: [
+            { type: 'text', text: JSON.stringify({ success: false, error: 'Channel service unavailable' }, null, 2) },
+          ],
+          isError: true,
+        },
       };
     }
+    return { ok: true, service: this.channelService };
+  }
 
-    const data = parseResult.data;
-
+  /**
+   * Build the ChannelCreateRequest from validated input.
+   * Returns a validation error MCPToolResponse on path-validation failure, or the request on success.
+   * DECISION: per-member systemPrompt wins over the top-level field (??-coalesce, left operand wins).
+   */
+  private buildChannelCreateRequest(
+    data: z.infer<typeof CreateChannelSchema>,
+  ): ChannelCreateRequest | MCPToolResponse {
     // SECURITY: workingDirectory must be an absolute path (prevents path traversal via relative refs)
     if (data.workingDirectory) {
       if (!path.isAbsolute(data.workingDirectory)) {
@@ -4272,13 +4277,12 @@ export class MCPAdapter {
       }
     }
 
-    const request: ChannelCreateRequest = {
+    return {
       name: data.name,
       members: data.members.map((m, idx) => ({
         name: m.name,
-        agent: m.agent as import('../core/agents.js').AgentProvider,
-        // Apply top-level systemPrompt to the sole member when members.length === 1,
-        // falling back to the per-member value if both are provided (per-member wins).
+        agent: m.agent,
+        // Per-member systemPrompt wins (??). Fall back to top-level only for the sole member.
         systemPrompt: m.systemPrompt ?? (data.members.length === 1 && idx === 0 ? data.systemPrompt : undefined),
       })),
       communicationMode: data.communicationMode as CommunicationMode | undefined,
@@ -4286,8 +4290,28 @@ export class MCPAdapter {
       topic: data.topic,
       workingDirectory: data.workingDirectory,
     };
+  }
 
-    const result = await this.channelService.createChannel(request);
+  /**
+   * Handle CreateChannel tool call.
+   * Creates a channel and spawns member tmux sessions.
+   */
+  private async handleCreateChannel(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = CreateChannelSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
+
+    const requestOrError = this.buildChannelCreateRequest(parseResult.data);
+    if ('isError' in requestOrError) return requestOrError;
+
+    const result = await svcResult.service.createChannel(requestOrError);
 
     return match(result, {
       ok: (channel: Channel) => ({
@@ -4330,17 +4354,11 @@ export class MCPAdapter {
       };
     }
 
-    if (!this.channelService) {
-      return {
-        content: [
-          { type: 'text', text: JSON.stringify({ success: false, error: 'Channel service unavailable' }, null, 2) },
-        ],
-        isError: true,
-      };
-    }
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
 
     const { channelId, reason } = parseResult.data;
-    const result = await this.channelService.destroyChannel(ChannelId(channelId), reason ?? 'user-requested');
+    const result = await svcResult.service.destroyChannel(ChannelId(channelId), reason ?? 'user-requested');
 
     return match(result, {
       ok: () => ({
@@ -4370,17 +4388,11 @@ export class MCPAdapter {
       };
     }
 
-    if (!this.channelService) {
-      return {
-        content: [
-          { type: 'text', text: JSON.stringify({ success: false, error: 'Channel service unavailable' }, null, 2) },
-        ],
-        isError: true,
-      };
-    }
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
 
     const { channelId } = parseResult.data;
-    const result = await this.channelService.getChannel(ChannelId(channelId));
+    const result = await svcResult.service.getChannel(ChannelId(channelId));
 
     return match(result, {
       ok: (channel: Channel | null) => {
@@ -4445,18 +4457,12 @@ export class MCPAdapter {
       };
     }
 
-    if (!this.channelService) {
-      return {
-        content: [
-          { type: 'text', text: JSON.stringify({ success: false, error: 'Channel service unavailable' }, null, 2) },
-        ],
-        isError: true,
-      };
-    }
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
 
     const { status, limit } = parseResult.data;
     const statusEnum = status as ChannelStatus | undefined;
-    const result = await this.channelService.listChannels(statusEnum, limit);
+    const result = await svcResult.service.listChannels(statusEnum, limit);
 
     return match(result, {
       ok: (channels: readonly Channel[]) => ({
@@ -4503,17 +4509,11 @@ export class MCPAdapter {
       };
     }
 
-    if (!this.channelService) {
-      return {
-        content: [
-          { type: 'text', text: JSON.stringify({ success: false, error: 'Channel service unavailable' }, null, 2) },
-        ],
-        isError: true,
-      };
-    }
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
 
     const { channelId, message, targetMember } = parseResult.data;
-    const result = await this.channelService.sendMessage(ChannelId(channelId), message, targetMember);
+    const result = await svcResult.service.sendMessage(ChannelId(channelId), message, targetMember);
 
     return match(result, {
       ok: () => ({
@@ -4552,17 +4552,11 @@ export class MCPAdapter {
       };
     }
 
-    if (!this.channelService) {
-      return {
-        content: [
-          { type: 'text', text: JSON.stringify({ success: false, error: 'Channel service unavailable' }, null, 2) },
-        ],
-        isError: true,
-      };
-    }
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
 
     const { channelId } = parseResult.data;
-    const result = await this.channelService.pauseChannel(ChannelId(channelId));
+    const result = await svcResult.service.pauseChannel(ChannelId(channelId));
 
     return match(result, {
       ok: () => ({
@@ -4592,17 +4586,11 @@ export class MCPAdapter {
       };
     }
 
-    if (!this.channelService) {
-      return {
-        content: [
-          { type: 'text', text: JSON.stringify({ success: false, error: 'Channel service unavailable' }, null, 2) },
-        ],
-        isError: true,
-      };
-    }
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
 
     const { channelId } = parseResult.data;
-    const result = await this.channelService.resumeChannel(ChannelId(channelId));
+    const result = await svcResult.service.resumeChannel(ChannelId(channelId));
 
     return match(result, {
       ok: () => ({
