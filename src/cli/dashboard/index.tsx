@@ -14,6 +14,7 @@ import { render } from 'ink';
 import React from 'react';
 import { bootstrap } from '../../bootstrap.js';
 import type {
+  ChannelRepository,
   LoopRepository,
   LoopService,
   OrchestrationRepository,
@@ -85,6 +86,7 @@ export async function startDashboard(): Promise<void> {
   const outputRepository = container.get<OutputRepository>('outputRepository');
   const usageRepository = container.get<UsageRepository>('usageRepository');
   const pipelineRepository = container.get<PipelineRepository>('pipelineRepository');
+  const channelRepository = container.get<ChannelRepository>('channelRepository');
 
   if (
     !taskRepository.ok ||
@@ -94,7 +96,8 @@ export async function startDashboard(): Promise<void> {
     !workerRepository.ok ||
     !outputRepository.ok ||
     !usageRepository.ok ||
-    !pipelineRepository.ok
+    !pipelineRepository.ok ||
+    !channelRepository.ok
   ) {
     process.stderr.write('Error: Failed to resolve repositories from container\n');
     process.exit(1);
@@ -111,6 +114,7 @@ export async function startDashboard(): Promise<void> {
     outputRepository: outputRepository.value,
     usageRepository: usageRepository.value,
     pipelineRepository: pipelineRepository.value,
+    channelRepository: channelRepository.value,
     close: () => {
       /* handled by container.dispose() in cleanup() */
     },

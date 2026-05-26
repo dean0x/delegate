@@ -18,6 +18,7 @@
 
 import { loadConfiguration } from '../core/configuration.js';
 import type {
+  ChannelRepository,
   LoopRepository,
   OrchestrationRepository,
   OutputRepository,
@@ -28,6 +29,7 @@ import type {
   WorkerRepository,
 } from '../core/interfaces.js';
 import { Result, tryCatch } from '../core/result.js';
+import { SQLiteChannelRepository } from '../implementations/channel-repository.js';
 import { Database } from '../implementations/database.js';
 import { SQLiteLoopRepository } from '../implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from '../implementations/orchestration-repository.js';
@@ -47,6 +49,7 @@ export interface ReadOnlyContext {
   readonly workerRepository: WorkerRepository;
   readonly usageRepository: UsageRepository;
   readonly pipelineRepository: PipelineRepository;
+  readonly channelRepository: ChannelRepository;
   close(): void;
 }
 
@@ -66,6 +69,7 @@ export function createReadOnlyContext(): Result<ReadOnlyContext> {
     const workerRepository = new SQLiteWorkerRepository(database);
     const usageRepository = new SQLiteUsageRepository(database);
     const pipelineRepository = new SQLitePipelineRepository(database);
+    const channelRepository = new SQLiteChannelRepository(database);
 
     return {
       taskRepository,
@@ -76,6 +80,7 @@ export function createReadOnlyContext(): Result<ReadOnlyContext> {
       workerRepository,
       usageRepository,
       pipelineRepository,
+      channelRepository,
       close: () => database.close(),
     };
   });

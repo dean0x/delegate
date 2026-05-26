@@ -1,6 +1,12 @@
 import { bootstrap } from '../bootstrap.js';
 import type { Container } from '../core/container.js';
-import type { LoopService, OrchestrationService, ScheduleService, TaskManager } from '../core/interfaces.js';
+import type {
+  ChannelService,
+  LoopService,
+  OrchestrationService,
+  ScheduleService,
+  TaskManager,
+} from '../core/interfaces.js';
 import type { Result } from '../core/result.js';
 import { createReadOnlyContext, type ReadOnlyContext } from './read-only-context.js';
 import type { Spinner } from './ui.js';
@@ -65,6 +71,7 @@ export async function withServices(s?: Spinner): Promise<{
   scheduleService: ScheduleService;
   loopService: LoopService;
   orchestrationService: OrchestrationService;
+  channelService?: ChannelService;
 }> {
   s?.message('Initializing...');
   const container = exitOnError(await bootstrap({ mode: 'cli' }), s, 'Bootstrap failed', 'Initialization failed');
@@ -93,5 +100,16 @@ export async function withServices(s?: Spinner): Promise<{
     'Initialization failed',
   );
 
-  return { container, taskManager, scheduleService, loopService, orchestrationService };
+  // ARCHITECTURE: channelService is optional — resolution failure must not block other commands.
+  // ChannelManager.create() is async, so resolve() (not get()) is required here.
+  // On failure, log a warning and continue; channel mutation commands check for undefined.
+  let channelService: ChannelService | undefined;
+  const channelServiceResult = await container.resolve<ChannelService>('channelService');
+  if (channelServiceResult.ok) {
+    channelService = channelServiceResult.value;
+  } else {
+    ui.info(`Warning: Channel service unavailable: ${channelServiceResult.error.message}`);
+  }
+
+  return { container, taskManager, scheduleService, loopService, orchestrationService, channelService };
 }
