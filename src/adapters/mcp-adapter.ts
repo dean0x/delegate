@@ -4270,7 +4270,12 @@ export class MCPAdapter {
           },
         };
       }
-      const pathValidation = validatePath(data.workingDirectory);
+      // SECURITY: Pass '/' as baseDir so any absolute path is permitted — the isAbsolute()
+      // guard above already blocks relative paths. Using process.cwd() (the default) would
+      // reject any path outside the server's install directory, which incorrectly breaks
+      // all valid workingDirectory values. validatePath still resolves symlinks to catch
+      // symlink-based traversal attacks.
+      const pathValidation = validatePath(data.workingDirectory, '/');
       if (!pathValidation.ok) {
         return {
           ok: false,
