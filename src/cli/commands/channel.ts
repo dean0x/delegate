@@ -118,6 +118,9 @@ export function parseChannelCreateArgs(args: readonly string[]): Result<ParsedCh
       workingDirectory = pathResult.value;
       i++;
     } else if (arg === '--system-prompt' && next !== undefined) {
+      if (next.length > 100_000) {
+        return err('--system-prompt must be at most 100,000 characters');
+      }
       systemPrompt = next;
       i++;
     } else if (arg.startsWith('-')) {
@@ -293,24 +296,6 @@ async function resolveChannelId(idOrName: string, channelRepository: ChannelRepo
   return result.value.id;
 }
 
-/**
- * Resolve a channel ID using a transient read-only context, then close it.
- * Exits the process if not found.
- */
-async function resolveChannelIdOrExit(idOrName: string): Promise<ChannelId> {
-  const ctx = withReadOnlyContext();
-  try {
-    const resolved = await resolveChannelId(idOrName, ctx.channelRepository);
-    if (!resolved) {
-      ui.error(`Channel not found: ${idOrName}`);
-      process.exit(1);
-    }
-    return resolved;
-  } finally {
-    ctx.close();
-  }
-}
-
 // ─── Create ──────────────────────────────────────────────────────────────────
 
 async function handleChannelCreate(args: string[]): Promise<void> {
@@ -323,7 +308,8 @@ async function handleChannelCreate(args: string[]): Promise<void> {
 
   const s = ui.createSpinner();
   s.start('Creating channel...');
-  const { channelService } = await withServices(s);
+  const { resolveChannelService } = await withServices(s);
+  const channelService = await resolveChannelService();
 
   if (!channelService) {
     s.stop('Failed');
@@ -384,7 +370,12 @@ async function handleChannelList(args: string[]): Promise<void> {
       statusFilter = next;
       i++;
     } else if (arg === '--limit' && next) {
-      limit = parseInt(next, 10);
+      const n = parseInt(next, 10);
+      if (isNaN(n) || n < 1 || n > 100) {
+        ui.error('--limit must be an integer between 1 and 100');
+        process.exit(1);
+      }
+      limit = n;
       i++;
     }
   }
@@ -494,11 +485,15 @@ async function handleChannelDestroy(args: string[]): Promise<void> {
     ui.error('Usage: beat channel destroy <channel-id|name> [reason]');
     process.exit(1);
   }
-  const reason = args.slice(1).join(' ') || undefined;
+  // ARCHITECTURE: reason is a user-visible display string only; destroyChannel()
+  // accepts a typed ChannelDestroyReason enum ('user-requested' | 'max-rounds-reached' |
+  // 'all-members-crashed'), so the free-form CLI input cannot be passed to the service.
+  const displayReason = args.slice(1).join(' ') || undefined;
 
   const s = ui.createSpinner();
   s.start('Destroying channel...');
-  const { channelService } = await withServices(s);
+  const { container, resolveChannelService } = await withServices(s);
+  const channelService = await resolveChannelService();
 
   if (!channelService) {
     s.stop('Failed');
@@ -506,12 +501,20 @@ async function handleChannelDestroy(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const channelId = await resolveChannelIdOrExit(idOrName);
+  const channelRepositoryResult = container.get<ChannelRepository>('channelRepository');
+  const channelRepository = exitOnError(channelRepositoryResult, s, 'Failed to get channel repository');
+  const channelId = await resolveChannelId(idOrName, channelRepository);
+  if (!channelId) {
+    s.stop('Not found');
+    ui.error(`Channel not found: ${idOrName}`);
+    process.exit(1);
+  }
+
   const result = await channelService.destroyChannel(channelId, 'user-requested');
   exitOnError(result, s, 'Failed to destroy channel');
   s.stop('Destroyed');
   ui.success(`Channel ${idOrName} destroyed`);
-  if (reason) ui.info(`Reason: ${reason}`);
+  if (displayReason) ui.info(`Reason: ${displayReason}`);
   process.exit(0);
 }
 
@@ -526,7 +529,8 @@ async function handleChannelPause(args: string[]): Promise<void> {
 
   const s = ui.createSpinner();
   s.start('Pausing channel...');
-  const { channelService } = await withServices(s);
+  const { container, resolveChannelService } = await withServices(s);
+  const channelService = await resolveChannelService();
 
   if (!channelService) {
     s.stop('Failed');
@@ -534,7 +538,15 @@ async function handleChannelPause(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const channelId = await resolveChannelIdOrExit(idOrName);
+  const channelRepositoryResult = container.get<ChannelRepository>('channelRepository');
+  const channelRepository = exitOnError(channelRepositoryResult, s, 'Failed to get channel repository');
+  const channelId = await resolveChannelId(idOrName, channelRepository);
+  if (!channelId) {
+    s.stop('Not found');
+    ui.error(`Channel not found: ${idOrName}`);
+    process.exit(1);
+  }
+
   const result = await channelService.pauseChannel(channelId);
   exitOnError(result, s, 'Failed to pause channel');
   s.stop('Paused');
@@ -553,7 +565,8 @@ async function handleChannelResume(args: string[]): Promise<void> {
 
   const s = ui.createSpinner();
   s.start('Resuming channel...');
-  const { channelService } = await withServices(s);
+  const { container, resolveChannelService } = await withServices(s);
+  const channelService = await resolveChannelService();
 
   if (!channelService) {
     s.stop('Failed');
@@ -561,7 +574,15 @@ async function handleChannelResume(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const channelId = await resolveChannelIdOrExit(idOrName);
+  const channelRepositoryResult = container.get<ChannelRepository>('channelRepository');
+  const channelRepository = exitOnError(channelRepositoryResult, s, 'Failed to get channel repository');
+  const channelId = await resolveChannelId(idOrName, channelRepository);
+  if (!channelId) {
+    s.stop('Not found');
+    ui.error(`Channel not found: ${idOrName}`);
+    process.exit(1);
+  }
+
   const result = await channelService.resumeChannel(channelId);
   exitOnError(result, s, 'Failed to resume channel');
   s.stop('Resumed');

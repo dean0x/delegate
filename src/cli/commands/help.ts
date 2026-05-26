@@ -173,6 +173,18 @@ ${bold('Examples:')}
   # Resume failed task with context
   beat resume <task-id> --context "Try a different approach"
 
+  # Channels (single-agent and multi-agent)
+  beat channel advisor --agent claude                              # Single-agent channel
+  beat channel debate --member alice:claude --member bob:codex --max-rounds 10
+  beat channel debate --mode round-robin --topic "Review this PR"
+  beat channel list --status active
+  beat channel status advisor
+  beat channel pause advisor
+  beat channel resume advisor
+  beat channel destroy advisor "work complete"
+  beat msg advisor "What do you think about this approach?"
+  beat msg debate/alice "Focus on security concerns"
+
   # Configuration
   beat config show
   beat config set timeout 300000
