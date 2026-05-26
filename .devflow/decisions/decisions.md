@@ -1,4 +1,4 @@
-<!-- TL;DR: 2 decisions. Key: ADR-001, ADR-002 -->
+<!-- TL;DR: 3 decisions. Key: ADR-001, ADR-002, ADR-003 -->
 # Architecture Decision Records
 
 Explicit design choices and trade-offs made during development.
@@ -18,3 +18,11 @@ Explicit design choices and trade-offs made during development.
 - **Rationale**: Keeps the review thread auditable, documents reasoning for anyone reading the PR later, and prevents the same issues being re-raised in future review cycles. The 300ms hardcoded wait in the tmux worker path was specifically documented as intentional (no feedback signal available).
 - **Status**: Active
 - **Source**: sidecar:obs_c3d9e5
+
+## ADR-003: Pre-existing design gaps found during PR review are tracked as GitHub issues rather than fixed in-scope
+
+- **Context**: PR #193 (channel service layer) — Greptile surfaced a P1 about recovered tmux sessions having no output callbacks, a limitation in `TmuxConnectorPort` that predates the PR
+- **Decision**: Pre-existing gaps not introduced by the current PR are replied to with an explanation and tracked as a GitHub issue (e.g. #194) rather than fixed in-scope
+- **Rationale**: Keeps PR scope bounded and avoids scope creep on already-large feature PRs. A GitHub issue provides a durable record that a reply comment alone would not — it cannot be forgotten and can be prioritized, assigned, and referenced in future work.
+- **Status**: Active
+- **Source**: sidecar:obs_e2c7b3

@@ -33,7 +33,7 @@
     "test:tmux:integration": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/integration/tmux --no-file-parallelism",
     "test:scheduling": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/unit/services/schedule-manager.test.ts tests/unit/services/schedule-executor.test.ts tests/unit/services/handlers/schedule-handler.test.ts --no-file-parallelism",
     "test:checkpoints": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/unit/implementations/checkpoint-repository.test.ts tests/unit/services/handlers/checkpoint-handler.test.ts --no-file-parallelism",
-    "test:cli": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/unit/cli.test.ts tests/unit/cli-init.test.ts tests/unit/cli-services.test.ts tests/unit/retry-functionality.test.ts tests/unit/read-only-context.test.ts --no-file-parallelism",
+    "test:cli": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/unit/cli.test.ts tests/unit/cli-init.test.ts tests/unit/cli-services.test.ts tests/unit/retry-functionality.test.ts tests/unit/read-only-context.test.ts tests/unit/cli/channel.test.ts tests/unit/cli/msg.test.ts --no-file-parallelism",
     "test:error-scenarios": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/unit/error-scenarios --no-file-parallelism",
     "test:integration": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/integration --exclude='**/tmux/**' --no-file-parallelism",
     "test:dashboard": "NODE_OPTIONS='--max-old-space-size=2048' vitest run tests/unit/cli/dashboard --no-file-parallelism",
