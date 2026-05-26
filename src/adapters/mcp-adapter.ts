@@ -4448,19 +4448,7 @@ export class MCPAdapter {
     }
 
     const { status, limit } = parseResult.data;
-
-    // Map string status to enum
-    let statusEnum: ChannelStatus | undefined;
-    if (status) {
-      const statusMap: Record<string, ChannelStatus> = {
-        active: ChannelStatus.ACTIVE,
-        paused: ChannelStatus.PAUSED,
-        completed: ChannelStatus.COMPLETED,
-        destroyed: ChannelStatus.DESTROYED,
-      };
-      statusEnum = statusMap[status];
-    }
-
+    const statusEnum = status as ChannelStatus | undefined;
     const result = await this.channelService.listChannels(statusEnum, limit);
 
     return match(result, {

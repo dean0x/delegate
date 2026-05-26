@@ -9,7 +9,7 @@
  * names are valid tmux session name suffixes (no transformation required).
  */
 
-import { AGENT_PROVIDERS, isAgentProvider } from '../../core/agents.js';
+import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
 import { CHANNEL_NAME_REGEX, ChannelId, ChannelStatus, type CommunicationMode } from '../../core/domain.js';
 import type { ChannelRepository } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
@@ -111,7 +111,11 @@ export function parseChannelCreateArgs(args: readonly string[]): Result<ParsedCh
       topic = next;
       i++;
     } else if ((arg === '--working-directory' || arg === '-w') && next !== undefined) {
-      workingDirectory = next;
+      const pathResult = validatePath(next);
+      if (!pathResult.ok) {
+        return err(`Invalid working directory: ${pathResult.error.message}`);
+      }
+      workingDirectory = pathResult.value;
       i++;
     } else if (arg === '--system-prompt' && next !== undefined) {
       systemPrompt = next;
@@ -285,6 +289,24 @@ async function resolveChannelId(idOrName: string, channelRepository: ChannelRepo
   return result.value.id;
 }
 
+/**
+ * Resolve a channel ID using a transient read-only context, then close it.
+ * Exits the process if not found.
+ */
+async function resolveChannelIdOrExit(idOrName: string): Promise<ChannelId> {
+  const ctx = withReadOnlyContext();
+  try {
+    const resolved = await resolveChannelId(idOrName, ctx.channelRepository);
+    if (!resolved) {
+      ui.error(`Channel not found: ${idOrName}`);
+      process.exit(1);
+    }
+    return resolved;
+  } finally {
+    ctx.close();
+  }
+}
+
 // ─── Create ──────────────────────────────────────────────────────────────────
 
 async function handleChannelCreate(args: string[]): Promise<void> {
@@ -312,7 +334,7 @@ async function handleChannelCreate(args: string[]): Promise<void> {
       members: [
         {
           name: createArgs.name,
-          agent: createArgs.agent as import('../../core/agents.js').AgentProvider,
+          agent: createArgs.agent as AgentProvider,
           systemPrompt: createArgs.systemPrompt,
         },
       ],
@@ -324,7 +346,7 @@ async function handleChannelCreate(args: string[]): Promise<void> {
       name: createArgs.name,
       members: createArgs.members.map((m) => ({
         name: m.name,
-        agent: m.agent as import('../../core/agents.js').AgentProvider,
+        agent: m.agent as AgentProvider,
         systemPrompt: m.systemPrompt,
       })),
       communicationMode: createArgs.communicationMode,
@@ -419,20 +441,11 @@ async function handleChannelStatus(args: string[]): Promise<void> {
   try {
     const channelId = await resolveChannelId(idOrName, ctx.channelRepository);
     if (!channelId) {
-      const findResult = await ctx.channelRepository.findByName(idOrName);
-      if (!findResult.ok) {
-        ui.error(`Failed to look up channel: ${findResult.error.message}`);
-        process.exit(1);
-      }
-    }
-
-    const resolvedId = channelId;
-    if (!resolvedId) {
       ui.error(`Channel not found: ${idOrName}`);
       process.exit(1);
     }
 
-    const channelResult = await ctx.channelRepository.findById(resolvedId);
+    const channelResult = await ctx.channelRepository.findById(channelId);
     const channel = exitOnNull(
       exitOnError(channelResult, undefined, 'Failed to get channel'),
       undefined,
@@ -487,22 +500,8 @@ async function handleChannelDestroy(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  // Resolve name → ID if needed
-  const ctx = withReadOnlyContext();
-  let channelId: ChannelId;
-  try {
-    const resolved = await resolveChannelId(idOrName, ctx.channelRepository);
-    if (!resolved) {
-      s.stop('Not found');
-      ui.error(`Channel not found: ${idOrName}`);
-      process.exit(1);
-    }
-    channelId = resolved;
-  } finally {
-    ctx.close();
-  }
-
-  const result = await channelService.destroyChannel(channelId, reason ? 'user-requested' : 'user-requested');
+  const channelId = await resolveChannelIdOrExit(idOrName);
+  const result = await channelService.destroyChannel(channelId, 'user-requested');
   exitOnError(result, s, 'Failed to destroy channel');
   s.stop('Destroyed');
   ui.success(`Channel ${idOrName} destroyed`);
@@ -529,20 +528,7 @@ async function handleChannelPause(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const ctx = withReadOnlyContext();
-  let channelId: ChannelId;
-  try {
-    const resolved = await resolveChannelId(idOrName, ctx.channelRepository);
-    if (!resolved) {
-      s.stop('Not found');
-      ui.error(`Channel not found: ${idOrName}`);
-      process.exit(1);
-    }
-    channelId = resolved;
-  } finally {
-    ctx.close();
-  }
-
+  const channelId = await resolveChannelIdOrExit(idOrName);
   const result = await channelService.pauseChannel(channelId);
   exitOnError(result, s, 'Failed to pause channel');
   s.stop('Paused');
@@ -569,20 +555,7 @@ async function handleChannelResume(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const ctx = withReadOnlyContext();
-  let channelId: ChannelId;
-  try {
-    const resolved = await resolveChannelId(idOrName, ctx.channelRepository);
-    if (!resolved) {
-      s.stop('Not found');
-      ui.error(`Channel not found: ${idOrName}`);
-      process.exit(1);
-    }
-    channelId = resolved;
-  } finally {
-    ctx.close();
-  }
-
+  const channelId = await resolveChannelIdOrExit(idOrName);
   const result = await channelService.resumeChannel(channelId);
   exitOnError(result, s, 'Failed to resume channel');
   s.stop('Resumed');

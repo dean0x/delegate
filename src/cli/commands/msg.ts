@@ -10,7 +10,7 @@
  * ADR-001: Channel name validated against CHANNEL_NAME_REGEX.
  */
 
-import { CHANNEL_NAME_REGEX, ChannelStatus } from '../../core/domain.js';
+import { CHANNEL_NAME_REGEX, type ChannelId, ChannelStatus } from '../../core/domain.js';
 import { err, ok, type Result } from '../../core/result.js';
 import { exitOnError, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';
@@ -90,7 +90,7 @@ export async function handleMsgCommand(args: string[]): Promise<void> {
 
   // Resolve channel name → ID via read-only context
   const ctx = withReadOnlyContext();
-  let channelId: string;
+  let channelId: ChannelId;
   let channelStatus: ChannelStatus;
   try {
     const channelResult = await ctx.channelRepository.findByName(channelName);
@@ -133,11 +133,7 @@ export async function handleMsgCommand(args: string[]): Promise<void> {
     ui.info(`Note: channel "${channelName}" is paused. Message will be queued.`);
   }
 
-  const result = await channelService.sendMessage(
-    channelId as import('../../core/domain.js').ChannelId,
-    message,
-    memberName,
-  );
+  const result = await channelService.sendMessage(channelId, message, memberName);
   exitOnError(result, s, 'Failed to send message');
   s.stop('Sent');
 

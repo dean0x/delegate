@@ -7,6 +7,8 @@
 import { describe, expect, it } from 'vitest';
 import { type ParsedChannelCreate, parseChannelCreateArgs } from '../../../src/cli/commands/channel';
 
+const cwd = process.cwd();
+
 describe('parseChannelCreateArgs', () => {
   // ─── Single-agent mode ──────────────────────────────────────────────────────
 
@@ -28,7 +30,7 @@ describe('parseChannelCreateArgs', () => {
         '--topic',
         'analyze this codebase',
         '--working-directory',
-        '/tmp',
+        cwd,
         '--system-prompt',
         'You are a helpful assistant',
       ]);
@@ -37,7 +39,7 @@ describe('parseChannelCreateArgs', () => {
       const val = result.value as { mode: string; topic?: string; workingDirectory?: string; systemPrompt?: string };
       expect(val.mode).toBe('single');
       expect(val.topic).toBe('analyze this codebase');
-      expect(val.workingDirectory).toBe('/tmp');
+      expect(val.workingDirectory).toBe(cwd);
       expect(val.systemPrompt).toBe('You are a helpful assistant');
     });
 
@@ -331,7 +333,7 @@ describe('parseChannelCreateArgs', () => {
         '--topic',
         'Build a REST API',
         '--working-directory',
-        '/tmp',
+        cwd,
       ]);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
@@ -351,7 +353,7 @@ describe('parseChannelCreateArgs', () => {
       expect(val.communicationMode).toBe('directed');
       expect(val.maxRounds).toBe(50);
       expect(val.topic).toBe('Build a REST API');
-      expect(val.workingDirectory).toBe('/tmp');
+      expect(val.workingDirectory).toBe(cwd);
     });
   });
 });
