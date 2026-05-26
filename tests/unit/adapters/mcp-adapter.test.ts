@@ -3701,3 +3701,497 @@ describe('ConfigureAgent — runtime + proxy integration via callTool()', () => 
     expect(response.warning).toContain('mutually exclusive');
   });
 });
+
+// ─── Channel tool tests ───────────────────────────────────────────────────────
+
+import {
+  ChannelStatusSchema,
+  CreateChannelSchema,
+  DestroyChannelSchema,
+  ListChannelsSchema,
+  PauseChannelSchema,
+  ResumeChannelSchema,
+  SendChannelMessageSchema,
+} from '../../../src/adapters/mcp-adapter';
+import type { Channel, ChannelCreateRequest, ChannelMember } from '../../../src/core/domain';
+import { ChannelId, ChannelMemberStatus, ChannelStatus, createChannel } from '../../../src/core/domain';
+import type { ChannelService } from '../../../src/core/interfaces';
+
+/**
+ * Mock ChannelService for MCP adapter channel tool tests.
+ */
+class MockChannelService implements ChannelService {
+  createChannelCalls: ChannelCreateRequest[] = [];
+  destroyChannelCalls: Array<{ channelId: ChannelId; reason?: string }> = [];
+  pauseChannelCalls: ChannelId[] = [];
+  resumeChannelCalls: ChannelId[] = [];
+  sendMessageCalls: Array<{ channelId: ChannelId; message: string; targetMember?: string }> = [];
+  getChannelCalls: ChannelId[] = [];
+  listChannelsCalls: Array<{ status?: ChannelStatus; limit?: number; offset?: number }> = [];
+
+  private createResult: Result<Channel> = ok(this.makeChannel());
+  private destroyResult: Result<void> = ok(undefined);
+  private pauseResult: Result<void> = ok(undefined);
+  private resumeResult: Result<void> = ok(undefined);
+  private sendResult: Result<void> = ok(undefined);
+  private getResult: Result<Channel | null> = ok(this.makeChannel());
+  private listResult: Result<readonly Channel[]> = ok([]);
+
+  makeChannel(overrides?: Partial<Channel>): Channel {
+    const base = createChannel({
+      name: 'test-channel',
+      members: [{ name: 'test-channel', agent: 'claude' as import('../../../src/core/agents').AgentProvider }],
+    });
+    return overrides ? { ...base, ...overrides } : base;
+  }
+
+  setCreateResult(r: Result<Channel>) {
+    this.createResult = r;
+  }
+  setDestroyResult(r: Result<void>) {
+    this.destroyResult = r;
+  }
+  setPauseResult(r: Result<void>) {
+    this.pauseResult = r;
+  }
+  setResumeResult(r: Result<void>) {
+    this.resumeResult = r;
+  }
+  setSendResult(r: Result<void>) {
+    this.sendResult = r;
+  }
+  setGetResult(r: Result<Channel | null>) {
+    this.getResult = r;
+  }
+  setListResult(r: Result<readonly Channel[]>) {
+    this.listResult = r;
+  }
+
+  async createChannel(request: ChannelCreateRequest): Promise<Result<Channel>> {
+    this.createChannelCalls.push(request);
+    return this.createResult;
+  }
+
+  async destroyChannel(
+    channelId: ChannelId,
+    reason?: import('../../../src/core/events/events').ChannelDestroyReason,
+  ): Promise<Result<void>> {
+    this.destroyChannelCalls.push({ channelId, reason });
+    return this.destroyResult;
+  }
+
+  async pauseChannel(channelId: ChannelId): Promise<Result<void>> {
+    this.pauseChannelCalls.push(channelId);
+    return this.pauseResult;
+  }
+
+  async resumeChannel(channelId: ChannelId): Promise<Result<void>> {
+    this.resumeChannelCalls.push(channelId);
+    return this.resumeResult;
+  }
+
+  async sendMessage(channelId: ChannelId, message: string, targetMember?: string): Promise<Result<void>> {
+    this.sendMessageCalls.push({ channelId, message, targetMember });
+    return this.sendResult;
+  }
+
+  async getChannel(channelId: ChannelId): Promise<Result<Channel | null>> {
+    this.getChannelCalls.push(channelId);
+    return this.getResult;
+  }
+
+  async getChannelByName(_name: string): Promise<Result<Channel | null>> {
+    return this.getResult;
+  }
+
+  async listChannels(status?: ChannelStatus, limit?: number, offset?: number): Promise<Result<readonly Channel[]>> {
+    this.listChannelsCalls.push({ status, limit, offset });
+    return this.listResult;
+  }
+
+  async recoverChannels(): Promise<Result<void>> {
+    return ok(undefined);
+  }
+
+  dispose(): void {
+    /* no-op */
+  }
+
+  reset() {
+    this.createChannelCalls = [];
+    this.destroyChannelCalls = [];
+    this.pauseChannelCalls = [];
+    this.resumeChannelCalls = [];
+    this.sendMessageCalls = [];
+    this.getChannelCalls = [];
+    this.listChannelsCalls = [];
+    this.createResult = ok(this.makeChannel());
+    this.destroyResult = ok(undefined);
+    this.pauseResult = ok(undefined);
+    this.resumeResult = ok(undefined);
+    this.sendResult = ok(undefined);
+    this.getResult = ok(this.makeChannel());
+    this.listResult = ok([]);
+  }
+}
+
+/** Build an MCPAdapter with a MockChannelService injected. */
+function makeChannelAdapter(channelService?: ChannelService): MCPAdapter {
+  return new MCPAdapter({
+    taskManager: new MockTaskManager(),
+    logger: new MockLogger(),
+    scheduleService: stubScheduleService,
+    loopService: stubLoopService,
+    agentRegistry: undefined,
+    config: testConfig,
+    channelService,
+  });
+}
+
+describe('MCPAdapter - Channel Schemas', () => {
+  describe('CreateChannelSchema', () => {
+    it('accepts valid single-member channel', () => {
+      const result = CreateChannelSchema.safeParse({
+        name: 'my-channel',
+        members: [{ name: 'my-channel', agent: 'claude' }],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid multi-member channel with all fields', () => {
+      const result = CreateChannelSchema.safeParse({
+        name: 'code-review',
+        members: [
+          { name: 'author', agent: 'claude', systemPrompt: 'You write code.' },
+          { name: 'reviewer', agent: 'codex' },
+        ],
+        communicationMode: 'round-robin',
+        maxRounds: 20,
+        topic: 'Review auth module',
+        workingDirectory: '/tmp/project',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects invalid channel name', () => {
+      const result = CreateChannelSchema.safeParse({
+        name: 'My Channel',
+        members: [{ name: 'member', agent: 'claude' }],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects members array exceeding 10', () => {
+      const members = Array.from({ length: 11 }, (_, i) => ({ name: `m${i}`, agent: 'claude' }));
+      const result = CreateChannelSchema.safeParse({ name: 'ch', members });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects maxRounds of 0', () => {
+      const result = CreateChannelSchema.safeParse({
+        name: 'ch',
+        members: [{ name: 'm', agent: 'claude' }],
+        maxRounds: 0,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects maxRounds above 10000', () => {
+      const result = CreateChannelSchema.safeParse({
+        name: 'ch',
+        members: [{ name: 'm', agent: 'claude' }],
+        maxRounds: 10001,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects invalid communicationMode', () => {
+      const result = CreateChannelSchema.safeParse({
+        name: 'ch',
+        members: [{ name: 'm', agent: 'claude' }],
+        communicationMode: 'gossip',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects empty members array', () => {
+      const result = CreateChannelSchema.safeParse({ name: 'ch', members: [] });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('DestroyChannelSchema', () => {
+    it('accepts channelId', () => {
+      expect(DestroyChannelSchema.safeParse({ channelId: 'ch-abc' }).success).toBe(true);
+    });
+    it('accepts channelId with reason', () => {
+      expect(DestroyChannelSchema.safeParse({ channelId: 'ch-abc', reason: 'done' }).success).toBe(true);
+    });
+    it('rejects empty channelId', () => {
+      expect(DestroyChannelSchema.safeParse({ channelId: '' }).success).toBe(false);
+    });
+  });
+
+  describe('ChannelStatusSchema', () => {
+    it('accepts valid channelId', () => {
+      expect(ChannelStatusSchema.safeParse({ channelId: 'ch-abc' }).success).toBe(true);
+    });
+    it('rejects empty channelId', () => {
+      expect(ChannelStatusSchema.safeParse({ channelId: '' }).success).toBe(false);
+    });
+  });
+
+  describe('ListChannelsSchema', () => {
+    it('accepts no filters', () => {
+      expect(ListChannelsSchema.safeParse({}).success).toBe(true);
+    });
+    it('accepts valid status filter', () => {
+      expect(ListChannelsSchema.safeParse({ status: 'active' }).success).toBe(true);
+    });
+    it('rejects invalid status filter', () => {
+      expect(ListChannelsSchema.safeParse({ status: 'unknown' }).success).toBe(false);
+    });
+    it('rejects limit above 100', () => {
+      expect(ListChannelsSchema.safeParse({ limit: 101 }).success).toBe(false);
+    });
+  });
+
+  describe('SendChannelMessageSchema', () => {
+    it('accepts minimal valid input', () => {
+      expect(SendChannelMessageSchema.safeParse({ channelId: 'ch-abc', message: 'hello' }).success).toBe(true);
+    });
+    it('accepts with targetMember', () => {
+      expect(
+        SendChannelMessageSchema.safeParse({ channelId: 'ch-abc', message: 'hi', targetMember: 'alice' }).success,
+      ).toBe(true);
+    });
+    it('rejects empty message', () => {
+      expect(SendChannelMessageSchema.safeParse({ channelId: 'ch-abc', message: '' }).success).toBe(false);
+    });
+    it('rejects message exceeding 256KB', () => {
+      const huge = 'x'.repeat(262_145);
+      expect(SendChannelMessageSchema.safeParse({ channelId: 'ch-abc', message: huge }).success).toBe(false);
+    });
+  });
+
+  describe('PauseChannelSchema', () => {
+    it('accepts valid channelId', () => {
+      expect(PauseChannelSchema.safeParse({ channelId: 'ch-abc' }).success).toBe(true);
+    });
+    it('rejects empty channelId', () => {
+      expect(PauseChannelSchema.safeParse({ channelId: '' }).success).toBe(false);
+    });
+  });
+
+  describe('ResumeChannelSchema', () => {
+    it('accepts valid channelId', () => {
+      expect(ResumeChannelSchema.safeParse({ channelId: 'ch-abc' }).success).toBe(true);
+    });
+    it('rejects missing channelId', () => {
+      expect(ResumeChannelSchema.safeParse({}).success).toBe(false);
+    });
+  });
+});
+
+describe('MCPAdapter - Channel Handlers', () => {
+  let mockChannelService: MockChannelService;
+  let adapter: MCPAdapter;
+
+  beforeEach(() => {
+    mockChannelService = new MockChannelService();
+    adapter = makeChannelAdapter(mockChannelService);
+  });
+
+  afterEach(() => {
+    mockChannelService.reset();
+  });
+
+  describe('CreateChannel', () => {
+    it('returns success response on channel creation', async () => {
+      const result = await adapter.callTool('CreateChannel', {
+        name: 'test-channel',
+        members: [{ name: 'test-channel', agent: 'claude' }],
+      });
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.channelId).toBeDefined();
+      expect(response.name).toBe('test-channel');
+    });
+
+    it('passes createChannel request to service', async () => {
+      await adapter.callTool('CreateChannel', {
+        name: 'my-ch',
+        members: [{ name: 'member1', agent: 'claude' }],
+        maxRounds: 10,
+      });
+      expect(mockChannelService.createChannelCalls).toHaveLength(1);
+      expect(mockChannelService.createChannelCalls[0]?.name).toBe('my-ch');
+      expect(mockChannelService.createChannelCalls[0]?.maxRounds).toBe(10);
+    });
+
+    it('returns validation error on invalid name', async () => {
+      const result = await adapter.callTool('CreateChannel', {
+        name: 'Invalid Name!',
+        members: [{ name: 'member', agent: 'claude' }],
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+    });
+
+    it('returns service unavailable when channelService is undefined', async () => {
+      const adapterNoChannel = makeChannelAdapter(undefined);
+      const result = await adapterNoChannel.callTool('CreateChannel', {
+        name: 'my-channel',
+        members: [{ name: 'member', agent: 'claude' }],
+      });
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('unavailable');
+    });
+
+    it('rejects invalid workingDirectory path', async () => {
+      const result = await adapter.callTool('CreateChannel', {
+        name: 'my-channel',
+        members: [{ name: 'member', agent: 'claude' }],
+        workingDirectory: 'relative/path',
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Invalid working directory');
+    });
+
+    it('propagates service error', async () => {
+      mockChannelService.setCreateResult(err(new Error('Name collision')));
+      const result = await adapter.callTool('CreateChannel', {
+        name: 'my-channel',
+        members: [{ name: 'member', agent: 'claude' }],
+      });
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('Name collision');
+    });
+  });
+
+  describe('DestroyChannel', () => {
+    it('returns success on destroy', async () => {
+      const result = await adapter.callTool('DestroyChannel', { channelId: 'ch-abc' });
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+    });
+
+    it('passes channelId to service', async () => {
+      await adapter.callTool('DestroyChannel', { channelId: 'ch-abc123' });
+      expect(mockChannelService.destroyChannelCalls[0]?.channelId).toBe('ch-abc123');
+    });
+
+    it('returns error on service failure', async () => {
+      mockChannelService.setDestroyResult(err(new Error('Not found')));
+      const result = await adapter.callTool('DestroyChannel', { channelId: 'ch-abc' });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('ChannelStatus', () => {
+    it('returns channel details on success', async () => {
+      const result = await adapter.callTool('ChannelStatus', { channelId: 'ch-abc' });
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.channel).toBeDefined();
+      expect(response.channel.name).toBe('test-channel');
+      expect(response.channel.members).toHaveLength(1);
+    });
+
+    it('returns error when channel not found', async () => {
+      mockChannelService.setGetResult(ok(null));
+      const result = await adapter.callTool('ChannelStatus', { channelId: 'ch-notfound' });
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('not found');
+    });
+  });
+
+  describe('ListChannels', () => {
+    it('returns empty list when no channels', async () => {
+      const result = await adapter.callTool('ListChannels', {});
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.count).toBe(0);
+    });
+
+    it('passes status filter to service', async () => {
+      await adapter.callTool('ListChannels', { status: 'active' });
+      expect(mockChannelService.listChannelsCalls[0]?.status).toBe(ChannelStatus.ACTIVE);
+    });
+
+    it('passes limit to service', async () => {
+      await adapter.callTool('ListChannels', { limit: 5 });
+      expect(mockChannelService.listChannelsCalls[0]?.limit).toBe(5);
+    });
+  });
+
+  describe('SendChannelMessage', () => {
+    it('returns success on message delivery', async () => {
+      const result = await adapter.callTool('SendChannelMessage', {
+        channelId: 'ch-abc',
+        message: 'hello world',
+      });
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.target).toBe('all');
+    });
+
+    it('passes targetMember to service', async () => {
+      await adapter.callTool('SendChannelMessage', {
+        channelId: 'ch-abc',
+        message: 'hello alice',
+        targetMember: 'alice',
+      });
+      expect(mockChannelService.sendMessageCalls[0]?.targetMember).toBe('alice');
+    });
+
+    it('returns error on service failure', async () => {
+      mockChannelService.setSendResult(err(new Error('Channel paused')));
+      const result = await adapter.callTool('SendChannelMessage', {
+        channelId: 'ch-abc',
+        message: 'hello',
+      });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('PauseChannel', () => {
+    it('returns success on pause', async () => {
+      const result = await adapter.callTool('PauseChannel', { channelId: 'ch-abc' });
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.status).toBe('paused');
+    });
+
+    it('returns error on service failure', async () => {
+      mockChannelService.setPauseResult(err(new Error('Not ACTIVE')));
+      const result = await adapter.callTool('PauseChannel', { channelId: 'ch-abc' });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('ResumeChannel', () => {
+    it('returns success on resume', async () => {
+      const result = await adapter.callTool('ResumeChannel', { channelId: 'ch-abc' });
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.status).toBe('active');
+    });
+
+    it('returns error on service failure', async () => {
+      mockChannelService.setResumeResult(err(new Error('Not PAUSED')));
+      const result = await adapter.callTool('ResumeChannel', { channelId: 'ch-abc' });
+      expect(result.isError).toBe(true);
+    });
+  });
+});
