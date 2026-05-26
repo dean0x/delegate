@@ -11,7 +11,7 @@
 
 import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
 import { CHANNEL_NAME_REGEX, ChannelId, ChannelStatus, type CommunicationMode } from '../../core/domain.js';
-import type { ChannelRepository } from '../../core/interfaces.js';
+import type { ChannelRepository, ChannelService } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
 import { validatePath } from '../../utils/validation.js';
 import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../services.js';
@@ -477,21 +477,22 @@ async function handleChannelStatus(args: string[]): Promise<void> {
   process.exit(0);
 }
 
-// ─── Destroy ─────────────────────────────────────────────────────────────────
+// ─── Shared setup for mutation commands ──────────────────────────────────────
 
-async function handleChannelDestroy(args: string[]): Promise<void> {
-  const idOrName = args[0];
-  if (!idOrName) {
-    ui.error('Usage: beat channel destroy <channel-id|name> [reason]');
-    process.exit(1);
-  }
-  // ARCHITECTURE: reason is a user-visible display string only; destroyChannel()
-  // accepts a typed ChannelDestroyReason enum ('user-requested' | 'max-rounds-reached' |
-  // 'all-members-crashed'), so the free-form CLI input cannot be passed to the service.
-  const displayReason = args.slice(1).join(' ') || undefined;
-
+/**
+ * Bootstrap channelService and resolve a channel ID or name to a ChannelId.
+ * Exits the process on any error.
+ */
+async function resolveChannelOp(
+  idOrName: string,
+  spinnerMsg: string,
+): Promise<{
+  channelService: ChannelService;
+  channelId: ChannelId;
+  s: ReturnType<typeof ui.createSpinner>;
+}> {
   const s = ui.createSpinner();
-  s.start('Destroying channel...');
+  s.start(spinnerMsg);
   const { container, resolveChannelService } = await withServices(s);
   const channelService = await resolveChannelService();
 
@@ -510,6 +511,23 @@ async function handleChannelDestroy(args: string[]): Promise<void> {
     process.exit(1);
   }
 
+  return { channelService, channelId, s };
+}
+
+// ─── Destroy ─────────────────────────────────────────────────────────────────
+
+async function handleChannelDestroy(args: string[]): Promise<void> {
+  const idOrName = args[0];
+  if (!idOrName) {
+    ui.error('Usage: beat channel destroy <channel-id|name> [reason]');
+    process.exit(1);
+  }
+  // ARCHITECTURE: reason is a user-visible display string only; destroyChannel()
+  // accepts a typed ChannelDestroyReason enum ('user-requested' | 'max-rounds-reached' |
+  // 'all-members-crashed'), so the free-form CLI input cannot be passed to the service.
+  const displayReason = args.slice(1).join(' ') || undefined;
+
+  const { channelService, channelId, s } = await resolveChannelOp(idOrName, 'Destroying channel...');
   const result = await channelService.destroyChannel(channelId, 'user-requested');
   exitOnError(result, s, 'Failed to destroy channel');
   s.stop('Destroyed');
@@ -527,26 +545,7 @@ async function handleChannelPause(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const s = ui.createSpinner();
-  s.start('Pausing channel...');
-  const { container, resolveChannelService } = await withServices(s);
-  const channelService = await resolveChannelService();
-
-  if (!channelService) {
-    s.stop('Failed');
-    ui.error('Channel service unavailable.');
-    process.exit(1);
-  }
-
-  const channelRepositoryResult = container.get<ChannelRepository>('channelRepository');
-  const channelRepository = exitOnError(channelRepositoryResult, s, 'Failed to get channel repository');
-  const channelId = await resolveChannelId(idOrName, channelRepository);
-  if (!channelId) {
-    s.stop('Not found');
-    ui.error(`Channel not found: ${idOrName}`);
-    process.exit(1);
-  }
-
+  const { channelService, channelId, s } = await resolveChannelOp(idOrName, 'Pausing channel...');
   const result = await channelService.pauseChannel(channelId);
   exitOnError(result, s, 'Failed to pause channel');
   s.stop('Paused');
@@ -563,26 +562,7 @@ async function handleChannelResume(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const s = ui.createSpinner();
-  s.start('Resuming channel...');
-  const { container, resolveChannelService } = await withServices(s);
-  const channelService = await resolveChannelService();
-
-  if (!channelService) {
-    s.stop('Failed');
-    ui.error('Channel service unavailable.');
-    process.exit(1);
-  }
-
-  const channelRepositoryResult = container.get<ChannelRepository>('channelRepository');
-  const channelRepository = exitOnError(channelRepositoryResult, s, 'Failed to get channel repository');
-  const channelId = await resolveChannelId(idOrName, channelRepository);
-  if (!channelId) {
-    s.stop('Not found');
-    ui.error(`Channel not found: ${idOrName}`);
-    process.exit(1);
-  }
-
+  const { channelService, channelId, s } = await resolveChannelOp(idOrName, 'Resuming channel...');
   const result = await channelService.resumeChannel(channelId);
   exitOnError(result, s, 'Failed to resume channel');
   s.stop('Resumed');

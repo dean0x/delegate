@@ -713,7 +713,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // so the pre-resolve is intentionally skipped to avoid ChannelManager.create() latency.
   // channelService is optional — if resolution fails, MCPAdapter is created without it.
   let preResolvedChannelService: ChannelService | undefined;
-  if (!skipProxy) {
+  if (mode !== 'cli') {
     // 'server' or 'run' modes — pre-resolve so the factory below is synchronous
     const channelServiceResult = await container.resolve<ChannelService>('channelService');
     if (channelServiceResult.ok) {

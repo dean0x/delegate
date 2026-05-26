@@ -561,24 +561,17 @@ const CancelLoopSchema = z.object({
 
 // Channel-related Zod schemas (Phase 8, epic #183)
 
-/**
- * ADR-001: Channel name regex imported from domain.ts (single source of truth).
- * Constraint: lowercase alphanumeric with interior hyphens, max 64 chars.
- * Must be a subset of tmux SESSION_NAME_REGEX — no transformation needed.
- */
-const channelNamePattern = CHANNEL_NAME_REGEX;
-
 export const CreateChannelSchema = z.object({
   name: z
     .string()
-    .regex(channelNamePattern, 'Channel name must be lowercase alphanumeric with interior hyphens, max 64 chars')
+    .regex(CHANNEL_NAME_REGEX, 'Channel name must be lowercase alphanumeric with interior hyphens, max 64 chars')
     .describe('Channel name (unique identifier, used as tmux session name suffix)'),
   members: z
     .array(
       z.object({
         name: z
           .string()
-          .regex(channelNamePattern, 'Member name must be lowercase alphanumeric with interior hyphens, max 64 chars')
+          .regex(CHANNEL_NAME_REGEX, 'Member name must be lowercase alphanumeric with interior hyphens, max 64 chars')
           .describe('Member name'),
         agent: z.string().min(1).describe('Agent provider for this member'),
         systemPrompt: z.string().max(100_000).optional().describe('Per-member system prompt'),
