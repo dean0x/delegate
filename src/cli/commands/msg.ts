@@ -83,11 +83,20 @@ export function parseMsgArgs(args: readonly string[]): Result<ParsedMsgArgs, str
     );
   }
 
+  if (memberName !== undefined && !CHANNEL_NAME_REGEX.test(memberName)) {
+    return err(
+      `Invalid member name "${memberName}": must be lowercase alphanumeric with interior hyphens, max 64 chars`,
+    );
+  }
+
   return ok({ channelName, memberName, message });
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
+/**
+ * Handle `beat msg <target> <message...>` — send a message to a channel or specific member.
+ */
 export async function handleMsgCommand(args: string[]): Promise<void> {
   const parsed = parseMsgArgs(args);
   if (!parsed.ok) {
@@ -129,21 +138,15 @@ export async function handleMsgCommand(args: string[]): Promise<void> {
   }
 
   // Fast-fail on terminal and paused statuses before calling the service
-  if (channel.status === ChannelStatus.DESTROYED) {
+  const REJECTED_STATUSES: Partial<Record<ChannelStatus, string>> = {
+    [ChannelStatus.DESTROYED]: `Channel "${channelName}" is destroyed. Create a new channel with: beat channel create ${channelName} ...`,
+    [ChannelStatus.COMPLETED]: `Channel "${channelName}" has completed and no longer accepts messages.`,
+    [ChannelStatus.PAUSED]: `Channel "${channelName}" is paused. Resume with: beat channel resume ${channelName}`,
+  };
+  const rejection = REJECTED_STATUSES[channel.status];
+  if (rejection) {
     s.stop('Failed');
-    ui.error(
-      `Channel "${channelName}" is destroyed. Create a new channel with: beat channel create ${channelName} ...`,
-    );
-    process.exit(1);
-  }
-  if (channel.status === ChannelStatus.COMPLETED) {
-    s.stop('Failed');
-    ui.error(`Channel "${channelName}" has completed and no longer accepts messages.`);
-    process.exit(1);
-  }
-  if (channel.status === ChannelStatus.PAUSED) {
-    s.stop('Failed');
-    ui.error(`Channel "${channelName}" is paused. Resume with: beat channel resume ${channelName}`);
+    ui.error(rejection);
     process.exit(1);
   }
 

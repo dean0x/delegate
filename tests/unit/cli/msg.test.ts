@@ -124,4 +124,37 @@ describe('parseMsgArgs', () => {
       expect(result.ok).toBe(false);
     });
   });
+
+  // ─── Member name validation ──────────────────────────────────────────────────
+
+  describe('member name validation', () => {
+    it('accepts valid member names', () => {
+      for (const member of ['alice', 'bob-2', 'agent1']) {
+        const result = parseMsgArgs([`my-channel/${member}`, 'hello']);
+        expect(result.ok).toBe(true);
+      }
+    });
+
+    it('rejects member names with uppercase letters', () => {
+      const result = parseMsgArgs(['my-channel/Alice', 'hello']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('Invalid member name');
+    });
+
+    it('rejects member names with spaces', () => {
+      const result = parseMsgArgs(['my-channel/alice bob', 'hello']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('Invalid member name');
+    });
+
+    it('rejects member names that are too long', () => {
+      const longName = 'a'.repeat(65);
+      const result = parseMsgArgs([`my-channel/${longName}`, 'hello']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('Invalid member name');
+    });
+  });
 });
