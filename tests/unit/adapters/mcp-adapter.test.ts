@@ -3925,7 +3925,7 @@ describe('MCPAdapter - Channel Schemas', () => {
       expect(DestroyChannelSchema.safeParse({ channelId: 'ch-abc' }).success).toBe(true);
     });
     it('accepts channelId with reason', () => {
-      expect(DestroyChannelSchema.safeParse({ channelId: 'ch-abc', reason: 'done' }).success).toBe(true);
+      expect(DestroyChannelSchema.safeParse({ channelId: 'ch-abc', reason: 'user-requested' }).success).toBe(true);
     });
     it('rejects empty channelId', () => {
       expect(DestroyChannelSchema.safeParse({ channelId: '' }).success).toBe(false);

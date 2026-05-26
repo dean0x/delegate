@@ -26,6 +26,7 @@ import {
   saveAgentConfig,
 } from '../core/configuration.js';
 import {
+  CHANNEL_NAME_REGEX,
   type Channel,
   type ChannelCreateRequest,
   ChannelId,
@@ -561,12 +562,11 @@ const CancelLoopSchema = z.object({
 // Channel-related Zod schemas (Phase 8, epic #183)
 
 /**
- * DECISION: Channel name regex mirrors CHANNEL_NAME_REGEX from domain.ts.
- * Inline here so the MCP layer validates without importing domain constants.
+ * ADR-001: Channel name regex imported from domain.ts (single source of truth).
  * Constraint: lowercase alphanumeric with interior hyphens, max 64 chars.
- * ADR-001: Must be a subset of tmux SESSION_NAME_REGEX — no transformation needed.
+ * Must be a subset of tmux SESSION_NAME_REGEX — no transformation needed.
  */
-const channelNamePattern = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/;
+const channelNamePattern = CHANNEL_NAME_REGEX;
 
 export const CreateChannelSchema = z.object({
   name: z
@@ -609,7 +609,10 @@ export const CreateChannelSchema = z.object({
 
 export const DestroyChannelSchema = z.object({
   channelId: z.string().min(1).describe('Channel ID to destroy'),
-  reason: z.string().optional().describe('Reason for destruction (informational)'),
+  reason: z
+    .enum(['user-requested', 'max-rounds-reached', 'all-members-crashed'])
+    .optional()
+    .describe('Reason for destruction (default: user-requested)'),
 });
 
 export const ChannelStatusSchema = z.object({
@@ -1934,6 +1937,10 @@ export class MCPAdapter {
                     type: 'string',
                     description: 'Working directory for member agent sessions (absolute path)',
                   },
+                  systemPrompt: {
+                    type: 'string',
+                    description: 'System prompt for single-member channels (overrides per-member systemPrompt, max 100KB)',
+                  },
                 },
                 required: ['name', 'members'],
               },
@@ -1945,7 +1952,11 @@ export class MCPAdapter {
                 type: 'object',
                 properties: {
                   channelId: { type: 'string', description: 'Channel ID to destroy' },
-                  reason: { type: 'string', description: 'Reason for destruction (informational)' },
+                  reason: {
+                    type: 'string',
+                    enum: ['user-requested', 'max-rounds-reached', 'all-members-crashed'],
+                    description: 'Reason for destruction (default: user-requested)',
+                  },
                 },
                 required: ['channelId'],
               },
@@ -4269,10 +4280,12 @@ export class MCPAdapter {
 
     const request: ChannelCreateRequest = {
       name: data.name,
-      members: data.members.map((m) => ({
+      members: data.members.map((m, idx) => ({
         name: m.name,
         agent: m.agent as import('../core/agents.js').AgentProvider,
-        systemPrompt: m.systemPrompt,
+        // Apply top-level systemPrompt to the sole member when members.length === 1,
+        // falling back to the per-member value if both are provided (per-member wins).
+        systemPrompt: m.systemPrompt ?? (data.members.length === 1 && idx === 0 ? data.systemPrompt : undefined),
       })),
       communicationMode: data.communicationMode as CommunicationMode | undefined,
       maxRounds: data.maxRounds,
@@ -4332,8 +4345,8 @@ export class MCPAdapter {
       };
     }
 
-    const { channelId } = parseResult.data;
-    const result = await this.channelService.destroyChannel(ChannelId(channelId), 'user-requested');
+    const { channelId, reason } = parseResult.data;
+    const result = await this.channelService.destroyChannel(ChannelId(channelId), reason ?? 'user-requested');
 
     return match(result, {
       ok: () => ({
