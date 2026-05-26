@@ -3,6 +3,7 @@
  * Bridges the MCP protocol with our new architecture
  */
 
+import path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { z } from 'zod';
 import {
@@ -25,6 +26,13 @@ import {
   saveAgentConfig,
 } from '../core/configuration.js';
 import {
+  CHANNEL_NAME_REGEX,
+  type Channel,
+  type ChannelCreateRequest,
+  ChannelId,
+  type ChannelMemberRequest,
+  ChannelStatus,
+  type CommunicationMode,
   EvalMode,
   LoopCreateRequest,
   LoopId,
@@ -48,6 +56,7 @@ import {
   TaskRequest,
 } from '../core/domain.js';
 import {
+  ChannelService,
   Logger,
   LoopService,
   OrchestrationService,
@@ -551,6 +560,78 @@ const CancelLoopSchema = z.object({
   cancelTasks: z.boolean().optional().default(true).describe('Also cancel in-flight tasks'),
 });
 
+// Channel-related Zod schemas (Phase 8, epic #183)
+
+export const CreateChannelSchema = z.object({
+  name: z
+    .string()
+    .regex(CHANNEL_NAME_REGEX, 'Channel name must be lowercase alphanumeric with interior hyphens, max 64 chars')
+    .describe('Channel name (unique identifier, used as tmux session name suffix)'),
+  members: z
+    .array(
+      z.object({
+        name: z
+          .string()
+          .regex(CHANNEL_NAME_REGEX, 'Member name must be lowercase alphanumeric with interior hyphens, max 64 chars')
+          .describe('Member name'),
+        agent: z.enum(AGENT_PROVIDERS_TUPLE).describe('Agent provider for this member'),
+        systemPrompt: z.string().max(100_000).optional().describe('Per-member system prompt'),
+      }),
+    )
+    .min(1, 'At least one member is required')
+    .max(10, 'At most 10 members allowed')
+    .describe('Channel members'),
+  communicationMode: z
+    .enum(['broadcast', 'directed', 'round-robin'])
+    .optional()
+    .describe('Message routing strategy (default: broadcast for ≥2 members)'),
+  maxRounds: z
+    .number()
+    .int()
+    .min(1)
+    .max(10_000)
+    .optional()
+    .describe('Maximum conversation rounds before channel transitions to COMPLETED (required for ≥2 members)'),
+  topic: z.string().optional().describe('Initial topic delivered to members on creation'),
+  workingDirectory: z.string().optional().describe('Working directory for member agent sessions (absolute path)'),
+  systemPrompt: z
+    .string()
+    .max(100_000)
+    .optional()
+    .describe('System prompt for single-member channels (used when per-member systemPrompt is not set)'),
+});
+
+export const DestroyChannelSchema = z.object({
+  channelId: z.string().min(1).describe('Channel ID to destroy'),
+  reason: z
+    .enum(['user-requested', 'max-rounds-reached', 'all-members-crashed'])
+    .optional()
+    .describe('Reason for destruction (default: user-requested)'),
+});
+
+export const ChannelStatusSchema = z.object({
+  channelId: z.string().min(1).describe('Channel ID'),
+});
+
+export const ListChannelsSchema = z.object({
+  status: z.enum(['active', 'paused', 'completed', 'destroyed']).optional().describe('Filter by status'),
+  limit: z.number().int().min(1).max(100).optional().describe('Maximum results to return'),
+});
+
+export const SendChannelMessageSchema = z.object({
+  channelId: z.string().min(1).describe('Channel ID'),
+  message: z.string().min(1).max(262_144).describe('Message text to deliver (max 256KB)'),
+  targetMember: z.string().optional().describe('Deliver to this specific member only (omit for mode-default routing)'),
+});
+
+export const PauseChannelSchema = z.object({
+  channelId: z.string().min(1).describe('Channel ID to pause'),
+});
+
+export const ResumeChannelSchema = z.object({
+  channelId: z.string().min(1).describe('Channel ID to resume'),
+});
+
 /** Standard MCP tool response shape */
 interface MCPToolResponse {
   [key: string]: unknown;
@@ -567,6 +648,13 @@ export interface MCPAdapterDeps {
   readonly config: Configuration;
   readonly orchestrationService?: OrchestrationService;
   readonly pipelineRepository?: PipelineRepository;
+  /**
+   * Channel service for multi-agent channel management (Phase 8, epic #183).
+   * ARCHITECTURE: Optional — unavailable in environments without tmux or when
+   * ChannelManager.create() fails at bootstrap. All channel tool handlers guard
+   * against undefined with an actionable error message.
+   */
+  readonly channelService?: ChannelService;
 }
 
 export class MCPAdapter {
@@ -580,6 +668,7 @@ export class MCPAdapter {
   private readonly config: Configuration;
   private readonly orchestrationService?: OrchestrationService;
   private readonly pipelineRepository?: PipelineRepository;
+  private readonly channelService?: ChannelService;
 
   constructor(deps: MCPAdapterDeps) {
     this.taskManager = deps.taskManager;
@@ -590,6 +679,7 @@ export class MCPAdapter {
     this.config = deps.config;
     this.orchestrationService = deps.orchestrationService;
     this.pipelineRepository = deps.pipelineRepository;
+    this.channelService = deps.channelService;
     this.server = new Server(
       {
         name: 'autobeat',
@@ -684,6 +774,21 @@ export class MCPAdapter {
         return await this.handleCancelPipeline(args);
       case 'ConfigureAgent':
         return await this.handleConfigureAgent(args);
+      // Channel tools (Phase 8, epic #183)
+      case 'CreateChannel':
+        return await this.handleCreateChannel(args);
+      case 'DestroyChannel':
+        return await this.handleDestroyChannel(args);
+      case 'ChannelStatus':
+        return await this.handleChannelStatus(args);
+      case 'ListChannels':
+        return await this.handleListChannels(args);
+      case 'SendChannelMessage':
+        return await this.handleSendChannelMessage(args);
+      case 'PauseChannel':
+        return await this.handlePauseChannel(args);
+      case 'ResumeChannel':
+        return await this.handleResumeChannel(args);
       default:
         return {
           content: [
@@ -1776,6 +1881,154 @@ export class MCPAdapter {
                   },
                 },
                 required: ['agent'],
+              },
+            },
+            // Channel tools (Phase 8, epic #183)
+            {
+              name: 'CreateChannel',
+              description:
+                'Create a multi-agent communication channel and spawn member tmux sessions. Members communicate via the configured routing strategy.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                    description:
+                      'Channel name (unique identifier, lowercase alphanumeric with interior hyphens, max 64 chars)',
+                    pattern: '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$',
+                  },
+                  members: {
+                    type: 'array',
+                    description: 'Channel members (1–10)',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        name: { type: 'string', description: 'Member name' },
+                        agent: { type: 'string', description: 'Agent provider' },
+                        systemPrompt: { type: 'string', description: 'Per-member system prompt (max 100KB)' },
+                      },
+                      required: ['name', 'agent'],
+                    },
+                    minItems: 1,
+                    maxItems: 10,
+                  },
+                  communicationMode: {
+                    type: 'string',
+                    enum: ['broadcast', 'directed', 'round-robin'],
+                    description: 'Message routing strategy (default: broadcast for ≥2 members)',
+                  },
+                  maxRounds: {
+                    type: 'number',
+                    description: 'Maximum conversation rounds before COMPLETED (required for ≥2 members)',
+                    minimum: 1,
+                    maximum: 10000,
+                  },
+                  topic: {
+                    type: 'string',
+                    description: 'Initial topic delivered to members on creation',
+                  },
+                  workingDirectory: {
+                    type: 'string',
+                    description: 'Working directory for member agent sessions (absolute path)',
+                  },
+                  systemPrompt: {
+                    type: 'string',
+                    description:
+                      'System prompt for single-member channels (used when per-member systemPrompt is not set, max 100KB)',
+                  },
+                },
+                required: ['name', 'members'],
+              },
+            },
+            {
+              name: 'DestroyChannel',
+              description: 'Destroy a channel and kill all member tmux sessions.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  channelId: { type: 'string', description: 'Channel ID to destroy' },
+                  reason: {
+                    type: 'string',
+                    enum: ['user-requested', 'max-rounds-reached', 'all-members-crashed'],
+                    description: 'Reason for destruction (default: user-requested)',
+                  },
+                },
+                required: ['channelId'],
+              },
+            },
+            {
+              name: 'ChannelStatus',
+              description: 'Get status and member details for a channel.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  channelId: { type: 'string', description: 'Channel ID' },
+                },
+                required: ['channelId'],
+              },
+            },
+            {
+              name: 'ListChannels',
+              description: 'List channels, optionally filtered by status.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  status: {
+                    type: 'string',
+                    enum: ['active', 'paused', 'completed', 'destroyed'],
+                    description: 'Filter by channel status',
+                  },
+                  limit: {
+                    type: 'number',
+                    description: 'Maximum results (1–100)',
+                    minimum: 1,
+                    maximum: 100,
+                  },
+                },
+              },
+            },
+            {
+              name: 'SendChannelMessage',
+              description:
+                'Send a message to a channel. Routes to target member or uses mode-default routing (broadcast/round-robin).',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  channelId: { type: 'string', description: 'Channel ID' },
+                  message: {
+                    type: 'string',
+                    description: 'Message text (max 256KB)',
+                    minLength: 1,
+                    maxLength: 262144,
+                  },
+                  targetMember: {
+                    type: 'string',
+                    description: 'Deliver to this specific member only (omit for mode-default routing)',
+                  },
+                },
+                required: ['channelId', 'message'],
+              },
+            },
+            {
+              name: 'PauseChannel',
+              description: 'Pause an active channel (suppress message routing while members continue running).',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  channelId: { type: 'string', description: 'Channel ID to pause' },
+                },
+                required: ['channelId'],
+              },
+            },
+            {
+              name: 'ResumeChannel',
+              description: 'Resume a paused channel.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  channelId: { type: 'string', description: 'Channel ID to resume' },
+                },
+                required: ['channelId'],
               },
             },
           ],
@@ -3975,5 +4228,396 @@ export class MCPAdapter {
         },
       ],
     };
+  }
+
+  // ─── Channel handlers (Phase 8, epic #183) ─────────────────────────────────
+
+  /**
+   * Return the channel service if available, or a ready-to-return error response if not.
+   * All channel handlers call this once and early-return on the error branch.
+   */
+  private requireChannelService(): { ok: true; service: ChannelService } | { ok: false; response: MCPToolResponse } {
+    if (!this.channelService) {
+      return {
+        ok: false,
+        response: {
+          content: [
+            { type: 'text', text: JSON.stringify({ success: false, error: 'Channel service unavailable' }, null, 2) },
+          ],
+          isError: true,
+        },
+      };
+    }
+    return { ok: true, service: this.channelService };
+  }
+
+  /**
+   * Build the ChannelCreateRequest from validated input.
+   * Returns a validation error MCPToolResponse on path-validation failure, or the request on success.
+   * DECISION: per-member systemPrompt wins over the top-level field (??-coalesce, left operand wins).
+   */
+  private buildChannelCreateRequest(
+    data: z.infer<typeof CreateChannelSchema>,
+  ): { ok: true; request: ChannelCreateRequest } | { ok: false; response: MCPToolResponse } {
+    // SECURITY: workingDirectory must be an absolute path (prevents path traversal via relative refs)
+    if (data.workingDirectory) {
+      if (!path.isAbsolute(data.workingDirectory)) {
+        return {
+          ok: false,
+          response: {
+            content: [{ type: 'text', text: `Invalid working directory: must be an absolute path` }],
+            isError: true,
+          },
+        };
+      }
+      // SECURITY: Pass '/' as baseDir so any absolute path is permitted — the isAbsolute()
+      // guard above already blocks relative paths. Using process.cwd() (the default) would
+      // reject any path outside the server's install directory, which incorrectly breaks
+      // all valid workingDirectory values. validatePath still resolves symlinks to catch
+      // symlink-based traversal attacks.
+      const pathValidation = validatePath(data.workingDirectory, '/');
+      if (!pathValidation.ok) {
+        return {
+          ok: false,
+          response: {
+            content: [{ type: 'text', text: `Invalid working directory: ${pathValidation.error.message}` }],
+            isError: true,
+          },
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      request: {
+        name: data.name,
+        members: data.members.map((m, idx) => ({
+          name: m.name,
+          agent: m.agent,
+          // Per-member systemPrompt wins (??). Fall back to top-level only for the sole member.
+          systemPrompt: m.systemPrompt ?? (data.members.length === 1 && idx === 0 ? data.systemPrompt : undefined),
+        })),
+        communicationMode: data.communicationMode,
+        maxRounds: data.maxRounds,
+        topic: data.topic,
+        workingDirectory: data.workingDirectory,
+      },
+    };
+  }
+
+  /**
+   * Handle CreateChannel tool call.
+   * Creates a channel and spawns member tmux sessions.
+   */
+  private async handleCreateChannel(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = CreateChannelSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
+
+    const buildResult = this.buildChannelCreateRequest(parseResult.data);
+    if (!buildResult.ok) return buildResult.response;
+
+    const result = await svcResult.service.createChannel(buildResult.request);
+
+    return match(result, {
+      ok: (channel: Channel) => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                channelId: channel.id,
+                name: channel.name,
+                status: channel.status,
+                members: channel.members.map((m) => ({ name: m.name, agent: m.agent, status: m.status })),
+                communicationMode: channel.communicationMode ?? null,
+                maxRounds: channel.maxRounds ?? null,
+                message: 'Channel created successfully',
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error: Error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle DestroyChannel tool call.
+   */
+  private async handleDestroyChannel(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = DestroyChannelSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
+
+    const { channelId, reason } = parseResult.data;
+    const result = await svcResult.service.destroyChannel(ChannelId(channelId), reason ?? 'user-requested');
+
+    return match(result, {
+      ok: () => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ success: true, channelId, message: 'Channel destroyed' }, null, 2),
+          },
+        ],
+      }),
+      err: (error: Error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle ChannelStatus tool call.
+   */
+  private async handleChannelStatus(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = ChannelStatusSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
+
+    const { channelId } = parseResult.data;
+    const result = await svcResult.service.getChannel(ChannelId(channelId));
+
+    return match(result, {
+      ok: (channel: Channel | null) => {
+        if (!channel) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ success: false, error: `Channel not found: ${channelId}` }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  success: true,
+                  channel: {
+                    id: channel.id,
+                    name: channel.name,
+                    status: channel.status,
+                    communicationMode: channel.communicationMode ?? null,
+                    maxRounds: channel.maxRounds ?? null,
+                    currentRound: channel.currentRound,
+                    topic: channel.topic ?? null,
+                    members: channel.members.map((m) => ({
+                      name: m.name,
+                      agent: m.agent,
+                      status: m.status,
+                    })),
+                    createdAt: new Date(channel.createdAt).toISOString(),
+                    updatedAt: new Date(channel.updatedAt).toISOString(),
+                  },
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      },
+      err: (error: Error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle ListChannels tool call.
+   */
+  private async handleListChannels(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = ListChannelsSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
+
+    const { status, limit } = parseResult.data;
+    const statusEnum = status as ChannelStatus | undefined;
+    const result = await svcResult.service.listChannels(statusEnum, limit);
+
+    return match(result, {
+      ok: (channels: readonly Channel[]) => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                count: channels.length,
+                channels: channels.map((ch) => ({
+                  id: ch.id,
+                  name: ch.name,
+                  status: ch.status,
+                  memberCount: ch.members.length,
+                  communicationMode: ch.communicationMode ?? null,
+                  currentRound: ch.currentRound,
+                  maxRounds: ch.maxRounds ?? null,
+                  createdAt: new Date(ch.createdAt).toISOString(),
+                })),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error: Error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle SendChannelMessage tool call.
+   */
+  private async handleSendChannelMessage(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = SendChannelMessageSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
+
+    const { channelId, message, targetMember } = parseResult.data;
+    const result = await svcResult.service.sendMessage(ChannelId(channelId), message, targetMember);
+
+    return match(result, {
+      ok: () => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                channelId,
+                target: targetMember ?? 'all',
+                message: 'Message delivered',
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error: Error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle PauseChannel tool call.
+   */
+  private async handlePauseChannel(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = PauseChannelSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
+
+    const { channelId } = parseResult.data;
+    const result = await svcResult.service.pauseChannel(ChannelId(channelId));
+
+    return match(result, {
+      ok: () => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ success: true, channelId, status: 'paused', message: 'Channel paused' }, null, 2),
+          },
+        ],
+      }),
+      err: (error: Error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle ResumeChannel tool call.
+   */
+  private async handleResumeChannel(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = ResumeChannelSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const svcResult = this.requireChannelService();
+    if (!svcResult.ok) return svcResult.response;
+
+    const { channelId } = parseResult.data;
+    const result = await svcResult.service.resumeChannel(ChannelId(channelId));
+
+    return match(result, {
+      ok: () => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ success: true, channelId, status: 'active', message: 'Channel resumed' }, null, 2),
+          },
+        ],
+      }),
+      err: (error: Error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
   }
 }

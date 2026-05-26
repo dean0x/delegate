@@ -1069,7 +1069,7 @@ export interface ChannelService {
   /**
    * Deliver a message to the channel from an external caller.
    * targetMember — if provided, deliver to that specific member only.
-   * Returns err(INVALID_INPUT) if channel is paused or target member unknown.
+   * Returns err(INVALID_INPUT) if channel is paused, completed, or target member unknown.
    */
   sendMessage(channelId: ChannelId, message: string, targetMember?: string): Promise<Result<void>>;
   /** Fetch a channel by ID. Returns null if not found. */

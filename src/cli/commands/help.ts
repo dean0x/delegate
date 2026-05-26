@@ -112,6 +112,28 @@ ${bold('Loop Commands:')}
   ${cyan('loop resume')} <loop-id>               Resume a paused loop
   ${cyan('loop cancel')} <loop-id> [--cancel-tasks] [reason]
 
+${bold('Channel Commands:')}
+  ${cyan('channel')} <name> --agent <provider>              Create single-agent channel
+    --topic TEXT                              Initial topic delivered to member
+    -w, --working-directory DIR              Working directory for session
+    --system-prompt TEXT                     System prompt for the member
+
+  ${cyan('channel')} <name> --member name:agent[:prompt]... Create multi-agent channel
+    --member name:agent[:prompt]             Repeatable; prompt may contain colons
+    --mode broadcast|directed|round-robin    Routing strategy (default: broadcast)
+    --max-rounds N                           Max rounds before COMPLETED (required)
+    --topic TEXT                             Initial topic (broadcast to all)
+    -w, --working-directory DIR              Working directory for sessions
+
+  ${cyan('channel list')} [--status active|paused|...] [--limit N]
+  ${cyan('channel status')} <channel-id|name>
+  ${cyan('channel destroy')} <channel-id|name> [reason]
+  ${cyan('channel pause')} <channel-id|name>
+  ${cyan('channel resume')} <channel-id|name>
+
+  ${cyan('msg')} <channel-name>[/<member-name>] <message...>
+                               Send a message to a channel or specific member
+
 ${bold('Configuration:')}
   ${cyan('config show')}                Show current configuration (resolved values)
   ${cyan('config set')} <key> <value>   Set a config value (persisted to ~/.autobeat/config.json)
@@ -150,6 +172,18 @@ ${bold('Examples:')}
 
   # Resume failed task with context
   beat resume <task-id> --context "Try a different approach"
+
+  # Channels (single-agent and multi-agent)
+  beat channel advisor --agent claude                              # Single-agent channel
+  beat channel debate --member alice:claude --member bob:codex --max-rounds 10
+  beat channel debate --mode round-robin --topic "Review this PR"
+  beat channel list --status active
+  beat channel status advisor
+  beat channel pause advisor
+  beat channel resume advisor
+  beat channel destroy advisor "work complete"
+  beat msg advisor "What do you think about this approach?"
+  beat msg debate/alice "Focus on security concerns"
 
   # Configuration
   beat config show

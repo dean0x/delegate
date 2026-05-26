@@ -13,6 +13,7 @@ import {
   listAgents,
 } from './cli/commands/agents.js';
 import { cancelTask } from './cli/commands/cancel.js';
+import { handleChannelCommand } from './cli/commands/channel.js';
 import { configPath, configReset, configSet, configShow } from './cli/commands/config.js';
 import { showHelp } from './cli/commands/help.js';
 import { initCommand } from './cli/commands/init.js';
@@ -20,6 +21,7 @@ import { getTaskLogs } from './cli/commands/logs.js';
 import { handleLoopCommand } from './cli/commands/loop.js';
 import { handleMcpStart, handleMcpTest, showConfig } from './cli/commands/mcp.js';
 import { migrateCommand } from './cli/commands/migrate.js';
+import { handleMsgCommand } from './cli/commands/msg.js';
 import { handleOrchestrateCommand } from './cli/commands/orchestrate.js';
 import { handlePipelineCommand } from './cli/commands/pipeline.js';
 import { handleResumeCommand } from './cli/commands/resume.js';
@@ -286,6 +288,10 @@ if (mainCommand === 'mcp') {
   await handleOrchestrateCommand(subCommand, args.slice(2));
 } else if (mainCommand === 'loop') {
   await handleLoopCommand(subCommand, args.slice(2));
+} else if (mainCommand === 'channel') {
+  await handleChannelCommand(subCommand, args.slice(2));
+} else if (mainCommand === 'msg') {
+  await handleMsgCommand(args.slice(1));
 } else if (mainCommand === 'agents') {
   if (subCommand === 'list' || !subCommand) {
     await listAgents();

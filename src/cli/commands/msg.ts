@@ -1,0 +1,162 @@
+/**
+ * msg CLI command — send a message to a channel member.
+ *
+ * Usage:
+ *   beat msg <channel-name>[/<member-name>] <message text...>
+ *
+ * ARCHITECTURE: Pure parsing function exported for testability;
+ * handler is side-effecting and not exported.
+ *
+ * ADR-001: Channel name validated against CHANNEL_NAME_REGEX.
+ */
+
+import { CHANNEL_NAME_REGEX, type ChannelId, ChannelStatus } from '../../core/domain.js';
+import type { ChannelRepository } from '../../core/interfaces.js';
+import { err, ok, type Result } from '../../core/result.js';
+import { exitOnError, withServices } from '../services.js';
+import * as ui from '../ui.js';
+
+/** Maximum message length aligned with MCP SendMessage tool (256 KB). */
+const MAX_MESSAGE_LENGTH = 262144;
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface ParsedMsgArgs {
+  /** Channel name (validated against CHANNEL_NAME_REGEX) */
+  readonly channelName: string;
+  /** Optional target member name */
+  readonly memberName?: string;
+  /** Message text */
+  readonly message: string;
+}
+
+// ─── Pure parsing ─────────────────────────────────────────────────────────────
+
+/**
+ * Parse msg command arguments.
+ * ARCHITECTURE: Pure function — no side effects, returns Result for testability.
+ *
+ * Syntax: <channel-name>[/<member-name>] <message text...>
+ * - Split target on first '/' only
+ * - Empty member after '/' is an error
+ * - Message is args[1..] joined with spaces
+ */
+export function parseMsgArgs(args: readonly string[]): Result<ParsedMsgArgs, string> {
+  const target = args[0];
+  if (!target) {
+    return err('Usage: beat msg <channel-name>[/<member-name>] <message text...>');
+  }
+
+  const messageWords = args.slice(1);
+  if (messageWords.length === 0) {
+    return err('Message text is required. Usage: beat msg <target> <message...>');
+  }
+  const message = messageWords.join(' ');
+
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    return err(`Message too long: ${message.length} chars (max ${MAX_MESSAGE_LENGTH}). Split into shorter messages.`);
+  }
+
+  // Split target on first '/' only
+  const slashIndex = target.indexOf('/');
+  let channelName: string;
+  let memberName: string | undefined;
+
+  if (slashIndex === -1) {
+    channelName = target;
+  } else {
+    channelName = target.slice(0, slashIndex);
+    const memberPart = target.slice(slashIndex + 1);
+    if (!memberPart) {
+      return err(`Empty member name after '/' in "${target}". Use: channel-name/member-name`);
+    }
+    memberName = memberPart;
+  }
+
+  if (!channelName) {
+    return err(`Channel name cannot be empty in target "${target}"`);
+  }
+
+  if (!CHANNEL_NAME_REGEX.test(channelName)) {
+    return err(
+      `Invalid channel name "${channelName}": must be lowercase alphanumeric with interior hyphens, max 64 chars`,
+    );
+  }
+
+  if (memberName !== undefined && !CHANNEL_NAME_REGEX.test(memberName)) {
+    return err(
+      `Invalid member name "${memberName}": must be lowercase alphanumeric with interior hyphens, max 64 chars`,
+    );
+  }
+
+  return ok({ channelName, memberName, message });
+}
+
+// ─── Handler ──────────────────────────────────────────────────────────────────
+
+/**
+ * Handle `beat msg <target> <message...>` — send a message to a channel or specific member.
+ */
+export async function handleMsgCommand(args: string[]): Promise<void> {
+  const parsed = parseMsgArgs(args);
+  if (!parsed.ok) {
+    ui.error(parsed.error);
+    process.exit(1);
+  }
+  const { channelName, memberName, message } = parsed.value;
+
+  const s = ui.createSpinner();
+  s.start('Sending message...');
+  const { container, resolveChannelService } = await withServices(s);
+  const channelService = await resolveChannelService();
+
+  if (!channelService) {
+    s.stop('Failed');
+    ui.error('Channel service unavailable.');
+    process.exit(1);
+  }
+
+  // Resolve channel name → ID using the same connection as the service call.
+  // ARCHITECTURE: Reading from the container avoids a second DB connection and
+  // eliminates the TOCTOU window where channel status could change between the
+  // read-only lookup and the subsequent service call.
+  const channelRepositoryResult = container.get<ChannelRepository>('channelRepository');
+  if (!channelRepositoryResult.ok) {
+    s.stop('Failed');
+    ui.error(`Failed to get channel repository: ${channelRepositoryResult.error.message}`);
+    process.exit(1);
+  }
+  const channelRepository = channelRepositoryResult.value;
+
+  const channelResult = await channelRepository.findByName(channelName);
+  const channel = exitOnError(channelResult, s, `Failed to look up channel "${channelName}"`);
+
+  if (!channel) {
+    s.stop('Failed');
+    ui.error(`Channel "${channelName}" not found`);
+    process.exit(1);
+  }
+
+  // Fast-fail on terminal and paused statuses before calling the service
+  const REJECTED_STATUSES: Partial<Record<ChannelStatus, string>> = {
+    [ChannelStatus.DESTROYED]: `Channel "${channelName}" is destroyed. Create a new channel with: beat channel create ${channelName} ...`,
+    [ChannelStatus.COMPLETED]: `Channel "${channelName}" has completed and no longer accepts messages.`,
+    [ChannelStatus.PAUSED]: `Channel "${channelName}" is paused. Resume with: beat channel resume ${channelName}`,
+  };
+  const rejection = REJECTED_STATUSES[channel.status];
+  if (rejection) {
+    s.stop('Failed');
+    ui.error(rejection);
+    process.exit(1);
+  }
+
+  const channelId: ChannelId = channel.id;
+
+  const result = await channelService.sendMessage(channelId, message, memberName);
+  exitOnError(result, s, 'Failed to send message');
+  s.stop('Sent');
+
+  const target = memberName ? `${channelName}/${memberName}` : channelName;
+  ui.success(`Message sent to ${target}`);
+  process.exit(0);
+}

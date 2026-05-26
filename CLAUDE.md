@@ -271,7 +271,7 @@ When adding task dependencies:
 
 ### MCP Tools
 
-All tools use PascalCase: `DelegateTask`, `TaskStatus`, `TaskLogs`, `CancelTask`, `RetryTask`, `ResumeTask`, `CreatePipeline`, `PipelineStatus`, `ListPipelines`, `CancelPipeline`, `CreateLoop`, `LoopStatus`, `ListLoops`, `CancelLoop`, `PauseLoop`, `ResumeLoop`, `ScheduleTask`, `SchedulePipeline`, `ScheduleLoop`, `ListSchedules`, `ScheduleStatus`, `PauseSchedule`, `ResumeSchedule`, `CancelSchedule`, `CreateOrchestrator`, `OrchestratorStatus`, `ListOrchestrators`, `CancelOrchestrator`, `InitCustomOrchestrator`, `ListAgents`, `ConfigureAgent`
+All tools use PascalCase: `DelegateTask`, `TaskStatus`, `TaskLogs`, `CancelTask`, `RetryTask`, `ResumeTask`, `CreatePipeline`, `PipelineStatus`, `ListPipelines`, `CancelPipeline`, `CreateLoop`, `LoopStatus`, `ListLoops`, `CancelLoop`, `PauseLoop`, `ResumeLoop`, `ScheduleTask`, `SchedulePipeline`, `ScheduleLoop`, `ListSchedules`, `ScheduleStatus`, `PauseSchedule`, `ResumeSchedule`, `CancelSchedule`, `CreateOrchestrator`, `OrchestratorStatus`, `ListOrchestrators`, `CancelOrchestrator`, `InitCustomOrchestrator`, `ListAgents`, `ConfigureAgent`, `CreateChannel`, `DestroyChannel`, `ChannelStatus`, `ListChannels`, `SendChannelMessage`, `PauseChannel`, `ResumeChannel`
 
 `DelegateTask` accepts an optional `metadata.orchestratorId` field for orchestrator attribution. Long-running MCP servers should pass this so sub-tasks are attributed to the calling orchestration even when the process ID changes across restarts.
 
@@ -322,6 +322,9 @@ Quick reference for common operations:
 | Translation middleware | `src/translation/middleware/` |
 | Pipeline repository | `src/implementations/pipeline-repository.ts` |
 | Channel repository | `src/implementations/channel-repository.ts` |
+| Channel service | `src/services/channel-manager.ts` |
+| Channel CLI command | `src/cli/commands/channel.ts` |
+| Msg CLI command | `src/cli/commands/msg.ts` |
 | Pipeline handler | `src/services/handlers/pipeline-handler.ts` |
 | Interactive orchestrator | `src/cli/commands/orchestrate-interactive.ts` |
 

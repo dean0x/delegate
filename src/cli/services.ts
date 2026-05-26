@@ -1,6 +1,12 @@
 import { bootstrap } from '../bootstrap.js';
 import type { Container } from '../core/container.js';
-import type { LoopService, OrchestrationService, ScheduleService, TaskManager } from '../core/interfaces.js';
+import type {
+  ChannelService,
+  LoopService,
+  OrchestrationService,
+  ScheduleService,
+  TaskManager,
+} from '../core/interfaces.js';
 import type { Result } from '../core/result.js';
 import { createReadOnlyContext, type ReadOnlyContext } from './read-only-context.js';
 import type { Spinner } from './ui.js';
@@ -58,6 +64,10 @@ export function withReadOnlyContext(s?: Spinner): ReadOnlyContext {
  *
  * Used for mutation commands that need the full event-driven pipeline.
  * Skips recovery and schedule executor — only the MCP server daemon needs those.
+ *
+ * ARCHITECTURE: channelService is resolved lazily via `resolveChannelService()`.
+ * Non-channel commands never call it and pay zero ChannelManager.create() cost.
+ * Channel commands call it once; subsequent calls return the cached singleton.
  */
 export async function withServices(s?: Spinner): Promise<{
   container: Container;
@@ -65,6 +75,7 @@ export async function withServices(s?: Spinner): Promise<{
   scheduleService: ScheduleService;
   loopService: LoopService;
   orchestrationService: OrchestrationService;
+  resolveChannelService: () => Promise<ChannelService | undefined>;
 }> {
   s?.message('Initializing...');
   const container = exitOnError(await bootstrap({ mode: 'cli' }), s, 'Bootstrap failed', 'Initialization failed');
@@ -93,5 +104,15 @@ export async function withServices(s?: Spinner): Promise<{
     'Initialization failed',
   );
 
-  return { container, taskManager, scheduleService, loopService, orchestrationService };
+  // ARCHITECTURE: Lazy resolver — ChannelManager.create() is async and only needed by
+  // channel mutation commands. Non-channel commands (cancel, retry, resume, etc.) never
+  // call this and pay no startup cost. The container caches the singleton on first call.
+  const resolveChannelService = async (): Promise<ChannelService | undefined> => {
+    const result = await container.resolve<ChannelService>('channelService');
+    if (result.ok) return result.value;
+    ui.info(`Warning: Channel service unavailable: ${result.error.message}`);
+    return undefined;
+  };
+
+  return { container, taskManager, scheduleService, loopService, orchestrationService, resolveChannelService };
 }

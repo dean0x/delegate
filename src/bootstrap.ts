@@ -707,6 +707,24 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   });
 
   // Register MCP adapter
+  // ARCHITECTURE: channelService is pre-resolved in server/run modes (where the MCP adapter
+  // is actually used) so the factory can be synchronous and use container.get() directly.
+  // In cli mode (withServices()) the mcpAdapter factory is registered but never resolved,
+  // so the pre-resolve is intentionally skipped to avoid ChannelManager.create() latency.
+  // channelService is optional — if resolution fails, MCPAdapter is created without it.
+  let preResolvedChannelService: ChannelService | undefined;
+  if (mode !== 'cli') {
+    // 'server' or 'run' modes — pre-resolve so the factory below is synchronous
+    const channelServiceResult = await container.resolve<ChannelService>('channelService');
+    if (channelServiceResult.ok) {
+      preResolvedChannelService = channelServiceResult.value;
+    } else {
+      logger.warn('MCPAdapter: channelService unavailable, channel tools disabled', {
+        error: channelServiceResult.error.message,
+      });
+    }
+  }
+
   container.registerSingleton('mcpAdapter', () => {
     const taskManagerResult = container.get<TaskManager>('taskManager');
     if (!taskManagerResult.ok) {
@@ -722,6 +740,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       config,
       orchestrationService: getFromContainer<OrchestrationService>(container, 'orchestrationService'),
       pipelineRepository: getFromContainer<PipelineRepository>(container, 'pipelineRepository'),
+      channelService: preResolvedChannelService,
     });
   });
 
@@ -758,17 +777,22 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     // Skipped in cli mode (no tmux sessions are managed by CLI commands).
     // DECISION: resolve() is required here (not get()) because ChannelManager.create() is async
     // (subscribes to events). container.get() rejects async factories before instantiation.
-    container.resolve<ChannelService>('channelService').then((channelServiceResult) => {
-      if (!channelServiceResult.ok) {
-        logger.error('Failed to resolve ChannelService for recovery', channelServiceResult.error);
-        return;
-      }
-      channelServiceResult.value.recoverChannels().then((result) => {
-        if (!result.ok) {
-          logger.error('Channel recovery failed', result.error);
+    container
+      .resolve<ChannelService>('channelService')
+      .then((channelServiceResult) => {
+        if (!channelServiceResult.ok) {
+          logger.error('Failed to resolve ChannelService for recovery', channelServiceResult.error);
+          return;
         }
+        channelServiceResult.value.recoverChannels().then((result) => {
+          if (!result.ok) {
+            logger.error('Channel recovery failed', result.error);
+          }
+        });
+      })
+      .catch((e: unknown) => {
+        logger.error('Unexpected error in channel recovery', e instanceof Error ? e : new Error(String(e)));
       });
-    });
   } else {
     logger.info(`Skipping recovery (mode=${mode})`);
   }

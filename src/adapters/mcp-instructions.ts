@@ -70,6 +70,39 @@ Two-step pattern:
 The built-in CreateOrchestrator is this pattern with a pre-built system prompt.
 InitCustomOrchestrator gives you the building blocks to create your own.
 
+### Channels (CreateChannel, SendChannelMessage, etc.)
+Use for persistent multi-agent communication sessions where agents talk to each other.
+Channels own their member sessions — each member is a long-running agent process that receives messages and can respond.
+
+**Create a single-agent channel** (one member, no maxRounds required):
+\`\`\`
+CreateChannel { name: "research", members: [{ name: "research", agent: "claude" }], topic: "Summarize the codebase" }
+\`\`\`
+
+**Create a multi-agent channel** (two or more members, maxRounds required):
+\`\`\`
+CreateChannel {
+  name: "code-review",
+  members: [
+    { name: "author", agent: "claude", systemPrompt: "You are the code author." },
+    { name: "reviewer", agent: "claude", systemPrompt: "You are the code reviewer." }
+  ],
+  communicationMode: "round-robin",
+  maxRounds: 10,
+  topic: "Review the authentication module"
+}
+\`\`\`
+
+**Communication modes**:
+- \`broadcast\` (default) — messages go to all active members
+- \`directed\` — members address each other by name (\`@member-name: message\`)
+- \`round-robin\` — members take turns in fixed order
+
+**Send a message** to the channel (routes per mode) or a specific member:
+- SendChannelMessage { channelId: "ch-...", message: "...", targetMember: "reviewer" }
+
+**Lifecycle**: ChannelStatus → ListChannels → PauseChannel / ResumeChannel → DestroyChannel
+
 ## Monitoring Patterns
 
 ### Check on work
@@ -80,6 +113,8 @@ InitCustomOrchestrator gives you the building blocks to create your own.
 - OrchestratorStatus with orchestratorId → see plan steps and progress
 - PipelineStatus with pipelineId → check overall pipeline status and per-step task IDs
 - ListPipelines → list pipelines with optional status filter (pending/running/completed/failed/cancelled)
+- ChannelStatus with channelId → see channel details and member statuses
+- ListChannels → list channels with optional status filter
 
 ### React to results
 - TaskLogs to read output, then decide next steps

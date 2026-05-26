@@ -400,6 +400,9 @@ export class ChannelManager implements ChannelService {
     if (!channel || channel.status === ChannelStatus.DESTROYED) {
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Channel '${channelId}' not found or destroyed`));
     }
+    if (channel.status === ChannelStatus.COMPLETED) {
+      return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Channel '${channelId}' is completed`));
+    }
 
     // Validate targetMember before queuing (fast-fail, no async work needed).
     if (targetMember !== undefined) {
@@ -425,7 +428,12 @@ export class ChannelManager implements ChannelService {
 
     let dispatchError: Error | undefined;
     let delivered = false;
+    // Cancellation token: set to true if drain times out before the closure
+    // executes. The closure checks this flag before dispatching so a timed-out
+    // send does not dispatch after the caller has already received an error.
+    let cancelled = false;
     queue.enqueue(async () => {
+      if (cancelled) return;
       const dispatchResult = await this.dispatchMessage(channel, message, targetMember);
       delivered = true;
       if (!dispatchResult.ok) {
@@ -450,14 +458,15 @@ export class ChannelManager implements ChannelService {
     await queue.drain(10_000);
 
     // Guard against drain timeout racing the enqueued task: if the closure never
-    // ran (drain expired before execution), return an explicit error rather than
-    // silently reporting ok() for an undelivered message.
+    // ran (drain expired before execution), cancel it and return an explicit error
+    // rather than silently reporting ok() for an undelivered message.
     // ARCHITECTURE: SerialQueue is constructed internally (not injected), so the
     // 10-second drain timeout cannot be shortened in tests without making
     // drainTimeoutMs injectable. This guard is verified by inspection — mock
     // tmuxConnector resolves synchronously so drain() always completes before the
     // timeout in unit tests. A slow-connector test would require a design change.
     if (!delivered) {
+      cancelled = true;
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, `Message delivery timed out for channel '${channelId}'`));
     }
     if (dispatchError) return err(dispatchError);
@@ -732,6 +741,15 @@ export class ChannelManager implements ChannelService {
           ErrorCode.INVALID_INPUT,
           'Multi-agent channels (≥2 members) require maxRounds to be specified',
         ),
+      );
+    }
+
+    // 5b. Validate maxRounds range when provided
+    if (request.maxRounds !== undefined && (request.maxRounds < 1 || request.maxRounds > 10000)) {
+      return err(
+        new AutobeatError(ErrorCode.INVALID_INPUT, `maxRounds must be between 1 and 10000 (got ${request.maxRounds})`, {
+          maxRounds: request.maxRounds,
+        }),
       );
     }
 
