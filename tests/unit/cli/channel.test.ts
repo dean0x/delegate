@@ -19,7 +19,8 @@ describe('parseChannelCreateArgs', () => {
       if (!result.ok) return;
       expect(result.value.mode).toBe('single');
       expect(result.value.name).toBe('my-channel');
-      expect((result.value as { agent: string }).agent).toBe('claude');
+      if (result.value.mode !== 'single') return;
+      expect(result.value.agent).toBe('claude');
     });
 
     it('accepts all single-agent optional flags', () => {
@@ -36,18 +37,19 @@ describe('parseChannelCreateArgs', () => {
       ]);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      const val = result.value as { mode: string; topic?: string; workingDirectory?: string; systemPrompt?: string };
-      expect(val.mode).toBe('single');
-      expect(val.topic).toBe('analyze this codebase');
-      expect(val.workingDirectory).toBe(cwd);
-      expect(val.systemPrompt).toBe('You are a helpful assistant');
+      expect(result.value.mode).toBe('single');
+      if (result.value.mode !== 'single') return;
+      expect(result.value.topic).toBe('analyze this codebase');
+      expect(result.value.workingDirectory).toBe(cwd);
+      expect(result.value.systemPrompt).toBe('You are a helpful assistant');
     });
 
     it('accepts codex as agent', () => {
       const result = parseChannelCreateArgs(['my-channel', '--agent', 'codex']);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect((result.value as { agent: string }).agent).toBe('codex');
+      if (result.value.mode !== 'single') return;
+      expect(result.value.agent).toBe('codex');
     });
 
     it('rejects unknown agent provider', () => {
@@ -90,10 +92,10 @@ describe('parseChannelCreateArgs', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.mode).toBe('multi');
-      const val = result.value as { members: Array<{ name: string; agent: string; systemPrompt?: string }> };
-      expect(val.members).toHaveLength(2);
-      expect(val.members[0]).toMatchObject({ name: 'author', agent: 'claude' });
-      expect(val.members[1]).toMatchObject({ name: 'reviewer', agent: 'codex' });
+      if (result.value.mode !== 'multi') return;
+      expect(result.value.members).toHaveLength(2);
+      expect(result.value.members[0]).toMatchObject({ name: 'author', agent: 'claude' });
+      expect(result.value.members[1]).toMatchObject({ name: 'reviewer', agent: 'codex' });
     });
 
     it('parses member with prompt containing colons', () => {
@@ -106,8 +108,8 @@ describe('parseChannelCreateArgs', () => {
       ]);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      const val = result.value as { members: Array<{ name: string; agent: string; systemPrompt?: string }> };
-      expect(val.members[0]?.systemPrompt).toBe('You are a debugger: be precise.');
+      if (result.value.mode !== 'multi') return;
+      expect(result.value.members[0]?.systemPrompt).toBe('You are a debugger: be precise.');
     });
 
     it('accepts valid communication mode', () => {
@@ -122,8 +124,8 @@ describe('parseChannelCreateArgs', () => {
       ]);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      const val = result.value as { communicationMode?: string };
-      expect(val.communicationMode).toBe('round-robin');
+      if (result.value.mode !== 'multi') return;
+      expect(result.value.communicationMode).toBe('round-robin');
     });
 
     it('accepts broadcast and directed modes', () => {
@@ -139,8 +141,8 @@ describe('parseChannelCreateArgs', () => {
         ]);
         expect(result.ok).toBe(true);
         if (!result.ok) return;
-        const val = result.value as { communicationMode?: string };
-        expect(val.communicationMode).toBe(mode);
+        if (result.value.mode !== 'multi') return;
+        expect(result.value.communicationMode).toBe(mode);
       }
     });
 
@@ -228,8 +230,8 @@ describe('parseChannelCreateArgs', () => {
       const result = parseChannelCreateArgs(['my-channel', '--member', 'agent1:claude', '--max-rounds', '5']);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      const val = result.value as { members: Array<{ systemPrompt?: string }> };
-      expect(val.members[0]?.systemPrompt).toBeUndefined();
+      if (result.value.mode !== 'multi') return;
+      expect(result.value.members[0]?.systemPrompt).toBeUndefined();
     });
   });
 
@@ -338,22 +340,15 @@ describe('parseChannelCreateArgs', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.mode).toBe('multi');
-      const val = result.value as {
-        name: string;
-        members: Array<{ name: string; agent: string; systemPrompt?: string }>;
-        communicationMode?: string;
-        maxRounds: number;
-        topic?: string;
-        workingDirectory?: string;
-      };
-      expect(val.name).toBe('full-channel');
-      expect(val.members).toHaveLength(2);
-      expect(val.members[0]?.systemPrompt).toBe('You write code.');
-      expect(val.members[1]?.systemPrompt).toBeUndefined();
-      expect(val.communicationMode).toBe('directed');
-      expect(val.maxRounds).toBe(50);
-      expect(val.topic).toBe('Build a REST API');
-      expect(val.workingDirectory).toBe(cwd);
+      if (result.value.mode !== 'multi') return;
+      expect(result.value.name).toBe('full-channel');
+      expect(result.value.members).toHaveLength(2);
+      expect(result.value.members[0]?.systemPrompt).toBe('You write code.');
+      expect(result.value.members[1]?.systemPrompt).toBeUndefined();
+      expect(result.value.communicationMode).toBe('directed');
+      expect(result.value.maxRounds).toBe(50);
+      expect(result.value.topic).toBe('Build a REST API');
+      expect(result.value.workingDirectory).toBe(cwd);
     });
   });
 });

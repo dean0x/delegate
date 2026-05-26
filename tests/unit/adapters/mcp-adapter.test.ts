@@ -4090,6 +4090,20 @@ describe('MCPAdapter - Channel Handlers', () => {
       const result = await adapter.callTool('DestroyChannel', { channelId: 'ch-abc' });
       expect(result.isError).toBe(true);
     });
+
+    it('returns service unavailable when channelService is undefined', async () => {
+      const adapterNoChannel = makeChannelAdapter(undefined);
+      const result = await adapterNoChannel.callTool('DestroyChannel', { channelId: 'ch-abc' });
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('unavailable');
+    });
+
+    it('returns validation error on empty channelId', async () => {
+      const result = await adapter.callTool('DestroyChannel', { channelId: '' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+    });
   });
 
   describe('ChannelStatus', () => {
@@ -4110,6 +4124,28 @@ describe('MCPAdapter - Channel Handlers', () => {
       const response = JSON.parse(result.content[0].text);
       expect(response.error).toContain('not found');
     });
+
+    it('propagates service error', async () => {
+      mockChannelService.setGetResult(err(new Error('DB connection lost')));
+      const result = await adapter.callTool('ChannelStatus', { channelId: 'ch-abc' });
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('DB connection lost');
+    });
+
+    it('returns service unavailable when channelService is undefined', async () => {
+      const adapterNoChannel = makeChannelAdapter(undefined);
+      const result = await adapterNoChannel.callTool('ChannelStatus', { channelId: 'ch-abc' });
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('unavailable');
+    });
+
+    it('returns validation error on empty channelId', async () => {
+      const result = await adapter.callTool('ChannelStatus', { channelId: '' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+    });
   });
 
   describe('ListChannels', () => {
@@ -4129,6 +4165,28 @@ describe('MCPAdapter - Channel Handlers', () => {
     it('passes limit to service', async () => {
       await adapter.callTool('ListChannels', { limit: 5 });
       expect(mockChannelService.listChannelsCalls[0]?.limit).toBe(5);
+    });
+
+    it('propagates service error', async () => {
+      mockChannelService.setListResult(err(new Error('Repository unavailable')));
+      const result = await adapter.callTool('ListChannels', {});
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('Repository unavailable');
+    });
+
+    it('returns service unavailable when channelService is undefined', async () => {
+      const adapterNoChannel = makeChannelAdapter(undefined);
+      const result = await adapterNoChannel.callTool('ListChannels', {});
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('unavailable');
+    });
+
+    it('returns validation error on invalid status filter', async () => {
+      const result = await adapter.callTool('ListChannels', { status: 'unknown-status' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
     });
   });
 
@@ -4161,6 +4219,23 @@ describe('MCPAdapter - Channel Handlers', () => {
       });
       expect(result.isError).toBe(true);
     });
+
+    it('returns service unavailable when channelService is undefined', async () => {
+      const adapterNoChannel = makeChannelAdapter(undefined);
+      const result = await adapterNoChannel.callTool('SendChannelMessage', {
+        channelId: 'ch-abc',
+        message: 'hello',
+      });
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('unavailable');
+    });
+
+    it('returns validation error on empty message', async () => {
+      const result = await adapter.callTool('SendChannelMessage', { channelId: 'ch-abc', message: '' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+    });
   });
 
   describe('PauseChannel', () => {
@@ -4177,6 +4252,20 @@ describe('MCPAdapter - Channel Handlers', () => {
       const result = await adapter.callTool('PauseChannel', { channelId: 'ch-abc' });
       expect(result.isError).toBe(true);
     });
+
+    it('returns service unavailable when channelService is undefined', async () => {
+      const adapterNoChannel = makeChannelAdapter(undefined);
+      const result = await adapterNoChannel.callTool('PauseChannel', { channelId: 'ch-abc' });
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('unavailable');
+    });
+
+    it('returns validation error on empty channelId', async () => {
+      const result = await adapter.callTool('PauseChannel', { channelId: '' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+    });
   });
 
   describe('ResumeChannel', () => {
@@ -4192,6 +4281,20 @@ describe('MCPAdapter - Channel Handlers', () => {
       mockChannelService.setResumeResult(err(new Error('Not PAUSED')));
       const result = await adapter.callTool('ResumeChannel', { channelId: 'ch-abc' });
       expect(result.isError).toBe(true);
+    });
+
+    it('returns service unavailable when channelService is undefined', async () => {
+      const adapterNoChannel = makeChannelAdapter(undefined);
+      const result = await adapterNoChannel.callTool('ResumeChannel', { channelId: 'ch-abc' });
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toContain('unavailable');
+    });
+
+    it('returns validation error on empty channelId', async () => {
+      const result = await adapter.callTool('ResumeChannel', { channelId: '' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
     });
   });
 });
