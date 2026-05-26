@@ -307,6 +307,54 @@ describe('parseChannelCreateArgs', () => {
     });
   });
 
+  // ─── system-prompt length validation ─────────────────────────────────────────
+
+  describe('--system-prompt length validation', () => {
+    it('accepts system-prompt at the 100,000 character limit', () => {
+      const result = parseChannelCreateArgs(['my-channel', '--agent', 'claude', '--system-prompt', 'a'.repeat(100_000)]);
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects system-prompt exceeding 100,000 characters', () => {
+      const result = parseChannelCreateArgs(['my-channel', '--agent', 'claude', '--system-prompt', 'a'.repeat(100_001)]);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('100,000');
+    });
+  });
+
+  // ─── working-directory validation ─────────────────────────────────────────────
+
+  describe('--working-directory validation', () => {
+    it('rejects a path that traverses outside the working directory', () => {
+      const result = parseChannelCreateArgs(['my-channel', '--agent', 'claude', '--working-directory', '../../etc/passwd']);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('Invalid working directory');
+    });
+  });
+
+  // ─── Shorthand flags ──────────────────────────────────────────────────────────
+
+  describe('shorthand flags', () => {
+    it('accepts -a as shorthand for --agent', () => {
+      const result = parseChannelCreateArgs(['my-channel', '-a', 'claude']);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.mode).toBe('single');
+      if (result.value.mode !== 'single') return;
+      expect(result.value.agent).toBe('claude');
+    });
+
+    it('accepts -w as shorthand for --working-directory', () => {
+      const result = parseChannelCreateArgs(['my-channel', '--agent', 'claude', '-w', cwd]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      if (result.value.mode !== 'single') return;
+      expect(result.value.workingDirectory).toBe(cwd);
+    });
+  });
+
   // ─── Unknown flags ───────────────────────────────────────────────────────────
 
   describe('unknown flags', () => {
