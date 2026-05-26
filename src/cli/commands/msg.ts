@@ -98,7 +98,8 @@ export async function handleMsgCommand(args: string[]): Promise<void> {
 
   const s = ui.createSpinner();
   s.start('Sending message...');
-  const { container, channelService } = await withServices(s);
+  const { container, resolveChannelService } = await withServices(s);
+  const channelService = await resolveChannelService();
 
   if (!channelService) {
     s.stop('Failed');

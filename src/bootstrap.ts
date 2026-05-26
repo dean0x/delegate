@@ -707,26 +707,28 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   });
 
   // Register MCP adapter
-  // ARCHITECTURE: channelService is async (ChannelManager.create()), so the mcpAdapter
-  // factory must be async too. container.registerSingleton() supports async factories
-  // via container.resolve() (not container.get()). channelService is optional — if
-  // resolution fails, MCPAdapter is still created with channelService: undefined.
-  container.registerSingleton('mcpAdapter', async () => {
+  // ARCHITECTURE: channelService is pre-resolved in server/run modes (where the MCP adapter
+  // is actually used) so the factory can be synchronous and use container.get() directly.
+  // In cli mode (withServices()) the mcpAdapter factory is registered but never resolved,
+  // so the pre-resolve is intentionally skipped to avoid ChannelManager.create() latency.
+  // channelService is optional — if resolution fails, MCPAdapter is created without it.
+  let preResolvedChannelService: ChannelService | undefined;
+  if (!skipProxy) {
+    // 'server' or 'run' modes — pre-resolve so the factory below is synchronous
+    const channelServiceResult = await container.resolve<ChannelService>('channelService');
+    if (channelServiceResult.ok) {
+      preResolvedChannelService = channelServiceResult.value;
+    } else {
+      logger.warn('MCPAdapter: channelService unavailable, channel tools disabled', {
+        error: channelServiceResult.error.message,
+      });
+    }
+  }
+
+  container.registerSingleton('mcpAdapter', () => {
     const taskManagerResult = container.get<TaskManager>('taskManager');
     if (!taskManagerResult.ok) {
       throw new Error(`Failed to get taskManager for MCPAdapter: ${taskManagerResult.error.message}`);
-    }
-
-    // Resolve channelService (async factory). Absent in test environments or if bootstrap failed.
-    let channelService: ChannelService | undefined;
-    const channelServiceResult = await container.resolve<ChannelService>('channelService');
-    if (channelServiceResult.ok) {
-      channelService = channelServiceResult.value;
-    } else {
-      getFromContainer<Logger>(container, 'logger').warn(
-        'MCPAdapter: channelService unavailable, channel tools disabled',
-        { error: channelServiceResult.error.message },
-      );
     }
 
     return new MCPAdapter({
@@ -738,7 +740,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       config,
       orchestrationService: getFromContainer<OrchestrationService>(container, 'orchestrationService'),
       pipelineRepository: getFromContainer<PipelineRepository>(container, 'pipelineRepository'),
-      channelService,
+      channelService: preResolvedChannelService,
     });
   });
 
