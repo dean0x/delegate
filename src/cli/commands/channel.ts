@@ -499,7 +499,7 @@ async function handleChannelStatus(args: string[]): Promise<void> {
     lines.push(`ID:            ${channel.id}`);
     lines.push(`Name:          ${channel.name}`);
     lines.push(`Status:        ${ui.colorStatus(channel.status)}`);
-    lines.push(`Members:       ${channel.members.length}`);
+    lines.push(`Member count:  ${channel.members.length}`);
     if (channel.communicationMode) lines.push(`Mode:          ${channel.communicationMode}`);
     if (channel.maxRounds !== undefined) {
       lines.push(`Rounds:        ${channel.currentRound}/${channel.maxRounds}`);
@@ -510,6 +510,7 @@ async function handleChannelStatus(args: string[]): Promise<void> {
     lines.push(`Created:       ${new Date(channel.createdAt).toISOString()}`);
 
     if (channel.members.length > 0) {
+      lines.push('');
       lines.push('Members:');
       for (const m of channel.members) {
         lines.push(`  ${m.name}  ${m.agent}  ${ui.colorStatus(m.status)}`);
@@ -574,20 +575,15 @@ async function resolveChannelOp(
 async function handleChannelDestroy(args: string[]): Promise<void> {
   const idOrName = args[0];
   if (!idOrName) {
-    ui.error('Usage: beat channel destroy <channel-id|name> [reason]');
+    ui.error('Usage: beat channel destroy <channel-id|name>');
     process.exit(1);
   }
-  // ARCHITECTURE: reason is a user-visible display string only; destroyChannel()
-  // accepts a typed ChannelDestroyReason enum ('user-requested' | 'max-rounds-reached' |
-  // 'all-members-crashed'), so the free-form CLI input cannot be passed to the service.
-  const displayReason = args.slice(1).join(' ') || undefined;
 
   const { channelService, channelId, s } = await resolveChannelOp(idOrName, 'Destroying channel...');
   const result = await channelService.destroyChannel(channelId, 'user-requested');
   exitOnError(result, s, 'Failed to destroy channel');
   s.stop('Destroyed');
   ui.success(`Channel ${idOrName} destroyed`);
-  if (displayReason) ui.info(`Reason: ${displayReason}`);
   process.exit(0);
 }
 
