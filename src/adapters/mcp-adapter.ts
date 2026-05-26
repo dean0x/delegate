@@ -4293,7 +4293,7 @@ export class MCPAdapter {
                 channelId: channel.id,
                 name: channel.name,
                 status: channel.status,
-                memberCount: channel.members.length,
+                members: channel.members.map((m) => ({ name: m.name, agent: m.agent, status: m.status })),
                 communicationMode: channel.communicationMode ?? null,
                 maxRounds: channel.maxRounds ?? null,
                 message: 'Channel created successfully',

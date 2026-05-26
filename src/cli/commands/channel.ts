@@ -267,8 +267,12 @@ export async function handleChannelCommand(subCmd: string | undefined, channelAr
     await handleChannelResume(channelArgs);
     return;
   }
+  if (subCmd === 'create') {
+    await handleChannelCreate(channelArgs);
+    return;
+  }
 
-  // Default: create (subCmd is the channel name or a flag)
+  // Default: subCmd is the channel name (e.g. `beat channel advisor --agent claude`)
   const createArgs = subCmd ? [subCmd, ...channelArgs] : channelArgs;
   await handleChannelCreate(createArgs);
 }
@@ -412,8 +416,10 @@ async function handleChannelList(args: string[]): Promise<void> {
     } else {
       for (const ch of channels) {
         const memberSummary = ch.members.map((m) => m.name).join(', ');
+        const mode = ch.communicationMode ?? 'n/a';
+        const rounds = ch.maxRounds ? `${ch.currentRound ?? 0}/${ch.maxRounds}` : 'n/a';
         ui.step(
-          `${ui.dim(ch.id)}  ${ui.colorStatus(ch.status.padEnd(10))}  ${ch.name}  members: ${ch.members.length} (${memberSummary})`,
+          `${ui.dim(ch.id)}  ${ui.colorStatus(ch.status.padEnd(10))}  ${ch.name.padEnd(20)}  ${mode.padEnd(12)}  ${rounds.padEnd(8)}  members: ${ch.members.length} (${memberSummary})`,
         );
       }
       ui.info(`${channels.length} channel${channels.length === 1 ? '' : 's'}`);

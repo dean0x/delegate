@@ -130,7 +130,9 @@ export async function handleMsgCommand(args: string[]): Promise<void> {
   }
 
   if (channelStatus === ChannelStatus.PAUSED) {
-    ui.info(`Note: channel "${channelName}" is paused. Message will be queued.`);
+    s.stop('Failed');
+    ui.error(`Channel "${channelName}" is paused. Resume with: beat channel resume ${channelName}`);
+    process.exit(1);
   }
 
   const result = await channelService.sendMessage(channelId, message, memberName);
