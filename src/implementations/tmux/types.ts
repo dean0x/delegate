@@ -236,6 +236,19 @@ export interface TmuxSessionManagerPort {
    * Implementation: `tmux set-environment -t <name> <varName> <value>`
    */
   setSessionEnvironment(name: string, varName: string, value: string): Result<void, AutobeatError>;
+  /**
+   * Delivers content to a session via load-buffer / paste-buffer without shell expansion.
+   * DESIGN DECISION (Phase 7): Channel members receive agent output via paste-buffer
+   * rather than send-keys to guarantee literal delivery of content with special characters.
+   *
+   * Flow:
+   *   1. Write content to a temp file (avoids arg-size limits and shell expansion)
+   *   2. tmux load-buffer -b beat-channel - < tempFile
+   *   3. tmux paste-buffer -b beat-channel -t sessionName
+   *   4. tmux delete-buffer -b beat-channel
+   *   5. Remove temp file (always, even on error)
+   */
+  pasteContent(sessionName: string, content: string): Result<void, AutobeatError>;
 }
 
 /**

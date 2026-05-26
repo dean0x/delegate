@@ -166,7 +166,17 @@ describe.skipIf(!tmuxAvailable)('Sentinel detection — session lifecycle', () =
   });
 
   it('staleness: session appears dead after external kill', () => {
-    const manager = new TmuxSessionManager({ exec: realExec as ExecFn });
+    const manager = new TmuxSessionManager({
+      exec: realExec as ExecFn,
+      writeFileSync: (p, c) => fs.writeFileSync(p, c, 'utf8'),
+      unlinkSync: (p) => {
+        try {
+          fs.unlinkSync(p);
+        } catch {
+          /* best-effort */
+        }
+      },
+    });
 
     // Clean up any pre-existing session with this name
     realExec(`tmux kill-session -t ${sessionName} 2>/dev/null || true`);

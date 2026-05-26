@@ -36,7 +36,11 @@ describe('TmuxSessionManager', () => {
 
   beforeEach(() => {
     exec = vi.fn().mockReturnValue({ stdout: '', stderr: '', status: 0 } satisfies ExecResult);
-    manager = new TmuxSessionManager({ exec: exec as ExecFn });
+    manager = new TmuxSessionManager({
+      exec: exec as ExecFn,
+      writeFileSync: vi.fn(),
+      unlinkSync: vi.fn(),
+    });
   });
 
   // ─── createSession ───────────────────────────────────────────────────────────
@@ -167,10 +171,32 @@ describe('TmuxSessionManager', () => {
     expect(envStr).not.toContain('LARGE_VAR');
   });
 
+  it('injectEnvironment silently skips multi-byte env value exceeding MAX_ENV_VALUE_LENGTH in bytes even when char count is within limit', () => {
+    // Each CJK character is 3 UTF-8 bytes but 1 JS char. 1366 CJK chars = 4098 bytes > 4096 byte limit.
+    // Using value.length (1366) would pass the 4096 guard; Buffer.byteLength (4098) correctly rejects it.
+    const cjkChar = '中'; // 3 UTF-8 bytes
+    const oversizedByBytes = cjkChar.repeat(1366);
+    expect(Buffer.byteLength(oversizedByBytes, 'utf8')).toBeGreaterThan(4096);
+    expect(oversizedByBytes.length).toBeLessThan(4096);
+    manager.createSession({
+      ...validConfig,
+      env: {
+        SMALL_VAR: 'fits',
+        MULTI_BYTE_VAR: oversizedByBytes,
+      },
+    });
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const envStr = calls.filter((c) => c.includes('set-environment')).join(' ');
+    expect(envStr).toContain('SMALL_VAR');
+    expect(envStr).not.toContain('MULTI_BYTE_VAR');
+  });
+
   it('enforces concurrent session limit when max sessions are active', () => {
     const limitedManager = new TmuxSessionManager({
       exec: listSessionsExec(20) as ExecFn,
       maxConcurrentSessions: 20,
+      writeFileSync: vi.fn(),
+      unlinkSync: vi.fn(),
     });
     const result = limitedManager.createSession(validConfig);
     expect(result.ok).toBe(false);
@@ -189,6 +215,8 @@ describe('TmuxSessionManager', () => {
         if (cmd.includes('list-sessions')) return { stdout: '', stderr: "can't find session", status: 1 };
         return { stdout: '', stderr: 'duplicate session: beat-task-123', status: 1 };
       }) as ExecFn,
+      writeFileSync: vi.fn(),
+      unlinkSync: vi.fn(),
     });
     const failResult = failManager.createSession(validConfig);
     expect(failResult.ok).toBe(false);
@@ -487,7 +515,7 @@ describe('TmuxSessionManager.setSessionEnvironment()', () => {
 
   beforeEach(() => {
     exec = vi.fn().mockReturnValue({ stdout: '', stderr: '', status: 0 });
-    manager = new TmuxSessionManager({ exec });
+    manager = new TmuxSessionManager({ exec, writeFileSync: vi.fn(), unlinkSync: vi.fn() });
   });
 
   it('calls tmux set-environment with correct arguments', () => {
@@ -530,11 +558,204 @@ describe('TmuxSessionManager.setSessionEnvironment()', () => {
     expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
   });
 
+  it('returns err for multi-byte value that exceeds MAX_ENV_VALUE_LENGTH in bytes even when char count is within limit', () => {
+    // Each CJK character is 3 UTF-8 bytes but 1 JS char. 1366 chars = 4098 bytes > 4096 byte limit.
+    // Using value.length (1366) would pass the 4096 guard; Buffer.byteLength (4098) correctly rejects it.
+    const cjkChar = '中'; // 3 UTF-8 bytes
+    const oversizedByBytes = cjkChar.repeat(1366);
+    expect(Buffer.byteLength(oversizedByBytes, 'utf8')).toBeGreaterThan(4096);
+    expect(oversizedByBytes.length).toBeLessThan(4096);
+    const result = manager.setSessionEnvironment('beat-task-123', 'MY_VAR', oversizedByBytes);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
   it('single-quotes value to prevent shell injection', () => {
     const result = manager.setSessionEnvironment('beat-task-123', 'MY_VAR', 'task-abc');
     expect(result.ok).toBe(true);
     const cmd = (exec.mock.calls[0] as [string])[0];
     // Value must be wrapped in single quotes
     expect(cmd).toMatch(/'task-abc'/);
+  });
+
+  // ─── pasteContent ─────────────────────────────────────────────────────────────
+
+  describe('pasteContent', () => {
+    let writeFileSync: ReturnType<typeof vi.fn>;
+    let unlinkSync: ReturnType<typeof vi.fn>;
+    let pasteManager: TmuxSessionManager;
+
+    beforeEach(() => {
+      writeFileSync = vi.fn();
+      unlinkSync = vi.fn();
+      pasteManager = new TmuxSessionManager({
+        exec: exec as ExecFn,
+        writeFileSync: writeFileSync as (path: string, content: string) => void,
+        unlinkSync: unlinkSync as (path: string) => void,
+      });
+    });
+
+    it('writes content to a temp file and loads it into the named buffer', () => {
+      const result = pasteManager.pasteContent('beat-channel-test-member', 'hello world');
+      expect(result.ok).toBe(true);
+      // writeFileSync must be called with content
+      expect(writeFileSync).toHaveBeenCalledOnce();
+      const [writtenPath, writtenContent] = writeFileSync.mock.calls[0] as [string, string];
+      expect(writtenContent).toBe('hello world');
+      // Temp file path must be in tmpdir
+      expect(writtenPath).toContain('beat-channel-');
+    });
+
+    it('calls load-buffer, paste-buffer, and delete-buffer in order', () => {
+      pasteManager.pasteContent('beat-channel-test-member', 'some message');
+      const cmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
+      expect(cmds.some((c) => c.includes('load-buffer'))).toBe(true);
+      expect(cmds.some((c) => c.includes('paste-buffer'))).toBe(true);
+      expect(cmds.some((c) => c.includes('delete-buffer'))).toBe(true);
+
+      // Verify order: load → paste → delete
+      const loadIdx = cmds.findIndex((c) => c.includes('load-buffer'));
+      const pasteIdx = cmds.findIndex((c) => c.includes('paste-buffer'));
+      const deleteIdx = cmds.findIndex((c) => c.includes('delete-buffer'));
+      expect(loadIdx).toBeLessThan(pasteIdx);
+      expect(pasteIdx).toBeLessThan(deleteIdx);
+    });
+
+    it('paste-buffer targets the correct session name', () => {
+      pasteManager.pasteContent('beat-channel-review-agent', 'content');
+      const cmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
+      const pasteCmd = cmds.find((c) => c.includes('paste-buffer'));
+      expect(pasteCmd).toBeDefined();
+      expect(pasteCmd).toContain("'beat-channel-review-agent'");
+    });
+
+    it('uses a per-invocation unique buffer name (beat-ch-<uuid>) for load, paste, and delete', () => {
+      pasteManager.pasteContent('beat-channel-test-member', 'content');
+      const cmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
+      const loadCmd = cmds.find((c) => c.includes('load-buffer'));
+      const pasteCmd = cmds.find((c) => c.includes('paste-buffer'));
+      const deleteCmd = cmds.find((c) => c.includes('delete-buffer'));
+      expect(loadCmd).toMatch(/-b 'beat-ch-[0-9a-f]{8}'/);
+      expect(pasteCmd).toMatch(/-b 'beat-ch-[0-9a-f]{8}'/);
+      expect(deleteCmd).toMatch(/-b 'beat-ch-[0-9a-f]{8}'/);
+      // All three must reference the same buffer ID within a single invocation
+      const loadId = loadCmd?.match(/-b '(beat-ch-[0-9a-f]{8})'/)?.[1];
+      const pasteId = pasteCmd?.match(/-b '(beat-ch-[0-9a-f]{8})'/)?.[1];
+      const deleteId = deleteCmd?.match(/-b '(beat-ch-[0-9a-f]{8})'/)?.[1];
+      expect(loadId).toBeDefined();
+      expect(loadId).toBe(pasteId);
+      expect(loadId).toBe(deleteId);
+    });
+
+    it('uses distinct buffer IDs for concurrent calls (no shared global buffer)', () => {
+      // Two sequential calls must produce different buffer IDs
+      pasteManager.pasteContent('beat-channel-test-member', 'first');
+      const firstCmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
+      const firstBufferId = firstCmds.find((c) => c.includes('load-buffer'))?.match(/-b '(beat-ch-[0-9a-f]{8})'/)?.[1];
+
+      exec.mockClear();
+      pasteManager.pasteContent('beat-channel-test-member', 'second');
+      const secondCmds: string[] = (exec.mock.calls as [string][]).map((c) => c[0]);
+      const secondBufferId = secondCmds
+        .find((c) => c.includes('load-buffer'))
+        ?.match(/-b '(beat-ch-[0-9a-f]{8})'/)?.[1];
+
+      expect(firstBufferId).toBeDefined();
+      expect(secondBufferId).toBeDefined();
+      expect(firstBufferId).not.toBe(secondBufferId);
+    });
+
+    it('cleans up temp file even when load-buffer fails', () => {
+      exec.mockReturnValueOnce({ stdout: '', stderr: 'load failed', status: 1 });
+      const result = pasteManager.pasteContent('beat-channel-test-member', 'content');
+      expect(result.ok).toBe(false);
+      // unlinkSync must have been called despite failure
+      expect(unlinkSync).toHaveBeenCalledOnce();
+    });
+
+    it('cleans up temp file on success', () => {
+      pasteManager.pasteContent('beat-channel-test-member', 'content');
+      expect(unlinkSync).toHaveBeenCalledOnce();
+    });
+
+    it('returns TMUX_SESSION_FAILED when load-buffer fails', () => {
+      exec.mockReturnValueOnce({ stdout: '', stderr: 'no server running', status: 1 });
+      const result = pasteManager.pasteContent('beat-channel-test-member', 'content');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    });
+
+    it('returns TMUX_SESSION_FAILED when paste-buffer fails', () => {
+      exec
+        .mockReturnValueOnce({ stdout: '', stderr: '', status: 0 }) // load-buffer succeeds
+        .mockReturnValueOnce({ stdout: '', stderr: 'no session', status: 1 }); // paste-buffer fails
+      const result = pasteManager.pasteContent('beat-channel-test-member', 'content');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    });
+
+    it('rejects session names that do not match SESSION_NAME_REGEX', () => {
+      const result = pasteManager.pasteContent('not-a-beat-session', 'content');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    });
+
+    it('returns TMUX_SESSION_FAILED when content exceeds MAX_PASTE_CONTENT_LENGTH (256 KB)', () => {
+      // 256 KB + 1 byte — just over the limit (ASCII: byte count === char count)
+      const oversized = 'x'.repeat(256 * 1024 + 1);
+      const result = pasteManager.pasteContent('beat-channel-test-member', oversized);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+      expect(result.error.message).toContain('exceeds maximum length');
+      // No file write or tmux command should have been attempted
+      expect(writeFileSync).not.toHaveBeenCalled();
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it('rejects multi-byte content that exceeds MAX_PASTE_CONTENT_LENGTH in bytes even if char count is within limit', () => {
+      // Each CJK character is 3 bytes in UTF-8 but 1 char in JS string length.
+      // 87382 chars * 3 bytes = 262146 bytes > 256 * 1024 (262144) bytes.
+      // Using content.length would pass (87382 < 262144), but byte check correctly rejects it.
+      const cjkChar = '中'; // '中' — 3 UTF-8 bytes
+      const oversizedByBytes = cjkChar.repeat(87382);
+      expect(Buffer.byteLength(oversizedByBytes, 'utf8')).toBeGreaterThan(256 * 1024);
+      expect(oversizedByBytes.length).toBeLessThan(256 * 1024);
+      const result = pasteManager.pasteContent('beat-channel-test-member', oversizedByBytes);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+      expect(result.error.message).toContain('exceeds maximum length');
+      expect(writeFileSync).not.toHaveBeenCalled();
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it('allows content at exactly MAX_PASTE_CONTENT_LENGTH (256 KB)', () => {
+      const atLimit = 'x'.repeat(256 * 1024);
+      const result = pasteManager.pasteContent('beat-channel-test-member', atLimit);
+      expect(result.ok).toBe(true);
+    });
+
+    it('allows multi-byte content whose byte length is exactly MAX_PASTE_CONTENT_LENGTH', () => {
+      // 87381 CJK chars = 262143 bytes < 262144 bytes (256 KB) — within limit
+      const cjkChar = '中'; // '中' — 3 UTF-8 bytes
+      const atByteLimit = cjkChar.repeat(87381);
+      expect(Buffer.byteLength(atByteLimit, 'utf8')).toBeLessThanOrEqual(256 * 1024);
+      const result = pasteManager.pasteContent('beat-channel-test-member', atByteLimit);
+      expect(result.ok).toBe(true);
+    });
+
+    it('delivers content with special characters ($, backticks, newlines) literally', () => {
+      const specialContent = 'echo $HOME\n`id`\nHello World!';
+      const result = pasteManager.pasteContent('beat-channel-test-member', specialContent);
+      expect(result.ok).toBe(true);
+      // The content is written to a file — no shell expansion occurs on content itself
+      const [, writtenContent] = writeFileSync.mock.calls[0] as [string, string];
+      expect(writtenContent).toBe(specialContent);
+    });
   });
 });

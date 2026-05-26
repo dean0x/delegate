@@ -6,6 +6,7 @@
 import {
   ActivityEntry,
   Channel,
+  ChannelCreateRequest,
   ChannelId,
   ChannelMember,
   ChannelMemberStatus,
@@ -43,7 +44,7 @@ import {
   WorkerId,
   WorkerRegistration,
 } from './domain.js';
-import { AutobeatEvent, BaseEvent, EventHandler } from './events/events.js';
+import { AutobeatEvent, BaseEvent, type ChannelDestroyReason, EventHandler } from './events/events.js';
 import { Result } from './result.js';
 
 /**
@@ -1024,9 +1025,71 @@ export interface ChannelRepository {
   updateRound(id: ChannelId, round: number): Promise<Result<void>>;
   addMember(channelId: ChannelId, member: ChannelMember): Promise<Result<void>>;
   updateMemberStatus(channelId: ChannelId, memberName: string, status: ChannelMemberStatus): Promise<Result<void>>;
+  /**
+   * Update multiple channel members to the same status in a single transaction.
+   * Used by recoverChannels() to batch-mark dead members as DESTROYED without
+   * issuing N individual UPDATE statements.
+   * No-op when memberNames is empty.
+   */
+  batchUpdateMemberStatuses(
+    channelId: ChannelId,
+    memberNames: readonly string[],
+    status: ChannelMemberStatus,
+  ): Promise<Result<void>>;
   delete(id: ChannelId): Promise<Result<void>>;
   count(): Promise<Result<number>>;
   countByStatus(): Promise<Result<Record<string, number>>>;
+}
+
+/**
+ * Service interface for Channel lifecycle management.
+ * ARCHITECTURE: Pure Result pattern — no exceptions in service logic.
+ * Pattern: Service layer sits above the repository and tmux connector,
+ *   owned by ChannelManager. Follows ScheduleService / LoopService convention.
+ *
+ * ADR-001: Channel names are validated against CHANNEL_NAME_REGEX, which is
+ * constructed to be a valid tmux SESSION_NAME_REGEX suffix — no transformation
+ * is needed when building beat-channel-{name}-{member} session names.
+ */
+export interface ChannelService {
+  /**
+   * Create a new channel and spawn member sessions.
+   * Returns err(INVALID_INPUT) on name conflict, invalid name, or invalid members.
+   */
+  createChannel(request: ChannelCreateRequest): Promise<Result<Channel>>;
+  /**
+   * Destroy a channel, killing all member sessions.
+   * Returns err(INVALID_INPUT) if channel not found or already DESTROYED.
+   */
+  destroyChannel(channelId: ChannelId, reason?: ChannelDestroyReason): Promise<Result<void>>;
+  /** Pause an ACTIVE channel (suppress routing while members continue running). */
+  pauseChannel(channelId: ChannelId): Promise<Result<void>>;
+  /** Resume a PAUSED channel. */
+  resumeChannel(channelId: ChannelId): Promise<Result<void>>;
+  /**
+   * Deliver a message to the channel from an external caller.
+   * targetMember — if provided, deliver to that specific member only.
+   * Returns err(INVALID_INPUT) if channel is paused or target member unknown.
+   */
+  sendMessage(channelId: ChannelId, message: string, targetMember?: string): Promise<Result<void>>;
+  /** Fetch a channel by ID. Returns null if not found. */
+  getChannel(channelId: ChannelId): Promise<Result<Channel | null>>;
+  /** Fetch a channel by name. Returns null if not found. */
+  getChannelByName(name: string): Promise<Result<Channel | null>>;
+  /** List channels, optionally filtered by status. */
+  listChannels(status?: ChannelStatus, limit?: number, offset?: number): Promise<Result<readonly Channel[]>>;
+  /**
+   * Re-attach to alive member tmux sessions after a process restart.
+   * Marks members whose sessions are gone as DESTROYED.
+   * ARCHITECTURE: Lifecycle method — called once during bootstrap recovery.
+   */
+  recoverChannels(): Promise<Result<void>>;
+  /**
+   * Release all in-memory resources (queues, handles).
+   * Called during graceful shutdown; idempotent.
+   * ARCHITECTURE: Lifecycle method — counterpart to recoverChannels().
+   */
+  dispose(): void;
 }
 
 // Re-export for convenience (consumers can import from interfaces instead of domain)

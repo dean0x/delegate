@@ -12,6 +12,8 @@ import { Container } from './core/container.js';
 import { AutobeatError, ErrorCode } from './core/errors.js';
 import { EventBus, InMemoryEventBus } from './core/events/event-bus.js';
 import {
+  ChannelRepository,
+  ChannelService,
   CheckpointRepository,
   DependencyRepository,
   Logger,
@@ -131,6 +133,7 @@ import { SQLiteUsageRepository } from './implementations/usage-repository.js';
 import { SQLiteWorkerRepository } from './implementations/worker-repository.js';
 
 // Services
+import { ChannelManager } from './services/channel-manager.js';
 import { extractHandlerDependencies, setupEventHandlers } from './services/handler-setup.js';
 import { LoopManagerService } from './services/loop-manager.js';
 import { OrchestrationManagerService } from './services/orchestration-manager.js';
@@ -363,6 +366,34 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     return new SQLiteChannelRepository(dbResult.value);
   });
 
+  // Register ChannelService for multi-agent channel orchestration (Phase 7, epic #182)
+  // ARCHITECTURE: ChannelManager is the primary entry point for all channel operations.
+  // Lazy singleton — factory does not run until channelService is first resolved.
+  // DECISION: sessionsDir resolves lazily inside the factory because it is registered
+  // later in bootstrap (post-tmux-validation). The factory only runs when channelService
+  // is first resolved (after bootstrap is complete), so the ordering is safe.
+  container.registerSingleton('channelService', async () => {
+    const sessionsDir = getFromContainer<string>(container, 'sessionsDir');
+    // Attempt to resolve tmuxSessionManager for batch liveness checks during recovery.
+    // Absent in test environments where the tmux stack is not registered.
+    const tmuxSessionManagerResult = container.get<TmuxSessionManagerCorePort>('tmuxSessionManager');
+    const tmuxSessionManager = tmuxSessionManagerResult.ok ? tmuxSessionManagerResult.value : undefined;
+    const createResult = await ChannelManager.create({
+      eventBus: getFromContainer<EventBus>(container, 'eventBus'),
+      logger: getFromContainer<Logger>(container, 'logger').child({ module: 'ChannelManager' }),
+      channelRepository: getFromContainer<ChannelRepository>(container, 'channelRepository'),
+      config,
+      tmuxConnector: getFromContainer<TmuxConnectorPort>(container, 'tmuxConnector'),
+      agentRegistry: getFromContainer<AgentRegistry>(container, 'agentRegistry'),
+      sessionsDir,
+      tmuxSessionManager,
+    });
+    if (!createResult.ok) {
+      throw new Error(`Failed to create ChannelManager: ${createResult.error.message}`);
+    }
+    return createResult.value;
+  });
+
   // Register ScheduleService for schedule management (v0.4.0)
   container.registerSingleton('scheduleService', () => {
     return new ScheduleManagerService(
@@ -536,7 +567,17 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   if (options.tmuxConnector) {
     container.registerValue('tmuxConnector', options.tmuxConnector);
   } else {
-    tmuxSessionManager = new TmuxSessionManager({ exec: tmuxExec });
+    tmuxSessionManager = new TmuxSessionManager({
+      exec: tmuxExec,
+      writeFileSync: (p, c) => fs.writeFileSync(p, c, 'utf8'),
+      unlinkSync: (p) => {
+        try {
+          fs.unlinkSync(p);
+        } catch {
+          /* best-effort cleanup */
+        }
+      },
+    });
     container.registerValue('tmuxSessionManager', tmuxSessionManager);
     const sessionManager = tmuxSessionManager;
     container.registerSingleton('tmuxConnector', () => {
@@ -711,6 +752,23 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
         }
       });
     }
+
+    // Channel recovery — re-attach to alive member sessions, mark dead members DESTROYED
+    // ARCHITECTURE: Fire-and-forget; runs after task recovery to avoid race on tmux session names.
+    // Skipped in cli mode (no tmux sessions are managed by CLI commands).
+    // DECISION: resolve() is required here (not get()) because ChannelManager.create() is async
+    // (subscribes to events). container.get() rejects async factories before instantiation.
+    container.resolve<ChannelService>('channelService').then((channelServiceResult) => {
+      if (!channelServiceResult.ok) {
+        logger.error('Failed to resolve ChannelService for recovery', channelServiceResult.error);
+        return;
+      }
+      channelServiceResult.value.recoverChannels().then((result) => {
+        if (!result.ok) {
+          logger.error('Channel recovery failed', result.error);
+        }
+      });
+    });
   } else {
     logger.info(`Skipping recovery (mode=${mode})`);
   }

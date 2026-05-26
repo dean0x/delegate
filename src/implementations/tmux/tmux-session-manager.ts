@@ -10,6 +10,8 @@
  * single quotes to prevent breaking the shell quoting context.
  */
 
+import * as os from 'os';
+import * as path from 'path';
 import type { AutobeatError } from '../../core/errors.js';
 import { tmuxSendKeysFailed, tmuxSessionFailed } from '../../core/errors.js';
 import type { Result } from '../../core/result.js';
@@ -25,6 +27,19 @@ import { MAX_CONCURRENT_SESSIONS, SAFE_PATH_REGEX, SESSION_NAME_REGEX } from './
 export interface TmuxSessionManagerDeps {
   exec: ExecFn;
   maxConcurrentSessions?: number;
+  /**
+   * Synchronous file write — used by pasteContent() to write content to a temp file
+   * before loading it into the tmux buffer.
+   * DESIGN DECISION (Phase 7): Injected to keep TmuxSessionManager fully unit-testable
+   * without touching the real filesystem in tests. Always provided by bootstrap.ts.
+   */
+  writeFileSync: (path: string, content: string) => void;
+  /**
+   * Synchronous file delete — used by pasteContent() to remove the temp file after
+   * loading. Must always execute, even on error (cleanup in finally block).
+   * Always provided by bootstrap.ts.
+   */
+  unlinkSync: (path: string) => void;
 }
 
 /** Default terminal dimensions if not specified */
@@ -42,6 +57,13 @@ const POSIX_ENV_VAR_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** Maximum byte length for an environment variable value — protects against oversized inputs */
 const MAX_ENV_VALUE_LENGTH = 4096;
+
+/**
+ * Maximum byte length for paste content delivered via pasteContent().
+ * Guards against disk exhaustion in os.tmpdir() and tmux buffer allocation failures.
+ * 256 KB is sufficient for any realistic agent round-trip message.
+ */
+const MAX_PASTE_CONTENT_LENGTH = 256 * 1024;
 
 /**
  * Allowlist of tmux control key tokens accepted by sendControlKeys().
@@ -171,9 +193,9 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
     // Inject caller-provided env vars, then the auto vars (auto vars win on conflict)
     const allEnv: Record<string, string> = { ...(callerEnv ?? {}), ...autoVars };
 
-    // Filter to valid POSIX env var keys with value length cap, then batch to avoid N+1 spawns
+    // Filter to valid POSIX env var keys with value byte-length cap, then batch to avoid N+1 spawns
     const validEntries = Object.entries(allEnv).filter(
-      ([key, value]) => POSIX_ENV_VAR_REGEX.test(key) && value.length <= MAX_ENV_VALUE_LENGTH,
+      ([key, value]) => POSIX_ENV_VAR_REGEX.test(key) && Buffer.byteLength(value, 'utf8') <= MAX_ENV_VALUE_LENGTH,
     );
 
     if (validEntries.length === 0) return true;
@@ -332,6 +354,78 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
   }
 
   /**
+   * Delivers content to a tmux session using load-buffer / paste-buffer without shell expansion.
+   *
+   * DESIGN DECISION (Phase 7): Uses a per-invocation named buffer rather than the
+   * global send-keys so that content with special characters ($, `, newlines) is
+   * delivered literally, and concurrent deliveries cannot overwrite each other's buffers
+   * (TOCTOU race on a shared buffer name is eliminated by using a unique ID per call).
+   *
+   * Flow:
+   *   1. Validate content size against MAX_PASTE_CONTENT_LENGTH
+   *   2. Write content to a temp file (avoids shell arg-length limits and expansion)
+   *   3. tmux load-buffer -b beat-ch-<uuid> <tempFile>
+   *   4. tmux paste-buffer -b beat-ch-<uuid> -t sessionName
+   *   5. tmux delete-buffer -b beat-ch-<uuid>
+   *   6. Remove temp file (always, via finally block)
+   *
+   * SECURITY: tempFile path is constructed from os.tmpdir() + randomUUID — safe for
+   * single-quoting into a shell command. Session name is validated against SESSION_NAME_REGEX.
+   */
+  pasteContent(sessionName: string, content: string): Result<void, AutobeatError> {
+    const nameCheck = validateSessionName(sessionName, 'pasteContent');
+    if (!nameCheck.ok) return nameCheck;
+
+    const contentByteLength = Buffer.byteLength(content, 'utf8');
+    if (contentByteLength > MAX_PASTE_CONTENT_LENGTH) {
+      return err(
+        tmuxSessionFailed(
+          'pasteContent',
+          `Content exceeds maximum length (${MAX_PASTE_CONTENT_LENGTH} bytes, got ${contentByteLength})`,
+          { sessionName },
+        ),
+      );
+    }
+
+    // Per-invocation unique buffer name — prevents concurrent pasteContent() calls
+    // from overwriting each other's tmux buffer (TOCTOU race eliminated).
+    const bufferId = `beat-ch-${crypto.randomUUID().slice(0, 8)}`;
+    const tempFile = path.join(os.tmpdir(), `beat-channel-${crypto.randomUUID()}.txt`);
+    try {
+      this.deps.writeFileSync(tempFile, content);
+
+      const escapedTempFile = escapeForSingleQuotes(tempFile);
+
+      // Load content into per-invocation named buffer (< redirect reads file without shell expansion of content)
+      const loadResult = this.deps.exec(`tmux load-buffer -b '${bufferId}' '${escapedTempFile}'`);
+      if (loadResult.status !== 0) {
+        return err(
+          tmuxSessionFailed('pasteContent:load-buffer', loadResult.stderr || loadResult.stdout, {
+            sessionName,
+          }),
+        );
+      }
+
+      // Paste buffer into the target session
+      const pasteResult = this.deps.exec(`tmux paste-buffer -b '${bufferId}' -t '${sessionName}'`);
+      if (pasteResult.status !== 0) {
+        return err(
+          tmuxSessionFailed('pasteContent:paste-buffer', pasteResult.stderr || pasteResult.stdout, {
+            sessionName,
+          }),
+        );
+      }
+
+      // Delete the named buffer (best-effort — don't fail if it's already gone)
+      this.deps.exec(`tmux delete-buffer -b '${bufferId}'`);
+
+      return ok(undefined);
+    } finally {
+      this.deps.unlinkSync(tempFile);
+    }
+  }
+
+  /**
    * Retrieves an environment variable from a session.
    * Returns undefined if the variable is not set.
    */
@@ -376,7 +470,7 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
       );
     }
 
-    if (value.length > MAX_ENV_VALUE_LENGTH) {
+    if (Buffer.byteLength(value, 'utf8') > MAX_ENV_VALUE_LENGTH) {
       return err(
         tmuxSessionFailed(
           'setSessionEnvironment',
