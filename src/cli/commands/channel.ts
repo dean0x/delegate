@@ -60,19 +60,23 @@ export type ParsedChannelCreate = ParsedChannelCreateSingle | ParsedChannelCreat
 
 // ─── Pure parsing functions ────────────────────────────────────────────────────
 
+/** Raw flag values extracted from argv before semantic validation. */
+interface TokenizedChannelCreateFlags {
+  readonly positional: readonly string[];
+  readonly agentFlag: string | undefined;
+  readonly members: readonly ParsedMember[];
+  readonly communicationMode: CommunicationMode | undefined;
+  readonly maxRounds: number | undefined;
+  readonly topic: string | undefined;
+  readonly workingDirectory: string | undefined;
+  readonly systemPrompt: string | undefined;
+}
+
 /**
- * Parse and validate channel create arguments.
- * ARCHITECTURE: Pure function — no side effects, returns Result for testability.
- *
- * Two modes:
- * - Single-agent: --agent <provider> flag present, no --member flags.
- *   Member name = channel name. No --mode or --max-rounds required.
- * - Multi-agent: --member name:agent[:prompt] flags. Requires --max-rounds.
- *   Accepts --mode broadcast|directed|round-robin.
- * Mutual exclusion: --agent + --member together → error.
+ * Phase 1: Tokenize raw argv into typed flag values with per-flag syntax checks.
+ * No cross-flag semantic rules are applied here.
  */
-export function parseChannelCreateArgs(args: readonly string[]): Result<ParsedChannelCreate, string> {
-  // First positional argument is the channel name
+function tokenizeChannelCreateFlags(args: readonly string[]): Result<TokenizedChannelCreateFlags, string> {
   const positional: string[] = [];
   const members: ParsedMember[] = [];
   let agentFlag: string | undefined;
@@ -108,6 +112,9 @@ export function parseChannelCreateArgs(args: readonly string[]): Result<ParsedCh
       maxRounds = n;
       i++;
     } else if (arg === '--topic' && next !== undefined) {
+      if (next.length > 262_144) {
+        return err('--topic must be at most 262,144 characters');
+      }
       topic = next;
       i++;
     } else if ((arg === '--working-directory' || arg === '-w') && next !== undefined) {
@@ -130,19 +137,28 @@ export function parseChannelCreateArgs(args: readonly string[]): Result<ParsedCh
     }
   }
 
-  const channelName = positional[0];
+  return ok({ positional, agentFlag, members, communicationMode, maxRounds, topic, workingDirectory, systemPrompt });
+}
+
+/**
+ * Phase 2: Apply semantic validation rules to tokenized flags.
+ * Enforces cross-flag constraints: mutual exclusion, required fields per mode,
+ * channel name format, agent provider validity, and member name format.
+ */
+function validateChannelCreateFlags(tokens: TokenizedChannelCreateFlags): Result<ParsedChannelCreate, string> {
+  const { agentFlag, members, communicationMode, maxRounds, topic, workingDirectory, systemPrompt } = tokens;
+
+  const channelName = tokens.positional[0];
   if (!channelName) {
     return err('Usage: beat channel create <name> --agent <provider> | --member name:agent[:prompt]...');
   }
 
-  // Validate channel name
   if (!CHANNEL_NAME_REGEX.test(channelName)) {
     return err(
       `Invalid channel name "${channelName}": must be lowercase alphanumeric with interior hyphens, max 64 chars`,
     );
   }
 
-  // Mutual exclusion: --agent + --member
   if (agentFlag !== undefined && members.length > 0) {
     return err('--agent and --member are mutually exclusive. Use --agent for single-agent, --member for multi-agent.');
   }
@@ -158,14 +174,7 @@ export function parseChannelCreateArgs(args: readonly string[]): Result<ParsedCh
     if (communicationMode !== undefined) {
       return err('--mode is only valid for multi-agent channels (--member). Use --agent for single-agent.');
     }
-    return ok({
-      mode: 'single' as const,
-      name: channelName,
-      agent: agentFlag,
-      topic,
-      workingDirectory,
-      systemPrompt,
-    });
+    return ok({ mode: 'single' as const, name: channelName, agent: agentFlag, topic, workingDirectory, systemPrompt });
   }
 
   // Multi-agent mode
@@ -177,7 +186,6 @@ export function parseChannelCreateArgs(args: readonly string[]): Result<ParsedCh
     return err('--max-rounds is required for multi-agent channels');
   }
 
-  // Validate all member agents
   for (const member of members) {
     if (!isAgentProvider(member.agent)) {
       return err(
@@ -191,7 +199,6 @@ export function parseChannelCreateArgs(args: readonly string[]): Result<ParsedCh
     }
   }
 
-  // --system-prompt is single-agent only
   if (systemPrompt !== undefined) {
     return err(
       '--system-prompt is only valid for single-agent channels (--agent). Use --member name:agent:prompt for per-member prompts.',
@@ -207,6 +214,26 @@ export function parseChannelCreateArgs(args: readonly string[]): Result<ParsedCh
     topic,
     workingDirectory,
   });
+}
+
+/**
+ * Parse and validate channel create arguments.
+ * ARCHITECTURE: Pure function — no side effects, returns Result for testability.
+ *
+ * Two modes:
+ * - Single-agent: --agent <provider> flag present, no --member flags.
+ *   Member name = channel name. No --mode or --max-rounds required.
+ * - Multi-agent: --member name:agent[:prompt] flags. Requires --max-rounds.
+ *   Accepts --mode broadcast|directed|round-robin.
+ * Mutual exclusion: --agent + --member together → error.
+ *
+ * Composed from two phases: tokenizeChannelCreateFlags (argv → raw tokens)
+ * then validateChannelCreateFlags (tokens → typed ParsedChannelCreate).
+ */
+export function parseChannelCreateArgs(args: readonly string[]): Result<ParsedChannelCreate, string> {
+  const tokensResult = tokenizeChannelCreateFlags(args);
+  if (!tokensResult.ok) return tokensResult;
+  return validateChannelCreateFlags(tokensResult.value);
 }
 
 /**
@@ -249,6 +276,11 @@ function parseMemberFlag(value: string): Result<ParsedMember, string> {
 
 // ─── Subcommand router ────────────────────────────────────────────────────────
 
+/**
+ * Route channel subcommands to their handlers.
+ * Subcommands: create, list, status, destroy, pause, resume.
+ * Invoked from src/cli.ts as the primary entry point for `beat channel ...`.
+ */
 export async function handleChannelCommand(subCmd: string | undefined, channelArgs: string[]): Promise<void> {
   if (subCmd === 'list') {
     await handleChannelList(channelArgs);
@@ -285,15 +317,23 @@ export async function handleChannelCommand(subCmd: string | undefined, channelAr
 /**
  * Resolve a channel ID or name string to a ChannelId.
  * IDs start with 'ch-'; names are resolved via findByName().
+ *
+ * Returns:
+ * - ok(ChannelId) when found
+ * - ok(null) when not found (name lookup returned no row)
+ * - err(Error) when the repository call itself fails (DB error)
  */
-async function resolveChannelId(idOrName: string, channelRepository: ChannelRepository): Promise<ChannelId | null> {
+async function resolveChannelId(
+  idOrName: string,
+  channelRepository: ChannelRepository,
+): Promise<Result<ChannelId | null, Error>> {
   if (idOrName.startsWith('ch-')) {
-    return ChannelId(idOrName);
+    return ok(ChannelId(idOrName));
   }
   const result = await channelRepository.findByName(idOrName);
-  if (!result.ok) return null;
-  if (!result.value) return null;
-  return result.value.id;
+  if (!result.ok) return err(result.error);
+  if (!result.value) return ok(null);
+  return ok(result.value.id);
 }
 
 // ─── Create ──────────────────────────────────────────────────────────────────
@@ -308,11 +348,12 @@ async function handleChannelCreate(args: string[]): Promise<void> {
 
   const s = ui.createSpinner();
   s.start('Creating channel...');
-  const { resolveChannelService } = await withServices(s);
+  const { container, resolveChannelService } = await withServices(s);
   const channelService = await resolveChannelService();
 
   if (!channelService) {
     s.stop('Failed');
+    await container.dispose();
     ui.error('Channel service unavailable. Ensure the server is properly configured.');
     process.exit(1);
   }
@@ -436,7 +477,12 @@ async function handleChannelStatus(args: string[]): Promise<void> {
   s.stop('Ready');
 
   try {
-    const channelId = await resolveChannelId(idOrName, ctx.channelRepository);
+    const channelIdResult = await resolveChannelId(idOrName, ctx.channelRepository);
+    if (!channelIdResult.ok) {
+      ui.error(`Failed to look up channel: ${channelIdResult.error.message}`);
+      process.exit(1);
+    }
+    const channelId = channelIdResult.value;
     if (!channelId) {
       ui.error(`Channel not found: ${idOrName}`);
       process.exit(1);
@@ -498,15 +544,24 @@ async function resolveChannelOp(
 
   if (!channelService) {
     s.stop('Failed');
+    await container.dispose();
     ui.error('Channel service unavailable.');
     process.exit(1);
   }
 
   const channelRepositoryResult = container.get<ChannelRepository>('channelRepository');
   const channelRepository = exitOnError(channelRepositoryResult, s, 'Failed to get channel repository');
-  const channelId = await resolveChannelId(idOrName, channelRepository);
+  const channelIdResult = await resolveChannelId(idOrName, channelRepository);
+  if (!channelIdResult.ok) {
+    s.stop('Failed');
+    await container.dispose();
+    ui.error(`Failed to look up channel: ${channelIdResult.error.message}`);
+    process.exit(1);
+  }
+  const channelId = channelIdResult.value;
   if (!channelId) {
     s.stop('Not found');
+    await container.dispose();
     ui.error(`Channel not found: ${idOrName}`);
     process.exit(1);
   }

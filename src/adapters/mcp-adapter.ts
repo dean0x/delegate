@@ -30,6 +30,7 @@ import {
   type Channel,
   type ChannelCreateRequest,
   ChannelId,
+  type ChannelMemberRequest,
   ChannelStatus,
   type CommunicationMode,
   EvalMode,
@@ -4235,9 +4236,7 @@ export class MCPAdapter {
    * Return the channel service if available, or a ready-to-return error response if not.
    * All channel handlers call this once and early-return on the error branch.
    */
-  private requireChannelService():
-    | { ok: true; service: ChannelService }
-    | { ok: false; response: MCPToolResponse } {
+  private requireChannelService(): { ok: true; service: ChannelService } | { ok: false; response: MCPToolResponse } {
     if (!this.channelService) {
       return {
         ok: false,
@@ -4259,36 +4258,45 @@ export class MCPAdapter {
    */
   private buildChannelCreateRequest(
     data: z.infer<typeof CreateChannelSchema>,
-  ): ChannelCreateRequest | MCPToolResponse {
+  ): { ok: true; request: ChannelCreateRequest } | { ok: false; response: MCPToolResponse } {
     // SECURITY: workingDirectory must be an absolute path (prevents path traversal via relative refs)
     if (data.workingDirectory) {
       if (!path.isAbsolute(data.workingDirectory)) {
         return {
-          content: [{ type: 'text', text: `Invalid working directory: must be an absolute path` }],
-          isError: true,
+          ok: false,
+          response: {
+            content: [{ type: 'text', text: `Invalid working directory: must be an absolute path` }],
+            isError: true,
+          },
         };
       }
       const pathValidation = validatePath(data.workingDirectory);
       if (!pathValidation.ok) {
         return {
-          content: [{ type: 'text', text: `Invalid working directory: ${pathValidation.error.message}` }],
-          isError: true,
+          ok: false,
+          response: {
+            content: [{ type: 'text', text: `Invalid working directory: ${pathValidation.error.message}` }],
+            isError: true,
+          },
         };
       }
     }
 
     return {
-      name: data.name,
-      members: data.members.map((m, idx) => ({
-        name: m.name,
-        agent: m.agent,
-        // Per-member systemPrompt wins (??). Fall back to top-level only for the sole member.
-        systemPrompt: m.systemPrompt ?? (data.members.length === 1 && idx === 0 ? data.systemPrompt : undefined),
-      })),
-      communicationMode: data.communicationMode as CommunicationMode | undefined,
-      maxRounds: data.maxRounds,
-      topic: data.topic,
-      workingDirectory: data.workingDirectory,
+      ok: true,
+      request: {
+        name: data.name,
+        members: data.members.map((m, idx) => ({
+          name: m.name,
+          agent: m.agent,
+          // Per-member systemPrompt wins (??). Fall back to top-level only for the sole member.
+          systemPrompt: m.systemPrompt ?? (data.members.length === 1 && idx === 0 ? data.systemPrompt : undefined),
+        })) as ChannelMemberRequest[],
+        communicationMode: data.communicationMode as CommunicationMode | undefined,
+        maxRounds: data.maxRounds,
+        topic: data.topic,
+        workingDirectory: data.workingDirectory,
+      },
     };
   }
 
@@ -4308,10 +4316,10 @@ export class MCPAdapter {
     const svcResult = this.requireChannelService();
     if (!svcResult.ok) return svcResult.response;
 
-    const requestOrError = this.buildChannelCreateRequest(parseResult.data);
-    if ('isError' in requestOrError) return requestOrError;
+    const buildResult = this.buildChannelCreateRequest(parseResult.data);
+    if (!buildResult.ok) return buildResult.response;
 
-    const result = await svcResult.service.createChannel(requestOrError);
+    const result = await svcResult.service.createChannel(buildResult.request);
 
     return match(result, {
       ok: (channel: Channel) => ({

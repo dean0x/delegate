@@ -318,6 +318,22 @@ describe('parseChannelCreateArgs', () => {
     });
   });
 
+  // ─── Topic length validation ──────────────────────────────────────────────────
+
+  describe('--topic length validation', () => {
+    it('accepts topic within the 262,144 character limit', () => {
+      const result = parseChannelCreateArgs(['my-channel', '--agent', 'claude', '--topic', 'a'.repeat(262_144)]);
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects topic exceeding 262,144 characters', () => {
+      const result = parseChannelCreateArgs(['my-channel', '--agent', 'claude', '--topic', 'a'.repeat(262_145)]);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('262,144');
+    });
+  });
+
   // ─── Combined flags (integration) ────────────────────────────────────────────
 
   describe('combined flags', () => {
