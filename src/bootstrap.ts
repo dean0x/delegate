@@ -787,6 +787,8 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
           logger.error('Channel recovery failed', result.error);
         }
       });
+    }).catch((e: unknown) => {
+      logger.error('Unexpected error in channel recovery', e instanceof Error ? e : new Error(String(e)));
     });
   } else {
     logger.info(`Skipping recovery (mode=${mode})`);
