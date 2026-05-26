@@ -311,12 +311,24 @@ describe('parseChannelCreateArgs', () => {
 
   describe('--system-prompt length validation', () => {
     it('accepts system-prompt at the 100,000 character limit', () => {
-      const result = parseChannelCreateArgs(['my-channel', '--agent', 'claude', '--system-prompt', 'a'.repeat(100_000)]);
+      const result = parseChannelCreateArgs([
+        'my-channel',
+        '--agent',
+        'claude',
+        '--system-prompt',
+        'a'.repeat(100_000),
+      ]);
       expect(result.ok).toBe(true);
     });
 
     it('rejects system-prompt exceeding 100,000 characters', () => {
-      const result = parseChannelCreateArgs(['my-channel', '--agent', 'claude', '--system-prompt', 'a'.repeat(100_001)]);
+      const result = parseChannelCreateArgs([
+        'my-channel',
+        '--agent',
+        'claude',
+        '--system-prompt',
+        'a'.repeat(100_001),
+      ]);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error).toContain('100,000');
@@ -327,7 +339,13 @@ describe('parseChannelCreateArgs', () => {
 
   describe('--working-directory validation', () => {
     it('rejects a path that traverses outside the working directory', () => {
-      const result = parseChannelCreateArgs(['my-channel', '--agent', 'claude', '--working-directory', '../../etc/passwd']);
+      const result = parseChannelCreateArgs([
+        'my-channel',
+        '--agent',
+        'claude',
+        '--working-directory',
+        '../../etc/passwd',
+      ]);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error).toContain('Invalid working directory');
