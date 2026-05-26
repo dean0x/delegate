@@ -358,34 +358,23 @@ async function handleChannelCreate(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  let result;
-  if (createArgs.mode === 'single') {
-    result = await channelService.createChannel({
-      name: createArgs.name,
-      members: [
-        {
-          name: createArgs.name,
-          agent: createArgs.agent as AgentProvider,
-          systemPrompt: createArgs.systemPrompt,
-        },
-      ],
-      topic: createArgs.topic,
-      workingDirectory: createArgs.workingDirectory,
-    });
-  } else {
-    result = await channelService.createChannel({
-      name: createArgs.name,
-      members: createArgs.members.map((m) => ({
-        name: m.name,
-        agent: m.agent as AgentProvider,
-        systemPrompt: m.systemPrompt,
-      })),
-      communicationMode: createArgs.communicationMode,
-      maxRounds: createArgs.maxRounds,
-      topic: createArgs.topic,
-      workingDirectory: createArgs.workingDirectory,
-    });
-  }
+  const members =
+    createArgs.mode === 'single'
+      ? [{ name: createArgs.name, agent: createArgs.agent as AgentProvider, systemPrompt: createArgs.systemPrompt }]
+      : createArgs.members.map((m) => ({
+          name: m.name,
+          agent: m.agent as AgentProvider,
+          systemPrompt: m.systemPrompt,
+        }));
+
+  const result = await channelService.createChannel({
+    name: createArgs.name,
+    members,
+    communicationMode: createArgs.mode === 'multi' ? createArgs.communicationMode : undefined,
+    maxRounds: createArgs.mode === 'multi' ? createArgs.maxRounds : undefined,
+    topic: createArgs.topic,
+    workingDirectory: createArgs.workingDirectory,
+  });
 
   const channel = exitOnError(result, s, 'Failed to create channel');
   s.stop('Channel created');

@@ -574,7 +574,7 @@ export const CreateChannelSchema = z.object({
           .string()
           .regex(CHANNEL_NAME_REGEX, 'Member name must be lowercase alphanumeric with interior hyphens, max 64 chars')
           .describe('Member name'),
-        agent: z.string().min(1).describe('Agent provider for this member'),
+        agent: z.enum(AGENT_PROVIDERS_TUPLE).describe('Agent provider for this member'),
         systemPrompt: z.string().max(100_000).optional().describe('Per-member system prompt'),
       }),
     )
@@ -4296,8 +4296,8 @@ export class MCPAdapter {
           agent: m.agent,
           // Per-member systemPrompt wins (??). Fall back to top-level only for the sole member.
           systemPrompt: m.systemPrompt ?? (data.members.length === 1 && idx === 0 ? data.systemPrompt : undefined),
-        })) as ChannelMemberRequest[],
-        communicationMode: data.communicationMode as CommunicationMode | undefined,
+        })),
+        communicationMode: data.communicationMode,
         maxRounds: data.maxRounds,
         topic: data.topic,
         workingDirectory: data.workingDirectory,
