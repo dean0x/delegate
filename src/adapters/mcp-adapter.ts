@@ -598,7 +598,7 @@ export const CreateChannelSchema = z.object({
     .string()
     .max(100_000)
     .optional()
-    .describe('System prompt for single-member channels (overrides per-member systemPrompt)'),
+    .describe('System prompt for single-member channels (used when per-member systemPrompt is not set)'),
 });
 
 export const DestroyChannelSchema = z.object({
@@ -1934,7 +1934,7 @@ export class MCPAdapter {
                   systemPrompt: {
                     type: 'string',
                     description:
-                      'System prompt for single-member channels (overrides per-member systemPrompt, max 100KB)',
+                      'System prompt for single-member channels (used when per-member systemPrompt is not set, max 100KB)',
                   },
                 },
                 required: ['name', 'members'],
