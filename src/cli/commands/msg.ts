@@ -11,9 +11,13 @@
  */
 
 import { CHANNEL_NAME_REGEX, type ChannelId, ChannelStatus } from '../../core/domain.js';
+import type { ChannelRepository } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
-import { exitOnError, withReadOnlyContext, withServices } from '../services.js';
+import { exitOnError, withServices } from '../services.js';
 import * as ui from '../ui.js';
+
+/** Maximum message length aligned with MCP SendMessage tool (256 KB). */
+const MAX_MESSAGE_LENGTH = 262144;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,6 +52,10 @@ export function parseMsgArgs(args: readonly string[]): Result<ParsedMsgArgs, str
     return err('Message text is required. Usage: beat msg <target> <message...>');
   }
   const message = messageWords.join(' ');
+
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    return err(`Message too long: ${message.length} chars (max ${MAX_MESSAGE_LENGTH}). Split into shorter messages.`);
+  }
 
   // Split target on first '/' only
   const slashIndex = target.indexOf('/');
@@ -88,40 +96,9 @@ export async function handleMsgCommand(args: string[]): Promise<void> {
   }
   const { channelName, memberName, message } = parsed.value;
 
-  // Resolve channel name → ID via read-only context
-  const ctx = withReadOnlyContext();
-  let channelId: ChannelId;
-  let channelStatus: ChannelStatus;
-  try {
-    const channelResult = await ctx.channelRepository.findByName(channelName);
-    const channel = exitOnError(channelResult, undefined, `Failed to look up channel "${channelName}"`);
-
-    if (!channel) {
-      ui.error(`Channel "${channelName}" not found`);
-      process.exit(1);
-    }
-
-    // Fast-fail on terminal statuses before calling the service
-    if (channel.status === ChannelStatus.DESTROYED) {
-      ui.error(
-        `Channel "${channelName}" is destroyed. Create a new channel with: beat channel create ${channelName} ...`,
-      );
-      process.exit(1);
-    }
-    if (channel.status === ChannelStatus.COMPLETED) {
-      ui.error(`Channel "${channelName}" has completed and no longer accepts messages.`);
-      process.exit(1);
-    }
-
-    channelId = channel.id;
-    channelStatus = channel.status;
-  } finally {
-    ctx.close();
-  }
-
   const s = ui.createSpinner();
   s.start('Sending message...');
-  const { channelService } = await withServices(s);
+  const { container, channelService } = await withServices(s);
 
   if (!channelService) {
     s.stop('Failed');
@@ -129,11 +106,47 @@ export async function handleMsgCommand(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  if (channelStatus === ChannelStatus.PAUSED) {
+  // Resolve channel name → ID using the same connection as the service call.
+  // ARCHITECTURE: Reading from the container avoids a second DB connection and
+  // eliminates the TOCTOU window where channel status could change between the
+  // read-only lookup and the subsequent service call.
+  const channelRepositoryResult = container.get<ChannelRepository>('channelRepository');
+  if (!channelRepositoryResult.ok) {
+    s.stop('Failed');
+    ui.error(`Failed to get channel repository: ${channelRepositoryResult.error.message}`);
+    process.exit(1);
+  }
+  const channelRepository = channelRepositoryResult.value;
+
+  const channelResult = await channelRepository.findByName(channelName);
+  const channel = exitOnError(channelResult, s, `Failed to look up channel "${channelName}"`);
+
+  if (!channel) {
+    s.stop('Failed');
+    ui.error(`Channel "${channelName}" not found`);
+    process.exit(1);
+  }
+
+  // Fast-fail on terminal and paused statuses before calling the service
+  if (channel.status === ChannelStatus.DESTROYED) {
+    s.stop('Failed');
+    ui.error(
+      `Channel "${channelName}" is destroyed. Create a new channel with: beat channel create ${channelName} ...`,
+    );
+    process.exit(1);
+  }
+  if (channel.status === ChannelStatus.COMPLETED) {
+    s.stop('Failed');
+    ui.error(`Channel "${channelName}" has completed and no longer accepts messages.`);
+    process.exit(1);
+  }
+  if (channel.status === ChannelStatus.PAUSED) {
     s.stop('Failed');
     ui.error(`Channel "${channelName}" is paused. Resume with: beat channel resume ${channelName}`);
     process.exit(1);
   }
+
+  const channelId: ChannelId = channel.id;
 
   const result = await channelService.sendMessage(channelId, message, memberName);
   exitOnError(result, s, 'Failed to send message');

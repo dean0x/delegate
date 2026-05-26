@@ -81,6 +81,25 @@ describe('parseMsgArgs', () => {
     });
   });
 
+  // ─── Message length validation ───────────────────────────────────────────────
+
+  describe('message length validation', () => {
+    it('accepts message at exactly the limit', () => {
+      const message = 'a'.repeat(262144);
+      const result = parseMsgArgs(['ch', message]);
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects message exceeding 262144 chars', () => {
+      const message = 'a'.repeat(262145);
+      const result = parseMsgArgs(['ch', message]);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('Message too long');
+      expect(result.error).toContain('262145');
+    });
+  });
+
   // ─── Channel name validation ─────────────────────────────────────────────────
 
   describe('channel name validation', () => {

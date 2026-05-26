@@ -1939,7 +1939,8 @@ export class MCPAdapter {
                   },
                   systemPrompt: {
                     type: 'string',
-                    description: 'System prompt for single-member channels (overrides per-member systemPrompt, max 100KB)',
+                    description:
+                      'System prompt for single-member channels (overrides per-member systemPrompt, max 100KB)',
                   },
                 },
                 required: ['name', 'members'],
