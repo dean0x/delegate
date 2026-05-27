@@ -118,7 +118,7 @@ export function resolveIterationIndex(
  * members array is empty. Mirrors resolveIterationIndex but for channel members.
  */
 export function resolveMemberIndex(selectedName: string | null, members: readonly { name: string }[]): number {
-  if (!selectedName) return 0;
+  if (selectedName === null) return 0;
   const idx = members.findIndex((m) => m.name === selectedName);
   return idx >= 0 ? idx : 0;
 }
