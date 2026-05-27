@@ -131,6 +131,21 @@ export interface TmuxSessionManagerCorePort {
    * Treated as idempotent — no error if the session does not exist.
    */
   destroySession(name: string): Result<void, AutobeatError>;
+  /**
+   * Capture the visible pane content of a tmux session.
+   * Implementation: `tmux capture-pane -t '{name}' -p -S -{lines}`
+   *
+   * ARCHITECTURE (Phase 9 Dashboard): Display-only method for live pane preview
+   * in the channel detail view. No business logic depends on the captured content.
+   *
+   * Session validation: name must match SESSION_NAME_REGEX.
+   * "Session not found" is treated as empty string (ok('')) rather than an error —
+   * the session may have exited between the liveness check and this call.
+   *
+   * @param name - Tmux session name (must match SESSION_NAME_REGEX)
+   * @param lines - Number of lines to capture from the bottom (default: 10)
+   */
+  capturePaneContent(name: string, lines?: number): Result<string, AutobeatError>;
 }
 
 /**

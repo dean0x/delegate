@@ -426,6 +426,39 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
   }
 
   /**
+   * Captures the visible pane content of a tmux session.
+   * Implementation: `tmux capture-pane -t '{name}' -p -S -{lines}`
+   *
+   * ARCHITECTURE (Phase 9 Dashboard): Display-only method for live pane preview.
+   * Session validation uses the shared validateSessionName helper so the same
+   * SESSION_NAME_REGEX guard applies here as to all other session operations.
+   *
+   * "Session not found" is treated as ok('') — the session may have exited between
+   * the liveness check and this call. All other non-zero exit codes are returned as err().
+   */
+  capturePaneContent(name: string, lines = 10): Result<string, AutobeatError> {
+    const nameCheck = validateSessionName(name, 'capturePaneContent');
+    if (!nameCheck.ok) return nameCheck;
+
+    const result = this.deps.exec(`tmux capture-pane -t '${name}' -p -S -${lines}`);
+
+    if (result.status !== 0) {
+      const combinedOutput = (result.stderr + result.stdout).toLowerCase();
+      if (isSessionNotFound(combinedOutput)) {
+        return ok('');
+      }
+      return err(
+        tmuxSessionFailed('capturePaneContent', result.stderr || result.stdout, {
+          sessionName: name,
+          exitStatus: result.status,
+        }),
+      );
+    }
+
+    return ok(result.stdout);
+  }
+
+  /**
    * Retrieves an environment variable from a session.
    * Returns undefined if the variable is not set.
    */

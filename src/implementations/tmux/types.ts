@@ -249,6 +249,17 @@ export interface TmuxSessionManagerPort {
    *   5. Remove temp file (always, even on error)
    */
   pasteContent(sessionName: string, content: string): Result<void, AutobeatError>;
+  /**
+   * Capture the visible pane content of a tmux session.
+   * Implementation: `tmux capture-pane -t '{name}' -p -S -{lines}`
+   *
+   * ARCHITECTURE (Phase 9 Dashboard): Display-only method for live pane preview.
+   * "Session not found" returns ok('') rather than an error.
+   *
+   * @param name - Tmux session name (must match SESSION_NAME_REGEX)
+   * @param lines - Number of lines to capture from the bottom (default: 10)
+   */
+  capturePaneContent(name: string, lines?: number): Result<string, AutobeatError>;
 }
 
 /**

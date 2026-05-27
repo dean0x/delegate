@@ -759,3 +759,58 @@ describe('TmuxSessionManager.setSessionEnvironment()', () => {
     });
   });
 });
+
+// ─── capturePaneContent ──────────────────────────────────────────────────────
+
+describe('TmuxSessionManager.capturePaneContent()', () => {
+  let exec: ReturnType<typeof vi.fn>;
+  let manager: TmuxSessionManager;
+
+  beforeEach(() => {
+    exec = vi.fn().mockReturnValue({ stdout: '', stderr: '', status: 0 });
+    manager = new TmuxSessionManager({ exec, writeFileSync: vi.fn(), unlinkSync: vi.fn() });
+  });
+
+  it('returns ok with pane text on success', () => {
+    exec.mockReturnValue({ stdout: 'line1\nline2\nline3\n', stderr: '', status: 0 });
+    const result = manager.capturePaneContent('beat-channel-test-member');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBe('line1\nline2\nline3\n');
+  });
+
+  it('calls capture-pane with default 10 lines when lines is omitted', () => {
+    manager.capturePaneContent('beat-channel-test-member');
+    const cmd = (exec.mock.calls[0] as [string])[0];
+    expect(cmd).toContain("capture-pane -t 'beat-channel-test-member' -p -S -10");
+  });
+
+  it('calls capture-pane with custom line count when provided', () => {
+    manager.capturePaneContent('beat-channel-test-member', 50);
+    const cmd = (exec.mock.calls[0] as [string])[0];
+    expect(cmd).toContain('-S -50');
+  });
+
+  it('returns ok("") when session is not found (idempotent)', () => {
+    exec.mockReturnValue({ stdout: '', stderr: "can't find session: beat-channel-test-member", status: 1 });
+    const result = manager.capturePaneContent('beat-channel-test-member');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBe('');
+  });
+
+  it('returns err(TMUX_SESSION_FAILED) for non-"not found" exec failures', () => {
+    exec.mockReturnValue({ stdout: '', stderr: 'unexpected server crash', status: 1 });
+    const result = manager.capturePaneContent('beat-channel-test-member');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('returns err(TMUX_SESSION_FAILED) for invalid session names', () => {
+    const result = manager.capturePaneContent('not-a-beat-session');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+});
