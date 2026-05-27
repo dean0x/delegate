@@ -42,9 +42,6 @@ export function useChannelPanePreview(
   // Prevent setState after unmount
   const closing = useRef(false);
 
-  // Track previous sessionName to reset preview on change
-  const prevSessionName = useRef<string | null>(null);
-
   const doCapture = useCallback((): void => {
     if (!enabled || sessionName === null || capturePaneFn === undefined) return;
     if (fetching.current) return;
@@ -64,17 +61,12 @@ export function useChannelPanePreview(
     }
   }, [capturePaneFn, sessionName, enabled, lines]);
 
-  // Reset preview when sessionName changes
-  useEffect(() => {
-    if (prevSessionName.current !== sessionName) {
-      prevSessionName.current = sessionName;
-      setPreview(null);
-      setError(null);
-    }
-  }, [sessionName]);
-
   useEffect(() => {
     closing.current = false;
+
+    // Reset preview and error when sessionName changes or polling becomes disabled
+    setPreview(null);
+    setError(null);
 
     if (!enabled || sessionName === null || capturePaneFn === undefined) {
       return () => {
@@ -85,9 +77,7 @@ export function useChannelPanePreview(
     // Initial capture immediately on mount or when deps change
     doCapture();
 
-    const intervalId = setInterval(() => {
-      doCapture();
-    }, POLL_INTERVAL_MS);
+    const intervalId = setInterval(doCapture, POLL_INTERVAL_MS);
 
     return () => {
       closing.current = true;

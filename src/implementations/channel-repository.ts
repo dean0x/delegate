@@ -509,21 +509,7 @@ export class SQLiteChannelRepository implements ChannelRepository {
   private rowToChannel(row: ChannelRow): Channel {
     const validated = ChannelRowSchema.parse(row);
     const memberRows = this.findMembersByChannelIdStmt.all(validated.id) as ChannelMemberRow[];
-    const members = memberRows.map((mr) => this.rowToMember(mr));
-
-    return Object.freeze({
-      id: ChannelId(validated.id),
-      name: validated.name,
-      members: Object.freeze(members),
-      communicationMode: validated.communication_mode ?? undefined,
-      topic: validated.topic ?? undefined,
-      status: validated.status as ChannelStatus,
-      maxRounds: validated.max_rounds ?? undefined,
-      currentRound: validated.current_round,
-      createdBy: validated.created_by ?? undefined,
-      createdAt: validated.created_at,
-      updatedAt: validated.updated_at,
-    });
+    return this.rowToChannelWithMembers(row, memberRows);
   }
 
   private rowToMember(row: ChannelMemberRow): ChannelMember {

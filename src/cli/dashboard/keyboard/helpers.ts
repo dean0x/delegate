@@ -126,10 +126,8 @@ export function resolveSelectedMember<T extends { name: string }>(
   selectedName: string | null,
   members: readonly T[],
 ): T | null {
-  if (selectedName !== null) {
-    return members.find((m) => m.name === selectedName) ?? members[0] ?? null;
-  }
-  return members[0] ?? null;
+  const found = selectedName !== null ? members.find((m) => m.name === selectedName) : undefined;
+  return found ?? members[0] ?? null;
 }
 
 /**

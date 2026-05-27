@@ -84,14 +84,11 @@ function formatMessageRow(msg: ChannelMessage): string {
 
 export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
   ({ channel, messages, scrollOffset, animFrame, selectedMemberName, panePreview }) => {
-    // Selected member object (for live preview label)
+    // Resolved member (falls back to first member) — used for preview label and selection highlight
     const selectedMember = React.useMemo(
       () => resolveSelectedMember(selectedMemberName, channel.members),
       [channel.members, selectedMemberName],
     );
-
-    // Effective selected name (falls back to first member)
-    const effectiveSelectedName = selectedMember?.name ?? null;
 
     // Round progress — only shown when maxRounds is set
     const showRoundProgress = channel.maxRounds !== undefined && channel.maxRounds > 0;
@@ -99,7 +96,7 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
 
     // Live preview section label
     const previewLabel =
-      effectiveSelectedName !== null ? `─── Live Preview (${effectiveSelectedName}) ───` : '─── Live Preview ───';
+      selectedMember !== null ? `─── Live Preview (${selectedMember.name}) ───` : '─── Live Preview ───';
 
     return (
       <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
@@ -130,7 +127,7 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
           <Text dimColor>No members</Text>
         ) : (
           <Box flexDirection="column">
-            {channel.members.map((member) => renderMemberRow(member, member.name === (effectiveSelectedName ?? '')))}
+            {channel.members.map((member) => renderMemberRow(member, member.name === (selectedMember?.name ?? '')))}
           </Box>
         )}
 
@@ -162,7 +159,7 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
           </Text>
         </Box>
 
-        {effectiveSelectedName === null ? (
+        {selectedMember === null ? (
           <Text dimColor>(no member selected)</Text>
         ) : panePreview !== null ? (
           <Box flexDirection="column">

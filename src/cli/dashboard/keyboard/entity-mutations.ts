@@ -132,12 +132,14 @@ export async function pauseOrResumeEntity(
         }
         break;
       case 'channel':
-        if (entityStatus === ChannelStatus.ACTIVE && mutations.channelService) {
-          await mutations.channelService.pauseChannel(entityId as ChannelId);
-          refreshNow();
-        } else if (entityStatus === ChannelStatus.PAUSED && mutations.channelService) {
-          await mutations.channelService.resumeChannel(entityId as ChannelId);
-          refreshNow();
+        if (mutations.channelService) {
+          if (entityStatus === ChannelStatus.ACTIVE) {
+            await mutations.channelService.pauseChannel(entityId as ChannelId);
+            refreshNow();
+          } else if (entityStatus === ChannelStatus.PAUSED) {
+            await mutations.channelService.resumeChannel(entityId as ChannelId);
+            refreshNow();
+          }
         }
         break;
       default:
