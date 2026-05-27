@@ -70,11 +70,9 @@ function memberStatusColor(status: ChannelMemberStatus): string {
 function renderMemberRow(member: ChannelMember, isSelected: boolean): React.ReactNode {
   const icon = memberStatusIcon(member.status);
   const color = memberStatusColor(member.status);
-  const bg = isSelected ? 'blue' : undefined;
-  const statusLabel = member.status === ChannelMemberStatus.DESTROYED ? 'destroyed' : member.status;
 
   return (
-    <Box key={member.name} flexDirection="row" backgroundColor={bg}>
+    <Box key={member.name} flexDirection="row" backgroundColor={isSelected ? 'blue' : undefined}>
       <Text bold={isSelected} color={isSelected ? 'white' : color}>
         {icon}
       </Text>
@@ -83,7 +81,7 @@ function renderMemberRow(member: ChannelMember, isSelected: boolean): React.Reac
         {member.name}
       </Text>
       <Text dimColor>{` (${member.agent})`}</Text>
-      <Text dimColor>{` — ${statusLabel}`}</Text>
+      <Text dimColor>{` — ${member.status}`}</Text>
     </Box>
   );
 }
@@ -104,8 +102,10 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
     );
 
     // Round progress — only shown when maxRounds is set
-    const showRoundProgress = channel.maxRounds !== undefined && channel.maxRounds > 0;
-    const roundProgress = showRoundProgress ? formatRunProgress(channel.currentRound, channel.maxRounds) : null;
+    const roundProgress =
+      channel.maxRounds !== undefined && channel.maxRounds > 0
+        ? formatRunProgress(channel.currentRound, channel.maxRounds)
+        : null;
 
     // Live preview section label
     const previewLabel =
@@ -125,7 +125,7 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
         </StatusField>
         {channel.communicationMode !== undefined ? <Field label="Mode">{channel.communicationMode}</Field> : null}
         {channel.topic !== undefined ? <Field label="Topic">{truncateCell(channel.topic, 50)}</Field> : null}
-        {showRoundProgress && roundProgress !== null ? <Field label="Round Progress">{roundProgress}</Field> : null}
+        {roundProgress !== null ? <Field label="Round Progress">{roundProgress}</Field> : null}
         <Field label="Members">{String(channel.members.length)}</Field>
         <Field label="Created">{relativeTime(channel.createdAt)}</Field>
         <Field label="Updated">{relativeTime(channel.updatedAt)}</Field>
@@ -140,7 +140,9 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
           <Text dimColor>No members</Text>
         ) : (
           <Box flexDirection="column">
-            {channel.members.map((member) => renderMemberRow(member, member.name === (selectedMember?.name ?? '')))}
+            {channel.members.map((member) =>
+              renderMemberRow(member, selectedMember !== null && member.name === selectedMember.name),
+            )}
           </Box>
         )}
 
