@@ -11,7 +11,7 @@ import type { PanelId } from '../types.js';
 
 /**
  * Return the footer hint string for the main panel view.
- * Includes panel-jump hint (1-5) and optionally c/d/p mutation hints.
+ * Includes panel-jump hint (1-6) and optionally c/d/p mutation hints.
  * The pause/resume hint is only shown when the focused panel supports it
  * (schedules and loops); p is a no-op for tasks, orchestrations, and pipelines.
  */
@@ -22,7 +22,9 @@ export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string
       focusedPanel === 'schedules' || focusedPanel === 'loops' || focusedPanel === 'channels'
         ? ' · p pause/resume'
         : '';
-    return `${base} · c cancel · d delete (terminal)${pauseHint}`;
+    // Channels use destroy semantics (not cancel) — show accurate label when focused
+    const cancelLabel = focusedPanel === 'channels' ? 'c destroy' : 'c cancel';
+    return `${base} · ${cancelLabel} · d delete (terminal)${pauseHint}`;
   }
   return base;
 }

@@ -325,6 +325,8 @@ Quick reference for common operations:
 | Pipeline repository | `src/implementations/pipeline-repository.ts` |
 | Channel repository | `src/implementations/channel-repository.ts` |
 | Channel service | `src/services/channel-manager.ts` |
+| Channel detail view | `src/cli/dashboard/views/channel-detail.tsx` |
+| Channel pane preview hook | `src/cli/dashboard/use-channel-pane-preview.ts` |
 | Channel message persistence handler | `src/services/handlers/channel-message-persistence-handler.ts` |
 | Channel CLI command | `src/cli/commands/channel.ts` |
 | Msg CLI command | `src/cli/commands/msg.ts` |

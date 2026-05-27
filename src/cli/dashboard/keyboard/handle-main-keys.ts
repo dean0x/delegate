@@ -2,7 +2,7 @@
  * Key handler for the main panel view.
  *
  * Scope: view.kind === 'main'. Handles panel Tab cycling, ↑/↓ navigation,
- * Enter drill-through to detail, filter cycling (f), digit panel jumps (1-5),
+ * Enter drill-through to detail, filter cycling (f), digit panel jumps (1-6),
  * and cancel/delete via entity-mutations.
  *
  * DECISION (Dashboard Layout Overhaul): Activity is now a non-interactive tile.
