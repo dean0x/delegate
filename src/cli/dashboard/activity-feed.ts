@@ -10,10 +10,6 @@ import type { ActivityEntry } from '../../core/domain.js';
 // Verb mapping helpers
 // ============================================================================
 
-function taskAction(status: string): string {
-  return status; // task statuses map directly: completed, failed, running, queued, cancelled
-}
-
 function loopAction(status: string, currentIteration?: number): string {
   if (status === 'running' && currentIteration !== undefined) {
     return `iteration ${currentIteration}`;
@@ -27,10 +23,6 @@ function orchestrationAction(status: string): string {
     return 'planning';
   }
   return status;
-}
-
-function scheduleAction(status: string): string {
-  return status; // active, paused, completed, cancelled, expired
 }
 
 function pipelineAction(status: string, failedStep?: number): string {
@@ -109,7 +101,6 @@ interface BuildActivityFeedArgs {
   readonly orchestrations: readonly OrchestrationLike[];
   readonly schedules: readonly ScheduleLike[];
   readonly pipelines: readonly PipelineLike[];
-  /** Channels to include in the feed (Phase 9, epic #184) */
   readonly channels?: readonly ChannelLike[];
   readonly limit: number;
 }
@@ -117,7 +108,7 @@ interface BuildActivityFeedArgs {
 /**
  * Merge entity arrays into a time-sorted activity feed.
  *
- * - All five entity kinds are merged into a single array
+ * - All entity kinds are merged into a single array
  * - Sorted descending by updatedAt (most recent first)
  * - Limited to `limit` entries after sort
  * - Action verbs are mapped per-kind based on status
@@ -133,7 +124,7 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
       kind: 'task',
       entityId: task.id,
       status: task.status,
-      action: taskAction(task.status),
+      action: task.status,
     });
   }
 
@@ -163,7 +154,7 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
       kind: 'schedule',
       entityId: sched.id,
       status: sched.status,
-      action: scheduleAction(sched.status),
+      action: sched.status,
     });
   }
 

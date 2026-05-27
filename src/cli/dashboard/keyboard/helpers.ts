@@ -105,6 +105,17 @@ export function resolveIterationIndex(
 }
 
 /**
+ * Resolve the currently selected channel member index from a member name.
+ * Returns 0 when no name is set, when the name is not found, or when the
+ * members array is empty. Mirrors resolveIterationIndex but for channel members.
+ */
+export function resolveMemberIndex(selectedName: string | null, members: readonly { name: string }[]): number {
+  if (!selectedName) return 0;
+  const idx = members.findIndex((m) => m.name === selectedName);
+  return idx >= 0 ? idx : 0;
+}
+
+/**
  * Return the currently selected item in the focused panel, or null if data is absent.
  * Applies the active filter before resolving the selection index.
  * Used by the 'c' (cancel) and 'd' (delete) handlers in the main panel.

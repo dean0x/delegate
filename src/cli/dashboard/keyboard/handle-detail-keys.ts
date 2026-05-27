@@ -9,7 +9,7 @@
 
 import { ORCHESTRATION_CHILDREN_PAGE_SIZE } from '../views/orchestration-detail.js';
 import { pauseOrResumeEntity } from './entity-mutations.js';
-import { resolveChildIndex, resolveIterationIndex } from './helpers.js';
+import { resolveChildIndex, resolveIterationIndex, resolveMemberIndex } from './helpers.js';
 import type { InkKey, KeyHandlerParams } from './types.js';
 
 // ─── Section handlers ────────────────────────────────────────────────────────
@@ -98,9 +98,9 @@ function handleOutputControls(input: string, params: KeyHandlerParams): boolean 
 }
 
 /**
- * 3. Pause/resume toggle for schedules and loops.
+ * 3. Pause/resume toggle for schedules, loops, and channels.
  *
- *  - p: pause (active schedule / running loop) or resume (paused schedule / loop)
+ *  - p: pause (active schedule / running loop / active channel) or resume (paused)
  *  - Silently consumed for non-pauseable entity types.
  */
 function handlePauseResume(input: string, params: KeyHandlerParams): boolean {
@@ -117,6 +117,11 @@ function handlePauseResume(input: string, params: KeyHandlerParams): boolean {
     const loop = dataRef.current?.loops.find((l) => l.id === view.entityId);
     if (loop) {
       void pauseOrResumeEntity('loop', view.entityId, loop.status, mutations, refreshNow);
+    }
+  } else if (view.entityType === 'channels') {
+    const channel = dataRef.current?.channels.find((c) => c.id === view.entityId);
+    if (channel) {
+      void pauseOrResumeEntity('channel', view.entityId, channel.status, mutations, refreshNow);
     }
   }
   return true;
@@ -295,11 +300,7 @@ function handleChannelNavigation(input: string, key: InkKey, params: KeyHandlerP
   if (key.upArrow || input === 'k') {
     if (members.length === 0) return true;
     setNav((prev) => {
-      const currentIdx = prev.channelMemberSelectedName
-        ? members.findIndex((m) => m.name === prev.channelMemberSelectedName)
-        : 0;
-      const resolvedIdx = currentIdx >= 0 ? currentIdx : 0;
-      const nextIdx = Math.max(0, resolvedIdx - 1);
+      const nextIdx = Math.max(0, resolveMemberIndex(prev.channelMemberSelectedName, members) - 1);
       return { ...prev, channelMemberSelectedName: members[nextIdx]?.name ?? null };
     });
     return true;
@@ -308,11 +309,7 @@ function handleChannelNavigation(input: string, key: InkKey, params: KeyHandlerP
   if (key.downArrow || input === 'j') {
     if (members.length === 0) return true;
     setNav((prev) => {
-      const currentIdx = prev.channelMemberSelectedName
-        ? members.findIndex((m) => m.name === prev.channelMemberSelectedName)
-        : 0;
-      const resolvedIdx = currentIdx >= 0 ? currentIdx : 0;
-      const nextIdx = Math.min(members.length - 1, resolvedIdx + 1);
+      const nextIdx = Math.min(members.length - 1, resolveMemberIndex(prev.channelMemberSelectedName, members) + 1);
       return { ...prev, channelMemberSelectedName: members[nextIdx]?.name ?? null };
     });
     return true;
@@ -394,7 +391,7 @@ function handleGenericScroll(input: string, key: InkKey, params: KeyHandlerParam
  * Key handler ordering:
  *  1. Esc/Backspace → return to previous view
  *  2. Output controls (o/[/]/g/G) → guarded to task/orchestration only
- *  3. Pause/resume (p) → schedules and loops only
+ *  3. Pause/resume (p) → schedules, loops, and channels only
  *  4. Loop entity type → iteration navigation (↑/↓/Enter)
  *  5. Orchestration entity type → child navigation (existing D3 pattern)
  *  6. Channel entity type → member navigation (↑/↓)

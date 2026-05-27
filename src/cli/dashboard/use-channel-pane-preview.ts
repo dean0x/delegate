@@ -50,24 +50,17 @@ export function useChannelPanePreview(
     if (fetching.current) return;
 
     fetching.current = true;
-    try {
-      const result = capturePaneFn(sessionName, lines);
-      if (closing.current) return;
+    const result = capturePaneFn(sessionName, lines);
+    fetching.current = false;
 
-      if (result.ok) {
-        setPreview(result.value);
-        setError(null);
-      } else {
-        setPreview(null);
-        setError('(session not responding)');
-      }
-    } catch {
-      if (!closing.current) {
-        setPreview(null);
-        setError('(session not responding)');
-      }
-    } finally {
-      fetching.current = false;
+    if (closing.current) return;
+
+    if (result.ok) {
+      setPreview(result.value);
+      setError(null);
+    } else {
+      setPreview(null);
+      setError('(session not responding)');
     }
   }, [capturePaneFn, sessionName, enabled, lines]);
 

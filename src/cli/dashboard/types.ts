@@ -56,9 +56,9 @@ export interface DashboardMutationContext {
   readonly scheduleRepo: ScheduleRepository;
   /** Pipeline repository for delete operations (cancel is driven via task cancellation cascade) */
   readonly pipelineRepo?: PipelineRepository;
-  /** Channel service for pause/resume/destroy operations (Phase 9, epic #184) */
+  /** Channel service for pause/resume/destroy operations */
   readonly channelService?: ChannelService;
-  /** Channel repository for direct queries in channel detail view (Phase 9, epic #184) */
+  /** Channel repository for direct queries in channel detail view */
   readonly channelRepo?: ChannelRepository;
 }
 
@@ -165,7 +165,6 @@ export interface NavState {
   /**
    * Name of the highlighted member row in channel detail (null = first row).
    * Follows orchestrationChildSelectedTaskId convention for D3-style drill-through.
-   * Phase 9, epic #184.
    */
   readonly channelMemberSelectedName: string | null;
 }
@@ -205,14 +204,12 @@ export interface DashboardData {
   readonly schedules: readonly Schedule[];
   readonly orchestrations: readonly Orchestration[];
   readonly pipelines: readonly Pipeline[];
-  /** Channels for the entity browser panel (Phase 9, epic #184) */
   readonly channels: readonly Channel[];
   readonly taskCounts: EntityCounts;
   readonly loopCounts: EntityCounts;
   readonly scheduleCounts: EntityCounts;
   readonly orchestrationCounts: EntityCounts;
   readonly pipelineCounts: EntityCounts;
-  /** Channel entity counts (Phase 9, epic #184) */
   readonly channelCounts: EntityCounts;
   readonly iterations?: readonly LoopIteration[];
   readonly executions?: readonly ScheduleExecution[];
@@ -240,7 +237,7 @@ export interface DashboardData {
   readonly activityFeed?: readonly ActivityEntry[];
   /** Step tasks fetched by ID for pipeline detail (bypasses FETCH_LIMIT) */
   readonly pipelineStepTasks?: readonly (Task | null)[];
-  /** Message summaries for the focused channel in channel detail view (Phase 9, epic #184) */
+  /** Message summaries for the focused channel in channel detail view */
   readonly channelMessages?: readonly ChannelMessage[];
 }
 
@@ -259,6 +256,6 @@ export interface DetailExtra {
   readonly orchestrationChildrenTotal?: number;
   /** Step tasks fetched by ID for pipeline detail (bypasses FETCH_LIMIT) */
   readonly pipelineStepTasks?: readonly (Task | null)[];
-  /** Message summaries for the focused channel in channel detail view (Phase 9, epic #184) */
+  /** Message summaries for the focused channel in channel detail view */
   readonly channelMessages?: readonly ChannelMessage[];
 }
