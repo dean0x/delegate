@@ -207,6 +207,19 @@ describe('cancelEntity (channel)', () => {
     await cancelEntity('channel', 'chan-4', ChannelStatus.ACTIVE, mutations, refreshNow);
     expect(refreshNow).not.toHaveBeenCalled();
   });
+
+  it('swallows service errors without crashing', async () => {
+    const mutations = makeMutations({
+      channelService: makeChannelService({
+        destroyChannel: vi.fn().mockRejectedValue(new Error('channel service unavailable')),
+      }),
+    });
+    const refreshNow = vi.fn();
+    await expect(
+      cancelEntity('channel', 'chan-err', ChannelStatus.ACTIVE, mutations, refreshNow),
+    ).resolves.toBeUndefined();
+    expect(refreshNow).not.toHaveBeenCalled();
+  });
 });
 
 describe('deleteEntity (channel)', () => {
