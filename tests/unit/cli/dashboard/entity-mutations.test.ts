@@ -1,13 +1,33 @@
 /**
- * Tests for pauseOrResumeEntity dispatch function.
- * Pattern: Each test verifies the correct service method is called based on entity kind and status.
+ * Tests for cancelEntity, pauseOrResumeEntity, and deleteEntity dispatch functions.
+ * Pattern: Each test verifies the correct service/repo method is called based on entity kind and status.
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { pauseOrResumeEntity } from '../../../../src/cli/dashboard/keyboard/entity-mutations.js';
+import {
+  cancelEntity,
+  deleteEntity,
+  pauseOrResumeEntity,
+} from '../../../../src/cli/dashboard/keyboard/entity-mutations.js';
 import type { DashboardMutationContext } from '../../../../src/cli/dashboard/types.js';
-import { LoopStatus, ScheduleStatus } from '../../../../src/core/domain.js';
+import { ChannelStatus, LoopStatus, ScheduleStatus } from '../../../../src/core/domain.js';
 import { ok } from '../../../../src/core/result.js';
+
+function makeChannelService(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    destroyChannel: vi.fn().mockResolvedValue(ok(undefined)),
+    pauseChannel: vi.fn().mockResolvedValue(ok(undefined)),
+    resumeChannel: vi.fn().mockResolvedValue(ok(undefined)),
+    ...overrides,
+  };
+}
+
+function makeChannelRepo(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    delete: vi.fn().mockResolvedValue(ok(undefined)),
+    ...overrides,
+  };
+}
 
 function makeMutations(overrides: Partial<Record<string, unknown>> = {}): DashboardMutationContext {
   return {
@@ -114,6 +134,113 @@ describe('pauseOrResumeEntity', () => {
         refreshNow,
       ),
     ).resolves.toBeUndefined();
+    expect(refreshNow).not.toHaveBeenCalled();
+  });
+
+  it('pauses active channel', async () => {
+    const channelService = makeChannelService();
+    const mutations = makeMutations({ channelService });
+    const refreshNow = vi.fn();
+    await pauseOrResumeEntity('channel', 'chan-1', ChannelStatus.ACTIVE, mutations, refreshNow);
+    expect(channelService.pauseChannel).toHaveBeenCalledWith('chan-1');
+    expect(refreshNow).toHaveBeenCalled();
+  });
+
+  it('resumes paused channel', async () => {
+    const channelService = makeChannelService();
+    const mutations = makeMutations({ channelService });
+    const refreshNow = vi.fn();
+    await pauseOrResumeEntity('channel', 'chan-2', ChannelStatus.PAUSED, mutations, refreshNow);
+    expect(channelService.resumeChannel).toHaveBeenCalledWith('chan-2');
+    expect(refreshNow).toHaveBeenCalled();
+  });
+
+  it('skips channel pause/resume when terminal (destroyed)', async () => {
+    const channelService = makeChannelService();
+    const mutations = makeMutations({ channelService });
+    const refreshNow = vi.fn();
+    await pauseOrResumeEntity('channel', 'chan-3', ChannelStatus.DESTROYED, mutations, refreshNow);
+    expect(channelService.pauseChannel).not.toHaveBeenCalled();
+    expect(channelService.resumeChannel).not.toHaveBeenCalled();
+    expect(refreshNow).not.toHaveBeenCalled();
+  });
+
+  it('skips channel pause/resume when channelService is absent', async () => {
+    const mutations = makeMutations({ channelService: undefined });
+    const refreshNow = vi.fn();
+    await pauseOrResumeEntity('channel', 'chan-4', ChannelStatus.ACTIVE, mutations, refreshNow);
+    expect(refreshNow).not.toHaveBeenCalled();
+  });
+});
+
+describe('cancelEntity (channel)', () => {
+  it('destroys active channel', async () => {
+    const channelService = makeChannelService();
+    const mutations = makeMutations({ channelService });
+    const refreshNow = vi.fn();
+    await cancelEntity('channel', 'chan-1', ChannelStatus.ACTIVE, mutations, refreshNow);
+    expect(channelService.destroyChannel).toHaveBeenCalledWith('chan-1', 'user-requested');
+    expect(refreshNow).toHaveBeenCalled();
+  });
+
+  it('is no-op when channel is already destroyed (terminal)', async () => {
+    const channelService = makeChannelService();
+    const mutations = makeMutations({ channelService });
+    const refreshNow = vi.fn();
+    await cancelEntity('channel', 'chan-2', ChannelStatus.DESTROYED, mutations, refreshNow);
+    expect(channelService.destroyChannel).not.toHaveBeenCalled();
+    expect(refreshNow).not.toHaveBeenCalled();
+  });
+
+  it('is no-op when channel is already completed (terminal)', async () => {
+    const channelService = makeChannelService();
+    const mutations = makeMutations({ channelService });
+    const refreshNow = vi.fn();
+    await cancelEntity('channel', 'chan-3', ChannelStatus.COMPLETED, mutations, refreshNow);
+    expect(channelService.destroyChannel).not.toHaveBeenCalled();
+    expect(refreshNow).not.toHaveBeenCalled();
+  });
+
+  it('is no-op when channelService is absent', async () => {
+    const mutations = makeMutations({ channelService: undefined });
+    const refreshNow = vi.fn();
+    await cancelEntity('channel', 'chan-4', ChannelStatus.ACTIVE, mutations, refreshNow);
+    expect(refreshNow).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleteEntity (channel)', () => {
+  it('deletes a destroyed channel', async () => {
+    const channelRepo = makeChannelRepo();
+    const mutations = makeMutations({ channelRepo });
+    const refreshNow = vi.fn();
+    await deleteEntity('channel', 'chan-1', ChannelStatus.DESTROYED, mutations, refreshNow);
+    expect(channelRepo.delete).toHaveBeenCalledWith('chan-1');
+    expect(refreshNow).toHaveBeenCalled();
+  });
+
+  it('deletes a completed channel', async () => {
+    const channelRepo = makeChannelRepo();
+    const mutations = makeMutations({ channelRepo });
+    const refreshNow = vi.fn();
+    await deleteEntity('channel', 'chan-2', ChannelStatus.COMPLETED, mutations, refreshNow);
+    expect(channelRepo.delete).toHaveBeenCalledWith('chan-2');
+    expect(refreshNow).toHaveBeenCalled();
+  });
+
+  it('is no-op when channel is non-terminal (active)', async () => {
+    const channelRepo = makeChannelRepo();
+    const mutations = makeMutations({ channelRepo });
+    const refreshNow = vi.fn();
+    await deleteEntity('channel', 'chan-3', ChannelStatus.ACTIVE, mutations, refreshNow);
+    expect(channelRepo.delete).not.toHaveBeenCalled();
+    expect(refreshNow).not.toHaveBeenCalled();
+  });
+
+  it('is no-op when channelRepo is absent', async () => {
+    const mutations = makeMutations({ channelRepo: undefined });
+    const refreshNow = vi.fn();
+    await deleteEntity('channel', 'chan-4', ChannelStatus.DESTROYED, mutations, refreshNow);
     expect(refreshNow).not.toHaveBeenCalled();
   });
 });

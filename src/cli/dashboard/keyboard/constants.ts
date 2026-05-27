@@ -2,7 +2,7 @@
  * Keyboard navigation constants shared across all handler modules.
  */
 
-import { LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
+import { ChannelStatus, LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
 import type { PanelId } from '../types.js';
 
 /** Ordered panel cycle for Tab navigation */
@@ -42,12 +42,14 @@ export const TERMINAL_STATUSES: {
   tasks: TaskStatus[];
   schedules: ScheduleStatus[];
   pipelines: PipelineStatus[];
+  channels: ChannelStatus[];
 } = {
   orchestrations: [OrchestratorStatus.COMPLETED, OrchestratorStatus.FAILED, OrchestratorStatus.CANCELLED],
   loops: [LoopStatus.COMPLETED, LoopStatus.FAILED, LoopStatus.CANCELLED],
   tasks: [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED],
   schedules: [ScheduleStatus.COMPLETED, ScheduleStatus.CANCELLED, ScheduleStatus.EXPIRED],
   pipelines: [PipelineStatus.COMPLETED, PipelineStatus.FAILED, PipelineStatus.CANCELLED],
+  channels: [ChannelStatus.DESTROYED, ChannelStatus.COMPLETED],
 };
 
 /** Conservative upper bound for detail scroll when caller does not provide content length */

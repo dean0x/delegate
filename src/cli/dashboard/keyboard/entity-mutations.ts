@@ -82,12 +82,8 @@ export async function cancelEntity(
         break;
       }
       case 'channel':
-        // Channel destroy (not cancel) — skip if already destroyed/completed
-        if (
-          entityStatus !== ChannelStatus.DESTROYED &&
-          entityStatus !== ChannelStatus.COMPLETED &&
-          mutations.channelService
-        ) {
+        // Channel destroy (not cancel) — skip if already in a terminal status
+        if (!TERMINAL_STATUSES.channels.includes(entityStatus as ChannelStatus) && mutations.channelService) {
           await mutations.channelService.destroyChannel(entityId as ChannelId, 'user-requested');
           refreshNow();
         }
@@ -200,11 +196,8 @@ export async function deleteEntity(
         }
         break;
       case 'channel':
-        // Only delete destroyed/completed channels
-        if (
-          (entityStatus === ChannelStatus.DESTROYED || entityStatus === ChannelStatus.COMPLETED) &&
-          mutations.channelRepo
-        ) {
+        // Only delete terminal (destroyed/completed) channels
+        if (TERMINAL_STATUSES.channels.includes(entityStatus as ChannelStatus) && mutations.channelRepo) {
           await mutations.channelRepo.delete(entityId as ChannelId);
           refreshNow();
         }
