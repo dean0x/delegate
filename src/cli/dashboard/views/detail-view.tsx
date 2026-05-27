@@ -70,6 +70,8 @@ interface DetailViewProps {
   readonly channelMemberSelectedName?: string | null;
   /** Phase 9 (#184): live capture-pane preview for the selected channel member */
   readonly panePreview?: string | null;
+  /** Phase 9 (#184): error string from capture-pane failure, distinct from initial loading state */
+  readonly panePreviewError?: string | null;
 }
 
 const NotFound: React.FC<{ entityType: PanelId; entityId: string }> = ({ entityType, entityId }) => (
@@ -93,6 +95,7 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
     detailOutputConfig,
     channelMemberSelectedName = null,
     panePreview = null,
+    panePreviewError = null,
   }) => {
     switch (entityType) {
       case 'loops': {
@@ -179,6 +182,7 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
             animFrame={animFrame}
             selectedMemberName={channelMemberSelectedName}
             panePreview={panePreview}
+            panePreviewError={panePreviewError}
           />
         );
       }

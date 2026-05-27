@@ -152,21 +152,26 @@ export const App: React.FC<AppProps> = React.memo(
       streamingEnabled,
     );
 
+    // Extract view primitives to avoid spurious useMemo recomputations on unrelated view changes.
+    const viewKind = view.kind;
+    const viewEntityType = view.kind === 'detail' ? view.entityType : undefined;
+    const viewEntityId = view.kind === 'detail' ? view.entityId : undefined;
+
     // Resolve the selected channel member's tmux session name for live preview.
     // Only relevant when viewing a channel detail — other views pass null.
     const channelDetailSessionName = useMemo((): string | null => {
-      if (view.kind !== 'detail' || view.entityType !== 'channels') return null;
-      const channel = data?.channels.find((c) => c.id === view.entityId);
+      if (viewKind !== 'detail' || viewEntityType !== 'channels') return null;
+      const channel = data?.channels.find((c) => c.id === viewEntityId);
       if (channel === undefined) return null;
       const member = resolveSelectedMember(nav.channelMemberSelectedName, channel.members);
       return member?.tmuxSession ?? null;
-    }, [view, data?.channels, nav.channelMemberSelectedName]);
+    }, [viewKind, viewEntityType, viewEntityId, data?.channels, nav.channelMemberSelectedName]);
 
     // Live capture-pane preview for channel member sessions (Phase 9, #184)
-    const { preview: channelPanePreview } = useChannelPanePreview(
+    const { preview: channelPanePreview, error: channelPanePreviewError } = useChannelPanePreview(
       capturePaneContent,
       channelDetailSessionName,
-      view.kind === 'detail' && view.entityType === 'channels',
+      viewKind === 'detail' && viewEntityType === 'channels',
     );
 
     useKeyboard({
@@ -184,18 +189,18 @@ export const App: React.FC<AppProps> = React.memo(
     // Resolve the status of the entity currently shown in detail view.
     // Used by Footer to select the correct pause vs resume hint.
     const detailEntityStatus = useMemo(() => {
-      if (view.kind !== 'detail') return undefined;
-      if (view.entityType === 'schedules') {
-        return data?.schedules.find((s) => s.id === view.entityId)?.status;
+      if (viewKind !== 'detail') return undefined;
+      if (viewEntityType === 'schedules') {
+        return data?.schedules.find((s) => s.id === viewEntityId)?.status;
       }
-      if (view.entityType === 'loops') {
-        return data?.loops.find((l) => l.id === view.entityId)?.status;
+      if (viewEntityType === 'loops') {
+        return data?.loops.find((l) => l.id === viewEntityId)?.status;
       }
-      if (view.entityType === 'channels') {
-        return data?.channels.find((c) => c.id === view.entityId)?.status;
+      if (viewEntityType === 'channels') {
+        return data?.channels.find((c) => c.id === viewEntityId)?.status;
       }
       return undefined;
-    }, [view, data?.schedules, data?.loops, data?.channels]);
+    }, [viewKind, viewEntityType, viewEntityId, data?.schedules, data?.loops, data?.channels]);
 
     // View dispatcher
     const renderView = (): React.ReactNode => {
@@ -233,6 +238,7 @@ export const App: React.FC<AppProps> = React.memo(
             detailOutputConfig={detailOutputConfig}
             channelMemberSelectedName={nav.channelMemberSelectedName}
             panePreview={channelPanePreview}
+            panePreviewError={channelPanePreviewError}
           />
         );
       }

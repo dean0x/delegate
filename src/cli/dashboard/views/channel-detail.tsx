@@ -30,6 +30,8 @@ export interface ChannelDetailProps {
   readonly animFrame: number;
   readonly selectedMemberName: string | null;
   readonly panePreview: string | null;
+  /** Error message from capture-pane failure, distinct from initial loading state (null). */
+  readonly panePreviewError?: string | null;
 }
 
 /** Member status icon — filled dot for active, half-filled for idle, hollow for destroyed */
@@ -94,7 +96,7 @@ function formatMessageRow(msg: ChannelMessage): string {
 }
 
 export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
-  ({ channel, messages, scrollOffset, animFrame, selectedMemberName, panePreview }) => {
+  ({ channel, messages, scrollOffset, animFrame, selectedMemberName, panePreview, panePreviewError = null }) => {
     // Resolved member (falls back to first member) — used for preview label and selection highlight
     const selectedMember = React.useMemo(
       () => resolveSelectedMember(selectedMemberName, channel.members),
@@ -176,8 +178,10 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
           <Box flexDirection="column">
             <Text dimColor>{panePreview}</Text>
           </Box>
+        ) : panePreviewError !== null ? (
+          <Text dimColor>{panePreviewError}</Text>
         ) : (
-          <Text dimColor>(session not responding)</Text>
+          <Text dimColor>(loading…)</Text>
         )}
       </Box>
     );

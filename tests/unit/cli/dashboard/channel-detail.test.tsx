@@ -418,7 +418,7 @@ describe('ChannelDetail — live preview', () => {
     expect(lastFrame()).toContain('$ running analysis...');
   });
 
-  it('shows "(session not responding)" when panePreview is null with a selected member', () => {
+  it('shows "(session not responding)" when panePreviewError is set and panePreview is null', () => {
     const channel = makeChannel({
       members: [makeMember({ name: 'agent-a' })],
     });
@@ -429,9 +429,27 @@ describe('ChannelDetail — live preview', () => {
         animFrame={0}
         selectedMemberName="agent-a"
         panePreview={null}
+        panePreviewError="(session not responding)"
       />,
     );
     expect(lastFrame()).toContain('(session not responding)');
+  });
+
+  it('shows "(loading…)" when panePreview is null and panePreviewError is null with a selected member', () => {
+    const channel = makeChannel({
+      members: [makeMember({ name: 'agent-a' })],
+    });
+    const { lastFrame } = render(
+      <ChannelDetail
+        channel={channel}
+        scrollOffset={0}
+        animFrame={0}
+        selectedMemberName="agent-a"
+        panePreview={null}
+        panePreviewError={null}
+      />,
+    );
+    expect(lastFrame()).toContain('(loading…)');
   });
 
   it('shows "(no member selected)" when channel has no members', () => {
