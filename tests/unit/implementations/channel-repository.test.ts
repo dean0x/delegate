@@ -608,6 +608,26 @@ describe('SQLiteChannelRepository', () => {
       expect(memberColNames).toContain('status');
       expect(memberColNames).toContain('joined_at');
     });
+
+    it('creates idx_channel_messages_channel_created index for ORDER BY created_at DESC', () => {
+      const indexes = db.getDatabase().prepare("PRAGMA index_list('channel_messages')").all() as Array<{
+        name: string;
+        unique: number;
+        origin: string;
+      }>;
+      const indexNames = indexes.map((i) => i.name);
+      expect(indexNames).toContain('idx_channel_messages_channel_created');
+
+      // Verify the index covers (channel_id, created_at) columns
+      const indexInfo = db.getDatabase().prepare("PRAGMA index_info('idx_channel_messages_channel_created')").all() as Array<{
+        seqno: number;
+        cid: number;
+        name: string;
+      }>;
+      const indexCols = indexInfo.map((c) => c.name);
+      expect(indexCols).toContain('channel_id');
+      expect(indexCols).toContain('created_at');
+    });
   });
 
   // ============================================================================
@@ -722,10 +742,52 @@ describe('SQLiteChannelRepository', () => {
   });
 
   // ============================================================================
-  // P2: N+1 Member Loading (Baseline)
+  // P2: Batch Member Loading (findAll / findByStatus)
   // ============================================================================
 
   describe('performance', () => {
+    it('findAll loads members for all channels in two queries (batch hydration)', async () => {
+      // Save 3 channels with distinct members to verify cross-channel grouping
+      const ch1 = buildChannel({ name: 'batch-1', members: [{ name: 'a1', agent: 'claude' }, { name: 'a2', agent: 'codex' }] });
+      const ch2 = buildChannel({ name: 'batch-2', members: [{ name: 'b1', agent: 'claude' }] });
+      const ch3 = buildChannel({ name: 'batch-3', members: [] });
+      await repo.save(ch1);
+      await repo.save(ch2);
+      await repo.save(ch3);
+
+      const result = await repo.findAll();
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+
+      const byName = new Map(result.value.map((c) => [c.name, c]));
+      // Members are correctly attributed to their own channel
+      expect(byName.get('batch-1')!.members).toHaveLength(2);
+      expect(byName.get('batch-2')!.members).toHaveLength(1);
+      expect(byName.get('batch-3')!.members).toHaveLength(0);
+      // No member cross-contamination
+      const ch1Members = byName.get('batch-1')!.members.map((m) => m.name);
+      expect(ch1Members).toContain('a1');
+      expect(ch1Members).toContain('a2');
+      expect(ch1Members).not.toContain('b1');
+    });
+
+    it('findByStatus loads members for matching channels via batch hydration', async () => {
+      const active = buildChannel({ name: 'batch-active', members: [{ name: 'x1', agent: 'claude' }] });
+      const paused = buildChannel({ name: 'batch-paused', members: [{ name: 'y1', agent: 'codex' }, { name: 'y2', agent: 'claude' }] });
+      await repo.save(active);
+      await repo.save(paused);
+      await repo.updateStatus(paused.id, ChannelStatus.PAUSED);
+
+      const result = await repo.findByStatus(ChannelStatus.PAUSED);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(1);
+      expect(result.value[0].members).toHaveLength(2);
+      const names = result.value[0].members.map((m) => m.name);
+      expect(names).toContain('y1');
+      expect(names).toContain('y2');
+    });
+
     it('handles 50 channels with 3 members each via findAll', async () => {
       for (let i = 0; i < 50; i++) {
         const ch = buildChannel({

@@ -1277,6 +1277,8 @@ export class Database implements TransactionRunner {
               ON channel_messages(channel_id);
             CREATE INDEX IF NOT EXISTS idx_channel_messages_channel_round
               ON channel_messages(channel_id, round DESC);
+            CREATE INDEX IF NOT EXISTS idx_channel_messages_channel_created
+              ON channel_messages(channel_id, created_at DESC);
           `);
         },
       },

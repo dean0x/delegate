@@ -226,7 +226,7 @@ export class SQLiteChannelRepository implements ChannelRepository {
     const effectiveOffset = offset ?? 0;
     return tryCatchAsync(async () => {
       const rows = this.findAllStmt.all(effectiveLimit, effectiveOffset) as ChannelRow[];
-      return rows.map((row) => this.rowToChannel(row));
+      return this.hydrateChannelRows(rows);
     }, operationErrorHandler('find all channels'));
   }
 
@@ -236,7 +236,7 @@ export class SQLiteChannelRepository implements ChannelRepository {
     return tryCatchAsync(
       async () => {
         const rows = this.findByStatusStmt.all(status, effectiveLimit, effectiveOffset) as ChannelRow[];
-        return rows.map((row) => this.rowToChannel(row));
+        return this.hydrateChannelRows(rows);
       },
       operationErrorHandler('find channels by status', { status }),
     );
@@ -414,14 +414,75 @@ export class SQLiteChannelRepository implements ChannelRepository {
   }
 
   /**
+   * Batch-hydrates channel rows with their members in two queries total:
+   * one for channels (already fetched by caller) and one IN-clause fetch for all
+   * members, grouped by channel_id in-memory.
+   *
+   * PERFORMANCE: O(1) queries regardless of row count, safe for 1-second dashboard
+   * poll loop. Called by findAll() and findByStatus().
+   */
+  private hydrateChannelRows(rows: ChannelRow[]): readonly Channel[] {
+    if (rows.length === 0) return [];
+    const ids = rows.map((r) => r.id);
+    const membersByChannelId = this.findMembersByChannelIds(ids);
+    return rows.map((row) => this.rowToChannelWithMembers(row, membersByChannelId.get(row.id) ?? []));
+  }
+
+  /**
+   * Fetches all members for the given channel IDs in a single IN-clause query.
+   * Returns a Map keyed by channel_id for O(1) lookup.
+   *
+   * ARCHITECTURE: Builds the SQL dynamically from the id list; better-sqlite3
+   * does not support array binding directly. The id list is always bounded by
+   * DEFAULT_LIMIT (100) so the IN clause is safe.
+   */
+  private findMembersByChannelIds(ids: readonly string[]): Map<string, ChannelMemberRow[]> {
+    const placeholders = ids.map(() => '?').join(', ');
+    const memberRows = this.db
+      .prepare(`SELECT * FROM channel_members WHERE channel_id IN (${placeholders}) ORDER BY joined_at ASC`)
+      .all(...ids) as ChannelMemberRow[];
+
+    const byChannelId = new Map<string, ChannelMemberRow[]>();
+    for (const row of memberRows) {
+      let list = byChannelId.get(row.channel_id);
+      if (!list) {
+        list = [];
+        byChannelId.set(row.channel_id, list);
+      }
+      list.push(row);
+    }
+    return byChannelId;
+  }
+
+  /**
+   * Converts a raw DB row to a Channel domain object using pre-fetched member rows.
+   * Used by hydrateChannelRows() to avoid per-channel queries in list operations.
+   */
+  private rowToChannelWithMembers(row: ChannelRow, memberRows: ChannelMemberRow[]): Channel {
+    const validated = ChannelRowSchema.parse(row);
+    const members = memberRows.map((mr) => this.rowToMember(mr));
+    return Object.freeze({
+      id: ChannelId(validated.id),
+      name: validated.name,
+      members: Object.freeze(members),
+      communicationMode: validated.communication_mode ?? undefined,
+      topic: validated.topic ?? undefined,
+      status: validated.status as ChannelStatus,
+      maxRounds: validated.max_rounds ?? undefined,
+      currentRound: validated.current_round,
+      createdBy: validated.created_by ?? undefined,
+      createdAt: validated.created_at,
+      updatedAt: validated.updated_at,
+    });
+  }
+
+  /**
    * Converts a raw DB row to a Channel domain object, loading members via a
    * separate query.
    *
-   * N+1 LOAD: Each call issues a separate `findMembersByChannelIdStmt` query.
-   * findAll(100) = 101 queries total. Acceptable for Phase 6 baseline — channels
-   * are bounded by DEFAULT_LIMIT=100 and member counts are small in practice.
-   * Optimize to a single batch IN-clause fetch if findAll/findByStatus become
-   * hot paths under production load.
+   * Used only for single-channel lookups (findById, findByName) where N+1 is
+   * not a concern. List operations (findAll, findByStatus) use hydrateChannelRows()
+   * instead to batch-load members in a single IN-clause query.
    */
   private rowToChannel(row: ChannelRow): Channel {
     const validated = ChannelRowSchema.parse(row);
