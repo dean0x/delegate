@@ -124,6 +124,30 @@ describe('ChannelMessagePersistenceHandler', () => {
     });
   });
 
+  describe('ChannelMessageSent — save failure', () => {
+    it('logs warning and does not throw when save fails (non-existent channelId triggers FK violation)', async () => {
+      // Emit with a channelId that has no matching row — SQLite FK constraint fires,
+      // saveMessage returns err(), handler logs warn and returns ok(undefined) (best-effort).
+      const nonExistentChannelId = ChannelId('ch-does-not-exist');
+      await eventBus.emit('ChannelMessageSent', {
+        channelId: nonExistentChannelId,
+        from: 'architect',
+        to: 'reviewer',
+        round: 1,
+        summary: 'This will fail to persist',
+      });
+      await flushEventLoop();
+
+      // Handler must not throw — dashboard stays alive on repo errors
+      expect(logger.logs.some((e) => e.level === 'warn')).toBe(true);
+      // Verify no message row was saved for the real channel either
+      const result = await channelRepo.getMessages(channelId);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(0);
+    });
+  });
+
   describe('ChannelMessageSent — without summary', () => {
     it('skips persistence when event has no summary', async () => {
       await eventBus.emit('ChannelMessageSent', {

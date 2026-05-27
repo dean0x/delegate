@@ -256,4 +256,17 @@ describe('deleteEntity (channel)', () => {
     await deleteEntity('channel', 'chan-4', ChannelStatus.DESTROYED, mutations, refreshNow);
     expect(refreshNow).not.toHaveBeenCalled();
   });
+
+  it('swallows repo errors without crashing', async () => {
+    const mutations = makeMutations({
+      channelRepo: makeChannelRepo({
+        delete: vi.fn().mockRejectedValue(new Error('DB constraint violation')),
+      }),
+    });
+    const refreshNow = vi.fn();
+    await expect(
+      deleteEntity('channel', 'chan-err', ChannelStatus.DESTROYED, mutations, refreshNow),
+    ).resolves.toBeUndefined();
+    expect(refreshNow).not.toHaveBeenCalled();
+  });
 });

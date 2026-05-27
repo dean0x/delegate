@@ -380,26 +380,32 @@ export class SQLiteChannelRepository implements ChannelRepository {
   async saveMessage(msg: ChannelMessage): Promise<Result<void>> {
     return tryCatchAsync(
       async () => {
-        this.saveMessageStmt.run({
-          id: msg.id,
-          channel_id: msg.channelId,
-          from_member: msg.fromMember,
-          to_member: msg.toMember ?? null,
-          round: msg.round,
-          summary: msg.summary,
-          created_at: msg.createdAt,
-        });
-        // Prune oldest rows beyond MAX_MESSAGES_PER_CHANNEL to prevent unbounded growth.
-        // Best-effort — pruning failure is logged but does not fail the save.
-        // Guard: only prune once channel has accumulated enough messages to warrant a scan.
-        try {
-          const countRow = this.countMessagesStmt.get(msg.channelId) as { count: number };
-          if (countRow.count > SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL) {
-            this.pruneMessagesStmt.run(msg.channelId, msg.channelId, SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL);
+        // Wrap INSERT + COUNT + conditional DELETE in a single transaction.
+        // Prevents concurrent ChannelMessageSent events from double-pruning the same channel.
+        // Best-effort semantics preserved: prune errors are caught inside so the transaction
+        // still commits the INSERT if pruning throws.
+        const saveAndPrune = this.db.transaction(() => {
+          this.saveMessageStmt.run({
+            id: msg.id,
+            channel_id: msg.channelId,
+            from_member: msg.fromMember,
+            to_member: msg.toMember ?? null,
+            round: msg.round,
+            summary: msg.summary,
+            created_at: msg.createdAt,
+          });
+          // Prune oldest rows beyond MAX_MESSAGES_PER_CHANNEL to prevent unbounded growth.
+          // Guard: only prune once channel has accumulated enough messages to warrant a scan.
+          try {
+            const countRow = this.countMessagesStmt.get(msg.channelId) as { count: number };
+            if (countRow.count > SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL) {
+              this.pruneMessagesStmt.run(msg.channelId, msg.channelId, SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL);
+            }
+          } catch {
+            // Prune failure is intentionally swallowed — the message was saved successfully.
           }
-        } catch {
-          // Prune failure is intentionally swallowed — the message was saved successfully.
-        }
+        });
+        saveAndPrune();
       },
       operationErrorHandler('save channel message', { messageId: msg.id, channelId: msg.channelId }),
     );
@@ -411,9 +417,12 @@ export class SQLiteChannelRepository implements ChannelRepository {
    * Used by dashboard detail view for message history display.
    */
   async getMessages(channelId: ChannelId, limit?: number): Promise<Result<readonly ChannelMessage[]>> {
-    const effectiveLimit = Math.min(
-      limit ?? SQLiteChannelRepository.DEFAULT_MESSAGE_LIMIT,
-      SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL,
+    const effectiveLimit = Math.max(
+      1,
+      Math.min(
+        limit ?? SQLiteChannelRepository.DEFAULT_MESSAGE_LIMIT,
+        SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL,
+      ),
     );
     return tryCatchAsync(
       async () => {
@@ -489,6 +498,15 @@ export class SQLiteChannelRepository implements ChannelRepository {
         `SELECT * FROM channel_members WHERE channel_id IN (${placeholders}) ORDER BY joined_at ASC`,
       );
       this.membersByChannelIdsStmtCache.set(arity, stmt);
+      // Evict the oldest entry when the cache exceeds DEFAULT_LIMIT arities.
+      // In practice arity is always ≤ DEFAULT_LIMIT (100), but guard against
+      // callers passing unexpectedly large slices.
+      if (this.membersByChannelIdsStmtCache.size > SQLiteChannelRepository.DEFAULT_LIMIT) {
+        const firstKey = this.membersByChannelIdsStmtCache.keys().next().value;
+        if (firstKey !== undefined) {
+          this.membersByChannelIdsStmtCache.delete(firstKey);
+        }
+      }
     }
     const memberRows = stmt.all(...ids) as ChannelMemberRow[];
 
