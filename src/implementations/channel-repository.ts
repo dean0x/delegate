@@ -12,6 +12,7 @@ import {
   type Channel,
   ChannelId,
   type ChannelMember,
+  type ChannelMessage,
   ChannelMemberStatus,
   ChannelStatus,
   type CommunicationMode,
@@ -51,6 +52,16 @@ const ChannelMemberRowSchema = z.object({
   joined_at: z.number(),
 });
 
+const ChannelMessageRowSchema = z.object({
+  id: z.string().min(1),
+  channel_id: z.string().min(1),
+  from_member: z.string().min(1),
+  to_member: z.string().nullable(),
+  round: z.number().int().nonnegative(),
+  summary: z.string(),
+  created_at: z.number().int().positive(),
+});
+
 // ============================================================================
 // Row types for type-safe database interaction
 // ============================================================================
@@ -79,8 +90,19 @@ interface ChannelMemberRow {
   readonly joined_at: number;
 }
 
+interface ChannelMessageRow {
+  readonly id: string;
+  readonly channel_id: string;
+  readonly from_member: string;
+  readonly to_member: string | null;
+  readonly round: number;
+  readonly summary: string;
+  readonly created_at: number;
+}
+
 export class SQLiteChannelRepository implements ChannelRepository {
   private static readonly DEFAULT_LIMIT = 100;
+  private static readonly DEFAULT_MESSAGE_LIMIT = 50;
 
   private readonly db: SQLite.Database;
   private readonly saveChannelStmt: SQLite.Statement;
@@ -96,6 +118,8 @@ export class SQLiteChannelRepository implements ChannelRepository {
   private readonly deleteStmt: SQLite.Statement;
   private readonly countStmt: SQLite.Statement;
   private readonly countByStatusStmt: SQLite.Statement;
+  private readonly saveMessageStmt: SQLite.Statement;
+  private readonly getMessagesStmt: SQLite.Statement;
 
   constructor(database: Database) {
     this.db = database.getDatabase();
@@ -137,6 +161,15 @@ export class SQLiteChannelRepository implements ChannelRepository {
     this.countStmt = this.db.prepare(`SELECT COUNT(*) as count FROM channels`);
 
     this.countByStatusStmt = this.db.prepare(`SELECT status, COUNT(*) as count FROM channels GROUP BY status`);
+
+    this.saveMessageStmt = this.db.prepare(`
+      INSERT INTO channel_messages (id, channel_id, from_member, to_member, round, summary, created_at)
+      VALUES (@id, @channel_id, @from_member, @to_member, @round, @summary, @created_at)
+    `);
+
+    this.getMessagesStmt = this.db.prepare(`
+      SELECT * FROM channel_messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?
+    `);
   }
 
   // ============================================================================
@@ -307,6 +340,48 @@ export class SQLiteChannelRepository implements ChannelRepository {
   }
 
   // ============================================================================
+  // Channel message persistence (Phase 9 Dashboard)
+  // ============================================================================
+
+  /**
+   * Persist a single ChannelMessage summary row.
+   * ARCHITECTURE: INSERT only — message history is append-only.
+   * Called by ChannelMessagePersistenceHandler; best-effort — errors surface as err().
+   */
+  async saveMessage(msg: ChannelMessage): Promise<Result<void>> {
+    return tryCatchAsync(
+      async () => {
+        this.saveMessageStmt.run({
+          id: msg.id,
+          channel_id: msg.channelId,
+          from_member: msg.fromMember,
+          to_member: msg.toMember ?? null,
+          round: msg.round,
+          summary: msg.summary,
+          created_at: msg.createdAt,
+        });
+      },
+      operationErrorHandler('save channel message', { messageId: msg.id, channelId: msg.channelId }),
+    );
+  }
+
+  /**
+   * Retrieve message summaries for a channel, newest-first.
+   * ARCHITECTURE: Returns readonly array, max `limit` rows (default 50).
+   * Used by dashboard detail view for message history display.
+   */
+  async getMessages(channelId: ChannelId, limit?: number): Promise<Result<readonly ChannelMessage[]>> {
+    const effectiveLimit = limit ?? SQLiteChannelRepository.DEFAULT_MESSAGE_LIMIT;
+    return tryCatchAsync(
+      async () => {
+        const rows = this.getMessagesStmt.all(channelId, effectiveLimit) as ChannelMessageRow[];
+        return rows.map((row) => this.rowToChannelMessage(row));
+      },
+      operationErrorHandler('get channel messages', { channelId }),
+    );
+  }
+
+  // ============================================================================
   // Row conversion helpers
   // Pattern: Validate at boundary — ensures data integrity from database
   // ============================================================================
@@ -377,6 +452,19 @@ export class SQLiteChannelRepository implements ChannelRepository {
       tmuxSession: validated.tmux_session,
       status: validated.status as ChannelMemberStatus,
       joinedAt: validated.joined_at,
+    });
+  }
+
+  private rowToChannelMessage(row: ChannelMessageRow): ChannelMessage {
+    const validated = ChannelMessageRowSchema.parse(row);
+    return Object.freeze({
+      id: validated.id,
+      channelId: ChannelId(validated.channel_id),
+      fromMember: validated.from_member,
+      toMember: validated.to_member ?? null,
+      round: validated.round,
+      summary: validated.summary,
+      createdAt: validated.created_at,
     });
   }
 }

@@ -1259,6 +1259,27 @@ export class Database implements TransactionRunner {
           `);
         },
       },
+      {
+        version: 32,
+        description: 'Add channel_messages table for dashboard message summaries (Phase 9, epic #184)',
+        up: (db) => {
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS channel_messages (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+              from_member TEXT NOT NULL,
+              to_member TEXT,
+              round INTEGER NOT NULL,
+              summary TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_messages_channel_id
+              ON channel_messages(channel_id);
+            CREATE INDEX IF NOT EXISTS idx_channel_messages_channel_round
+              ON channel_messages(channel_id, round DESC);
+          `);
+        },
+      },
     ];
   }
 

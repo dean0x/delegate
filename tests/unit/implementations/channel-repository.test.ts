@@ -4,6 +4,7 @@ import {
   type Channel,
   ChannelId,
   type ChannelMember,
+  type ChannelMessage,
   ChannelMemberStatus,
   ChannelStatus,
   createChannel,
@@ -759,6 +760,142 @@ describe('SQLiteChannelRepository', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('unexpected');
       expect(result.value).toHaveLength(10);
+    });
+  });
+
+  // ============================================================================
+  // T12: Channel Messages — saveMessage + getMessages
+  // ============================================================================
+
+  describe('saveMessage + getMessages', () => {
+    function buildMessage(channelId: ChannelId, overrides: Partial<ChannelMessage> = {}): ChannelMessage {
+      return Object.freeze({
+        id: `cm-${crypto.randomUUID()}`,
+        channelId,
+        fromMember: 'architect',
+        toMember: null,
+        round: 1,
+        summary: 'Hello from architect',
+        createdAt: Date.now(),
+        ...overrides,
+      });
+    }
+
+    it('saves a message and retrieves it via getMessages', async () => {
+      const channel = buildChannel({ name: 'msg-save-test' });
+      await repo.save(channel);
+
+      const msg = buildMessage(channel.id, {
+        fromMember: 'architect',
+        toMember: 'reviewer',
+        round: 1,
+        summary: 'Code looks good!',
+      });
+
+      const saveResult = await repo.saveMessage(msg);
+      expect(saveResult.ok).toBe(true);
+
+      const getResult = await repo.getMessages(channel.id);
+      expect(getResult.ok).toBe(true);
+      if (!getResult.ok) throw new Error('unexpected');
+      expect(getResult.value).toHaveLength(1);
+
+      const found = getResult.value[0]!;
+      expect(found.id).toBe(msg.id);
+      expect(found.channelId).toBe(channel.id);
+      expect(found.fromMember).toBe('architect');
+      expect(found.toMember).toBe('reviewer');
+      expect(found.round).toBe(1);
+      expect(found.summary).toBe('Code looks good!');
+      expect(found.createdAt).toBe(msg.createdAt);
+    });
+
+    it('returns messages newest-first (ORDER BY created_at DESC)', async () => {
+      const channel = buildChannel({ name: 'msg-order-test' });
+      await repo.save(channel);
+
+      const now = Date.now();
+      const oldest = buildMessage(channel.id, { summary: 'oldest', createdAt: now - 2000 });
+      const middle = buildMessage(channel.id, { summary: 'middle', createdAt: now - 1000 });
+      const newest = buildMessage(channel.id, { summary: 'newest', createdAt: now });
+
+      await repo.saveMessage(oldest);
+      await repo.saveMessage(middle);
+      await repo.saveMessage(newest);
+
+      const result = await repo.getMessages(channel.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(3);
+      // newest-first
+      expect(result.value[0]!.summary).toBe('newest');
+      expect(result.value[1]!.summary).toBe('middle');
+      expect(result.value[2]!.summary).toBe('oldest');
+    });
+
+    it('respects the limit parameter', async () => {
+      const channel = buildChannel({ name: 'msg-limit-test' });
+      await repo.save(channel);
+
+      const now = Date.now();
+      for (let i = 0; i < 5; i++) {
+        await repo.saveMessage(buildMessage(channel.id, { summary: `msg-${i}`, createdAt: now + i }));
+      }
+
+      const result = await repo.getMessages(channel.id, 3);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(3);
+    });
+
+    it('returns empty array when channel has no messages', async () => {
+      const channel = buildChannel({ name: 'msg-empty-test' });
+      await repo.save(channel);
+
+      const result = await repo.getMessages(channel.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(0);
+    });
+
+    it('CASCADE deletes messages when channel is deleted', async () => {
+      const channel = buildChannel({ name: 'msg-cascade-test' });
+      await repo.save(channel);
+      await repo.saveMessage(buildMessage(channel.id));
+      await repo.saveMessage(buildMessage(channel.id));
+
+      // Verify messages exist before delete
+      const beforeDelete = await repo.getMessages(channel.id);
+      expect(beforeDelete.ok).toBe(true);
+      if (!beforeDelete.ok) throw new Error('unexpected');
+      expect(beforeDelete.value).toHaveLength(2);
+
+      // Delete channel — ON DELETE CASCADE should remove messages
+      await repo.delete(channel.id);
+
+      const afterDelete = await repo.getMessages(channel.id);
+      expect(afterDelete.ok).toBe(true);
+      if (!afterDelete.ok) throw new Error('unexpected');
+      expect(afterDelete.value).toHaveLength(0);
+    });
+
+    it('maps toMember=null for broadcast messages and preserves string for directed', async () => {
+      const channel = buildChannel({ name: 'msg-tomember-test' });
+      await repo.save(channel);
+
+      const broadcast = buildMessage(channel.id, { toMember: null, summary: 'broadcast' });
+      const directed = buildMessage(channel.id, { toMember: 'reviewer', summary: 'directed' });
+
+      await repo.saveMessage(broadcast);
+      await repo.saveMessage(directed);
+
+      const result = await repo.getMessages(channel.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      // Newest-first: directed was saved last (slightly later timestamp via test execution order)
+      const byId = new Map(result.value.map((m) => [m.id, m]));
+      expect(byId.get(broadcast.id)!.toMember).toBeNull();
+      expect(byId.get(directed.id)!.toMember).toBe('reviewer');
     });
   });
 });

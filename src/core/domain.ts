@@ -932,7 +932,7 @@ export interface OrchestratorChild {
  */
 export interface ActivityEntry {
   readonly timestamp: number;
-  readonly kind: 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline';
+  readonly kind: 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline' | 'channel';
   readonly entityId: string;
   readonly status: string;
   readonly action: string; // short verb: 'created', 'completed', 'failed', 'iteration 3'
@@ -1189,3 +1189,22 @@ export const updateChannel = (channel: Channel, updates: Partial<Omit<Channel, '
     updatedAt: Date.now(),
   });
 };
+
+/**
+ * A persisted summary of a single message exchanged within a channel.
+ * ARCHITECTURE (Phase 9 Dashboard): Captured by ChannelMessagePersistenceHandler on every
+ * ChannelMessageSent event that carries a summary. Display-only — the full message content
+ * is never stored here, only the first 200 code points as a summary for the detail view.
+ *
+ * createdAt is epoch milliseconds (number) — matches all other domain time fields.
+ * toMember is null for broadcast messages (to === 'all').
+ */
+export interface ChannelMessage {
+  readonly id: string;
+  readonly channelId: ChannelId;
+  readonly fromMember: string;
+  readonly toMember: string | null; // null = broadcast
+  readonly round: number;
+  readonly summary: string; // first 200 code points
+  readonly createdAt: number; // epoch ms
+}
