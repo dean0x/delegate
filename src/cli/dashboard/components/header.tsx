@@ -37,7 +37,7 @@ interface HeaderProps {
  *
  * Running: tasks, loops, active schedules, orchestrations (running+planning), pipelines, active channels
  * Queued:  queued tasks, paused loops, paused schedules, pending pipelines, paused channels
- * Failed:  failed/cancelled tasks/loops/orchestrations/pipelines, cancelled schedules
+ * Failed:  failed/cancelled tasks/loops/orchestrations/pipelines, cancelled schedules, destroyed channels
  */
 function buildHealthSummary(data: DashboardData): string {
   const running =
@@ -62,7 +62,8 @@ function buildHealthSummary(data: DashboardData): string {
     (data.scheduleCounts.byStatus['cancelled'] ?? 0) +
     (data.orchestrationCounts.byStatus['failed'] ?? 0) +
     (data.pipelineCounts.byStatus['failed'] ?? 0) +
-    (data.pipelineCounts.byStatus['cancelled'] ?? 0);
+    (data.pipelineCounts.byStatus['cancelled'] ?? 0) +
+    (data.channelCounts.byStatus['destroyed'] ?? 0);
 
   const parts: string[] = [];
   if (running > 0) parts.push(`●${running} run`);
