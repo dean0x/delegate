@@ -103,12 +103,18 @@ function makeCtx(overrides: Partial<ReadOnlyContext> = {}): ReadOnlyContext {
     findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
   };
 
+  const channelRepo = {
+    ...makeMockRepo(),
+    getMessages: vi.fn().mockResolvedValue(ok([])),
+  };
+
   return {
     taskRepository: taskRepo as unknown as ReadOnlyContext['taskRepository'],
     loopRepository: loopRepo as unknown as ReadOnlyContext['loopRepository'],
     scheduleRepository: scheduleRepo as unknown as ReadOnlyContext['scheduleRepository'],
     orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
     pipelineRepository: pipelineRepo as unknown as ReadOnlyContext['pipelineRepository'],
+    channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'],
     outputRepository: {} as ReadOnlyContext['outputRepository'],
     usageRepository: usageRepo as unknown as ReadOnlyContext['usageRepository'],
     workerRepository: {
@@ -171,9 +177,11 @@ describe('fetchAllData', () => {
     expect(result.value.schedules).toEqual([]);
     expect(result.value.orchestrations).toEqual([]);
     expect(result.value.pipelines).toEqual([]);
+    expect(result.value.channels).toEqual([]);
     expect(result.value.taskCounts.total).toBe(0);
     expect(result.value.loopCounts.total).toBe(0);
     expect(result.value.pipelineCounts.total).toBe(0);
+    expect(result.value.channelCounts.total).toBe(0);
   });
 
   it('calls findAll(FETCH_LIMIT) on all repositories', async () => {
@@ -185,6 +193,7 @@ describe('fetchAllData', () => {
     expect(ctx.scheduleRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
     expect(ctx.orchestrationRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
     expect(ctx.pipelineRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
+    expect(ctx.channelRepository.findAll).toHaveBeenCalledWith(FETCH_LIMIT);
   });
 
   it('calls countByStatus on all repositories', async () => {
@@ -196,6 +205,7 @@ describe('fetchAllData', () => {
     expect(ctx.scheduleRepository.countByStatus).toHaveBeenCalled();
     expect(ctx.orchestrationRepository.countByStatus).toHaveBeenCalled();
     expect(ctx.pipelineRepository.countByStatus).toHaveBeenCalled();
+    expect(ctx.channelRepository.countByStatus).toHaveBeenCalled();
   });
 
   it('returns error when task findAll fails', async () => {
@@ -383,6 +393,108 @@ describe('fetchAllData', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.orchestrationChildrenTotal).toBe(42);
+  });
+
+  // ---- Channel fetch tests ----
+
+  it('wires channel data from channelRepository.findAll into result.channels', async () => {
+    const mockChannel = {
+      id: 'ch-001',
+      status: 'active',
+      name: 'test',
+      members: [],
+      currentRound: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const channelRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([mockChannel])),
+      countByStatus: vi.fn().mockResolvedValue(ok({ active: 1 })),
+      getMessages: vi.fn().mockResolvedValue(ok([])),
+    };
+    const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
+
+    const result = await fetchAllData(ctx, MAIN_VIEW);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.channels).toEqual([mockChannel]);
+    expect(result.value.channelCounts.total).toBe(1);
+    expect(result.value.channelCounts.byStatus).toEqual({ active: 1 });
+  });
+
+  it('fetches channel messages when in channel detail view', async () => {
+    const channelRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      getMessages: vi.fn().mockResolvedValue(ok([])),
+    };
+    const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
+
+    const detailView: ViewState = { kind: 'detail', entityType: 'channels', entityId: 'ch-abc' };
+    await fetchAllData(ctx, detailView);
+
+    expect(channelRepo.getMessages).toHaveBeenCalledWith('ch-abc', 50);
+  });
+
+  it('does not fetch channel messages when in main view', async () => {
+    const channelRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      getMessages: vi.fn().mockResolvedValue(ok([])),
+    };
+    const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
+
+    await fetchAllData(ctx, MAIN_VIEW);
+
+    expect(channelRepo.getMessages).not.toHaveBeenCalled();
+  });
+
+  it('gracefully handles channel message fetch error (stale-on-error for detail extras)', async () => {
+    const channelRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      getMessages: vi.fn().mockResolvedValue(err(new Error('messages unavailable'))),
+    };
+    const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
+
+    const detailView: ViewState = { kind: 'detail', entityType: 'channels', entityId: 'ch-fail' };
+    const result = await fetchAllData(ctx, detailView);
+
+    // Should still succeed — channelMessages are best-effort
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.channelMessages).toBeUndefined();
+  });
+
+  it('returns error when channelRepository.findAll fails', async () => {
+    const channelRepo = {
+      findAll: vi.fn().mockResolvedValue(err(new Error('channel DB error'))),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      getMessages: vi.fn().mockResolvedValue(ok([])),
+    };
+    const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
+
+    const result = await fetchAllData(ctx, MAIN_VIEW);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('channel DB error');
+  });
+
+  it('returns error when channelRepository.countByStatus fails', async () => {
+    const channelRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(err(new Error('channel count error'))),
+      getMessages: vi.fn().mockResolvedValue(ok([])),
+    };
+    const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
+
+    const result = await fetchAllData(ctx, MAIN_VIEW);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('channel count error');
   });
 });
 

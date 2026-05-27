@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { OrchestratorStatus, type Task, TaskId } from '../../core/domain.js';
+import { type Channel, OrchestratorStatus, type Task, TaskId } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import { checkOrchestrationLiveness, type Liveness } from '../../services/orchestration-liveness.js';
@@ -201,6 +201,7 @@ export async function fetchAllData(
     orchestrationRepository,
     workerRepository,
     pipelineRepository,
+    channelRepository,
   } = ctx;
 
   // Parallel fetch: entity lists + status counts
@@ -210,11 +211,13 @@ export async function fetchAllData(
     scheduleRepository.findAll(FETCH_LIMIT),
     orchestrationRepository.findAll(FETCH_LIMIT),
     pipelineRepository.findAll(FETCH_LIMIT),
+    channelRepository.findAll(FETCH_LIMIT),
     taskRepository.countByStatus(),
     loopRepository.countByStatus(),
     scheduleRepository.countByStatus(),
     orchestrationRepository.countByStatus(),
     pipelineRepository.countByStatus(),
+    channelRepository.countByStatus(),
   ]);
 
   // Unwrap all results — any failure returns a labeled error string
@@ -225,11 +228,13 @@ export async function fetchAllData(
       'Schedules',
       'Orchestrations',
       'Pipelines',
+      'Channels',
       'Task counts',
       'Loop counts',
       'Schedule counts',
       'Orchestration counts',
       'Pipeline counts',
+      'Channel counts',
     ],
     rawResults,
   );
@@ -242,6 +247,7 @@ export async function fetchAllData(
   type OrchList =
     Awaited<ReturnType<typeof orchestrationRepository.findAll>> extends Result<infer V, Error> ? V : never;
   type PipelineList = Awaited<ReturnType<typeof pipelineRepository.findAll>> extends Result<infer V, Error> ? V : never;
+  type ChannelList = Awaited<ReturnType<typeof channelRepository.findAll>> extends Result<infer V, Error> ? V : never;
   type StatusMap = Record<string, number>;
 
   const [
@@ -250,17 +256,21 @@ export async function fetchAllData(
     schedules,
     orchestrations,
     pipelines,
+    channels,
     taskCounts,
     loopCounts,
     scheduleCounts,
     orchestrationCounts,
     pipelineCounts,
+    channelCounts,
   ] = unwrapped.value as [
     TaskList,
     LoopList,
     ScheduleList,
     OrchList,
     PipelineList,
+    ChannelList,
+    StatusMap,
     StatusMap,
     StatusMap,
     StatusMap,
@@ -291,7 +301,7 @@ export async function fetchAllData(
   > = {};
 
   if (viewState.kind === 'main') {
-    metricsExtras = await fetchMetricsExtras(ctx);
+    metricsExtras = await fetchMetricsExtras(ctx, channels);
   }
 
   return ok({
@@ -300,13 +310,13 @@ export async function fetchAllData(
     schedules,
     orchestrations,
     pipelines,
-    channels: [],
+    channels,
     taskCounts: buildEntityCounts(taskCounts),
     loopCounts: buildEntityCounts(loopCounts),
     scheduleCounts: buildEntityCounts(scheduleCounts),
     orchestrationCounts: buildEntityCounts(orchestrationCounts),
     pipelineCounts: buildEntityCounts(pipelineCounts),
-    channelCounts: buildEntityCounts({}),
+    channelCounts: buildEntityCounts(channelCounts),
     orchestrationLiveness,
     ...detailExtra,
     ...metricsExtras,
@@ -317,9 +327,13 @@ export async function fetchAllData(
  * Fetch metrics-view extras in parallel (cost, throughput, activity feed).
  * All failures are handled gracefully — errors yield undefined for that field.
  * Best-effort: dashboard degrades without crashing if any query fails.
+ *
+ * @param channels - Already-fetched channel list from the main parallel batch.
+ *   ChannelRepository has no findUpdatedSince; the main fetch result is reused.
  */
 async function fetchMetricsExtras(
   ctx: ReadOnlyContext,
+  channels: readonly Channel[],
 ): Promise<Pick<DashboardData, 'costRollup24h' | 'topOrchestrationsByCost' | 'throughputStats' | 'activityFeed'>> {
   const nowMs = Date.now();
   const since24h = nowMs - 24 * 3600 * 1000;
@@ -351,6 +365,7 @@ async function fetchMetricsExtras(
     orchestrations: recentOrchsResult.ok ? recentOrchsResult.value : [],
     schedules: recentSchedsResult.ok ? recentSchedsResult.value : [],
     pipelines: recentPipelinesResult.ok ? recentPipelinesResult.value : [],
+    channels,
     limit: 50,
   });
 
@@ -417,6 +432,11 @@ async function fetchDetailExtra(
       orchestrationChildrenTotal: countResult.ok ? countResult.value : undefined,
       orchestrationCostAggregate: costResult.ok ? costResult.value : undefined,
     };
+  }
+
+  if (detail.entityType === 'channels') {
+    const result = await ctx.channelRepository.getMessages(detail.entityId, 50);
+    return { channelMessages: result.ok ? result.value : undefined };
   }
 
   // tasks don't have dedicated extra data
