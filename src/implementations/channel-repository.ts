@@ -103,6 +103,13 @@ interface ChannelMessageRow {
 export class SQLiteChannelRepository implements ChannelRepository {
   private static readonly DEFAULT_LIMIT = 100;
   private static readonly DEFAULT_MESSAGE_LIMIT = 50;
+  /**
+   * Maximum messages retained per channel.
+   * After INSERT, oldest rows beyond this bound are pruned inline.
+   * DECISION: 500 is generous for dashboard display (default view shows 50) while
+   * preventing unbounded growth in long-running channels.
+   */
+  private static readonly MAX_MESSAGES_PER_CHANNEL = 500;
 
   private readonly db: SQLite.Database;
   private readonly saveChannelStmt: SQLite.Statement;
@@ -119,6 +126,7 @@ export class SQLiteChannelRepository implements ChannelRepository {
   private readonly countStmt: SQLite.Statement;
   private readonly countByStatusStmt: SQLite.Statement;
   private readonly saveMessageStmt: SQLite.Statement;
+  private readonly pruneMessagesStmt: SQLite.Statement;
   private readonly getMessagesStmt: SQLite.Statement;
 
   constructor(database: Database) {
@@ -165,6 +173,17 @@ export class SQLiteChannelRepository implements ChannelRepository {
     this.saveMessageStmt = this.db.prepare(`
       INSERT INTO channel_messages (id, channel_id, from_member, to_member, round, summary, created_at)
       VALUES (@id, @channel_id, @from_member, @to_member, @round, @summary, @created_at)
+    `);
+
+    this.pruneMessagesStmt = this.db.prepare(`
+      DELETE FROM channel_messages
+      WHERE channel_id = ?
+        AND id NOT IN (
+          SELECT id FROM channel_messages
+          WHERE channel_id = ?
+          ORDER BY created_at DESC
+          LIMIT ?
+        )
     `);
 
     this.getMessagesStmt = this.db.prepare(`
@@ -360,6 +379,9 @@ export class SQLiteChannelRepository implements ChannelRepository {
           summary: msg.summary,
           created_at: msg.createdAt,
         });
+        // Prune oldest rows beyond MAX_MESSAGES_PER_CHANNEL to prevent unbounded growth.
+        // Best-effort — pruning failure does not fail the save.
+        this.pruneMessagesStmt.run(msg.channelId, msg.channelId, SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL);
       },
       operationErrorHandler('save channel message', { messageId: msg.id, channelId: msg.channelId }),
     );

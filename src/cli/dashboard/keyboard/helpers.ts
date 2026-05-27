@@ -116,6 +116,23 @@ export function resolveMemberIndex(selectedName: string | null, members: readonl
 }
 
 /**
+ * Resolve the selected channel member object by name, falling back to the first member.
+ * Returns null when the members array is empty.
+ *
+ * Extracted to eliminate duplication between app.tsx (resolves tmux session name for
+ * polling) and channel-detail.tsx (resolves member object for rendering).
+ */
+export function resolveSelectedMember<T extends { name: string }>(
+  selectedName: string | null,
+  members: readonly T[],
+): T | null {
+  if (selectedName !== null) {
+    return members.find((m) => m.name === selectedName) ?? members[0] ?? null;
+  }
+  return members[0] ?? null;
+}
+
+/**
  * Return the currently selected item in the focused panel, or null if data is absent.
  * Applies the active filter before resolving the selection index.
  * Used by the 'c' (cancel) and 'd' (delete) handlers in the main panel.

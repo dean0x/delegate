@@ -42,7 +42,7 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
     return true;
   }
 
-  // 1-5 — jump to panel by number
+  // 1-6 — jump to panel by number
   if (input in PANEL_JUMP_KEYS) {
     setNav((prev) => ({ ...prev, focusedPanel: PANEL_JUMP_KEYS[input] }));
     return true;
@@ -173,7 +173,7 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
     return true;
   }
 
-  // p — pause/resume focused entity (schedules and loops only)
+  // p — pause/resume focused entity (schedules, loops, and channels)
   if (input === 'p' && params.mutations) {
     const item = getFocusedPanelItem(nav, params.dataRef.current);
     if (item) {

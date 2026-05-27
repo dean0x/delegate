@@ -13,6 +13,7 @@ import type { ReadOnlyContext } from '../read-only-context.js';
 import type { DetailOutputConfig } from './components/detail-output-panel.js';
 import { Footer } from './components/footer.js';
 import { Header } from './components/header.js';
+import { resolveSelectedMember } from './keyboard/helpers.js';
 import { computeMetricsLayout } from './layout.js';
 import { type DashboardState, dashboardReducer } from './nav-reducer.js';
 import type { DashboardMutationContext, NavState, ViewState } from './types.js';
@@ -157,11 +158,7 @@ export const App: React.FC<AppProps> = React.memo(
       if (view.kind !== 'detail' || view.entityType !== 'channels') return null;
       const channel = data?.channels.find((c) => c.id === view.entityId);
       if (channel === undefined) return null;
-      const memberName = nav.channelMemberSelectedName;
-      const member =
-        memberName !== null
-          ? (channel.members.find((m) => m.name === memberName) ?? channel.members[0] ?? null)
-          : (channel.members[0] ?? null);
+      const member = resolveSelectedMember(nav.channelMemberSelectedName, channel.members);
       return member?.tmuxSession ?? null;
     }, [view, data?.channels, nav.channelMemberSelectedName]);
 

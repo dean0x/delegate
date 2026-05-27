@@ -19,6 +19,7 @@ import { Field, StatusField } from '../components/field.js';
 import { ScrollableList } from '../components/scrollable-list.js';
 import { StatusBadge } from '../components/status-badge.js';
 import { formatRunProgress, relativeTime, truncateCell } from '../format.js';
+import { resolveSelectedMember } from '../keyboard/helpers.js';
 
 const MESSAGE_VIEWPORT_HEIGHT = 10;
 
@@ -85,10 +86,7 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
   ({ channel, messages, scrollOffset, animFrame, selectedMemberName, panePreview }) => {
     // Selected member object (for live preview label)
     const selectedMember = React.useMemo(
-      () =>
-        selectedMemberName !== null
-          ? (channel.members.find((m) => m.name === selectedMemberName) ?? channel.members[0] ?? null)
-          : (channel.members[0] ?? null),
+      () => resolveSelectedMember(selectedMemberName, channel.members),
       [channel.members, selectedMemberName],
     );
 
