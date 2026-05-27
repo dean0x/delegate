@@ -361,9 +361,7 @@ async function fetchMetricsExtras(
 
   // Filter channels to the 1h window inline — ChannelRepository has no findUpdatedSince,
   // so we reuse the already-fetched full list and apply the same time gate here.
-  const recentChannels = channels.filter(
-    (c) => (c.updatedAt ?? c.createdAt ?? 0) >= since1h,
-  );
+  const recentChannels = channels.filter((c) => (c.updatedAt ?? c.createdAt ?? 0) >= since1h);
 
   const activityFeed = buildActivityFeed({
     tasks: recentTasksResult.ok ? recentTasksResult.value : [],

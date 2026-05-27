@@ -2,7 +2,14 @@
  * Keyboard navigation constants shared across all handler modules.
  */
 
-import { ChannelStatus, LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
+import {
+  ChannelStatus,
+  LoopStatus,
+  OrchestratorStatus,
+  PipelineStatus,
+  ScheduleStatus,
+  TaskStatus,
+} from '../../../core/domain.js';
 import type { PanelId } from '../types.js';
 
 /** Ordered panel cycle for Tab navigation */

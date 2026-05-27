@@ -619,7 +619,10 @@ describe('SQLiteChannelRepository', () => {
       expect(indexNames).toContain('idx_channel_messages_channel_created');
 
       // Verify the index covers (channel_id, created_at) columns
-      const indexInfo = db.getDatabase().prepare("PRAGMA index_info('idx_channel_messages_channel_created')").all() as Array<{
+      const indexInfo = db
+        .getDatabase()
+        .prepare("PRAGMA index_info('idx_channel_messages_channel_created')")
+        .all() as Array<{
         seqno: number;
         cid: number;
         name: string;
@@ -748,7 +751,13 @@ describe('SQLiteChannelRepository', () => {
   describe('performance', () => {
     it('findAll loads members for all channels in two queries (batch hydration)', async () => {
       // Save 3 channels with distinct members to verify cross-channel grouping
-      const ch1 = buildChannel({ name: 'batch-1', members: [{ name: 'a1', agent: 'claude' }, { name: 'a2', agent: 'codex' }] });
+      const ch1 = buildChannel({
+        name: 'batch-1',
+        members: [
+          { name: 'a1', agent: 'claude' },
+          { name: 'a2', agent: 'codex' },
+        ],
+      });
       const ch2 = buildChannel({ name: 'batch-2', members: [{ name: 'b1', agent: 'claude' }] });
       const ch3 = buildChannel({ name: 'batch-3', members: [] });
       await repo.save(ch1);
@@ -773,7 +782,13 @@ describe('SQLiteChannelRepository', () => {
 
     it('findByStatus loads members for matching channels via batch hydration', async () => {
       const active = buildChannel({ name: 'batch-active', members: [{ name: 'x1', agent: 'claude' }] });
-      const paused = buildChannel({ name: 'batch-paused', members: [{ name: 'y1', agent: 'codex' }, { name: 'y2', agent: 'claude' }] });
+      const paused = buildChannel({
+        name: 'batch-paused',
+        members: [
+          { name: 'y1', agent: 'codex' },
+          { name: 'y2', agent: 'claude' },
+        ],
+      });
       await repo.save(active);
       await repo.save(paused);
       await repo.updateStatus(paused.id, ChannelStatus.PAUSED);
@@ -1015,9 +1030,7 @@ describe('SQLiteChannelRepository', () => {
       // Insert a small number — count never exceeds 500, so prune is never attempted
       const now = Date.now();
       for (let i = 0; i < 5; i++) {
-        const result = await repo.saveMessage(
-          buildMessage(channel.id, { summary: `msg-${i}`, createdAt: now + i }),
-        );
+        const result = await repo.saveMessage(buildMessage(channel.id, { summary: `msg-${i}`, createdAt: now + i }));
         // save must succeed even though prune path is not triggered
         expect(result.ok).toBe(true);
       }
