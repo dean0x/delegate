@@ -97,15 +97,24 @@ class SerialQueue {
  * Truncates a string to at most `maxCodePoints` Unicode code points.
  *
  * ARCHITECTURE (Phase 9 Dashboard): Used to produce summary strings for
- * ChannelMessageSent events. Array.from() correctly handles surrogate pairs
- * so multi-byte emoji and CJK characters are not split.
+ * ChannelMessageSent events. Iterates code points via for...of so surrogate
+ * pairs are not split for characters outside the BMP (e.g. emoji, CJK).
  *
  * DESIGN DECISION: codepoint-safe truncation rather than substring(0, n) because
  * substring operates on UTF-16 code units, which would split surrogate pairs for
  * characters outside the BMP (e.g. emoji). Using code points is correct.
+ * O(maxCodePoints) rather than O(input length) — avoids allocating a full array
+ * for large agent outputs.
  */
 function codePointSlice(str: string, maxCodePoints: number): string {
-  return Array.from(str).slice(0, maxCodePoints).join('');
+  let result = '';
+  let count = 0;
+  for (const cp of str) {
+    if (count >= maxCodePoints) break;
+    result += cp;
+    count++;
+  }
+  return result;
 }
 
 export interface ChannelManagerDeps {

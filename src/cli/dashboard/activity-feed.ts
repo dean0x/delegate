@@ -101,7 +101,7 @@ interface BuildActivityFeedArgs {
   readonly orchestrations: readonly OrchestrationLike[];
   readonly schedules: readonly ScheduleLike[];
   readonly pipelines: readonly PipelineLike[];
-  readonly channels?: readonly ChannelLike[];
+  readonly channels: readonly ChannelLike[];
   readonly limit: number;
 }
 
@@ -168,7 +168,7 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
     });
   }
 
-  for (const channel of channels ?? []) {
+  for (const channel of channels) {
     entries.push({
       timestamp: channel.updatedAt ?? channel.createdAt ?? 0,
       kind: 'channel',
