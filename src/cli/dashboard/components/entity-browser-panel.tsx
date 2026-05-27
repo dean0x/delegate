@@ -123,7 +123,8 @@ function getEntityDisplayFields(panelId: PanelId, entityId: string, data: Dashbo
         (c) => c.id === entityId,
         (channel) => ({
           elapsed: formatElapsed(channel.createdAt),
-          agent: `${channel.members.length} members`,
+          // AC-2: single-agent channels show "—" for members; multi-member shows count
+          agent: channel.members.length <= 1 ? '—' : `${channel.members.length} members`,
           description: truncateCell(channel.topic ?? channel.name, 60),
         }),
       );

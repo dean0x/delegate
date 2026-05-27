@@ -94,15 +94,27 @@ const ENTITY_LABEL: Record<PanelId, string> = {
  * Build breadcrumb text for the current view kind.
  * When in detail mode with entityType + entityId, produces an entity-specific trail:
  *   "Metrics · Task a1b2c3d4ef12"
+ *   "Metrics · Channel my-channel-name"  (channels use name, not shortId — AC-11)
  * Returns a short label that fits in the header row.
  */
-function buildBreadcrumb(viewKind: 'main' | 'detail' | undefined, entityType?: PanelId, entityId?: string): string {
+function buildBreadcrumb(
+  viewKind: 'main' | 'detail' | undefined,
+  entityType?: PanelId,
+  entityId?: string,
+  data?: DashboardData | null,
+): string {
   switch (viewKind) {
     case 'main':
       return '[M] Metrics';
     case 'detail': {
       if (entityType !== undefined && entityId !== undefined) {
         const label = ENTITY_LABEL[entityType];
+        // AC-11: channels show channel name instead of shortId
+        if (entityType === 'channels') {
+          const channelName = data?.channels.find((c) => c.id === entityId)?.name;
+          const displayId = channelName ?? shortId(entityId);
+          return `[D] Metrics · ${label} ${displayId}`;
+        }
         return `[D] Metrics · ${label} ${shortId(entityId)}`;
       }
       return '[D] Detail';
@@ -116,7 +128,7 @@ export const Header: React.FC<HeaderProps> = React.memo(
   ({ version, data, refreshedAt, error, viewKind, entityType, entityId }) => {
     const healthSummary = data !== null ? buildHealthSummary(data) : '—';
     const timestamp = refreshedAt !== null ? formatTime(refreshedAt) : '—';
-    const breadcrumb = buildBreadcrumb(viewKind, entityType, entityId);
+    const breadcrumb = buildBreadcrumb(viewKind, entityType, entityId, data);
 
     return (
       <Box flexDirection="column">
