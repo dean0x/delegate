@@ -275,7 +275,55 @@ function handleOrchestrationNavigation(input: string, key: InkKey, params: KeyHa
 }
 
 /**
- * 6. Generic scroll for non-orchestration/non-loop detail views (schedules, pipelines).
+ * 6. Channel detail: member row navigation (Phase 9, epic #184).
+ *
+ *  - ↑/k: move member selection up (cycles channelMemberSelectedName)
+ *  - ↓/j: move member selection down
+ *  - Any other key: falls through to generic scroll
+ *
+ * Member selection mirrors the loop iteration pattern: tracked by name (stable
+ * domain key) rather than array index (which can change when members leave).
+ */
+function handleChannelNavigation(input: string, key: InkKey, params: KeyHandlerParams): boolean {
+  const { view, setNav } = params;
+  if (view.kind !== 'detail') return false;
+  if (view.entityType !== 'channels') return false;
+
+  const channel = params.dataRef.current?.channels.find((c) => c.id === view.entityId);
+  const members = channel?.members ?? [];
+
+  if (key.upArrow || input === 'k') {
+    if (members.length === 0) return true;
+    setNav((prev) => {
+      const currentIdx = prev.channelMemberSelectedName
+        ? members.findIndex((m) => m.name === prev.channelMemberSelectedName)
+        : 0;
+      const resolvedIdx = currentIdx >= 0 ? currentIdx : 0;
+      const nextIdx = Math.max(0, resolvedIdx - 1);
+      return { ...prev, channelMemberSelectedName: members[nextIdx]?.name ?? null };
+    });
+    return true;
+  }
+
+  if (key.downArrow || input === 'j') {
+    if (members.length === 0) return true;
+    setNav((prev) => {
+      const currentIdx = prev.channelMemberSelectedName
+        ? members.findIndex((m) => m.name === prev.channelMemberSelectedName)
+        : 0;
+      const resolvedIdx = currentIdx >= 0 ? currentIdx : 0;
+      const nextIdx = Math.min(members.length - 1, resolvedIdx + 1);
+      return { ...prev, channelMemberSelectedName: members[nextIdx]?.name ?? null };
+    });
+    return true;
+  }
+
+  // Any other key in channel detail falls through to generic scroll
+  return false;
+}
+
+/**
+ * 7. Generic scroll for non-orchestration/non-loop/non-channel detail views (schedules, pipelines).
  *
  *  - ↑/k: scroll detail content up
  *  - ↓/j: scroll detail content down (clamped to detailContentLength - 1)
@@ -330,6 +378,10 @@ function handleGenericScroll(input: string, key: InkKey, params: KeyHandlerParam
  *  - Enter: drill into selected iteration's task detail (returnTo = loop object)
  *  - Esc: returns to the view encoded in returnTo (main or loop)
  *
+ * Channel member navigation (Phase 9, epic #184):
+ *  - Channel detail: ↑/↓/j/k cycle channelMemberSelectedName through channel members
+ *  - Esc: returns to main
+ *
  * Output controls (#165 — task/orchestration only):
  *  - o: toggle output stream panel visibility
  *  - [: scroll output up (enters paused mode)
@@ -337,7 +389,7 @@ function handleGenericScroll(input: string, key: InkKey, params: KeyHandlerParam
  *  - g: jump to top of output (paused mode)
  *  - G: jump to tail (re-engages auto-tail)
  *
- * For non-orchestration/non-loop detail views, ↑/↓ scroll the detail content as before.
+ * For non-orchestration/non-loop/non-channel detail views, ↑/↓ scroll the detail content.
  *
  * Key handler ordering:
  *  1. Esc/Backspace → return to previous view
@@ -345,7 +397,8 @@ function handleGenericScroll(input: string, key: InkKey, params: KeyHandlerParam
  *  3. Pause/resume (p) → schedules and loops only
  *  4. Loop entity type → iteration navigation (↑/↓/Enter)
  *  5. Orchestration entity type → child navigation (existing D3 pattern)
- *  6. Generic scroll (↑/↓) → non-orchestration/non-loop detail (schedules, pipelines)
+ *  6. Channel entity type → member navigation (↑/↓)
+ *  7. Generic scroll (↑/↓) → non-orchestration/non-loop/non-channel detail (schedules, pipelines)
  */
 export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerParams): boolean {
   if (params.view.kind !== 'detail') return false;
@@ -356,6 +409,7 @@ export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerP
     handlePauseResume(input, params) ||
     handleLoopNavigation(input, key, params) ||
     handleOrchestrationNavigation(input, key, params) ||
+    handleChannelNavigation(input, key, params) ||
     handleGenericScroll(input, key, params)
   );
 }

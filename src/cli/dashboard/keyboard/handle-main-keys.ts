@@ -9,7 +9,7 @@
  * Tab cycles directly among entity browser panels (wraps around).
  */
 
-import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
+import type { ChannelId, LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
 import { FILTER_CYCLES, PANEL_JUMP_KEYS, PANEL_ORDER } from './constants.js';
 import { cancelEntity, deleteEntity, pauseOrResumeEntity } from './entity-mutations.js';
 import { clamp, filteredLength, getFocusedPanelItem, getPanelItems, panelToEntityKind } from './helpers.js';
@@ -113,6 +113,7 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
       detailOutputAutoTail: true,
       detailOutputScrollOffset: 0,
       loopIterationSelectedNumber: null,
+      channelMemberSelectedName: null,
     }));
     // Cast id back to the branded type for the discriminated ViewState union.
     // The id originates from the domain entity — the cast is safe at this boundary.
@@ -139,6 +140,14 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
           kind: 'detail',
           entityType: 'pipelines',
           entityId: selectedItem.id as PipelineId,
+          returnTo: 'main',
+        });
+        break;
+      case 'channels':
+        setView({
+          kind: 'detail',
+          entityType: 'channels',
+          entityId: selectedItem.id as ChannelId,
           returnTo: 'main',
         });
         break;
