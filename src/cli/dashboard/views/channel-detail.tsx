@@ -32,9 +32,20 @@ export interface ChannelDetailProps {
   readonly panePreview: string | null;
 }
 
-/** Member status icon — filled dot for active/idle, hollow for destroyed */
+/** Member status icon — filled dot for active, half-filled for idle, hollow for destroyed */
 function memberStatusIcon(status: ChannelMemberStatus): string {
-  return status === ChannelMemberStatus.DESTROYED ? '○' : '●';
+  switch (status) {
+    case ChannelMemberStatus.ACTIVE:
+      return '●';
+    case ChannelMemberStatus.IDLE:
+      return '◐';
+    case ChannelMemberStatus.DESTROYED:
+      return '○';
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
 }
 
 /** Member status color */
@@ -147,7 +158,7 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
             selectedIndex={-1}
             scrollOffset={scrollOffset}
             viewportHeight={MESSAGE_VIEWPORT_HEIGHT}
-            renderItem={(msg) => <Text dimColor>{formatMessageRow(msg)}</Text>}
+            renderItem={(msg) => <Text>{formatMessageRow(msg)}</Text>}
             keyExtractor={(msg) => msg.id}
           />
         )}

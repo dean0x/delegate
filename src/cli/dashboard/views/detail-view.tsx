@@ -182,6 +182,10 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
           />
         );
       }
+      default: {
+        const _exhaustive: never = entityType;
+        return <Text color="red">Unknown panel: {_exhaustive}</Text>;
+      }
     }
   },
 );

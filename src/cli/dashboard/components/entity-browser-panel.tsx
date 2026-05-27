@@ -128,6 +128,10 @@ function getEntityDisplayFields(panelId: PanelId, entityId: string, data: Dashbo
           description: truncateCell(channel.topic ?? channel.name, 60),
         }),
       );
+    default: {
+      const _exhaustive: never = panelId;
+      return _exhaustive;
+    }
   }
 }
 
