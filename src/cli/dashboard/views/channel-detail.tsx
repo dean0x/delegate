@@ -16,8 +16,11 @@ import React from 'react';
 import type { Channel, ChannelMember, ChannelMessage } from '../../../core/domain.js';
 import { ChannelMemberStatus } from '../../../core/domain.js';
 import { Field, StatusField } from '../components/field.js';
+import { ScrollableList } from '../components/scrollable-list.js';
 import { StatusBadge } from '../components/status-badge.js';
 import { formatRunProgress, relativeTime, truncateCell } from '../format.js';
+
+const MESSAGE_VIEWPORT_HEIGHT = 10;
 
 export interface ChannelDetailProps {
   readonly channel: Channel;
@@ -42,6 +45,10 @@ function memberStatusColor(status: ChannelMemberStatus): string {
       return 'yellow';
     case ChannelMemberStatus.DESTROYED:
       return 'gray';
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
   }
 }
 
@@ -75,7 +82,7 @@ function formatMessageRow(msg: ChannelMessage): string {
 }
 
 export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
-  ({ channel, messages, scrollOffset: _scrollOffset, animFrame, selectedMemberName, panePreview }) => {
+  ({ channel, messages, scrollOffset, animFrame, selectedMemberName, panePreview }) => {
     // Selected member object (for live preview label)
     const selectedMember = React.useMemo(
       () =>
@@ -140,13 +147,14 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
         {messages === undefined || messages.length === 0 ? (
           <Text dimColor>No messages yet</Text>
         ) : (
-          <Box flexDirection="column">
-            {messages.map((msg) => (
-              <Box key={msg.id} flexDirection="row">
-                <Text dimColor>{formatMessageRow(msg)}</Text>
-              </Box>
-            ))}
-          </Box>
+          <ScrollableList
+            items={messages}
+            selectedIndex={-1}
+            scrollOffset={scrollOffset}
+            viewportHeight={MESSAGE_VIEWPORT_HEIGHT}
+            renderItem={(msg) => <Text dimColor>{formatMessageRow(msg)}</Text>}
+            keyExtractor={(msg) => msg.id}
+          />
         )}
 
         {/* Live Preview */}
