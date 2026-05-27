@@ -1052,6 +1052,12 @@ export interface ChannelRepository {
    * Returns newest-first (ORDER BY created_at DESC). Default limit: 50.
    */
   getMessages(channelId: ChannelId, limit?: number): Promise<Result<readonly ChannelMessage[]>>;
+  /**
+   * Return channels whose updated_at >= sinceMs, ordered newest-first, up to limit rows.
+   * Used by the activity feed (fetchMetricsExtras) to mirror the findUpdatedSince pattern
+   * used by all other entity repositories. Backed by idx_channels_updated_at (migration v31).
+   */
+  findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Channel[]>>;
 }
 
 /**

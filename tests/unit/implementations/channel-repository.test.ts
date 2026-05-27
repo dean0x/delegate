@@ -444,7 +444,66 @@ describe('SQLiteChannelRepository', () => {
   });
 
   // ============================================================================
-  // T12: Constraint — Duplicate Channel Name
+  // T12: findUpdatedSince — Activity Feed Query
+  // ============================================================================
+
+  describe('findUpdatedSince', () => {
+    it('returns only channels updated at or after the given timestamp', async () => {
+      const past = Date.now() - 10_000;
+      const recent = Date.now();
+
+      const oldChannel = buildChannel({ name: 'old-ch' });
+      const newChannel = buildChannel({ name: 'new-ch' });
+
+      // Save old channel with a past updated_at via direct SQL to control timestamp
+      db.getDatabase()
+        .prepare(
+          `INSERT INTO channels (id, name, status, current_round, created_at, updated_at)
+           VALUES (?, ?, 'active', 0, ?, ?)`,
+        )
+        .run(oldChannel.id, oldChannel.name, past - 1000, past - 1000);
+
+      db.getDatabase()
+        .prepare(
+          `INSERT INTO channels (id, name, status, current_round, created_at, updated_at)
+           VALUES (?, ?, 'active', 0, ?, ?)`,
+        )
+        .run(newChannel.id, newChannel.name, recent, recent);
+
+      const result = await repo.findUpdatedSince(past, 50);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+
+      const ids = result.value.map((c) => c.id);
+      expect(ids).toContain(newChannel.id);
+      expect(ids).not.toContain(oldChannel.id);
+    });
+
+    it('respects the limit parameter', async () => {
+      const since = Date.now() - 1000;
+      for (let i = 0; i < 5; i++) {
+        const ch = buildChannel({ name: `limit-ch-${i}` });
+        await repo.save(ch);
+      }
+
+      const result = await repo.findUpdatedSince(since, 3);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value.length).toBeLessThanOrEqual(3);
+    });
+
+    it('returns empty array when no channels match the time window', async () => {
+      const ch = buildChannel({ name: 'old-only' });
+      // Use a far-future cutoff so nothing qualifies
+      const result = await repo.findUpdatedSince(Date.now() + 100_000, 50);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(0);
+    });
+  });
+
+  // ============================================================================
+  // T13: Constraint — Duplicate Channel Name
   // ============================================================================
 
   describe('unique constraints', () => {

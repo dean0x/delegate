@@ -129,6 +129,7 @@ export class SQLiteChannelRepository implements ChannelRepository {
   private readonly countMessagesStmt: SQLite.Statement;
   private readonly pruneMessagesStmt: SQLite.Statement;
   private readonly getMessagesStmt: SQLite.Statement;
+  private readonly findUpdatedSinceStmt: SQLite.Statement;
   /**
    * Cache of IN-clause member lookup statements keyed by placeholder count.
    * Avoids re-preparing the same SQL on every dashboard poll tick.
@@ -198,6 +199,14 @@ export class SQLiteChannelRepository implements ChannelRepository {
 
     this.getMessagesStmt = this.db.prepare(`
       SELECT * FROM channel_messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?
+    `);
+
+    // idx_channels_updated_at (migration v31) covers WHERE + ORDER BY
+    this.findUpdatedSinceStmt = this.db.prepare(`
+      SELECT * FROM channels
+      WHERE updated_at >= ?
+      ORDER BY updated_at DESC
+      LIMIT ?
     `);
   }
 
@@ -368,6 +377,16 @@ export class SQLiteChannelRepository implements ChannelRepository {
     }, operationErrorHandler('count channels by status'));
   }
 
+  async findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Channel[]>> {
+    return tryCatchAsync(
+      async () => {
+        const rows = this.findUpdatedSinceStmt.all(sinceMs, limit) as ChannelRow[];
+        return this.hydrateChannelRows(rows);
+      },
+      operationErrorHandler('find channels updated since', { sinceMs }),
+    );
+  }
+
   // ============================================================================
   // Channel message persistence (Phase 9 Dashboard)
   // ============================================================================
@@ -399,7 +418,11 @@ export class SQLiteChannelRepository implements ChannelRepository {
           try {
             const countRow = this.countMessagesStmt.get(msg.channelId) as { count: number };
             if (countRow.count > SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL) {
-              this.pruneMessagesStmt.run(msg.channelId, msg.channelId, SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL);
+              this.pruneMessagesStmt.run(
+                msg.channelId,
+                msg.channelId,
+                SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL,
+              );
             }
           } catch {
             // Prune failure is intentionally swallowed — the message was saved successfully.

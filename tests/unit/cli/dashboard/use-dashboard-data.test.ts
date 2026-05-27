@@ -106,6 +106,7 @@ function makeCtx(overrides: Partial<ReadOnlyContext> = {}): ReadOnlyContext {
   const channelRepo = {
     ...makeMockRepo(),
     getMessages: vi.fn().mockResolvedValue(ok([])),
+    findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
   };
 
   return {
@@ -411,6 +412,7 @@ describe('fetchAllData', () => {
       findAll: vi.fn().mockResolvedValue(ok([mockChannel])),
       countByStatus: vi.fn().mockResolvedValue(ok({ active: 1 })),
       getMessages: vi.fn().mockResolvedValue(ok([])),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
     };
     const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
 
@@ -442,6 +444,7 @@ describe('fetchAllData', () => {
       findAll: vi.fn().mockResolvedValue(ok([])),
       countByStatus: vi.fn().mockResolvedValue(ok({})),
       getMessages: vi.fn().mockResolvedValue(ok([])),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
     };
     const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
 
