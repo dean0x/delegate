@@ -17,9 +17,9 @@ describe('Footer', () => {
       expect(lastFrame()).toContain('Tab: panel');
     });
 
-    it('contains "1-5: panel" hint for five-panel jump keys', () => {
+    it('contains "1-6: panel" hint for six-panel jump keys', () => {
       const { lastFrame } = render(<Footer viewKind="main" />);
-      expect(lastFrame()).toContain('1-5: panel');
+      expect(lastFrame()).toContain('1-6: panel');
     });
 
     it('contains "↑↓: select" hint', () => {

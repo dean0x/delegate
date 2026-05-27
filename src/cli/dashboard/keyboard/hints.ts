@@ -6,7 +6,7 @@
  * any keyboard refactor only needs to update this one file.
  */
 
-import { LoopStatus, ScheduleStatus } from '../../../core/domain.js';
+import { ChannelStatus, LoopStatus, ScheduleStatus } from '../../../core/domain.js';
 import type { PanelId } from '../types.js';
 
 /**
@@ -16,9 +16,12 @@ import type { PanelId } from '../types.js';
  * (schedules and loops); p is a no-op for tasks, orchestrations, and pipelines.
  */
 export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string {
-  const base = 'Tab: panel · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
+  const base = 'Tab: panel · ↑↓: select · Enter: detail · 1-6: panel · f: filter · r refresh · q quit';
   if (hasMutations) {
-    const pauseHint = focusedPanel === 'schedules' || focusedPanel === 'loops' ? ' · p pause/resume' : '';
+    const pauseHint =
+      focusedPanel === 'schedules' || focusedPanel === 'loops' || focusedPanel === 'channels'
+        ? ' · p pause/resume'
+        : '';
     return `${base} · c cancel · d delete (terminal)${pauseHint}`;
   }
   return base;
@@ -42,6 +45,15 @@ export function detailHints(entityType?: PanelId, entityStatus?: string, hasMuta
       return `${baseNoOutput} · p resume`;
     }
     return baseNoOutput;
+  }
+  if (entityType === 'channels') {
+    if (hasMutations && entityStatus === ChannelStatus.ACTIVE) {
+      return `${baseNoOutput} · ↑↓ member · p pause`;
+    }
+    if (hasMutations && entityStatus === ChannelStatus.PAUSED) {
+      return `${baseNoOutput} · ↑↓ member · p resume`;
+    }
+    return `${baseNoOutput} · ↑↓ member`;
   }
   return baseWithOutput;
 }

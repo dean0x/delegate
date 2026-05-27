@@ -8,6 +8,7 @@ import { Box, useApp } from 'ink';
 import React, { useCallback, useEffect, useMemo, useReducer } from 'react';
 import type { TaskId } from '../../core/domain.js';
 import type { OutputRepository, ResourceMonitor } from '../../core/interfaces.js';
+import type { Result } from '../../core/result.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import type { DetailOutputConfig } from './components/detail-output-panel.js';
 import { Footer } from './components/footer.js';
@@ -15,6 +16,7 @@ import { Header } from './components/header.js';
 import { computeMetricsLayout } from './layout.js';
 import { type DashboardState, dashboardReducer } from './nav-reducer.js';
 import type { DashboardMutationContext, NavState, ViewState } from './types.js';
+import { useChannelPanePreview } from './use-channel-pane-preview.js';
 import { useDashboardData } from './use-dashboard-data.js';
 import { useKeyboard } from './use-keyboard.js';
 import { useResourceMetrics } from './use-resource-metrics.js';
@@ -46,6 +48,12 @@ interface AppProps {
    * Pass () => false when tmuxSessionManager is unavailable (e.g. test environments).
    */
   readonly isTmuxSessionAlive: (sessionName: string) => boolean;
+  /**
+   * Optional capture-pane function for channel member live preview.
+   * When omitted (e.g. test environments), preview is disabled.
+   * Phase 9, epic #184.
+   */
+  readonly capturePaneContent?: (name: string, lines?: number) => Result<string, Error>;
 }
 
 /** Initial navigation state — focus on tasks panel (most common starting point), no selection, no filters */
@@ -77,7 +85,7 @@ const EMPTY_STATUS_MAP: ReadonlyMap<TaskId, string> = new Map();
  * Renders to stderr via the render() call in index.tsx.
  */
 export const App: React.FC<AppProps> = React.memo(
-  ({ ctx, version, mutations, resourceMonitor, outputRepository, isTmuxSessionAlive }) => {
+  ({ ctx, version, mutations, resourceMonitor, outputRepository, isTmuxSessionAlive, capturePaneContent }) => {
     const { exit } = useApp();
 
     const [state, dispatch] = useReducer(dashboardReducer, INITIAL_DASHBOARD_STATE);
@@ -143,6 +151,27 @@ export const App: React.FC<AppProps> = React.memo(
       streamingEnabled,
     );
 
+    // Resolve the selected channel member's tmux session name for live preview.
+    // Only relevant when viewing a channel detail — other views pass null.
+    const channelDetailSessionName = useMemo((): string | null => {
+      if (view.kind !== 'detail' || view.entityType !== 'channels') return null;
+      const channel = data?.channels.find((c) => c.id === view.entityId);
+      if (channel === undefined) return null;
+      const memberName = nav.channelMemberSelectedName;
+      const member =
+        memberName !== null
+          ? (channel.members.find((m) => m.name === memberName) ?? channel.members[0] ?? null)
+          : (channel.members[0] ?? null);
+      return member?.tmuxSession ?? null;
+    }, [view, data?.channels, nav.channelMemberSelectedName]);
+
+    // Live capture-pane preview for channel member sessions (Phase 9, #184)
+    const { preview: channelPanePreview } = useChannelPanePreview(
+      capturePaneContent,
+      channelDetailSessionName,
+      view.kind === 'detail' && view.entityType === 'channels',
+    );
+
     useKeyboard({
       view,
       nav,
@@ -165,8 +194,11 @@ export const App: React.FC<AppProps> = React.memo(
       if (view.entityType === 'loops') {
         return data?.loops.find((l) => l.id === view.entityId)?.status;
       }
+      if (view.entityType === 'channels') {
+        return data?.channels.find((c) => c.id === view.entityId)?.status;
+      }
       return undefined;
-    }, [view, data?.schedules, data?.loops]);
+    }, [view, data?.schedules, data?.loops, data?.channels]);
 
     // View dispatcher
     const renderView = (): React.ReactNode => {
@@ -202,6 +234,8 @@ export const App: React.FC<AppProps> = React.memo(
             loopIterationSelectedNumber={nav.loopIterationSelectedNumber}
             taskStreams={streams}
             detailOutputConfig={detailOutputConfig}
+            channelMemberSelectedName={nav.channelMemberSelectedName}
+            panePreview={channelPanePreview}
           />
         );
       }
