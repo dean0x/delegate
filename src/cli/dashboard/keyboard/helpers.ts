@@ -31,6 +31,8 @@ export function getPanelItems(panelId: PanelId, data: DashboardData): readonly I
       return toIdentifiables(data.orchestrations);
     case 'pipelines':
       return toIdentifiables(data.pipelines ?? []);
+    case 'channels':
+      return toIdentifiables(data.channels ?? []);
   }
 }
 
@@ -79,6 +81,8 @@ export function panelToEntityKind(panelId: PanelId): EntityKind {
       return 'schedule';
     case 'pipelines':
       return 'pipeline';
+    case 'channels':
+      return 'channel';
   }
 }
 

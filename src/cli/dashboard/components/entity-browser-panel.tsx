@@ -117,6 +117,16 @@ function getEntityDisplayFields(panelId: PanelId, entityId: string, data: Dashbo
           };
         },
       );
+    case 'channels':
+      return findAndMap(
+        data.channels,
+        (c) => c.id === entityId,
+        (channel) => ({
+          elapsed: formatElapsed(channel.createdAt),
+          agent: `${channel.members.length} members`,
+          description: truncateCell(channel.topic ?? channel.name, 60),
+        }),
+      );
   }
 }
 

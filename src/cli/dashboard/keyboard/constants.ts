@@ -6,7 +6,7 @@ import { LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskSta
 import type { PanelId } from '../types.js';
 
 /** Ordered panel cycle for Tab navigation */
-export const PANEL_ORDER: readonly PanelId[] = ['tasks', 'loops', 'schedules', 'orchestrations', 'pipelines'];
+export const PANEL_ORDER: readonly PanelId[] = ['tasks', 'loops', 'schedules', 'orchestrations', 'pipelines', 'channels'];
 
 /** Per-panel filter cycles — each panel only includes its valid statuses */
 export const FILTER_CYCLES: Record<PanelId, readonly (string | null)[]> = {
@@ -15,15 +15,17 @@ export const FILTER_CYCLES: Record<PanelId, readonly (string | null)[]> = {
   schedules: [null, 'active', 'paused', 'completed', 'cancelled', 'expired'],
   orchestrations: [null, 'planning', 'running', 'completed', 'failed', 'cancelled'],
   pipelines: [null, 'pending', 'running', 'completed', 'failed', 'cancelled'],
+  channels: [null, 'active', 'paused', 'completed', 'destroyed'],
 };
 
-/** Map of digit keys 1–5 to their corresponding panel IDs */
+/** Map of digit keys 1–6 to their corresponding panel IDs */
 export const PANEL_JUMP_KEYS: Record<string, PanelId> = {
   '1': 'tasks',
   '2': 'loops',
   '3': 'schedules',
   '4': 'orchestrations',
   '5': 'pipelines',
+  '6': 'channels',
 };
 
 /** Terminal statuses per panel — used by both 'c' (cancel guard) and 'd' (delete gate) handlers */

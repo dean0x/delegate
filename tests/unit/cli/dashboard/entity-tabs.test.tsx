@@ -28,6 +28,7 @@ function makeAllCounts(overrides: Partial<Record<PanelId, EntityCounts>> = {}): 
     schedules: makeEntityCounts(),
     orchestrations: makeEntityCounts(),
     pipelines: makeEntityCounts(),
+    channels: makeEntityCounts(),
     ...overrides,
   };
 }
@@ -38,7 +39,7 @@ function makeAllCounts(overrides: Partial<Record<PanelId, EntityCounts>> = {}): 
 
 describe('EntityTabs', () => {
   describe('tab labels', () => {
-    it('renders all five panel tabs', () => {
+    it('renders all six panel tabs', () => {
       const { lastFrame } = render(<EntityTabs activeTab="tasks" entityCounts={makeAllCounts()} focused={true} />);
       const frame = lastFrame() ?? '';
       expect(frame).toContain('Tasks');
@@ -46,6 +47,7 @@ describe('EntityTabs', () => {
       expect(frame).toContain('Schedules');
       expect(frame).toContain('Orchestrations');
       expect(frame).toContain('Pipelines');
+      expect(frame).toContain('Channels');
     });
   });
 

@@ -51,15 +51,16 @@ interface AppProps {
 /** Initial navigation state — focus on tasks panel (most common starting point), no selection, no filters */
 const INITIAL_NAV: NavState = {
   focusedPanel: 'tasks',
-  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
-  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
-  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
+  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0, channels: 0 },
+  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null, channels: null },
+  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0, channels: 0 },
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
   detailOutputVisible: true,
   detailOutputAutoTail: true,
   detailOutputScrollOffset: 0,
   loopIterationSelectedNumber: null,
+  channelMemberSelectedName: null,
 };
 
 const INITIAL_DASHBOARD_STATE: DashboardState = {

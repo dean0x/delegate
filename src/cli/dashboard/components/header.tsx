@@ -87,6 +87,7 @@ const ENTITY_LABEL: Record<PanelId, string> = {
   schedules: 'Schedule',
   orchestrations: 'Orch',
   pipelines: 'Pipeline',
+  channels: 'Channel',
 };
 
 /**

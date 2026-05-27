@@ -4,8 +4,8 @@
  * Extracted to eliminate duplication of entity-kind routing across cancel/delete/pause/resume blocks.
  */
 
-import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
-import { LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
+import type { ChannelId, LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
+import { ChannelStatus, LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
 import type { DashboardData, DashboardMutationContext } from '../types.js';
 import { TERMINAL_STATUSES } from './constants.js';
 
@@ -13,7 +13,7 @@ import { TERMINAL_STATUSES } from './constants.js';
  * The entity kind routing key — mirrors ActivityEntry['kind'] but is also used
  * for panel-focused cancel/delete/pause/resume where the kind is derived from PanelId.
  */
-export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline';
+export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline' | 'channel';
 
 /**
  * Dispatches cancel to the appropriate service based on entity kind.
@@ -74,6 +74,17 @@ export async function cancelEntity(
         }
         break;
       }
+      case 'channel':
+        // Channel destroy (not cancel) — skip if already destroyed/completed
+        if (
+          entityStatus !== ChannelStatus.DESTROYED &&
+          entityStatus !== ChannelStatus.COMPLETED &&
+          mutations.channelService
+        ) {
+          await mutations.channelService.destroyChannel(entityId as ChannelId, 'user-requested');
+          refreshNow();
+        }
+        break;
     }
   } catch {
     // Best-effort: service errors are logged internally by each service.
@@ -114,6 +125,15 @@ export async function pauseOrResumeEntity(
           refreshNow();
         } else if (entityStatus === LoopStatus.PAUSED) {
           await mutations.loopService.resumeLoop(entityId as LoopId);
+          refreshNow();
+        }
+        break;
+      case 'channel':
+        if (entityStatus === ChannelStatus.ACTIVE && mutations.channelService) {
+          await mutations.channelService.pauseChannel(entityId as ChannelId);
+          refreshNow();
+        } else if (entityStatus === ChannelStatus.PAUSED && mutations.channelService) {
+          await mutations.channelService.resumeChannel(entityId as ChannelId);
           refreshNow();
         }
         break;
@@ -169,6 +189,16 @@ export async function deleteEntity(
       case 'pipeline':
         if (TERMINAL_STATUSES.pipelines.includes(entityStatus as PipelineStatus) && mutations.pipelineRepo) {
           await mutations.pipelineRepo.delete(entityId as PipelineId);
+          refreshNow();
+        }
+        break;
+      case 'channel':
+        // Only delete destroyed/completed channels
+        if (
+          (entityStatus === ChannelStatus.DESTROYED || entityStatus === ChannelStatus.COMPLETED) &&
+          mutations.channelRepo
+        ) {
+          await mutations.channelRepo.delete(entityId as ChannelId);
           refreshNow();
         }
         break;

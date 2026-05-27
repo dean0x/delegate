@@ -6,6 +6,9 @@
 
 import type {
   ActivityEntry,
+  Channel,
+  ChannelId,
+  ChannelMessage,
   Loop,
   LoopId,
   LoopIteration,
@@ -21,6 +24,8 @@ import type {
   TaskUsage,
 } from '../../core/domain.js';
 import type {
+  ChannelRepository,
+  ChannelService,
   LoopRepository,
   LoopService,
   OrchestrationRepository,
@@ -51,9 +56,13 @@ export interface DashboardMutationContext {
   readonly scheduleRepo: ScheduleRepository;
   /** Pipeline repository for delete operations (cancel is driven via task cancellation cascade) */
   readonly pipelineRepo?: PipelineRepository;
+  /** Channel service for pause/resume/destroy operations (Phase 9, epic #184) */
+  readonly channelService?: ChannelService;
+  /** Channel repository for direct queries in channel detail view (Phase 9, epic #184) */
+  readonly channelRepo?: ChannelRepository;
 }
 
-export type PanelId = 'tasks' | 'loops' | 'schedules' | 'orchestrations' | 'pipelines';
+export type PanelId = 'tasks' | 'loops' | 'schedules' | 'orchestrations' | 'pipelines' | 'channels';
 
 /**
  * Return target for task detail view.
@@ -116,6 +125,12 @@ export type ViewState =
       readonly entityType: 'pipelines';
       readonly entityId: PipelineId;
       readonly returnTo: 'main';
+    }
+  | {
+      readonly kind: 'detail';
+      readonly entityType: 'channels';
+      readonly entityId: ChannelId;
+      readonly returnTo: 'main';
     };
 
 /**
@@ -147,6 +162,12 @@ export interface NavState {
   readonly detailOutputScrollOffset: number;
   /** iterationNumber of the highlighted row in loop detail (null = first row) (#168) */
   readonly loopIterationSelectedNumber: number | null;
+  /**
+   * Name of the highlighted member row in channel detail (null = first row).
+   * Follows orchestrationChildSelectedTaskId convention for D3-style drill-through.
+   * Phase 9, epic #184.
+   */
+  readonly channelMemberSelectedName: string | null;
 }
 
 /**
@@ -184,11 +205,15 @@ export interface DashboardData {
   readonly schedules: readonly Schedule[];
   readonly orchestrations: readonly Orchestration[];
   readonly pipelines: readonly Pipeline[];
+  /** Channels for the entity browser panel (Phase 9, epic #184) */
+  readonly channels: readonly Channel[];
   readonly taskCounts: EntityCounts;
   readonly loopCounts: EntityCounts;
   readonly scheduleCounts: EntityCounts;
   readonly orchestrationCounts: EntityCounts;
   readonly pipelineCounts: EntityCounts;
+  /** Channel entity counts (Phase 9, epic #184) */
+  readonly channelCounts: EntityCounts;
   readonly iterations?: readonly LoopIteration[];
   readonly executions?: readonly ScheduleExecution[];
   /** Liveness state per orchestration ID — only populated for RUNNING orchestrations */
@@ -215,6 +240,8 @@ export interface DashboardData {
   readonly activityFeed?: readonly ActivityEntry[];
   /** Step tasks fetched by ID for pipeline detail (bypasses FETCH_LIMIT) */
   readonly pipelineStepTasks?: readonly (Task | null)[];
+  /** Message summaries for the focused channel in channel detail view (Phase 9, epic #184) */
+  readonly channelMessages?: readonly ChannelMessage[];
 }
 
 /**
@@ -232,4 +259,6 @@ export interface DetailExtra {
   readonly orchestrationChildrenTotal?: number;
   /** Step tasks fetched by ID for pipeline detail (bypasses FETCH_LIMIT) */
   readonly pipelineStepTasks?: readonly (Task | null)[];
+  /** Message summaries for the focused channel in channel detail view (Phase 9, epic #184) */
+  readonly channelMessages?: readonly ChannelMessage[];
 }

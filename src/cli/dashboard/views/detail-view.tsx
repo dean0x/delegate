@@ -161,6 +161,12 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
           <PipelineDetail pipeline={pipeline} stepTasks={stepTasks} scrollOffset={scrollOffset} animFrame={animFrame} />
         );
       }
+      case 'channels': {
+        // Phase 9 (Steps 7-9): ChannelDetail component — stub until UI phase
+        const channel = data?.channels.find((c) => c.id === entityId);
+        if (channel === undefined) return <NotFound entityType={entityType} entityId={entityId} />;
+        return <NotFound entityType={entityType} entityId={entityId} />;
+      }
     }
   },
 );
