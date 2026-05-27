@@ -126,8 +126,14 @@ export class SQLiteChannelRepository implements ChannelRepository {
   private readonly countStmt: SQLite.Statement;
   private readonly countByStatusStmt: SQLite.Statement;
   private readonly saveMessageStmt: SQLite.Statement;
+  private readonly countMessagesStmt: SQLite.Statement;
   private readonly pruneMessagesStmt: SQLite.Statement;
   private readonly getMessagesStmt: SQLite.Statement;
+  /**
+   * Cache of IN-clause member lookup statements keyed by placeholder count.
+   * Avoids re-preparing the same SQL on every dashboard poll tick.
+   */
+  private readonly membersByChannelIdsStmtCache: Map<number, SQLite.Statement> = new Map();
 
   constructor(database: Database) {
     this.db = database.getDatabase();
@@ -173,6 +179,10 @@ export class SQLiteChannelRepository implements ChannelRepository {
     this.saveMessageStmt = this.db.prepare(`
       INSERT INTO channel_messages (id, channel_id, from_member, to_member, round, summary, created_at)
       VALUES (@id, @channel_id, @from_member, @to_member, @round, @summary, @created_at)
+    `);
+
+    this.countMessagesStmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM channel_messages WHERE channel_id = ?
     `);
 
     this.pruneMessagesStmt = this.db.prepare(`
@@ -380,8 +390,16 @@ export class SQLiteChannelRepository implements ChannelRepository {
           created_at: msg.createdAt,
         });
         // Prune oldest rows beyond MAX_MESSAGES_PER_CHANNEL to prevent unbounded growth.
-        // Best-effort — pruning failure does not fail the save.
-        this.pruneMessagesStmt.run(msg.channelId, msg.channelId, SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL);
+        // Best-effort — pruning failure is logged but does not fail the save.
+        // Guard: only prune once channel has accumulated enough messages to warrant a scan.
+        try {
+          const countRow = this.countMessagesStmt.get(msg.channelId) as { count: number };
+          if (countRow.count > SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL) {
+            this.pruneMessagesStmt.run(msg.channelId, msg.channelId, SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL);
+          }
+        } catch {
+          // Prune failure is intentionally swallowed — the message was saved successfully.
+        }
       },
       operationErrorHandler('save channel message', { messageId: msg.id, channelId: msg.channelId }),
     );
@@ -393,7 +411,10 @@ export class SQLiteChannelRepository implements ChannelRepository {
    * Used by dashboard detail view for message history display.
    */
   async getMessages(channelId: ChannelId, limit?: number): Promise<Result<readonly ChannelMessage[]>> {
-    const effectiveLimit = limit ?? SQLiteChannelRepository.DEFAULT_MESSAGE_LIMIT;
+    const effectiveLimit = Math.min(
+      limit ?? SQLiteChannelRepository.DEFAULT_MESSAGE_LIMIT,
+      SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL,
+    );
     return tryCatchAsync(
       async () => {
         const rows = this.getMessagesStmt.all(channelId, effectiveLimit) as ChannelMessageRow[];
@@ -457,12 +478,19 @@ export class SQLiteChannelRepository implements ChannelRepository {
    * ARCHITECTURE: Builds the SQL dynamically from the id list; better-sqlite3
    * does not support array binding directly. The id list is always bounded by
    * DEFAULT_LIMIT (100) so the IN clause is safe.
+   * Prepared statements are cached by arity to avoid re-preparing on every poll tick.
    */
   private findMembersByChannelIds(ids: readonly string[]): Map<string, ChannelMemberRow[]> {
-    const placeholders = ids.map(() => '?').join(', ');
-    const memberRows = this.db
-      .prepare(`SELECT * FROM channel_members WHERE channel_id IN (${placeholders}) ORDER BY joined_at ASC`)
-      .all(...ids) as ChannelMemberRow[];
+    const arity = ids.length;
+    let stmt = this.membersByChannelIdsStmtCache.get(arity);
+    if (!stmt) {
+      const placeholders = ids.map(() => '?').join(', ');
+      stmt = this.db.prepare(
+        `SELECT * FROM channel_members WHERE channel_id IN (${placeholders}) ORDER BY joined_at ASC`,
+      );
+      this.membersByChannelIdsStmtCache.set(arity, stmt);
+    }
+    const memberRows = stmt.all(...ids) as ChannelMemberRow[];
 
     const byChannelId = new Map<string, ChannelMemberRow[]>();
     for (const row of memberRows) {

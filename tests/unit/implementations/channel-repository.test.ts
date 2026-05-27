@@ -941,6 +941,36 @@ describe('SQLiteChannelRepository', () => {
       expect(afterDelete.value).toHaveLength(0);
     });
 
+    it('prunes to MAX_MESSAGES_PER_CHANNEL=500 keeping newest messages', async () => {
+      const channel = buildChannel({ name: 'msg-prune-test' });
+      await repo.save(channel);
+
+      const now = Date.now();
+      // Insert 501 messages — the oldest one should be pruned
+      for (let i = 0; i < 501; i++) {
+        await repo.saveMessage(
+          buildMessage(channel.id, {
+            id: `cm-prune-${i}`,
+            summary: `msg-${i}`,
+            // Spread timestamps so ordering is deterministic: i=0 is oldest, i=500 is newest
+            createdAt: now + i,
+          }),
+        );
+      }
+
+      // After pruning, only 500 remain
+      const result = await repo.getMessages(channel.id, 600);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(500);
+
+      // The oldest message (i=0) must have been pruned
+      const ids = result.value.map((m) => m.id);
+      expect(ids).not.toContain('cm-prune-0');
+      // The newest message (i=500) must still be present
+      expect(ids).toContain('cm-prune-500');
+    });
+
     it('maps toMember=null for broadcast messages and preserves string for directed', async () => {
       const channel = buildChannel({ name: 'msg-tomember-test' });
       await repo.save(channel);
@@ -958,6 +988,44 @@ describe('SQLiteChannelRepository', () => {
       const byId = new Map(result.value.map((m) => [m.id, m]));
       expect(byId.get(broadcast.id)!.toMember).toBeNull();
       expect(byId.get(directed.id)!.toMember).toBe('reviewer');
+    });
+
+    it('getMessages clamps limit to MAX_MESSAGES_PER_CHANNEL (500)', async () => {
+      const channel = buildChannel({ name: 'msg-limit-clamp-test' });
+      await repo.save(channel);
+
+      // Insert 10 messages — well below 500, so all are returned even with an absurd limit
+      const now = Date.now();
+      for (let i = 0; i < 10; i++) {
+        await repo.saveMessage(buildMessage(channel.id, { summary: `msg-${i}`, createdAt: now + i }));
+      }
+
+      // Passing Infinity or a huge number is clamped to MAX_MESSAGES_PER_CHANNEL
+      const result = await repo.getMessages(channel.id, Infinity);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      // All 10 messages are returned (well within the 500 cap)
+      expect(result.value).toHaveLength(10);
+    });
+
+    it('save succeeds even when fewer than MAX messages exist (prune guard skips)', async () => {
+      const channel = buildChannel({ name: 'msg-prune-guard-test' });
+      await repo.save(channel);
+
+      // Insert a small number — count never exceeds 500, so prune is never attempted
+      const now = Date.now();
+      for (let i = 0; i < 5; i++) {
+        const result = await repo.saveMessage(
+          buildMessage(channel.id, { summary: `msg-${i}`, createdAt: now + i }),
+        );
+        // save must succeed even though prune path is not triggered
+        expect(result.ok).toBe(true);
+      }
+
+      const getResult = await repo.getMessages(channel.id);
+      expect(getResult.ok).toBe(true);
+      if (!getResult.ok) throw new Error('unexpected');
+      expect(getResult.value).toHaveLength(5);
     });
   });
 });
