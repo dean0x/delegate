@@ -43,6 +43,13 @@ function pipelineAction(status: string, failedStep?: number): string {
   return status; // completed, cancelled, pending
 }
 
+function channelAction(status: string, currentRound?: number, maxRounds?: number): string {
+  if (status === 'active' && currentRound !== undefined && maxRounds !== undefined) {
+    return `round ${currentRound}/${maxRounds}`;
+  }
+  return status; // active, paused, completed, destroyed
+}
+
 // ============================================================================
 // buildActivityFeed
 // ============================================================================
@@ -85,12 +92,25 @@ interface PipelineLike {
   readonly failedStep?: number;
 }
 
+interface ChannelLike {
+  readonly id: string;
+  readonly status: string;
+  readonly updatedAt?: number;
+  readonly createdAt?: number;
+  /** Current conversation round (0-based counter) */
+  readonly currentRound?: number;
+  /** Maximum configured rounds, if set */
+  readonly maxRounds?: number;
+}
+
 interface BuildActivityFeedArgs {
   readonly tasks: readonly TaskLike[];
   readonly loops: readonly LoopLike[];
   readonly orchestrations: readonly OrchestrationLike[];
   readonly schedules: readonly ScheduleLike[];
   readonly pipelines: readonly PipelineLike[];
+  /** Channels to include in the feed (Phase 9, epic #184) */
+  readonly channels?: readonly ChannelLike[];
   readonly limit: number;
 }
 
@@ -103,7 +123,7 @@ interface BuildActivityFeedArgs {
  * - Action verbs are mapped per-kind based on status
  */
 export function buildActivityFeed(args: BuildActivityFeedArgs): readonly ActivityEntry[] {
-  const { tasks, loops, orchestrations, schedules, pipelines, limit } = args;
+  const { tasks, loops, orchestrations, schedules, pipelines, channels, limit } = args;
 
   const entries: ActivityEntry[] = [];
 
@@ -154,6 +174,16 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
       entityId: pipeline.id,
       status: pipeline.status,
       action: pipelineAction(pipeline.status, pipeline.failedStep),
+    });
+  }
+
+  for (const channel of channels ?? []) {
+    entries.push({
+      timestamp: channel.updatedAt ?? channel.createdAt ?? 0,
+      kind: 'channel',
+      entityId: channel.id,
+      status: channel.status,
+      action: channelAction(channel.status, channel.currentRound, channel.maxRounds),
     });
   }
 

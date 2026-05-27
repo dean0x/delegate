@@ -479,4 +479,140 @@ describe('buildActivityFeed', () => {
       expect(feed[0].kind).toBe('pipeline');
     });
   });
+
+  describe('channel verb mapping', () => {
+    it('maps active channel with currentRound and maxRounds to "round N/M"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'active', currentRound: 2, maxRounds: 5, updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('round 2/5');
+    });
+
+    it('maps active channel without rounds to "active"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'active', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('active');
+    });
+
+    it('maps active channel with currentRound but no maxRounds to "active"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'active', currentRound: 3, updatedAt: T1 }],
+        limit: 100,
+      });
+      // No maxRounds means we cannot render "round N/M" — fall back to status
+      expect(feed[0].action).toBe('active');
+    });
+
+    it('maps paused channel to "paused"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'paused', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('paused');
+    });
+
+    it('maps completed channel to "completed"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'completed', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('completed');
+    });
+
+    it('maps destroyed channel to "destroyed"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'destroyed', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('destroyed');
+    });
+
+    it('maps channel kind correctly', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'active', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].kind).toBe('channel');
+    });
+
+    it('sorts channels with other entity kinds by timestamp', () => {
+      const feed = buildActivityFeed({
+        tasks: [{ ...taskBase, id: 'task-a', status: 'running', updatedAt: T2 }],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'active', currentRound: 1, maxRounds: 3, updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed).toHaveLength(2);
+      expect(feed[0].entityId).toBe('ch-1'); // T1 — most recent
+      expect(feed[1].entityId).toBe('task-a'); // T2
+    });
+
+    it('omits channels when channels array is undefined (optional param)', () => {
+      const feed = buildActivityFeed({
+        tasks: [{ ...taskBase, id: 'task-a', status: 'running', updatedAt: T1 }],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        // channels not provided — omitted
+        limit: 100,
+      });
+      expect(feed).toHaveLength(1);
+      expect(feed[0].kind).toBe('task');
+    });
+
+    it('omits channels when channels array is empty', () => {
+      const feed = buildActivityFeed({
+        tasks: [{ ...taskBase, id: 'task-a', status: 'running', updatedAt: T1 }],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [],
+        limit: 100,
+      });
+      expect(feed).toHaveLength(1);
+    });
+  });
 });
