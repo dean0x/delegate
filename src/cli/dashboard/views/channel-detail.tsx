@@ -80,8 +80,8 @@ function renderMemberRow(member: ChannelMember, isSelected: boolean): React.Reac
       <Text bold={isSelected} color={isSelected ? 'white' : undefined}>
         {member.name}
       </Text>
-      <Text dimColor>{` (${member.agent})`}</Text>
-      <Text dimColor>{` — ${member.status}`}</Text>
+      <Text dimColor={!isSelected} color={isSelected ? 'white' : undefined}>{` (${member.agent})`}</Text>
+      <Text dimColor={!isSelected} color={isSelected ? 'white' : undefined}>{` — ${member.status}`}</Text>
     </Box>
   );
 }
@@ -174,6 +174,8 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
           </Text>
         </Box>
 
+        {/* useChannelPanePreview sets panePreview and panePreviewError as mutually exclusive:
+            preview is non-null only on success, error is non-null only on failure, never both. */}
         {selectedMember === null ? (
           <Text dimColor>(no member selected)</Text>
         ) : panePreview !== null ? (
