@@ -813,4 +813,37 @@ describe('TmuxSessionManager.capturePaneContent()', () => {
     if (result.ok) return;
     expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
   });
+
+  it('returns err(TMUX_SESSION_FAILED) when lines is zero', () => {
+    const result = manager.capturePaneContent('beat-channel-test-member', 0);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('returns err(TMUX_SESSION_FAILED) when lines is negative', () => {
+    const result = manager.capturePaneContent('beat-channel-test-member', -1);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('returns err(TMUX_SESSION_FAILED) when lines is a float', () => {
+    const result = manager.capturePaneContent('beat-channel-test-member', 10.5);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('returns err(TMUX_SESSION_FAILED) when lines exceeds MAX_CAPTURE_LINES', () => {
+    const result = manager.capturePaneContent('beat-channel-test-member', 10_001);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('does not call exec when lines validation fails', () => {
+    manager.capturePaneContent('beat-channel-test-member', -5);
+    expect(exec).not.toHaveBeenCalled();
+  });
 });

@@ -66,6 +66,13 @@ const MAX_ENV_VALUE_LENGTH = 4096;
 const MAX_PASTE_CONTENT_LENGTH = 256 * 1024;
 
 /**
+ * Maximum line count accepted by capturePaneContent().
+ * Guards against shell injection and runaway memory allocation in tmux.
+ * 10 000 lines is well above any legitimate pane preview use case.
+ */
+const MAX_CAPTURE_LINES = 10_000;
+
+/**
  * Allowlist of tmux control key tokens accepted by sendControlKeys().
  * SECURITY: Keys are interpolated directly into the shell command without quoting
  * (no -l flag so tmux can interpret them as key bindings). Restricting to known
@@ -439,6 +446,16 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
   capturePaneContent(name: string, lines = 10): Result<string, AutobeatError> {
     const nameCheck = validateSessionName(name, 'capturePaneContent');
     if (!nameCheck.ok) return nameCheck;
+
+    if (!Number.isInteger(lines) || lines <= 0 || lines > MAX_CAPTURE_LINES) {
+      return err(
+        tmuxSessionFailed(
+          'capturePaneContent',
+          `Invalid lines value: ${lines}. Must be a positive integer ≤ ${MAX_CAPTURE_LINES}`,
+          { lines },
+        ),
+      );
+    }
 
     const result = this.deps.exec(`tmux capture-pane -t '${name}' -p -S -${lines}`);
 
