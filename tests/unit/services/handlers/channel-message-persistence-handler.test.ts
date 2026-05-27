@@ -7,8 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ChannelId, createChannel } from '../../../../src/core/domain.js';
 import { InMemoryEventBus } from '../../../../src/core/events/event-bus.js';
-import { Database } from '../../../../src/implementations/database.js';
 import { SQLiteChannelRepository } from '../../../../src/implementations/channel-repository.js';
+import { Database } from '../../../../src/implementations/database.js';
 import { ChannelMessagePersistenceHandler } from '../../../../src/services/handlers/channel-message-persistence-handler.js';
 import { createTestConfiguration } from '../../../fixtures/factories.js';
 import { TestLogger } from '../../../fixtures/test-doubles.js';

@@ -6,7 +6,14 @@ import { LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskSta
 import type { PanelId } from '../types.js';
 
 /** Ordered panel cycle for Tab navigation */
-export const PANEL_ORDER: readonly PanelId[] = ['tasks', 'loops', 'schedules', 'orchestrations', 'pipelines', 'channels'];
+export const PANEL_ORDER: readonly PanelId[] = [
+  'tasks',
+  'loops',
+  'schedules',
+  'orchestrations',
+  'pipelines',
+  'channels',
+];
 
 /** Per-panel filter cycles — each panel only includes its valid statuses */
 export const FILTER_CYCLES: Record<PanelId, readonly (string | null)[]> = {

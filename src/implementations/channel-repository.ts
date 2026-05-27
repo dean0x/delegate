@@ -12,8 +12,8 @@ import {
   type Channel,
   ChannelId,
   type ChannelMember,
-  type ChannelMessage,
   ChannelMemberStatus,
+  type ChannelMessage,
   ChannelStatus,
   type CommunicationMode,
 } from '../core/domain.js';
