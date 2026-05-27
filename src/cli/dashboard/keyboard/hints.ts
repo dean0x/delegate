@@ -13,7 +13,7 @@ import type { PanelId } from '../types.js';
  * Return the footer hint string for the main panel view.
  * Includes panel-jump hint (1-6) and optionally c/d/p mutation hints.
  * The pause/resume hint is only shown when the focused panel supports it
- * (schedules and loops); p is a no-op for tasks, orchestrations, and pipelines.
+ * (schedules, loops, and channels); p is a no-op for tasks, orchestrations, and pipelines.
  */
 export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string {
   const base = 'Tab: panel · ↑↓: select · Enter: detail · 1-6: panel · f: filter · r refresh · q quit';
@@ -38,6 +38,8 @@ export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string
 export function detailHints(entityType?: PanelId, entityStatus?: string, hasMutations = true): string {
   const baseWithOutput = 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
   const baseNoOutput = 'Esc back · ↑↓ select · Enter detail · r refresh · q quit';
+  // Channel detail has no Enter drill-through — omit 'Enter detail' to avoid misleading keyboard-only users
+  const baseChannel = 'Esc back · r refresh · q quit';
 
   if (entityType === 'schedules' || entityType === 'loops') {
     if (hasMutations && (entityStatus === ScheduleStatus.ACTIVE || entityStatus === LoopStatus.RUNNING)) {
@@ -50,12 +52,12 @@ export function detailHints(entityType?: PanelId, entityStatus?: string, hasMuta
   }
   if (entityType === 'channels') {
     if (hasMutations && entityStatus === ChannelStatus.ACTIVE) {
-      return `${baseNoOutput} · ↑↓ member · p pause`;
+      return `${baseChannel} · ↑↓ member · p pause`;
     }
     if (hasMutations && entityStatus === ChannelStatus.PAUSED) {
-      return `${baseNoOutput} · ↑↓ member · p resume`;
+      return `${baseChannel} · ↑↓ member · p resume`;
     }
-    return `${baseNoOutput} · ↑↓ member`;
+    return `${baseChannel} · ↑↓ member`;
   }
   return baseWithOutput;
 }

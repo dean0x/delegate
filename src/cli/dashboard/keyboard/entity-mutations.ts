@@ -88,6 +88,13 @@ export async function cancelEntity(
           refreshNow();
         }
         break;
+      default: {
+        // Compile-time exhaustiveness guard — a new EntityKind without a cancel case will error here.
+        // Note: inside try/catch so throw would be swallowed; the assignment alone enforces the invariant.
+        const _exhaustive: never = kind;
+        void _exhaustive;
+        break;
+      }
     }
   } catch {
     // Best-effort: service errors are logged internally by each service.
@@ -204,6 +211,13 @@ export async function deleteEntity(
           refreshNow();
         }
         break;
+      default: {
+        // Compile-time exhaustiveness guard — a new EntityKind without a delete case will error here.
+        // Note: inside try/catch so throw would be swallowed; the assignment alone enforces the invariant.
+        const _exhaustive: never = kind;
+        void _exhaustive;
+        break;
+      }
     }
   } catch {
     // Best-effort: repo errors are logged internally by each repository.
