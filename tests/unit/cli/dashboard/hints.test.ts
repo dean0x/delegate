@@ -154,6 +154,11 @@ describe('detailHints()', () => {
     expect(result).not.toContain('p resume');
   });
 
+  it('omits Enter detail for channels (no drill-through from channel detail)', () => {
+    const result = detailHints('channels', 'active');
+    expect(result).not.toContain('Enter detail');
+  });
+
   it('appends ↑↓ member and p pause for active channel', () => {
     const result = detailHints('channels', 'active');
     expect(result).toContain('↑↓ member');

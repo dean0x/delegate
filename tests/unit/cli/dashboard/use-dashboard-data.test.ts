@@ -398,6 +398,37 @@ describe('fetchAllData', () => {
 
   // ---- Channel fetch tests ----
 
+  it('calls channelRepository.findUpdatedSince during MAIN_VIEW metrics fetch', async () => {
+    const channelRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      getMessages: vi.fn().mockResolvedValue(ok([])),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+    };
+    const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
+
+    await fetchAllData(ctx, MAIN_VIEW);
+
+    expect(channelRepo.findUpdatedSince).toHaveBeenCalledWith(expect.any(Number), 50);
+  });
+
+  it('gracefully degrades when channelRepository.findUpdatedSince returns err()', async () => {
+    const channelRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      getMessages: vi.fn().mockResolvedValue(ok([])),
+      findUpdatedSince: vi.fn().mockResolvedValue(err(new Error('channel feed unavailable'))),
+    };
+    const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
+
+    // fetchMetricsExtras silently degrades — activityFeed should still be present
+    const result = await fetchAllData(ctx, MAIN_VIEW);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.activityFeed).toBeDefined();
+  });
+
   it('wires channel data from channelRepository.findAll into result.channels', async () => {
     const mockChannel = {
       id: 'ch-001',
@@ -430,6 +461,7 @@ describe('fetchAllData', () => {
       findAll: vi.fn().mockResolvedValue(ok([])),
       countByStatus: vi.fn().mockResolvedValue(ok({})),
       getMessages: vi.fn().mockResolvedValue(ok([])),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
     };
     const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
 
@@ -458,6 +490,7 @@ describe('fetchAllData', () => {
       findAll: vi.fn().mockResolvedValue(ok([])),
       countByStatus: vi.fn().mockResolvedValue(ok({})),
       getMessages: vi.fn().mockResolvedValue(err(new Error('messages unavailable'))),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
     };
     const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
 
