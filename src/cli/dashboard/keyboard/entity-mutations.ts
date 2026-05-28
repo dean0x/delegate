@@ -4,8 +4,15 @@
  * Extracted to eliminate duplication of entity-kind routing across cancel/delete/pause/resume blocks.
  */
 
-import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
-import { LoopStatus, OrchestratorStatus, PipelineStatus, ScheduleStatus, TaskStatus } from '../../../core/domain.js';
+import type { ChannelId, LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
+import {
+  ChannelStatus,
+  LoopStatus,
+  OrchestratorStatus,
+  PipelineStatus,
+  ScheduleStatus,
+  TaskStatus,
+} from '../../../core/domain.js';
 import type { DashboardData, DashboardMutationContext } from '../types.js';
 import { TERMINAL_STATUSES } from './constants.js';
 
@@ -13,7 +20,7 @@ import { TERMINAL_STATUSES } from './constants.js';
  * The entity kind routing key — mirrors ActivityEntry['kind'] but is also used
  * for panel-focused cancel/delete/pause/resume where the kind is derived from PanelId.
  */
-export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline';
+export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipeline' | 'channel';
 
 /**
  * Dispatches cancel to the appropriate service based on entity kind.
@@ -74,6 +81,20 @@ export async function cancelEntity(
         }
         break;
       }
+      case 'channel':
+        // Channel destroy (not cancel) — skip if already in a terminal status
+        if (!TERMINAL_STATUSES.channels.includes(entityStatus as ChannelStatus) && mutations.channelService) {
+          await mutations.channelService.destroyChannel(entityId as ChannelId, 'user-requested');
+          refreshNow();
+        }
+        break;
+      default: {
+        // Compile-time exhaustiveness guard — a new EntityKind without a cancel case will error here.
+        // Note: inside try/catch so throw would be swallowed; the assignment alone enforces the invariant.
+        const _exhaustive: never = kind;
+        void _exhaustive;
+        break;
+      }
     }
   } catch {
     // Best-effort: service errors are logged internally by each service.
@@ -117,8 +138,28 @@ export async function pauseOrResumeEntity(
           refreshNow();
         }
         break;
-      default:
+      case 'channel':
+        if (!mutations.channelService) break;
+        if (entityStatus === ChannelStatus.ACTIVE) {
+          await mutations.channelService.pauseChannel(entityId as ChannelId);
+          refreshNow();
+        } else if (entityStatus === ChannelStatus.PAUSED) {
+          await mutations.channelService.resumeChannel(entityId as ChannelId);
+          refreshNow();
+        }
         break;
+      case 'task':
+      case 'orchestration':
+      case 'pipeline':
+        // These entity kinds do not support pause/resume — intentional no-ops.
+        break;
+      default: {
+        // Compile-time exhaustiveness guard — a new EntityKind without a pause/resume case will error here.
+        // Note: inside try/catch so throw would be swallowed; the assignment alone enforces the invariant.
+        const _exhaustive: never = kind;
+        void _exhaustive;
+        break;
+      }
     }
   } catch {
     // Best-effort: service errors are logged internally by each service.
@@ -172,6 +213,20 @@ export async function deleteEntity(
           refreshNow();
         }
         break;
+      case 'channel':
+        // Only delete terminal (destroyed/completed) channels
+        if (TERMINAL_STATUSES.channels.includes(entityStatus as ChannelStatus) && mutations.channelRepo) {
+          await mutations.channelRepo.delete(entityId as ChannelId);
+          refreshNow();
+        }
+        break;
+      default: {
+        // Compile-time exhaustiveness guard — a new EntityKind without a delete case will error here.
+        // Note: inside try/catch so throw would be swallowed; the assignment alone enforces the invariant.
+        const _exhaustive: never = kind;
+        void _exhaustive;
+        break;
+      }
     }
   } catch {
     // Best-effort: repo errors are logged internally by each repository.

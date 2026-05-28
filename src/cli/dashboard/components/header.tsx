@@ -35,9 +35,9 @@ interface HeaderProps {
  * Shows running, queued, and failed totals across all entity types
  * including pipelines (Phase B).
  *
- * Running: tasks, loops, active schedules, orchestrations (running+planning), pipelines
- * Queued:  queued tasks, paused loops, paused schedules, pending pipelines
- * Failed:  failed/cancelled tasks/loops/orchestrations/pipelines, cancelled schedules
+ * Running: tasks, loops, active schedules, orchestrations (running+planning), pipelines, active channels
+ * Queued:  queued tasks, paused loops, paused schedules, pending pipelines, paused channels
+ * Failed:  failed/cancelled tasks/loops/orchestrations/pipelines, cancelled schedules, destroyed channels
  */
 function buildHealthSummary(data: DashboardData): string {
   const running =
@@ -46,13 +46,15 @@ function buildHealthSummary(data: DashboardData): string {
     (data.scheduleCounts.byStatus['active'] ?? 0) +
     (data.orchestrationCounts.byStatus['running'] ?? 0) +
     (data.orchestrationCounts.byStatus['planning'] ?? 0) +
-    (data.pipelineCounts.byStatus['running'] ?? 0);
+    (data.pipelineCounts.byStatus['running'] ?? 0) +
+    (data.channelCounts.byStatus['active'] ?? 0);
 
   const queued =
     (data.taskCounts.byStatus['queued'] ?? 0) +
     (data.loopCounts.byStatus['paused'] ?? 0) +
     (data.scheduleCounts.byStatus['paused'] ?? 0) +
-    (data.pipelineCounts.byStatus['pending'] ?? 0);
+    (data.pipelineCounts.byStatus['pending'] ?? 0) +
+    (data.channelCounts.byStatus['paused'] ?? 0);
 
   const failed =
     (data.taskCounts.byStatus['failed'] ?? 0) +
@@ -60,7 +62,8 @@ function buildHealthSummary(data: DashboardData): string {
     (data.scheduleCounts.byStatus['cancelled'] ?? 0) +
     (data.orchestrationCounts.byStatus['failed'] ?? 0) +
     (data.pipelineCounts.byStatus['failed'] ?? 0) +
-    (data.pipelineCounts.byStatus['cancelled'] ?? 0);
+    (data.pipelineCounts.byStatus['cancelled'] ?? 0) +
+    (data.channelCounts.byStatus['destroyed'] ?? 0);
 
   const parts: string[] = [];
   if (running > 0) parts.push(`●${running} run`);
@@ -87,21 +90,34 @@ const ENTITY_LABEL: Record<PanelId, string> = {
   schedules: 'Schedule',
   orchestrations: 'Orch',
   pipelines: 'Pipeline',
+  channels: 'Channel',
 };
 
 /**
  * Build breadcrumb text for the current view kind.
  * When in detail mode with entityType + entityId, produces an entity-specific trail:
  *   "Metrics · Task a1b2c3d4ef12"
+ *   "Metrics · Channel my-channel-name"  (channels use name, not shortId — AC-11)
  * Returns a short label that fits in the header row.
  */
-function buildBreadcrumb(viewKind: 'main' | 'detail' | undefined, entityType?: PanelId, entityId?: string): string {
+function buildBreadcrumb(
+  viewKind: 'main' | 'detail' | undefined,
+  entityType?: PanelId,
+  entityId?: string,
+  data?: DashboardData | null,
+): string {
   switch (viewKind) {
     case 'main':
       return '[M] Metrics';
     case 'detail': {
       if (entityType !== undefined && entityId !== undefined) {
         const label = ENTITY_LABEL[entityType];
+        // AC-11: channels show channel name instead of shortId
+        if (entityType === 'channels') {
+          const channelName = data?.channels.find((c) => c.id === entityId)?.name;
+          const displayId = channelName ?? shortId(entityId);
+          return `[D] Metrics · ${label} ${displayId}`;
+        }
         return `[D] Metrics · ${label} ${shortId(entityId)}`;
       }
       return '[D] Detail';
@@ -115,7 +131,7 @@ export const Header: React.FC<HeaderProps> = React.memo(
   ({ version, data, refreshedAt, error, viewKind, entityType, entityId }) => {
     const healthSummary = data !== null ? buildHealthSummary(data) : '—';
     const timestamp = refreshedAt !== null ? formatTime(refreshedAt) : '—';
-    const breadcrumb = buildBreadcrumb(viewKind, entityType, entityId);
+    const breadcrumb = buildBreadcrumb(viewKind, entityType, entityId, data);
 
     return (
       <Box flexDirection="column">

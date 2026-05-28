@@ -62,6 +62,7 @@ npm run test:coverage       # With coverage
 - `ScheduleExecutor` → cron/one-time execution engine (note: has direct repo writes, architectural exception to event-driven pattern)
 - `LoopHandler` → loop iteration engine (retry/optimize strategies, exit condition evaluation)
 - `UsageCaptureHandler` → captures Claude token/cost usage on TaskCompleted, writes to `task_usage` via UsageParser
+- `ChannelMessagePersistenceHandler` → captures message summaries on ChannelMessageSent, writes to `channel_messages` via ChannelRepository
 
 **Worker Runtime**: Workers run as tmux sessions via injected `TmuxConnectorPort`. Identified by session name; pid=0 sentinel. Kill sequence: C-c → grace period → force-destroy. Requires tmux >= 3.0.
 
@@ -261,6 +262,7 @@ Safety nets that exist in the codebase but are not part of the manual release st
 - `orchestrations.session_name` column: nullable TEXT for interactive tmux session tracking (migration v30)
 - `channels` table: channel definitions, communication mode, rounds, status (migration v31)
 - `channel_members` table: per-member agent/session/status within a channel (migration v31)
+- `channel_messages` table: per-message summaries for dashboard activity feed (migration v32)
 
 ### Dependencies
 
@@ -323,6 +325,9 @@ Quick reference for common operations:
 | Pipeline repository | `src/implementations/pipeline-repository.ts` |
 | Channel repository | `src/implementations/channel-repository.ts` |
 | Channel service | `src/services/channel-manager.ts` |
+| Channel detail view | `src/cli/dashboard/views/channel-detail.tsx` |
+| Channel pane preview hook | `src/cli/dashboard/use-channel-pane-preview.ts` |
+| Channel message persistence handler | `src/services/handlers/channel-message-persistence-handler.ts` |
 | Channel CLI command | `src/cli/commands/channel.ts` |
 | Msg CLI command | `src/cli/commands/msg.ts` |
 | Pipeline handler | `src/services/handlers/pipeline-handler.ts` |

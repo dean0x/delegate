@@ -5,6 +5,7 @@ import {
   ChannelId,
   type ChannelMember,
   ChannelMemberStatus,
+  type ChannelMessage,
   ChannelStatus,
   createChannel,
   updateChannel,
@@ -443,7 +444,87 @@ describe('SQLiteChannelRepository', () => {
   });
 
   // ============================================================================
-  // T12: Constraint — Duplicate Channel Name
+  // T12: findUpdatedSince — Activity Feed Query
+  // ============================================================================
+
+  describe('findUpdatedSince', () => {
+    it('returns only channels updated at or after the given timestamp', async () => {
+      const past = Date.now() - 10_000;
+      const recent = Date.now();
+
+      const oldChannel = buildChannel({ name: 'old-ch' });
+      const newChannel = buildChannel({ name: 'new-ch' });
+
+      // Save old channel with a past updated_at via direct SQL to control timestamp
+      db.getDatabase()
+        .prepare(
+          `INSERT INTO channels (id, name, status, current_round, created_at, updated_at)
+           VALUES (?, ?, 'active', 0, ?, ?)`,
+        )
+        .run(oldChannel.id, oldChannel.name, past - 1000, past - 1000);
+
+      db.getDatabase()
+        .prepare(
+          `INSERT INTO channels (id, name, status, current_round, created_at, updated_at)
+           VALUES (?, ?, 'active', 0, ?, ?)`,
+        )
+        .run(newChannel.id, newChannel.name, recent, recent);
+
+      const result = await repo.findUpdatedSince(past, 50);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+
+      const ids = result.value.map((c) => c.id);
+      expect(ids).toContain(newChannel.id);
+      expect(ids).not.toContain(oldChannel.id);
+    });
+
+    it('respects the limit parameter', async () => {
+      const since = Date.now() - 1000;
+      for (let i = 0; i < 5; i++) {
+        const ch = buildChannel({ name: `limit-ch-${i}` });
+        await repo.save(ch);
+      }
+
+      const result = await repo.findUpdatedSince(since, 3);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value.length).toBeLessThanOrEqual(3);
+    });
+
+    it('returns empty array when no channels match the time window', async () => {
+      const ch = buildChannel({ name: 'old-only' });
+      await repo.save(ch);
+      // Use a far-future cutoff so the saved channel falls outside the window
+      const result = await repo.findUpdatedSince(Date.now() + 100_000, 50);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(0);
+    });
+
+    it('includes channel whose updated_at exactly equals sinceMs (inclusive boundary)', async () => {
+      const exactTs = Date.now() - 5_000;
+      const ch = buildChannel({ name: 'exact-boundary' });
+
+      // Insert with updated_at set exactly to the cutoff timestamp
+      db.getDatabase()
+        .prepare(
+          `INSERT INTO channels (id, name, status, current_round, created_at, updated_at)
+           VALUES (?, ?, 'active', 0, ?, ?)`,
+        )
+        .run(ch.id, ch.name, exactTs, exactTs);
+
+      const result = await repo.findUpdatedSince(exactTs, 50);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+
+      const ids = result.value.map((c) => c.id);
+      expect(ids).toContain(ch.id);
+    });
+  });
+
+  // ============================================================================
+  // T13: Constraint — Duplicate Channel Name
   // ============================================================================
 
   describe('unique constraints', () => {
@@ -607,6 +688,29 @@ describe('SQLiteChannelRepository', () => {
       expect(memberColNames).toContain('status');
       expect(memberColNames).toContain('joined_at');
     });
+
+    it('creates idx_channel_messages_channel_created index for ORDER BY created_at DESC', () => {
+      const indexes = db.getDatabase().prepare("PRAGMA index_list('channel_messages')").all() as Array<{
+        name: string;
+        unique: number;
+        origin: string;
+      }>;
+      const indexNames = indexes.map((i) => i.name);
+      expect(indexNames).toContain('idx_channel_messages_channel_created');
+
+      // Verify the index covers (channel_id, created_at) columns
+      const indexInfo = db
+        .getDatabase()
+        .prepare("PRAGMA index_info('idx_channel_messages_channel_created')")
+        .all() as Array<{
+        seqno: number;
+        cid: number;
+        name: string;
+      }>;
+      const indexCols = indexInfo.map((c) => c.name);
+      expect(indexCols).toContain('channel_id');
+      expect(indexCols).toContain('created_at');
+    });
   });
 
   // ============================================================================
@@ -721,10 +825,64 @@ describe('SQLiteChannelRepository', () => {
   });
 
   // ============================================================================
-  // P2: N+1 Member Loading (Baseline)
+  // P2: Batch Member Loading (findAll / findByStatus)
   // ============================================================================
 
   describe('performance', () => {
+    it('findAll loads members for all channels in two queries (batch hydration)', async () => {
+      // Save 3 channels with distinct members to verify cross-channel grouping
+      const ch1 = buildChannel({
+        name: 'batch-1',
+        members: [
+          { name: 'a1', agent: 'claude' },
+          { name: 'a2', agent: 'codex' },
+        ],
+      });
+      const ch2 = buildChannel({ name: 'batch-2', members: [{ name: 'b1', agent: 'claude' }] });
+      const ch3 = buildChannel({ name: 'batch-3', members: [] });
+      await repo.save(ch1);
+      await repo.save(ch2);
+      await repo.save(ch3);
+
+      const result = await repo.findAll();
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+
+      const byName = new Map(result.value.map((c) => [c.name, c]));
+      // Members are correctly attributed to their own channel
+      expect(byName.get('batch-1')!.members).toHaveLength(2);
+      expect(byName.get('batch-2')!.members).toHaveLength(1);
+      expect(byName.get('batch-3')!.members).toHaveLength(0);
+      // No member cross-contamination
+      const ch1Members = byName.get('batch-1')!.members.map((m) => m.name);
+      expect(ch1Members).toContain('a1');
+      expect(ch1Members).toContain('a2');
+      expect(ch1Members).not.toContain('b1');
+    });
+
+    it('findByStatus loads members for matching channels via batch hydration', async () => {
+      const active = buildChannel({ name: 'batch-active', members: [{ name: 'x1', agent: 'claude' }] });
+      const paused = buildChannel({
+        name: 'batch-paused',
+        members: [
+          { name: 'y1', agent: 'codex' },
+          { name: 'y2', agent: 'claude' },
+        ],
+      });
+      await repo.save(active);
+      await repo.save(paused);
+      await repo.updateStatus(paused.id, ChannelStatus.PAUSED);
+
+      const result = await repo.findByStatus(ChannelStatus.PAUSED);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(1);
+      expect(result.value[0].members).toHaveLength(2);
+      const names = result.value[0].members.map((m) => m.name);
+      expect(names).toContain('y1');
+      expect(names).toContain('y2');
+    });
+
     it('handles 50 channels with 3 members each via findAll', async () => {
       for (let i = 0; i < 50; i++) {
         const ch = buildChannel({
@@ -759,6 +917,208 @@ describe('SQLiteChannelRepository', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('unexpected');
       expect(result.value).toHaveLength(10);
+    });
+  });
+
+  // ============================================================================
+  // T12: Channel Messages — saveMessage + getMessages
+  // ============================================================================
+
+  describe('saveMessage + getMessages', () => {
+    function buildMessage(channelId: ChannelId, overrides: Partial<ChannelMessage> = {}): ChannelMessage {
+      return Object.freeze({
+        id: `cm-${crypto.randomUUID()}`,
+        channelId,
+        fromMember: 'architect',
+        toMember: null,
+        round: 1,
+        summary: 'Hello from architect',
+        createdAt: Date.now(),
+        ...overrides,
+      });
+    }
+
+    it('saves a message and retrieves it via getMessages', async () => {
+      const channel = buildChannel({ name: 'msg-save-test' });
+      await repo.save(channel);
+
+      const msg = buildMessage(channel.id, {
+        fromMember: 'architect',
+        toMember: 'reviewer',
+        round: 1,
+        summary: 'Code looks good!',
+      });
+
+      const saveResult = await repo.saveMessage(msg);
+      expect(saveResult.ok).toBe(true);
+
+      const getResult = await repo.getMessages(channel.id);
+      expect(getResult.ok).toBe(true);
+      if (!getResult.ok) throw new Error('unexpected');
+      expect(getResult.value).toHaveLength(1);
+
+      const found = getResult.value[0]!;
+      expect(found.id).toBe(msg.id);
+      expect(found.channelId).toBe(channel.id);
+      expect(found.fromMember).toBe('architect');
+      expect(found.toMember).toBe('reviewer');
+      expect(found.round).toBe(1);
+      expect(found.summary).toBe('Code looks good!');
+      expect(found.createdAt).toBe(msg.createdAt);
+    });
+
+    it('returns messages newest-first (ORDER BY created_at DESC)', async () => {
+      const channel = buildChannel({ name: 'msg-order-test' });
+      await repo.save(channel);
+
+      const now = Date.now();
+      const oldest = buildMessage(channel.id, { summary: 'oldest', createdAt: now - 2000 });
+      const middle = buildMessage(channel.id, { summary: 'middle', createdAt: now - 1000 });
+      const newest = buildMessage(channel.id, { summary: 'newest', createdAt: now });
+
+      await repo.saveMessage(oldest);
+      await repo.saveMessage(middle);
+      await repo.saveMessage(newest);
+
+      const result = await repo.getMessages(channel.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(3);
+      // newest-first
+      expect(result.value[0]!.summary).toBe('newest');
+      expect(result.value[1]!.summary).toBe('middle');
+      expect(result.value[2]!.summary).toBe('oldest');
+    });
+
+    it('respects the limit parameter', async () => {
+      const channel = buildChannel({ name: 'msg-limit-test' });
+      await repo.save(channel);
+
+      const now = Date.now();
+      for (let i = 0; i < 5; i++) {
+        await repo.saveMessage(buildMessage(channel.id, { summary: `msg-${i}`, createdAt: now + i }));
+      }
+
+      const result = await repo.getMessages(channel.id, 3);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(3);
+    });
+
+    it('returns empty array when channel has no messages', async () => {
+      const channel = buildChannel({ name: 'msg-empty-test' });
+      await repo.save(channel);
+
+      const result = await repo.getMessages(channel.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(0);
+    });
+
+    it('CASCADE deletes messages when channel is deleted', async () => {
+      const channel = buildChannel({ name: 'msg-cascade-test' });
+      await repo.save(channel);
+      await repo.saveMessage(buildMessage(channel.id));
+      await repo.saveMessage(buildMessage(channel.id));
+
+      // Verify messages exist before delete
+      const beforeDelete = await repo.getMessages(channel.id);
+      expect(beforeDelete.ok).toBe(true);
+      if (!beforeDelete.ok) throw new Error('unexpected');
+      expect(beforeDelete.value).toHaveLength(2);
+
+      // Delete channel — ON DELETE CASCADE should remove messages
+      await repo.delete(channel.id);
+
+      const afterDelete = await repo.getMessages(channel.id);
+      expect(afterDelete.ok).toBe(true);
+      if (!afterDelete.ok) throw new Error('unexpected');
+      expect(afterDelete.value).toHaveLength(0);
+    });
+
+    it('prunes to MAX_MESSAGES_PER_CHANNEL=500 keeping newest messages', async () => {
+      const channel = buildChannel({ name: 'msg-prune-test' });
+      await repo.save(channel);
+
+      const now = Date.now();
+      // Insert 501 messages — the oldest one should be pruned
+      for (let i = 0; i < 501; i++) {
+        await repo.saveMessage(
+          buildMessage(channel.id, {
+            id: `cm-prune-${i}`,
+            summary: `msg-${i}`,
+            // Spread timestamps so ordering is deterministic: i=0 is oldest, i=500 is newest
+            createdAt: now + i,
+          }),
+        );
+      }
+
+      // After pruning, only 500 remain
+      const result = await repo.getMessages(channel.id, 600);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      expect(result.value).toHaveLength(500);
+
+      // The oldest message (i=0) must have been pruned
+      const ids = result.value.map((m) => m.id);
+      expect(ids).not.toContain('cm-prune-0');
+      // The newest message (i=500) must still be present
+      expect(ids).toContain('cm-prune-500');
+    });
+
+    it('maps toMember=null for broadcast messages and preserves string for directed', async () => {
+      const channel = buildChannel({ name: 'msg-tomember-test' });
+      await repo.save(channel);
+
+      const broadcast = buildMessage(channel.id, { toMember: null, summary: 'broadcast' });
+      const directed = buildMessage(channel.id, { toMember: 'reviewer', summary: 'directed' });
+
+      await repo.saveMessage(broadcast);
+      await repo.saveMessage(directed);
+
+      const result = await repo.getMessages(channel.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      // Newest-first: directed was saved last (slightly later timestamp via test execution order)
+      const byId = new Map(result.value.map((m) => [m.id, m]));
+      expect(byId.get(broadcast.id)!.toMember).toBeNull();
+      expect(byId.get(directed.id)!.toMember).toBe('reviewer');
+    });
+
+    it('getMessages clamps limit to MAX_MESSAGES_PER_CHANNEL (500)', async () => {
+      const channel = buildChannel({ name: 'msg-limit-clamp-test' });
+      await repo.save(channel);
+
+      // Insert 10 messages — well below 500, so all are returned even with an absurd limit
+      const now = Date.now();
+      for (let i = 0; i < 10; i++) {
+        await repo.saveMessage(buildMessage(channel.id, { summary: `msg-${i}`, createdAt: now + i }));
+      }
+
+      // Passing Infinity or a huge number is clamped to MAX_MESSAGES_PER_CHANNEL
+      const result = await repo.getMessages(channel.id, Infinity);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+      // All 10 messages are returned (well within the 500 cap)
+      expect(result.value).toHaveLength(10);
+    });
+
+    it('save succeeds even when fewer than MAX messages exist (prune guard skips)', async () => {
+      const channel = buildChannel({ name: 'msg-prune-guard-test' });
+      await repo.save(channel);
+
+      // Insert a small number — count never exceeds 500, so prune is never attempted
+      const now = Date.now();
+      for (let i = 0; i < 5; i++) {
+        const result = await repo.saveMessage(buildMessage(channel.id, { summary: `msg-${i}`, createdAt: now + i }));
+        // save must succeed even though prune path is not triggered
+        expect(result.ok).toBe(true);
+      }
+
+      const getResult = await repo.getMessages(channel.id);
+      expect(getResult.ok).toBe(true);
+      if (!getResult.ok) throw new Error('unexpected');
+      expect(getResult.value).toHaveLength(5);
     });
   });
 });

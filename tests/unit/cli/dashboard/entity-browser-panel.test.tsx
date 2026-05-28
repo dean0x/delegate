@@ -33,6 +33,7 @@ function makeAllCounts(overrides: Partial<Record<PanelId, EntityCounts>> = {}): 
     schedules: makeEntityCounts(),
     orchestrations: makeEntityCounts(),
     pipelines: makeEntityCounts(),
+    channels: makeEntityCounts(),
     ...overrides,
   };
 }
@@ -43,11 +44,13 @@ const MOCK_DATA: DashboardData = {
   schedules: [],
   orchestrations: [],
   pipelines: [],
+  channels: [],
   taskCounts: makeEntityCounts(),
   loopCounts: makeEntityCounts(),
   scheduleCounts: makeEntityCounts(),
   orchestrationCounts: makeEntityCounts(),
   pipelineCounts: makeEntityCounts(),
+  channelCounts: makeEntityCounts(),
 };
 
 // ============================================================================
@@ -188,16 +191,17 @@ describe('EntityBrowserPanel', () => {
   });
 
   describe('constants coverage', () => {
-    it('PANEL_ORDER includes pipelines as the 5th panel', () => {
+    it('PANEL_ORDER includes channels as the 6th panel', () => {
       // Verify via the tab bar rendering order
-      const { lastFrame } = renderPanel({ focusedType: 'pipelines' });
+      const { lastFrame } = renderPanel({ focusedType: 'channels' });
       const frame = lastFrame() ?? '';
-      // All 5 tabs must be present
+      // All 6 tabs must be present
       expect(frame).toContain('Tasks');
       expect(frame).toContain('Loops');
       expect(frame).toContain('Schedules');
       expect(frame).toContain('Orchestrations');
-      expect(frame).toContain('[Pipelines(');
+      expect(frame).toContain('Pipelines');
+      expect(frame).toContain('[Channels(');
     });
   });
 });

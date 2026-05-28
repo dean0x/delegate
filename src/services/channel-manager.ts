@@ -93,6 +93,30 @@ class SerialQueue {
   }
 }
 
+/**
+ * Truncates a string to at most `maxCodePoints` Unicode code points.
+ *
+ * ARCHITECTURE (Phase 9 Dashboard): Used to produce summary strings for
+ * ChannelMessageSent events. Iterates code points via for...of so surrogate
+ * pairs are not split for characters outside the BMP (e.g. emoji, CJK).
+ *
+ * DESIGN DECISION: codepoint-safe truncation rather than substring(0, n) because
+ * substring operates on UTF-16 code units, which would split surrogate pairs for
+ * characters outside the BMP (e.g. emoji). Using code points is correct.
+ * O(maxCodePoints) rather than O(input length) — avoids allocating a full array
+ * for large agent outputs.
+ */
+function codePointSlice(str: string, maxCodePoints: number): string {
+  let result = '';
+  let count = 0;
+  for (const cp of str) {
+    if (count >= maxCodePoints) break;
+    result += cp;
+    count++;
+  }
+  return result;
+}
+
 export interface ChannelManagerDeps {
   readonly eventBus: EventBus;
   readonly logger: Logger;
@@ -446,6 +470,7 @@ export class ChannelManager implements ChannelService {
         from: 'external',
         to,
         round: channel.currentRound,
+        summary: codePointSlice(message, 200),
       });
       if (!emitResult.ok) {
         this.logger.error('Failed to emit ChannelMessageSent event', emitResult.error, { channelId });
@@ -1059,6 +1084,7 @@ export class ChannelManager implements ChannelService {
       from: memberName,
       to: toValue,
       round: channel.currentRound,
+      summary: codePointSlice(content, 200),
     });
     if (!routedEmitResult.ok) {
       this.logger.error('Failed to emit ChannelMessageSent event', routedEmitResult.error, { channelId, memberName });

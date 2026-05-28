@@ -333,6 +333,13 @@ export interface ChannelMessageSentEvent extends BaseEvent {
   from: string;
   to: string | 'all';
   round: number;
+  /**
+   * Optional message summary — first 200 code points of the message content.
+   * Set by ChannelManager when emitting ChannelMessageSent.
+   * When present, ChannelMessagePersistenceHandler persists it to channel_messages.
+   * Absent for historic events and events emitted before Phase 9.
+   */
+  summary?: string;
 }
 
 export interface ChannelMemberCrashedEvent extends BaseEvent {

@@ -15,6 +15,7 @@ import React from 'react';
 import { bootstrap } from '../../bootstrap.js';
 import type {
   ChannelRepository,
+  ChannelService,
   LoopRepository,
   LoopService,
   OrchestrationRepository,
@@ -133,11 +134,19 @@ export async function startDashboard(): Promise<void> {
       }
     : () => false;
 
+  // Build the capture-pane function for channel member live preview (Phase 9, #184).
+  // Best-effort — undefined when tmuxSessionManager is unavailable.
+  const capturePaneContent = tmuxSessionManagerResult.ok
+    ? (name: string, lines?: number) => tmuxSessionManagerResult.value.capturePaneContent(name, lines)
+    : undefined;
+
   // Extract mutation services for cancel/delete keybindings
   const orchestrationServiceResult = container.get<OrchestrationService>('orchestrationService');
   const loopServiceResult = container.get<LoopService>('loopService');
   const scheduleServiceResult = container.get<ScheduleService>('scheduleService');
   const taskManagerResult = container.get<TaskManager>('taskManager');
+  // Channel service — best-effort, optional for pause/resume/destroy (Phase 9, #184)
+  const channelServiceResult = container.get<ChannelService>('channelService');
 
   // Mutations are best-effort — dashboard degrades gracefully if unavailable
   const mutations: DashboardMutationContext | undefined =
@@ -151,6 +160,8 @@ export async function startDashboard(): Promise<void> {
           loopRepo: loopRepository.value,
           taskRepo: taskRepository.value,
           scheduleRepo: scheduleRepository.value,
+          channelService: channelServiceResult.ok ? channelServiceResult.value : undefined,
+          channelRepo: channelRepository.value,
         }
       : undefined;
 
@@ -211,6 +222,7 @@ export async function startDashboard(): Promise<void> {
       resourceMonitor={resourceMonitor}
       outputRepository={outputRepository.value}
       isTmuxSessionAlive={isTmuxSessionAlive}
+      capturePaneContent={capturePaneContent}
     />,
     {
       stdin: process.stdin, // Required: Ink needs stdin to establish raw mode + capture keystrokes

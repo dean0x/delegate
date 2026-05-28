@@ -10,10 +10,6 @@ import type { ActivityEntry } from '../../core/domain.js';
 // Verb mapping helpers
 // ============================================================================
 
-function taskAction(status: string): string {
-  return status; // task statuses map directly: completed, failed, running, queued, cancelled
-}
-
 function loopAction(status: string, currentIteration?: number): string {
   if (status === 'running' && currentIteration !== undefined) {
     return `iteration ${currentIteration}`;
@@ -29,10 +25,6 @@ function orchestrationAction(status: string): string {
   return status;
 }
 
-function scheduleAction(status: string): string {
-  return status; // active, paused, completed, cancelled, expired
-}
-
 function pipelineAction(status: string, failedStep?: number): string {
   if (status === 'failed' && failedStep !== undefined) {
     return `failed step ${failedStep}`;
@@ -41,6 +33,13 @@ function pipelineAction(status: string, failedStep?: number): string {
     return 'started';
   }
   return status; // completed, cancelled, pending
+}
+
+function channelAction(status: string, currentRound?: number, maxRounds?: number): string {
+  if (status === 'active' && currentRound !== undefined && maxRounds !== undefined) {
+    return `round ${currentRound}/${maxRounds}`;
+  }
+  return status; // active, paused, completed, destroyed
 }
 
 // ============================================================================
@@ -85,25 +84,37 @@ interface PipelineLike {
   readonly failedStep?: number;
 }
 
+interface ChannelLike {
+  readonly id: string;
+  readonly status: string;
+  readonly updatedAt?: number;
+  readonly createdAt?: number;
+  /** Current conversation round (0-based counter) */
+  readonly currentRound?: number;
+  /** Maximum configured rounds, if set */
+  readonly maxRounds?: number;
+}
+
 interface BuildActivityFeedArgs {
   readonly tasks: readonly TaskLike[];
   readonly loops: readonly LoopLike[];
   readonly orchestrations: readonly OrchestrationLike[];
   readonly schedules: readonly ScheduleLike[];
   readonly pipelines: readonly PipelineLike[];
+  readonly channels: readonly ChannelLike[];
   readonly limit: number;
 }
 
 /**
  * Merge entity arrays into a time-sorted activity feed.
  *
- * - All five entity kinds are merged into a single array
+ * - All entity kinds are merged into a single array
  * - Sorted descending by updatedAt (most recent first)
  * - Limited to `limit` entries after sort
  * - Action verbs are mapped per-kind based on status
  */
 export function buildActivityFeed(args: BuildActivityFeedArgs): readonly ActivityEntry[] {
-  const { tasks, loops, orchestrations, schedules, pipelines, limit } = args;
+  const { tasks, loops, orchestrations, schedules, pipelines, channels, limit } = args;
 
   const entries: ActivityEntry[] = [];
 
@@ -113,7 +124,7 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
       kind: 'task',
       entityId: task.id,
       status: task.status,
-      action: taskAction(task.status),
+      action: task.status,
     });
   }
 
@@ -143,7 +154,7 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
       kind: 'schedule',
       entityId: sched.id,
       status: sched.status,
-      action: scheduleAction(sched.status),
+      action: sched.status,
     });
   }
 
@@ -154,6 +165,16 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
       entityId: pipeline.id,
       status: pipeline.status,
       action: pipelineAction(pipeline.status, pipeline.failedStep),
+    });
+  }
+
+  for (const channel of channels) {
+    entries.push({
+      timestamp: channel.updatedAt ?? channel.createdAt ?? 0,
+      kind: 'channel',
+      entityId: channel.id,
+      status: channel.status,
+      action: channelAction(channel.status, channel.currentRound, channel.maxRounds),
     });
   }
 

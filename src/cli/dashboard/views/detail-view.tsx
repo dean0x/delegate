@@ -10,6 +10,7 @@ import type { Task, TaskId } from '../../../core/domain.js';
 import type { DetailOutputConfig } from '../components/detail-output-panel.js';
 import type { DashboardData, PanelId } from '../types.js';
 import type { OutputStreamState } from '../use-task-output-stream.js';
+import { ChannelDetail } from './channel-detail.js';
 import { LoopDetail } from './loop-detail.js';
 import { OrchestrationDetail } from './orchestration-detail.js';
 import { PipelineDetail } from './pipeline-detail.js';
@@ -65,6 +66,12 @@ interface DetailViewProps {
   readonly taskStreams?: ReadonlyMap<TaskId, OutputStreamState>;
   /** #165: grouped output panel configuration — required; app.tsx always provides explicit values */
   readonly detailOutputConfig: DetailOutputConfig;
+  /** Phase 9 (#184): name of the highlighted member row in channel detail */
+  readonly channelMemberSelectedName?: string | null;
+  /** Phase 9 (#184): live capture-pane preview for the selected channel member */
+  readonly panePreview?: string | null;
+  /** Phase 9 (#184): error string from capture-pane failure, distinct from initial loading state */
+  readonly panePreviewError?: string | null;
 }
 
 const NotFound: React.FC<{ entityType: PanelId; entityId: string }> = ({ entityType, entityId }) => (
@@ -86,6 +93,9 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
     loopIterationSelectedNumber = null,
     taskStreams,
     detailOutputConfig,
+    channelMemberSelectedName = null,
+    panePreview = null,
+    panePreviewError = null,
   }) => {
     switch (entityType) {
       case 'loops': {
@@ -160,6 +170,25 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
         return (
           <PipelineDetail pipeline={pipeline} stepTasks={stepTasks} scrollOffset={scrollOffset} animFrame={animFrame} />
         );
+      }
+      case 'channels': {
+        const channel = data?.channels.find((c) => c.id === entityId);
+        if (channel === undefined) return <NotFound entityType={entityType} entityId={entityId} />;
+        return (
+          <ChannelDetail
+            channel={channel}
+            messages={data?.channelMessages ?? []}
+            scrollOffset={scrollOffset}
+            animFrame={animFrame}
+            selectedMemberName={channelMemberSelectedName}
+            panePreview={panePreview}
+            panePreviewError={panePreviewError}
+          />
+        );
+      }
+      default: {
+        const _exhaustive: never = entityType;
+        return <Text color="red">Unknown panel: {_exhaustive}</Text>;
       }
     }
   },

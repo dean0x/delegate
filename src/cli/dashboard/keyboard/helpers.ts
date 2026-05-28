@@ -30,7 +30,13 @@ export function getPanelItems(panelId: PanelId, data: DashboardData): readonly I
     case 'orchestrations':
       return toIdentifiables(data.orchestrations);
     case 'pipelines':
-      return toIdentifiables(data.pipelines ?? []);
+      return toIdentifiables(data.pipelines);
+    case 'channels':
+      return toIdentifiables(data.channels);
+    default: {
+      const _exhaustive: never = panelId;
+      return _exhaustive;
+    }
   }
 }
 
@@ -79,6 +85,12 @@ export function panelToEntityKind(panelId: PanelId): EntityKind {
       return 'schedule';
     case 'pipelines':
       return 'pipeline';
+    case 'channels':
+      return 'channel';
+    default: {
+      const _exhaustive: never = panelId;
+      return _exhaustive;
+    }
   }
 }
 
@@ -98,6 +110,32 @@ export function resolveIterationIndex(
   if (selectedNumber === null) return 0;
   const idx = iterations.findIndex((i) => i.iterationNumber === selectedNumber);
   return idx >= 0 ? idx : 0;
+}
+
+/**
+ * Resolve the currently selected channel member index from a member name.
+ * Returns 0 when no name is set, when the name is not found, or when the
+ * members array is empty. Mirrors resolveIterationIndex but for channel members.
+ */
+export function resolveMemberIndex(selectedName: string | null, members: readonly { name: string }[]): number {
+  if (selectedName === null) return 0;
+  const idx = members.findIndex((m) => m.name === selectedName);
+  return idx >= 0 ? idx : 0;
+}
+
+/**
+ * Resolve the selected channel member object by name, falling back to the first member.
+ * Returns null when the members array is empty.
+ *
+ * Extracted to eliminate duplication between app.tsx (resolves tmux session name for
+ * polling) and channel-detail.tsx (resolves member object for rendering).
+ */
+export function resolveSelectedMember<T extends { name: string }>(
+  selectedName: string | null,
+  members: readonly T[],
+): T | null {
+  const found = selectedName !== null ? members.find((m) => m.name === selectedName) : undefined;
+  return found ?? members[0] ?? null;
 }
 
 /**

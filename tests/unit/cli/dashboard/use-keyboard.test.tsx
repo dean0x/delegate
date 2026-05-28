@@ -137,26 +137,29 @@ function makeDashboardData(overrides: Partial<DashboardData> = {}): DashboardDat
     schedules: [],
     orchestrations: [],
     pipelines: [],
+    channels: [],
     taskCounts: { total: 0, byStatus: {} },
     loopCounts: { total: 0, byStatus: {} },
     scheduleCounts: { total: 0, byStatus: {} },
     orchestrationCounts: { total: 0, byStatus: {} },
     pipelineCounts: { total: 0, byStatus: {} },
+    channelCounts: { total: 0, byStatus: {} },
     ...overrides,
   };
 }
 
 const INITIAL_NAV: NavState = {
   focusedPanel: 'loops',
-  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
-  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
-  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
+  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0, channels: 0 },
+  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null, channels: null },
+  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0, channels: 0 },
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
   detailOutputVisible: true,
   detailOutputAutoTail: true,
   detailOutputScrollOffset: 0,
   loopIterationSelectedNumber: null,
+  channelMemberSelectedName: null,
 };
 
 // ============================================================================
@@ -277,13 +280,14 @@ describe('useKeyboard — Tab panel cycling', () => {
     expect(lastFrame()).toContain('panel:schedules');
   });
 
-  it('Tab cycles all the way around: loops → schedules → orchestrations → pipelines → tasks → loops', async () => {
-    // INITIAL_NAV starts at loops. PANEL_ORDER is tasks/loops/schedules/orchestrations/pipelines.
-    // From loops (index 1): Tab → schedules(2) → orchestrations(3) → pipelines(4) → tasks(0) → loops(1)
+  it('Tab cycles all the way around: loops → schedules → orchestrations → pipelines → channels → tasks → loops', async () => {
+    // INITIAL_NAV starts at loops. PANEL_ORDER is tasks/loops/schedules/orchestrations/pipelines/channels.
+    // From loops (index 1): Tab → schedules(2) → orchestrations(3) → pipelines(4) → channels(5) → tasks(0) → loops(1)
     const { lastFrame, stdin } = render(<KeyboardWrapper />);
     await press(stdin, '\t'); // → schedules
     await press(stdin, '\t'); // → orchestrations
     await press(stdin, '\t'); // → pipelines
+    await press(stdin, '\t'); // → channels
     await press(stdin, '\t'); // → tasks (wrap around)
     expect(lastFrame()).toContain('panel:tasks');
     await press(stdin, '\t'); // → loops
@@ -298,12 +302,12 @@ describe('useKeyboard — Tab panel cycling', () => {
     expect(lastFrame()).toContain('panel:tasks');
   });
 
-  it('Shift+Tab from tasks → pipelines (last panel, wraps around)', async () => {
-    // tasks is the first panel (index 0) — Shift+Tab wraps to pipelines (last)
+  it('Shift+Tab from tasks → channels (last panel, wraps around)', async () => {
+    // tasks is the first panel (index 0) — Shift+Tab wraps to channels (last)
     const { lastFrame, stdin } = render(<KeyboardWrapper initialNav={{ ...INITIAL_NAV, focusedPanel: 'tasks' }} />);
     expect(lastFrame()).toContain('panel:tasks');
     await press(stdin, '\x1B[Z');
-    expect(lastFrame()).toContain('panel:pipelines');
+    expect(lastFrame()).toContain('panel:channels');
   });
 });
 

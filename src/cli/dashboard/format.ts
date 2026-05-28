@@ -70,6 +70,7 @@ export function statusColor(status: string): string {
     case 'failed':
     case 'cancelled':
     case 'missed':
+    case 'destroyed':
       return 'red';
     case 'paused':
       return 'yellow';
@@ -89,6 +90,7 @@ const STATUS_ICONS: Record<string, string> = {
   completed: '✓',
   failed: '✗',
   cancelled: '⊘',
+  destroyed: '⊘',
   paused: '⏸',
   blocked: '⊖', // gray — blocked by dependency
   expired: '○', // gray — schedule expired

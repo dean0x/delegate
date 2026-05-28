@@ -607,9 +607,9 @@ describe('migration v25 - mode and pid columns', () => {
     db.close();
   });
 
-  it('should be at schema version 31', () => {
+  it('should be at schema version 32', () => {
     const db = new Database(':memory:');
-    expect(db.getSchemaVersion()).toBe(31);
+    expect(db.getSchemaVersion()).toBe(32);
     db.close();
   });
 });

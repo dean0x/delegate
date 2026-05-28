@@ -8,6 +8,8 @@ import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { Header } from '../../../../src/cli/dashboard/components/header.js';
 import type { DashboardData, ViewState } from '../../../../src/cli/dashboard/types.js';
+import type { Channel } from '../../../../src/core/domain.js';
+import { ChannelStatus } from '../../../../src/core/domain.js';
 
 // ============================================================================
 // Test fixtures
@@ -20,11 +22,26 @@ function makeData(overrides: Partial<DashboardData> = {}): DashboardData {
     schedules: [],
     orchestrations: [],
     pipelines: [],
+    channels: [],
     taskCounts: { total: 0, byStatus: {} },
     loopCounts: { total: 0, byStatus: {} },
     scheduleCounts: { total: 0, byStatus: {} },
     orchestrationCounts: { total: 0, byStatus: {} },
     pipelineCounts: { total: 0, byStatus: {} },
+    channelCounts: { total: 0, byStatus: {} },
+    ...overrides,
+  };
+}
+
+function makeChannel(overrides: Partial<Channel> = {}): Channel {
+  return {
+    id: 'channel-aabbccddeeff-xyz' as Channel['id'],
+    name: 'test-channel',
+    members: [],
+    status: ChannelStatus.ACTIVE,
+    currentRound: 0,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
     ...overrides,
   };
 }
@@ -359,6 +376,64 @@ describe('Header — entity-specific breadcrumbs (Phase C)', () => {
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Pipeline');
     expect(frame).toContain(PIPELINE_ID.slice(0, 12));
+  });
+
+  it('shows Channel breadcrumb with channel name when entityType=channels and channel found (AC-11)', () => {
+    const CHANNEL_ID = 'channel-aabbccddeeff-xyz' as Channel['id'];
+    const channel = makeChannel({ id: CHANNEL_ID, name: 'my-channel' });
+    const data = makeData({ channels: [channel] });
+    const { lastFrame } = render(
+      <Header
+        version="1.0.0"
+        data={data}
+        refreshedAt={null}
+        error={null}
+        viewKind="detail"
+        entityType="channels"
+        entityId={CHANNEL_ID}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Channel');
+    expect(frame).toContain('my-channel');
+    expect(frame).not.toContain(CHANNEL_ID.slice(0, 12));
+  });
+
+  it('falls back to shortId in Channel breadcrumb when channel not found in data', () => {
+    const CHANNEL_ID = 'channel-aabbccddeeff-xyz' as Channel['id'];
+    const data = makeData({ channels: [] });
+    const { lastFrame } = render(
+      <Header
+        version="1.0.0"
+        data={data}
+        refreshedAt={null}
+        error={null}
+        viewKind="detail"
+        entityType="channels"
+        entityId={CHANNEL_ID}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Channel');
+    expect(frame).toContain(CHANNEL_ID.slice(0, 12));
+  });
+
+  it('falls back to shortId in Channel breadcrumb when data is null', () => {
+    const CHANNEL_ID = 'channel-aabbccddeeff-xyz' as Channel['id'];
+    const { lastFrame } = render(
+      <Header
+        version="1.0.0"
+        data={null}
+        refreshedAt={null}
+        error={null}
+        viewKind="detail"
+        entityType="channels"
+        entityId={CHANNEL_ID}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Channel');
+    expect(frame).toContain(CHANNEL_ID.slice(0, 12));
   });
 
   it('falls back to [D] Detail when entityType is missing', () => {

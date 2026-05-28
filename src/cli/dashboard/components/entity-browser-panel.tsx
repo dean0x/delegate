@@ -117,6 +117,21 @@ function getEntityDisplayFields(panelId: PanelId, entityId: string, data: Dashbo
           };
         },
       );
+    case 'channels':
+      return findAndMap(
+        data.channels,
+        (c) => c.id === entityId,
+        (channel) => ({
+          elapsed: formatElapsed(channel.createdAt),
+          // AC-2: single-agent channels show "—" for members; multi-member shows count
+          agent: channel.members.length <= 1 ? '—' : `${channel.members.length} members`,
+          description: truncateCell(channel.topic ?? channel.name, 60),
+        }),
+      );
+    default: {
+      const _exhaustive: never = panelId;
+      return _exhaustive;
+    }
   }
 }
 

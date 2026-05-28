@@ -39,6 +39,7 @@ import { ShellExitConditionEvaluator } from './exit-condition-evaluator.js';
 import { FeedforwardEvaluator } from './feedforward-evaluator.js';
 import { AttributedTaskCancellationHandler } from './handlers/attributed-task-cancellation-handler.js';
 import { ChannelHandler } from './handlers/channel-handler.js';
+import { ChannelMessagePersistenceHandler } from './handlers/channel-message-persistence-handler.js';
 import { CheckpointHandler } from './handlers/checkpoint-handler.js';
 import { DependencyHandler } from './handlers/dependency-handler.js';
 import { LoopHandler } from './handlers/loop-handler.js';
@@ -104,6 +105,8 @@ export interface HandlerSetupResult {
   readonly pipelineHandler?: PipelineHandler;
   /** ChannelHandler — round tracking and maxRounds termination enforcement (Phase 7, epic #175) */
   readonly channelHandler?: ChannelHandler;
+  /** ChannelMessagePersistenceHandler — saves message summaries for dashboard display (Phase 9, epic #184) */
+  readonly channelMessagePersistenceHandler?: ChannelMessagePersistenceHandler;
 }
 
 /**
@@ -545,6 +548,26 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     }
   }
 
+  // 13. Channel Message Persistence Handler — saves message summaries for dashboard (Phase 9, epic #184)
+  // ARCHITECTURE: Optional — only created if channelRepository is registered.
+  // Best-effort: failures are logged but never block other handlers.
+  let channelMessagePersistenceHandler: ChannelMessagePersistenceHandler | undefined;
+  if (deps.channelRepository) {
+    const channelMsgHandlerResult = await ChannelMessagePersistenceHandler.create({
+      channelRepository: deps.channelRepository,
+      eventBus,
+      logger: childLogger('ChannelMessagePersistenceHandler'),
+    });
+    if (!channelMsgHandlerResult.ok) {
+      // Non-fatal: log warning but continue without message persistence
+      setupLogger.warn('Failed to create ChannelMessagePersistenceHandler', {
+        error: channelMsgHandlerResult.error.message,
+      });
+    } else {
+      channelMessagePersistenceHandler = channelMsgHandlerResult.value;
+    }
+  }
+
   setupLogger.info('Event handlers initialized successfully', {
     standardHandlers: standardHandlers.length,
     totalHandlers:
@@ -554,7 +577,8 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
       (usageCaptureHandler ? 1 : 0) +
       (attributedTaskCancellationHandler ? 1 : 0) +
       (pipelineHandler ? 1 : 0) +
-      (channelHandler ? 1 : 0),
+      (channelHandler ? 1 : 0) +
+      (channelMessagePersistenceHandler ? 1 : 0),
   });
 
   return ok({
@@ -568,5 +592,6 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     attributedTaskCancellationHandler,
     pipelineHandler,
     channelHandler,
+    channelMessagePersistenceHandler,
   });
 }

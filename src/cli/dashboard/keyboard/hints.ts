@@ -6,20 +6,25 @@
  * any keyboard refactor only needs to update this one file.
  */
 
-import { LoopStatus, ScheduleStatus } from '../../../core/domain.js';
+import { ChannelStatus, LoopStatus, ScheduleStatus } from '../../../core/domain.js';
 import type { PanelId } from '../types.js';
 
 /**
  * Return the footer hint string for the main panel view.
- * Includes panel-jump hint (1-5) and optionally c/d/p mutation hints.
+ * Includes panel-jump hint (1-6) and optionally c/d/p mutation hints.
  * The pause/resume hint is only shown when the focused panel supports it
- * (schedules and loops); p is a no-op for tasks, orchestrations, and pipelines.
+ * (schedules, loops, and channels); p is a no-op for tasks, orchestrations, and pipelines.
  */
 export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string {
-  const base = 'Tab: panel · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
+  const base = 'Tab: panel · ↑↓: select · Enter: detail · 1-6: panel · f: filter · r refresh · q quit';
   if (hasMutations) {
-    const pauseHint = focusedPanel === 'schedules' || focusedPanel === 'loops' ? ' · p pause/resume' : '';
-    return `${base} · c cancel · d delete (terminal)${pauseHint}`;
+    const pauseHint =
+      focusedPanel === 'schedules' || focusedPanel === 'loops' || focusedPanel === 'channels'
+        ? ' · p pause/resume'
+        : '';
+    // Channels use destroy semantics (not cancel) — show accurate label when focused
+    const cancelLabel = focusedPanel === 'channels' ? 'c destroy' : 'c cancel';
+    return `${base} · ${cancelLabel} · d delete (terminal)${pauseHint}`;
   }
   return base;
 }
@@ -33,6 +38,8 @@ export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string
 export function detailHints(entityType?: PanelId, entityStatus?: string, hasMutations = true): string {
   const baseWithOutput = 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
   const baseNoOutput = 'Esc back · ↑↓ select · Enter detail · r refresh · q quit';
+  // Channel detail has no Enter drill-through — omit 'Enter detail' to avoid misleading keyboard-only users
+  const baseChannel = 'Esc back · r refresh · q quit';
 
   if (entityType === 'schedules' || entityType === 'loops') {
     if (hasMutations && (entityStatus === ScheduleStatus.ACTIVE || entityStatus === LoopStatus.RUNNING)) {
@@ -42,6 +49,15 @@ export function detailHints(entityType?: PanelId, entityStatus?: string, hasMuta
       return `${baseNoOutput} · p resume`;
     }
     return baseNoOutput;
+  }
+  if (entityType === 'channels') {
+    if (hasMutations && entityStatus === ChannelStatus.ACTIVE) {
+      return `${baseChannel} · ↑↓ member · p pause`;
+    }
+    if (hasMutations && entityStatus === ChannelStatus.PAUSED) {
+      return `${baseChannel} · ↑↓ member · p resume`;
+    }
+    return `${baseChannel} · ↑↓ member`;
   }
   return baseWithOutput;
 }

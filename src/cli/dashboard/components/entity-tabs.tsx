@@ -25,6 +25,7 @@ const TAB_LABELS: Record<PanelId, string> = {
   schedules: 'Schedules',
   orchestrations: 'Orchestrations',
   pipelines: 'Pipelines',
+  channels: 'Channels',
 };
 
 /**

@@ -13,6 +13,7 @@ import {
   ChannelId,
   type ChannelMember,
   ChannelMemberStatus,
+  type ChannelMessage,
   ChannelStatus,
   type CommunicationMode,
 } from '../core/domain.js';
@@ -51,6 +52,16 @@ const ChannelMemberRowSchema = z.object({
   joined_at: z.number(),
 });
 
+const ChannelMessageRowSchema = z.object({
+  id: z.string().min(1),
+  channel_id: z.string().min(1),
+  from_member: z.string().min(1),
+  to_member: z.string().nullable(),
+  round: z.number().int().nonnegative(),
+  summary: z.string(),
+  created_at: z.number().int().positive(),
+});
+
 // ============================================================================
 // Row types for type-safe database interaction
 // ============================================================================
@@ -79,8 +90,26 @@ interface ChannelMemberRow {
   readonly joined_at: number;
 }
 
+interface ChannelMessageRow {
+  readonly id: string;
+  readonly channel_id: string;
+  readonly from_member: string;
+  readonly to_member: string | null;
+  readonly round: number;
+  readonly summary: string;
+  readonly created_at: number;
+}
+
 export class SQLiteChannelRepository implements ChannelRepository {
   private static readonly DEFAULT_LIMIT = 100;
+  private static readonly DEFAULT_MESSAGE_LIMIT = 50;
+  /**
+   * Maximum messages retained per channel.
+   * After INSERT, oldest rows beyond this bound are pruned inline.
+   * DECISION: 500 is generous for dashboard display (default view shows 50) while
+   * preventing unbounded growth in long-running channels.
+   */
+  private static readonly MAX_MESSAGES_PER_CHANNEL = 500;
 
   private readonly db: SQLite.Database;
   private readonly saveChannelStmt: SQLite.Statement;
@@ -96,6 +125,16 @@ export class SQLiteChannelRepository implements ChannelRepository {
   private readonly deleteStmt: SQLite.Statement;
   private readonly countStmt: SQLite.Statement;
   private readonly countByStatusStmt: SQLite.Statement;
+  private readonly saveMessageStmt: SQLite.Statement;
+  private readonly countMessagesStmt: SQLite.Statement;
+  private readonly pruneMessagesStmt: SQLite.Statement;
+  private readonly getMessagesStmt: SQLite.Statement;
+  private readonly findUpdatedSinceStmt: SQLite.Statement;
+  /**
+   * Cache of IN-clause member lookup statements keyed by placeholder count.
+   * Avoids re-preparing the same SQL on every dashboard poll tick.
+   */
+  private readonly membersByChannelIdsStmtCache: Map<number, SQLite.Statement> = new Map();
 
   constructor(database: Database) {
     this.db = database.getDatabase();
@@ -137,6 +176,38 @@ export class SQLiteChannelRepository implements ChannelRepository {
     this.countStmt = this.db.prepare(`SELECT COUNT(*) as count FROM channels`);
 
     this.countByStatusStmt = this.db.prepare(`SELECT status, COUNT(*) as count FROM channels GROUP BY status`);
+
+    this.saveMessageStmt = this.db.prepare(`
+      INSERT INTO channel_messages (id, channel_id, from_member, to_member, round, summary, created_at)
+      VALUES (@id, @channel_id, @from_member, @to_member, @round, @summary, @created_at)
+    `);
+
+    this.countMessagesStmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM channel_messages WHERE channel_id = ?
+    `);
+
+    this.pruneMessagesStmt = this.db.prepare(`
+      DELETE FROM channel_messages
+      WHERE channel_id = ?
+        AND id NOT IN (
+          SELECT id FROM channel_messages
+          WHERE channel_id = ?
+          ORDER BY created_at DESC
+          LIMIT ?
+        )
+    `);
+
+    this.getMessagesStmt = this.db.prepare(`
+      SELECT * FROM channel_messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?
+    `);
+
+    // idx_channels_updated_at (migration v31) covers WHERE + ORDER BY
+    this.findUpdatedSinceStmt = this.db.prepare(`
+      SELECT * FROM channels
+      WHERE updated_at >= ?
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `);
   }
 
   // ============================================================================
@@ -193,7 +264,7 @@ export class SQLiteChannelRepository implements ChannelRepository {
     const effectiveOffset = offset ?? 0;
     return tryCatchAsync(async () => {
       const rows = this.findAllStmt.all(effectiveLimit, effectiveOffset) as ChannelRow[];
-      return rows.map((row) => this.rowToChannel(row));
+      return this.hydrateChannelRows(rows);
     }, operationErrorHandler('find all channels'));
   }
 
@@ -203,7 +274,7 @@ export class SQLiteChannelRepository implements ChannelRepository {
     return tryCatchAsync(
       async () => {
         const rows = this.findByStatusStmt.all(status, effectiveLimit, effectiveOffset) as ChannelRow[];
-        return rows.map((row) => this.rowToChannel(row));
+        return this.hydrateChannelRows(rows);
       },
       operationErrorHandler('find channels by status', { status }),
     );
@@ -306,6 +377,88 @@ export class SQLiteChannelRepository implements ChannelRepository {
     }, operationErrorHandler('count channels by status'));
   }
 
+  async findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Channel[]>> {
+    return tryCatchAsync(
+      async () => {
+        const rows = this.findUpdatedSinceStmt.all(sinceMs, limit) as ChannelRow[];
+        // Skip member hydration — sole consumer (activity feed) never reads members.
+        // hydrateChannelRows fires an extra IN-clause query per call; at 1-second
+        // poll frequency that adds unnecessary write overhead.
+        return rows.map((row) => this.rowToChannelWithMembers(row, []));
+      },
+      operationErrorHandler('find channels updated since', { sinceMs }),
+    );
+  }
+
+  // ============================================================================
+  // Channel message persistence (Phase 9 Dashboard)
+  // ============================================================================
+
+  /**
+   * Persist a single ChannelMessage summary row.
+   * ARCHITECTURE: INSERT only — message history is append-only.
+   * Called by ChannelMessagePersistenceHandler; best-effort — errors surface as err().
+   */
+  async saveMessage(msg: ChannelMessage): Promise<Result<void>> {
+    return tryCatchAsync(
+      async () => {
+        // Wrap INSERT + COUNT + conditional DELETE in a single transaction.
+        // Prevents concurrent ChannelMessageSent events from double-pruning the same channel.
+        // Best-effort semantics preserved: prune errors are caught inside so the transaction
+        // still commits the INSERT if pruning throws.
+        const saveAndPrune = this.db.transaction(() => {
+          this.saveMessageStmt.run({
+            id: msg.id,
+            channel_id: msg.channelId,
+            from_member: msg.fromMember,
+            to_member: msg.toMember ?? null,
+            round: msg.round,
+            summary: msg.summary,
+            created_at: msg.createdAt,
+          });
+          // Prune oldest rows beyond MAX_MESSAGES_PER_CHANNEL to prevent unbounded growth.
+          // Guard: only prune once channel has accumulated enough messages to warrant a scan.
+          try {
+            const countRow = this.countMessagesStmt.get(msg.channelId) as { count: number };
+            if (countRow.count > SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL) {
+              this.pruneMessagesStmt.run(
+                msg.channelId,
+                msg.channelId,
+                SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL,
+              );
+            }
+          } catch {
+            // Prune failure is intentionally swallowed — the message was saved successfully.
+          }
+        });
+        saveAndPrune();
+      },
+      operationErrorHandler('save channel message', { messageId: msg.id, channelId: msg.channelId }),
+    );
+  }
+
+  /**
+   * Retrieve message summaries for a channel, newest-first.
+   * ARCHITECTURE: Returns readonly array, max `limit` rows (default 50).
+   * Used by dashboard detail view for message history display.
+   */
+  async getMessages(channelId: ChannelId, limit?: number): Promise<Result<readonly ChannelMessage[]>> {
+    const effectiveLimit = Math.max(
+      1,
+      Math.min(
+        limit ?? SQLiteChannelRepository.DEFAULT_MESSAGE_LIMIT,
+        SQLiteChannelRepository.MAX_MESSAGES_PER_CHANNEL,
+      ),
+    );
+    return tryCatchAsync(
+      async () => {
+        const rows = this.getMessagesStmt.all(channelId, effectiveLimit) as ChannelMessageRow[];
+        return rows.map((row) => this.rowToChannelMessage(row));
+      },
+      operationErrorHandler('get channel messages', { channelId }),
+    );
+  }
+
   // ============================================================================
   // Row conversion helpers
   // Pattern: Validate at boundary — ensures data integrity from database
@@ -339,20 +492,69 @@ export class SQLiteChannelRepository implements ChannelRepository {
   }
 
   /**
-   * Converts a raw DB row to a Channel domain object, loading members via a
-   * separate query.
+   * Batch-hydrates channel rows with their members in two queries total:
+   * one for channels (already fetched by caller) and one IN-clause fetch for all
+   * members, grouped by channel_id in-memory.
    *
-   * N+1 LOAD: Each call issues a separate `findMembersByChannelIdStmt` query.
-   * findAll(100) = 101 queries total. Acceptable for Phase 6 baseline — channels
-   * are bounded by DEFAULT_LIMIT=100 and member counts are small in practice.
-   * Optimize to a single batch IN-clause fetch if findAll/findByStatus become
-   * hot paths under production load.
+   * PERFORMANCE: O(1) queries regardless of row count, safe for 1-second dashboard
+   * poll loop. Called by findAll() and findByStatus().
    */
-  private rowToChannel(row: ChannelRow): Channel {
-    const validated = ChannelRowSchema.parse(row);
-    const memberRows = this.findMembersByChannelIdStmt.all(validated.id) as ChannelMemberRow[];
-    const members = memberRows.map((mr) => this.rowToMember(mr));
+  private hydrateChannelRows(rows: ChannelRow[]): readonly Channel[] {
+    if (rows.length === 0) return [];
+    const ids = rows.map((r) => r.id);
+    const membersByChannelId = this.findMembersByChannelIds(ids);
+    return rows.map((row) => this.rowToChannelWithMembers(row, membersByChannelId.get(row.id) ?? []));
+  }
 
+  /**
+   * Fetches all members for the given channel IDs in a single IN-clause query.
+   * Returns a Map keyed by channel_id for O(1) lookup.
+   *
+   * ARCHITECTURE: Builds the SQL dynamically from the id list; better-sqlite3
+   * does not support array binding directly. The id list is always bounded by
+   * DEFAULT_LIMIT (100) so the IN clause is safe.
+   * Prepared statements are cached by arity to avoid re-preparing on every poll tick.
+   */
+  private findMembersByChannelIds(ids: readonly string[]): Map<string, ChannelMemberRow[]> {
+    const arity = ids.length;
+    let stmt = this.membersByChannelIdsStmtCache.get(arity);
+    if (!stmt) {
+      const placeholders = ids.map(() => '?').join(', ');
+      stmt = this.db.prepare(
+        `SELECT * FROM channel_members WHERE channel_id IN (${placeholders}) ORDER BY joined_at ASC`,
+      );
+      this.membersByChannelIdsStmtCache.set(arity, stmt);
+      // Evict the oldest entry when the cache exceeds DEFAULT_LIMIT arities.
+      // In practice arity is always ≤ DEFAULT_LIMIT (100), but guard against
+      // callers passing unexpectedly large slices.
+      if (this.membersByChannelIdsStmtCache.size > SQLiteChannelRepository.DEFAULT_LIMIT) {
+        const firstKey = this.membersByChannelIdsStmtCache.keys().next().value;
+        if (firstKey !== undefined) {
+          this.membersByChannelIdsStmtCache.delete(firstKey);
+        }
+      }
+    }
+    const memberRows = stmt.all(...ids) as ChannelMemberRow[];
+
+    const byChannelId = new Map<string, ChannelMemberRow[]>();
+    for (const row of memberRows) {
+      let list = byChannelId.get(row.channel_id);
+      if (!list) {
+        list = [];
+        byChannelId.set(row.channel_id, list);
+      }
+      list.push(row);
+    }
+    return byChannelId;
+  }
+
+  /**
+   * Converts a raw DB row to a Channel domain object using pre-fetched member rows.
+   * Used by hydrateChannelRows() to avoid per-channel queries in list operations.
+   */
+  private rowToChannelWithMembers(row: ChannelRow, memberRows: ChannelMemberRow[]): Channel {
+    const validated = ChannelRowSchema.parse(row);
+    const members = memberRows.map((mr) => this.rowToMember(mr));
     return Object.freeze({
       id: ChannelId(validated.id),
       name: validated.name,
@@ -368,6 +570,20 @@ export class SQLiteChannelRepository implements ChannelRepository {
     });
   }
 
+  /**
+   * Converts a raw DB row to a Channel domain object, loading members via a
+   * separate query.
+   *
+   * Used only for single-channel lookups (findById, findByName) where N+1 is
+   * not a concern. List operations (findAll, findByStatus) use hydrateChannelRows()
+   * instead to batch-load members in a single IN-clause query.
+   */
+  private rowToChannel(row: ChannelRow): Channel {
+    const validated = ChannelRowSchema.parse(row);
+    const memberRows = this.findMembersByChannelIdStmt.all(validated.id) as ChannelMemberRow[];
+    return this.rowToChannelWithMembers(row, memberRows);
+  }
+
   private rowToMember(row: ChannelMemberRow): ChannelMember {
     const validated = ChannelMemberRowSchema.parse(row);
     return Object.freeze({
@@ -377,6 +593,19 @@ export class SQLiteChannelRepository implements ChannelRepository {
       tmuxSession: validated.tmux_session,
       status: validated.status as ChannelMemberStatus,
       joinedAt: validated.joined_at,
+    });
+  }
+
+  private rowToChannelMessage(row: ChannelMessageRow): ChannelMessage {
+    const validated = ChannelMessageRowSchema.parse(row);
+    return Object.freeze({
+      id: validated.id,
+      channelId: ChannelId(validated.channel_id),
+      fromMember: validated.from_member,
+      toMember: validated.to_member ?? null,
+      round: validated.round,
+      summary: validated.summary,
+      createdAt: validated.created_at,
     });
   }
 }

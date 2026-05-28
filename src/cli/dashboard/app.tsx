@@ -8,13 +8,16 @@ import { Box, useApp } from 'ink';
 import React, { useCallback, useEffect, useMemo, useReducer } from 'react';
 import type { TaskId } from '../../core/domain.js';
 import type { OutputRepository, ResourceMonitor } from '../../core/interfaces.js';
+import type { Result } from '../../core/result.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import type { DetailOutputConfig } from './components/detail-output-panel.js';
 import { Footer } from './components/footer.js';
 import { Header } from './components/header.js';
+import { resolveSelectedMember } from './keyboard/helpers.js';
 import { computeMetricsLayout } from './layout.js';
 import { type DashboardState, dashboardReducer } from './nav-reducer.js';
 import type { DashboardMutationContext, NavState, ViewState } from './types.js';
+import { useChannelPanePreview } from './use-channel-pane-preview.js';
 import { useDashboardData } from './use-dashboard-data.js';
 import { useKeyboard } from './use-keyboard.js';
 import { useResourceMetrics } from './use-resource-metrics.js';
@@ -46,20 +49,27 @@ interface AppProps {
    * Pass () => false when tmuxSessionManager is unavailable (e.g. test environments).
    */
   readonly isTmuxSessionAlive: (sessionName: string) => boolean;
+  /**
+   * Optional capture-pane function for channel member live preview.
+   * When omitted (e.g. test environments), preview is disabled.
+   * Phase 9, epic #184.
+   */
+  readonly capturePaneContent?: (name: string, lines?: number) => Result<string, Error>;
 }
 
 /** Initial navigation state — focus on tasks panel (most common starting point), no selection, no filters */
 const INITIAL_NAV: NavState = {
   focusedPanel: 'tasks',
-  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
-  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
-  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
+  selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0, channels: 0 },
+  filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null, channels: null },
+  scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0, channels: 0 },
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
   detailOutputVisible: true,
   detailOutputAutoTail: true,
   detailOutputScrollOffset: 0,
   loopIterationSelectedNumber: null,
+  channelMemberSelectedName: null,
 };
 
 const INITIAL_DASHBOARD_STATE: DashboardState = {
@@ -76,7 +86,7 @@ const EMPTY_STATUS_MAP: ReadonlyMap<TaskId, string> = new Map();
  * Renders to stderr via the render() call in index.tsx.
  */
 export const App: React.FC<AppProps> = React.memo(
-  ({ ctx, version, mutations, resourceMonitor, outputRepository, isTmuxSessionAlive }) => {
+  ({ ctx, version, mutations, resourceMonitor, outputRepository, isTmuxSessionAlive, capturePaneContent }) => {
     const { exit } = useApp();
 
     const [state, dispatch] = useReducer(dashboardReducer, INITIAL_DASHBOARD_STATE);
@@ -142,6 +152,28 @@ export const App: React.FC<AppProps> = React.memo(
       streamingEnabled,
     );
 
+    // Extract view primitives to avoid spurious useMemo recomputations on unrelated view changes.
+    const viewKind = view.kind;
+    const viewEntityType = view.kind === 'detail' ? view.entityType : undefined;
+    const viewEntityId = view.kind === 'detail' ? view.entityId : undefined;
+
+    // Resolve the selected channel member's tmux session name for live preview.
+    // Only relevant when viewing a channel detail — other views pass null.
+    const channelDetailSessionName = useMemo((): string | null => {
+      if (viewKind !== 'detail' || viewEntityType !== 'channels') return null;
+      const channel = data?.channels.find((c) => c.id === viewEntityId);
+      if (channel === undefined) return null;
+      const member = resolveSelectedMember(nav.channelMemberSelectedName, channel.members);
+      return member?.tmuxSession ?? null;
+    }, [viewKind, viewEntityType, viewEntityId, data?.channels, nav.channelMemberSelectedName]);
+
+    // Live capture-pane preview for channel member sessions (Phase 9, #184)
+    const { preview: channelPanePreview, error: channelPanePreviewError } = useChannelPanePreview(
+      capturePaneContent,
+      channelDetailSessionName,
+      viewKind === 'detail' && viewEntityType === 'channels',
+    );
+
     useKeyboard({
       view,
       nav,
@@ -157,15 +189,18 @@ export const App: React.FC<AppProps> = React.memo(
     // Resolve the status of the entity currently shown in detail view.
     // Used by Footer to select the correct pause vs resume hint.
     const detailEntityStatus = useMemo(() => {
-      if (view.kind !== 'detail') return undefined;
-      if (view.entityType === 'schedules') {
-        return data?.schedules.find((s) => s.id === view.entityId)?.status;
+      if (viewKind !== 'detail') return undefined;
+      if (viewEntityType === 'schedules') {
+        return data?.schedules.find((s) => s.id === viewEntityId)?.status;
       }
-      if (view.entityType === 'loops') {
-        return data?.loops.find((l) => l.id === view.entityId)?.status;
+      if (viewEntityType === 'loops') {
+        return data?.loops.find((l) => l.id === viewEntityId)?.status;
+      }
+      if (viewEntityType === 'channels') {
+        return data?.channels.find((c) => c.id === viewEntityId)?.status;
       }
       return undefined;
-    }, [view, data?.schedules, data?.loops]);
+    }, [viewKind, viewEntityType, viewEntityId, data?.schedules, data?.loops, data?.channels]);
 
     // View dispatcher
     const renderView = (): React.ReactNode => {
@@ -201,6 +236,9 @@ export const App: React.FC<AppProps> = React.memo(
             loopIterationSelectedNumber={nav.loopIterationSelectedNumber}
             taskStreams={streams}
             detailOutputConfig={detailOutputConfig}
+            channelMemberSelectedName={nav.channelMemberSelectedName}
+            panePreview={channelPanePreview}
+            panePreviewError={channelPanePreviewError}
           />
         );
       }

@@ -54,6 +54,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
 
@@ -71,6 +72,7 @@ describe('buildActivityFeed', () => {
         ],
         schedules: [{ id: 'sched-d', status: 'active', updatedAt: T3, scheduleType: 'cron', createdAt: now - 10000 }],
         pipelines: [{ id: 'pipe-e', status: 'completed', updatedAt: T5, createdAt: now - 10000 }],
+        channels: [],
         limit: 100,
       });
 
@@ -89,6 +91,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed).toHaveLength(0);
@@ -110,6 +113,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 3,
       });
 
@@ -127,6 +131,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 50,
       });
       expect(feed).toHaveLength(1);
@@ -141,6 +146,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('completed');
@@ -153,6 +159,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('failed');
@@ -165,6 +172,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('running');
@@ -177,6 +185,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('queued');
@@ -189,6 +198,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('cancelled');
@@ -201,6 +211,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].kind).toBe('task');
@@ -215,6 +226,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('iteration 3');
@@ -227,6 +239,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('running');
@@ -239,6 +252,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('completed');
@@ -251,6 +265,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('paused');
@@ -263,6 +278,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].kind).toBe('loop');
@@ -279,6 +295,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [{ ...orchBase, id: 'orch-1', status: 'running', updatedAt: T1 }],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('planning');
@@ -291,6 +308,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [{ ...orchBase, id: 'orch-1', status: 'completed', updatedAt: T1 }],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('completed');
@@ -303,6 +321,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [{ ...orchBase, id: 'orch-1', status: 'failed', updatedAt: T1 }],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('failed');
@@ -315,6 +334,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [{ ...orchBase, id: 'orch-1', status: 'cancelled', updatedAt: T1 }],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('cancelled');
@@ -327,6 +347,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [{ ...orchBase, id: 'orch-1', status: 'running', updatedAt: T1 }],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].kind).toBe('orchestration');
@@ -343,6 +364,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [{ ...schedBase, id: 'sched-1', status: 'active', updatedAt: T1 }],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('active');
@@ -355,6 +377,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [{ ...schedBase, id: 'sched-1', status: 'completed', updatedAt: T1 }],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('completed');
@@ -367,6 +390,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [{ ...schedBase, id: 'sched-1', status: 'active', updatedAt: T1 }],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].kind).toBe('schedule');
@@ -381,6 +405,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
 
@@ -400,6 +425,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].timestamp).toBe(T1);
@@ -414,6 +440,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [{ id: 'pipe-1', status: 'running', updatedAt: T1 }],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('started');
@@ -426,6 +453,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [{ id: 'pipe-1', status: 'completed', updatedAt: T1 }],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('completed');
@@ -438,6 +466,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [{ id: 'pipe-1', status: 'failed', updatedAt: T1 }],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('failed');
@@ -450,6 +479,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [{ id: 'pipe-1', status: 'failed', failedStep: 2, updatedAt: T1 }],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('failed step 2');
@@ -462,6 +492,7 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [{ id: 'pipe-1', status: 'cancelled', updatedAt: T1 }],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].action).toBe('cancelled');
@@ -474,9 +505,133 @@ describe('buildActivityFeed', () => {
         orchestrations: [],
         schedules: [],
         pipelines: [{ id: 'pipe-1', status: 'running', updatedAt: T1 }],
+        channels: [],
         limit: 100,
       });
       expect(feed[0].kind).toBe('pipeline');
+    });
+  });
+
+  describe('channel verb mapping', () => {
+    it('maps active channel with currentRound and maxRounds to "round N/M"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'active', currentRound: 2, maxRounds: 5, updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('round 2/5');
+    });
+
+    it('maps active channel without rounds to "active"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'active', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('active');
+    });
+
+    it('maps active channel with currentRound but no maxRounds to "active"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'active', currentRound: 3, updatedAt: T1 }],
+        limit: 100,
+      });
+      // No maxRounds means we cannot render "round N/M" — fall back to status
+      expect(feed[0].action).toBe('active');
+    });
+
+    it('maps paused channel to "paused"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'paused', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('paused');
+    });
+
+    it('maps completed channel to "completed"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'completed', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('completed');
+    });
+
+    it('maps destroyed channel to "destroyed"', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'destroyed', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].action).toBe('destroyed');
+    });
+
+    it('maps channel kind correctly', () => {
+      const feed = buildActivityFeed({
+        tasks: [],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'active', updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed[0].kind).toBe('channel');
+    });
+
+    it('sorts channels with other entity kinds by timestamp', () => {
+      const feed = buildActivityFeed({
+        tasks: [{ ...taskBase, id: 'task-a', status: 'running', updatedAt: T2 }],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [{ id: 'ch-1', status: 'active', currentRound: 1, maxRounds: 3, updatedAt: T1 }],
+        limit: 100,
+      });
+      expect(feed).toHaveLength(2);
+      expect(feed[0].entityId).toBe('ch-1'); // T1 — most recent
+      expect(feed[1].entityId).toBe('task-a'); // T2
+    });
+
+    it('omits channels when channels array is empty', () => {
+      const feed = buildActivityFeed({
+        tasks: [{ ...taskBase, id: 'task-a', status: 'running', updatedAt: T1 }],
+        loops: [],
+        orchestrations: [],
+        schedules: [],
+        pipelines: [],
+        channels: [],
+        limit: 100,
+      });
+      expect(feed).toHaveLength(1);
+      expect(feed[0].kind).toBe('task');
     });
   });
 });

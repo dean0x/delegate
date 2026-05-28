@@ -93,6 +93,7 @@ export const MetricsView: React.FC<MetricsViewProps> = React.memo(
       schedules: data?.scheduleCounts ?? ZERO_ENTITY_COUNTS,
       orchestrations: data?.orchestrationCounts ?? ZERO_ENTITY_COUNTS,
       pipelines: data?.pipelineCounts ?? ZERO_ENTITY_COUNTS,
+      channels: data?.channelCounts ?? ZERO_ENTITY_COUNTS,
     };
 
     // Get items for the focused panel (applying the current filter for count display)

@@ -10,6 +10,7 @@ import {
   ChannelId,
   ChannelMember,
   ChannelMemberStatus,
+  ChannelMessage,
   ChannelStatus,
   Loop,
   LoopCreateRequest,
@@ -1039,6 +1040,24 @@ export interface ChannelRepository {
   delete(id: ChannelId): Promise<Result<void>>;
   count(): Promise<Result<number>>;
   countByStatus(): Promise<Result<Record<string, number>>>;
+  /**
+   * Persist a single ChannelMessage summary.
+   * ARCHITECTURE (Phase 9 Dashboard): Called by ChannelMessagePersistenceHandler on every
+   * ChannelMessageSent event that carries a summary. Best-effort — errors are logged, never thrown.
+   */
+  saveMessage(msg: ChannelMessage): Promise<Result<void>>;
+  /**
+   * Retrieve message summaries for a channel, newest-first.
+   * ARCHITECTURE (Phase 9 Dashboard): Used by the dashboard detail view to render message history.
+   * Returns newest-first (ORDER BY created_at DESC). Default limit: 50.
+   */
+  getMessages(channelId: ChannelId, limit?: number): Promise<Result<readonly ChannelMessage[]>>;
+  /**
+   * Find channels updated since a given timestamp. Backed by idx_channels_updated_at (migration v31).
+   * @param sinceMs - Epoch milliseconds lower bound
+   * @param limit - Maximum results to return
+   */
+  findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Channel[]>>;
 }
 
 /**

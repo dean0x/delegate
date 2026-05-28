@@ -76,24 +76,6 @@ export interface LivenessCacheEntry {
 
 export const LIVENESS_CACHE_TTL_MS = 4_000;
 
-/**
- * Unwrap an array of Results from a settled Promise.all call.
- * Returns ok with the first failed label+message, or ok with all values.
- * Designed for the parallel-fetch pattern in fetchAllData.
- */
-function unwrapAll(
-  labels: readonly string[],
-  results: readonly Result<unknown, Error>[],
-): Result<readonly unknown[], string> {
-  const values: unknown[] = [];
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    if (!r.ok) return err(`${labels[i]} fetch failed: ${r.error.message}`);
-    values.push(r.value);
-  }
-  return ok(values);
-}
-
 // ============================================================================
 // Pure helper functions (exported for unit testing)
 // ============================================================================
@@ -201,72 +183,67 @@ export async function fetchAllData(
     orchestrationRepository,
     workerRepository,
     pipelineRepository,
+    channelRepository,
   } = ctx;
 
-  // Parallel fetch: entity lists + status counts
-  const rawResults = await Promise.all([
+  // Parallel fetch: entity lists + status counts.
+  // Each result is unwrapped individually so variable types flow directly from
+  // the repository return types — no positional cast required.
+  const [
+    tasksResult,
+    loopsResult,
+    schedulesResult,
+    orchestrationsResult,
+    pipelinesResult,
+    channelsResult,
+    taskCountsResult,
+    loopCountsResult,
+    scheduleCountsResult,
+    orchestrationCountsResult,
+    pipelineCountsResult,
+    channelCountsResult,
+  ] = await Promise.all([
     taskRepository.findAll(FETCH_LIMIT),
     loopRepository.findAll(FETCH_LIMIT),
     scheduleRepository.findAll(FETCH_LIMIT),
     orchestrationRepository.findAll(FETCH_LIMIT),
     pipelineRepository.findAll(FETCH_LIMIT),
+    channelRepository.findAll(FETCH_LIMIT),
     taskRepository.countByStatus(),
     loopRepository.countByStatus(),
     scheduleRepository.countByStatus(),
     orchestrationRepository.countByStatus(),
     pipelineRepository.countByStatus(),
-  ]);
+    channelRepository.countByStatus(),
+  ] as const);
 
-  // Unwrap all results — any failure returns a labeled error string
-  const unwrapped = unwrapAll(
-    [
-      'Tasks',
-      'Loops',
-      'Schedules',
-      'Orchestrations',
-      'Pipelines',
-      'Task counts',
-      'Loop counts',
-      'Schedule counts',
-      'Orchestration counts',
-      'Pipeline counts',
-    ],
-    rawResults,
-  );
-  if (!unwrapped.ok) return err(unwrapped.error);
+  // Unwrap — any failure returns a labeled error string
+  if (!tasksResult.ok) return err(`Tasks fetch failed: ${tasksResult.error.message}`);
+  if (!loopsResult.ok) return err(`Loops fetch failed: ${loopsResult.error.message}`);
+  if (!schedulesResult.ok) return err(`Schedules fetch failed: ${schedulesResult.error.message}`);
+  if (!orchestrationsResult.ok) return err(`Orchestrations fetch failed: ${orchestrationsResult.error.message}`);
+  if (!pipelinesResult.ok) return err(`Pipelines fetch failed: ${pipelinesResult.error.message}`);
+  if (!channelsResult.ok) return err(`Channels fetch failed: ${channelsResult.error.message}`);
+  if (!taskCountsResult.ok) return err(`Task counts fetch failed: ${taskCountsResult.error.message}`);
+  if (!loopCountsResult.ok) return err(`Loop counts fetch failed: ${loopCountsResult.error.message}`);
+  if (!scheduleCountsResult.ok) return err(`Schedule counts fetch failed: ${scheduleCountsResult.error.message}`);
+  if (!orchestrationCountsResult.ok)
+    return err(`Orchestration counts fetch failed: ${orchestrationCountsResult.error.message}`);
+  if (!pipelineCountsResult.ok) return err(`Pipeline counts fetch failed: ${pipelineCountsResult.error.message}`);
+  if (!channelCountsResult.ok) return err(`Channel counts fetch failed: ${channelCountsResult.error.message}`);
 
-  // Cast from unknown[] — each position matches the Promise.all order above
-  type TaskList = Awaited<ReturnType<typeof taskRepository.findAll>> extends Result<infer V, Error> ? V : never;
-  type LoopList = Awaited<ReturnType<typeof loopRepository.findAll>> extends Result<infer V, Error> ? V : never;
-  type ScheduleList = Awaited<ReturnType<typeof scheduleRepository.findAll>> extends Result<infer V, Error> ? V : never;
-  type OrchList =
-    Awaited<ReturnType<typeof orchestrationRepository.findAll>> extends Result<infer V, Error> ? V : never;
-  type PipelineList = Awaited<ReturnType<typeof pipelineRepository.findAll>> extends Result<infer V, Error> ? V : never;
-  type StatusMap = Record<string, number>;
-
-  const [
-    tasks,
-    loops,
-    schedules,
-    orchestrations,
-    pipelines,
-    taskCounts,
-    loopCounts,
-    scheduleCounts,
-    orchestrationCounts,
-    pipelineCounts,
-  ] = unwrapped.value as [
-    TaskList,
-    LoopList,
-    ScheduleList,
-    OrchList,
-    PipelineList,
-    StatusMap,
-    StatusMap,
-    StatusMap,
-    StatusMap,
-    StatusMap,
-  ];
+  const tasks = tasksResult.value;
+  const loops = loopsResult.value;
+  const schedules = schedulesResult.value;
+  const orchestrations = orchestrationsResult.value;
+  const pipelines = pipelinesResult.value;
+  const channels = channelsResult.value;
+  const taskCounts = taskCountsResult.value;
+  const loopCounts = loopCountsResult.value;
+  const scheduleCounts = scheduleCountsResult.value;
+  const orchestrationCounts = orchestrationCountsResult.value;
+  const pipelineCounts = pipelineCountsResult.value;
+  const channelCounts = channelCountsResult.value;
 
   // Fetch detail extras if in detail view (best-effort — errors yield undefined)
   const detailExtra: DetailExtra = viewState.kind === 'detail' ? await fetchDetailExtra(ctx, viewState, childPage) : {};
@@ -300,11 +277,13 @@ export async function fetchAllData(
     schedules,
     orchestrations,
     pipelines,
+    channels,
     taskCounts: buildEntityCounts(taskCounts),
     loopCounts: buildEntityCounts(loopCounts),
     scheduleCounts: buildEntityCounts(scheduleCounts),
     orchestrationCounts: buildEntityCounts(orchestrationCounts),
     pipelineCounts: buildEntityCounts(pipelineCounts),
+    channelCounts: buildEntityCounts(channelCounts),
     orchestrationLiveness,
     ...detailExtra,
     ...metricsExtras,
@@ -332,6 +311,7 @@ async function fetchMetricsExtras(
     recentOrchsResult,
     recentSchedsResult,
     recentPipelinesResult,
+    recentChannelsResult,
   ] = await Promise.all([
     ctx.usageRepository.sumGlobal(since24h),
     ctx.usageRepository.topOrchestrationsByCost(since24h, 3),
@@ -341,6 +321,7 @@ async function fetchMetricsExtras(
     ctx.orchestrationRepository.findUpdatedSince(since1h, 50),
     ctx.scheduleRepository.findUpdatedSince(since1h, 50),
     ctx.pipelineRepository.findUpdatedSince(since1h, 50),
+    ctx.channelRepository.findUpdatedSince(since1h, 50),
   ]);
 
   const activityFeed = buildActivityFeed({
@@ -349,6 +330,7 @@ async function fetchMetricsExtras(
     orchestrations: recentOrchsResult.ok ? recentOrchsResult.value : [],
     schedules: recentSchedsResult.ok ? recentSchedsResult.value : [],
     pipelines: recentPipelinesResult.ok ? recentPipelinesResult.value : [],
+    channels: recentChannelsResult.ok ? recentChannelsResult.value : [],
     limit: 50,
   });
 
@@ -415,6 +397,11 @@ async function fetchDetailExtra(
       orchestrationChildrenTotal: countResult.ok ? countResult.value : undefined,
       orchestrationCostAggregate: costResult.ok ? costResult.value : undefined,
     };
+  }
+
+  if (detail.entityType === 'channels') {
+    const result = await ctx.channelRepository.getMessages(detail.entityId, 50);
+    return { channelMessages: result.ok ? result.value : undefined };
   }
 
   // tasks don't have dedicated extra data

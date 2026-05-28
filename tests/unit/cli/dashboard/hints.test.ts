@@ -11,7 +11,7 @@ describe('mainHints()', () => {
   it('returns base hint string when hasMutations is false', () => {
     const result = mainHints(false);
     expect(result).toContain('Tab: panel');
-    expect(result).toContain('1-5: panel');
+    expect(result).toContain('1-6: panel');
     expect(result).toContain('↑↓: select');
     expect(result).toContain('Enter: detail');
     expect(result).toContain('r refresh');
@@ -58,6 +58,16 @@ describe('mainHints()', () => {
 
   it('does NOT include p pause/resume when hasMutations is true and focusedPanel is pipelines', () => {
     const result = mainHints(true, 'pipelines');
+    expect(result).not.toContain('p pause/resume');
+  });
+
+  it('includes p pause/resume when hasMutations is true and focusedPanel is channels', () => {
+    const result = mainHints(true, 'channels');
+    expect(result).toContain('p pause/resume');
+  });
+
+  it('does NOT include p pause/resume when hasMutations is false and focusedPanel is channels', () => {
+    const result = mainHints(false, 'channels');
     expect(result).not.toContain('p pause/resume');
   });
 });
@@ -142,6 +152,39 @@ describe('detailHints()', () => {
     const result = detailHints('schedules', 'pending');
     expect(result).not.toContain('p pause');
     expect(result).not.toContain('p resume');
+  });
+
+  it('omits Enter detail for channels (no drill-through from channel detail)', () => {
+    const result = detailHints('channels', 'active');
+    expect(result).not.toContain('Enter detail');
+  });
+
+  it('appends ↑↓ member and p pause for active channel', () => {
+    const result = detailHints('channels', 'active');
+    expect(result).toContain('↑↓ member');
+    expect(result).toContain('p pause');
+    expect(result).not.toContain('p resume');
+  });
+
+  it('appends ↑↓ member and p resume for paused channel', () => {
+    const result = detailHints('channels', 'paused');
+    expect(result).toContain('↑↓ member');
+    expect(result).toContain('p resume');
+    expect(result).not.toContain('p pause');
+  });
+
+  it('appends only ↑↓ member for channels with non-pausable status', () => {
+    const result = detailHints('channels', 'completed');
+    expect(result).toContain('↑↓ member');
+    expect(result).not.toContain('p pause');
+    expect(result).not.toContain('p resume');
+  });
+
+  it('omits output controls for channels (no output streaming)', () => {
+    const result = detailHints('channels', 'active');
+    expect(result).not.toContain('o output');
+    expect(result).not.toContain('[/] scroll');
+    expect(result).not.toContain('G tail');
   });
 });
 

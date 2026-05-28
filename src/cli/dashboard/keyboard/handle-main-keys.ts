@@ -2,14 +2,14 @@
  * Key handler for the main panel view.
  *
  * Scope: view.kind === 'main'. Handles panel Tab cycling, ↑/↓ navigation,
- * Enter drill-through to detail, filter cycling (f), digit panel jumps (1-5),
+ * Enter drill-through to detail, filter cycling (f), digit panel jumps (1-6),
  * and cancel/delete via entity-mutations.
  *
  * DECISION (Dashboard Layout Overhaul): Activity is now a non-interactive tile.
  * Tab cycles directly among entity browser panels (wraps around).
  */
 
-import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
+import type { ChannelId, LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
 import { FILTER_CYCLES, PANEL_JUMP_KEYS, PANEL_ORDER } from './constants.js';
 import { cancelEntity, deleteEntity, pauseOrResumeEntity } from './entity-mutations.js';
 import { clamp, filteredLength, getFocusedPanelItem, getPanelItems, panelToEntityKind } from './helpers.js';
@@ -42,7 +42,7 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
     return true;
   }
 
-  // 1-5 — jump to panel by number
+  // 1-6 — jump to panel by number
   if (input in PANEL_JUMP_KEYS) {
     setNav((prev) => ({ ...prev, focusedPanel: PANEL_JUMP_KEYS[input] }));
     return true;
@@ -113,6 +113,7 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
       detailOutputAutoTail: true,
       detailOutputScrollOffset: 0,
       loopIterationSelectedNumber: null,
+      channelMemberSelectedName: null,
     }));
     // Cast id back to the branded type for the discriminated ViewState union.
     // The id originates from the domain entity — the cast is safe at this boundary.
@@ -142,6 +143,14 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
           returnTo: 'main',
         });
         break;
+      case 'channels':
+        setView({
+          kind: 'detail',
+          entityType: 'channels',
+          entityId: selectedItem.id as ChannelId,
+          returnTo: 'main',
+        });
+        break;
     }
     return true;
   }
@@ -164,7 +173,7 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
     return true;
   }
 
-  // p — pause/resume focused entity (schedules and loops only)
+  // p — pause/resume focused entity (schedules, loops, and channels)
   if (input === 'p' && params.mutations) {
     const item = getFocusedPanelItem(nav, params.dataRef.current);
     if (item) {
