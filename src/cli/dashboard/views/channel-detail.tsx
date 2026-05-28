@@ -180,7 +180,7 @@ export const ChannelDetail: React.FC<ChannelDetailProps> = React.memo(
           <Text dimColor>(no member selected)</Text>
         ) : panePreview !== null ? (
           <Box flexDirection="column">
-            <Text dimColor>{panePreview}</Text>
+            <Text>{panePreview}</Text>
           </Box>
         ) : panePreviewError !== null ? (
           <Text dimColor>{panePreviewError}</Text>
