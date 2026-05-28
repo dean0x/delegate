@@ -35,6 +35,21 @@ function makeMockRepo(overrides: Record<string, unknown> = {}): {
   };
 }
 
+function makeChannelRepo(overrides: Record<string, unknown> = {}): {
+  findAll: ReturnType<typeof vi.fn>;
+  countByStatus: ReturnType<typeof vi.fn>;
+  getMessages: ReturnType<typeof vi.fn>;
+  findUpdatedSince: ReturnType<typeof vi.fn>;
+} {
+  return {
+    findAll: vi.fn().mockResolvedValue(ok([])),
+    countByStatus: vi.fn().mockResolvedValue(ok({})),
+    getMessages: vi.fn().mockResolvedValue(ok([])),
+    findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+    ...overrides,
+  };
+}
+
 function makeCtx(overrides: Partial<ReadOnlyContext> = {}): ReadOnlyContext {
   const taskRepo = {
     ...makeMockRepo(),
@@ -399,12 +414,7 @@ describe('fetchAllData', () => {
   // ---- Channel fetch tests ----
 
   it('calls channelRepository.findUpdatedSince during MAIN_VIEW metrics fetch', async () => {
-    const channelRepo = {
-      findAll: vi.fn().mockResolvedValue(ok([])),
-      countByStatus: vi.fn().mockResolvedValue(ok({})),
-      getMessages: vi.fn().mockResolvedValue(ok([])),
-      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
-    };
+    const channelRepo = makeChannelRepo();
     const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
 
     await fetchAllData(ctx, MAIN_VIEW);
@@ -413,12 +423,9 @@ describe('fetchAllData', () => {
   });
 
   it('gracefully degrades when channelRepository.findUpdatedSince returns err()', async () => {
-    const channelRepo = {
-      findAll: vi.fn().mockResolvedValue(ok([])),
-      countByStatus: vi.fn().mockResolvedValue(ok({})),
-      getMessages: vi.fn().mockResolvedValue(ok([])),
+    const channelRepo = makeChannelRepo({
       findUpdatedSince: vi.fn().mockResolvedValue(err(new Error('channel feed unavailable'))),
-    };
+    });
     const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
 
     // fetchMetricsExtras silently degrades — activityFeed should still be present
@@ -439,12 +446,10 @@ describe('fetchAllData', () => {
       createdAt: 1,
       updatedAt: 1,
     };
-    const channelRepo = {
+    const channelRepo = makeChannelRepo({
       findAll: vi.fn().mockResolvedValue(ok([mockChannel])),
       countByStatus: vi.fn().mockResolvedValue(ok({ active: 1 })),
-      getMessages: vi.fn().mockResolvedValue(ok([])),
-      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
-    };
+    });
     const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
 
     const result = await fetchAllData(ctx, MAIN_VIEW);
@@ -457,12 +462,7 @@ describe('fetchAllData', () => {
   });
 
   it('fetches channel messages when in channel detail view', async () => {
-    const channelRepo = {
-      findAll: vi.fn().mockResolvedValue(ok([])),
-      countByStatus: vi.fn().mockResolvedValue(ok({})),
-      getMessages: vi.fn().mockResolvedValue(ok([])),
-      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
-    };
+    const channelRepo = makeChannelRepo();
     const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
 
     const detailView: ViewState = { kind: 'detail', entityType: 'channels', entityId: 'ch-abc' };
@@ -472,12 +472,7 @@ describe('fetchAllData', () => {
   });
 
   it('does not fetch channel messages when in main view', async () => {
-    const channelRepo = {
-      findAll: vi.fn().mockResolvedValue(ok([])),
-      countByStatus: vi.fn().mockResolvedValue(ok({})),
-      getMessages: vi.fn().mockResolvedValue(ok([])),
-      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
-    };
+    const channelRepo = makeChannelRepo();
     const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
 
     await fetchAllData(ctx, MAIN_VIEW);
@@ -486,12 +481,9 @@ describe('fetchAllData', () => {
   });
 
   it('gracefully handles channel message fetch error (stale-on-error for detail extras)', async () => {
-    const channelRepo = {
-      findAll: vi.fn().mockResolvedValue(ok([])),
-      countByStatus: vi.fn().mockResolvedValue(ok({})),
+    const channelRepo = makeChannelRepo({
       getMessages: vi.fn().mockResolvedValue(err(new Error('messages unavailable'))),
-      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
-    };
+    });
     const ctx = makeCtx({ channelRepository: channelRepo as unknown as ReadOnlyContext['channelRepository'] });
 
     const detailView: ViewState = { kind: 'detail', entityType: 'channels', entityId: 'ch-fail' };
