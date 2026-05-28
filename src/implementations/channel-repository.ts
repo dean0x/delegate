@@ -381,7 +381,10 @@ export class SQLiteChannelRepository implements ChannelRepository {
     return tryCatchAsync(
       async () => {
         const rows = this.findUpdatedSinceStmt.all(sinceMs, limit) as ChannelRow[];
-        return this.hydrateChannelRows(rows);
+        // Skip member hydration — sole consumer (activity feed) never reads members.
+        // hydrateChannelRows fires an extra IN-clause query per call; at 1-second
+        // poll frequency that adds unnecessary write overhead.
+        return rows.map((row) => this.rowToChannelWithMembers(row, []));
       },
       operationErrorHandler('find channels updated since', { sinceMs }),
     );
