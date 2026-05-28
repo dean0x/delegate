@@ -494,11 +494,32 @@ describe('SQLiteChannelRepository', () => {
 
     it('returns empty array when no channels match the time window', async () => {
       const ch = buildChannel({ name: 'old-only' });
-      // Use a far-future cutoff so nothing qualifies
+      await repo.save(ch);
+      // Use a far-future cutoff so the saved channel falls outside the window
       const result = await repo.findUpdatedSince(Date.now() + 100_000, 50);
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('unexpected');
       expect(result.value).toHaveLength(0);
+    });
+
+    it('includes channel whose updated_at exactly equals sinceMs (inclusive boundary)', async () => {
+      const exactTs = Date.now() - 5_000;
+      const ch = buildChannel({ name: 'exact-boundary' });
+
+      // Insert with updated_at set exactly to the cutoff timestamp
+      db.getDatabase()
+        .prepare(
+          `INSERT INTO channels (id, name, status, current_round, created_at, updated_at)
+           VALUES (?, ?, 'active', 0, ?, ?)`,
+        )
+        .run(ch.id, ch.name, exactTs, exactTs);
+
+      const result = await repo.findUpdatedSince(exactTs, 50);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unexpected');
+
+      const ids = result.value.map((c) => c.id);
+      expect(ids).toContain(ch.id);
     });
   });
 
