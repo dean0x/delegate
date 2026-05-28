@@ -148,8 +148,18 @@ export async function pauseOrResumeEntity(
           refreshNow();
         }
         break;
-      default:
+      case 'task':
+      case 'orchestration':
+      case 'pipeline':
+        // These entity kinds do not support pause/resume — intentional no-ops.
         break;
+      default: {
+        // Compile-time exhaustiveness guard — a new EntityKind without a pause/resume case will error here.
+        // Note: inside try/catch so throw would be swallowed; the assignment alone enforces the invariant.
+        const _exhaustive: never = kind;
+        void _exhaustive;
+        break;
+      }
     }
   } catch {
     // Best-effort: service errors are logged internally by each service.
