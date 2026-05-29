@@ -6,86 +6,6 @@
  * to avoid unsafe type assertions while maintaining test flexibility
  */
 
-import type { ChildProcess } from 'child_process';
-import { EventEmitter } from 'events';
-import type { Readable, Writable } from 'stream';
-
-/**
- * Creates a properly typed mock ChildProcess for testing
- */
-export function createMockChildProcess(overrides?: Partial<ChildProcess>): ChildProcess {
-  const stdout = new EventEmitter() as EventEmitter & Readable;
-  const stderr = new EventEmitter() as EventEmitter & Readable;
-  const stdin = new EventEmitter() as EventEmitter & Writable;
-
-  // Add stream methods to EventEmitters
-  Object.assign(stdout, {
-    readable: true,
-    read: () => null,
-    setEncoding: () => stdout,
-    pause: () => stdout,
-    resume: () => stdout,
-    isPaused: () => false,
-    pipe: () => stdout,
-    unpipe: () => stdout,
-    unshift: () => undefined,
-    wrap: () => stdout,
-    destroy: () => stdout,
-  });
-
-  Object.assign(stderr, {
-    readable: true,
-    read: () => null,
-    setEncoding: () => stderr,
-    pause: () => stderr,
-    resume: () => stderr,
-    isPaused: () => false,
-    pipe: () => stderr,
-    unpipe: () => stderr,
-    unshift: () => undefined,
-    wrap: () => stderr,
-    destroy: () => stderr,
-  });
-
-  Object.assign(stdin, {
-    writable: true,
-    write: () => true,
-    end: () => stdin,
-    destroy: () => stdin,
-    cork: () => undefined,
-    uncork: () => undefined,
-    setDefaultEncoding: () => stdin,
-  });
-
-  const process = new EventEmitter() as EventEmitter & ChildProcess;
-
-  return Object.assign(process, {
-    pid: 12345,
-    stdin: stdin as Writable,
-    stdout: stdout as Readable,
-    stderr: stderr as Readable,
-    stdio: [stdin, stdout, stderr] as [Writable, Readable, Readable],
-    kill: (signal?: NodeJS.Signals | number) => {
-      setImmediate(() => {
-        process.emit('exit', 0, signal);
-      });
-      return true;
-    },
-    send: () => true,
-    disconnect: () => undefined,
-    unref: () => process,
-    ref: () => process,
-    connected: false,
-    signalCode: null,
-    exitCode: null,
-    killed: false,
-    spawnfile: 'test',
-    spawnargs: ['test'],
-    channel: undefined,
-    ...overrides,
-  }) as ChildProcess;
-}
-
 /**
  * Type guard to safely check if a value is an Error
  */
@@ -130,26 +50,6 @@ export function createErrorLike(message: string, code?: string): { message: stri
  */
 export function safeCast<T>(value: unknown, validator: (v: unknown) => v is T, fallback: T): T {
   return validator(value) ? value : fallback;
-}
-
-/**
- * Creates a mock stream for testing
- */
-export function createMockStream(): Readable & EventEmitter {
-  const stream = new EventEmitter();
-  return Object.assign(stream, {
-    readable: true,
-    read: () => null,
-    setEncoding: () => stream,
-    pause: () => stream,
-    resume: () => stream,
-    isPaused: () => false,
-    pipe: () => stream,
-    unpipe: () => stream,
-    unshift: () => undefined,
-    wrap: () => stream,
-    destroy: () => stream,
-  }) as Readable & EventEmitter;
 }
 
 /**

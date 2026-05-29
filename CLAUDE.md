@@ -32,6 +32,7 @@ npm run test:implementations # Other implementations (~2s) - SAFE in Claude Code
 npm run test:cli            # CLI tests (~2s) - SAFE in Claude Code
 npm run test:tmux           # Tmux unit tests (~2s) - SAFE in Claude Code
 npm run test:tmux:integration # Tmux integration tests (~3s) - SAFE in Claude Code
+npm run test:channels       # Channel tests (~3s) - SAFE in Claude Code
 npm run test:integration    # Integration tests - SAFE in Claude Code
 npm test                    # ⚠️  BLOCKED - Prints warning and exits (technical safeguard)
 npm run test:all            # Full suite - Use in local terminal/CI only
@@ -139,6 +140,7 @@ npm run test:core && npm run test:handlers && npm run test:services && \
   npm run test:dashboard && npm run test:scheduling && \
   npm run test:checkpoints && npm run test:error-scenarios && \
   npm run test:orchestration && npm run test:translation && \
+  npm run test:channels && \
   npm run test:integration && npm run test:tmux && \
   npm run test:tmux:integration
 ```

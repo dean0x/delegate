@@ -145,19 +145,23 @@ export const createMockTmuxConnector = (opts?: { autoComplete?: boolean }): Mock
   const autoComplete = opts?.autoComplete ?? false;
 
   return {
-    spawn: vi.fn().mockImplementation((config: { taskId: string; sessionsDir: string }, callbacks: SpawnCallbacks) => {
-      const sessionName = `beat-${config.taskId}`;
-      callbacksMap.set(config.taskId, callbacks);
-      if (autoComplete) {
-        setImmediate(() => callbacks.onExit(0));
-      }
-      const handle: TmuxHandle = {
-        sessionName,
-        taskId: config.taskId as TaskId,
-        sessionsDir: config.sessionsDir ?? '/tmp/sessions',
-      };
-      return ok(handle);
-    }),
+    spawn: vi
+      .fn()
+      .mockImplementation(
+        (config: { taskId: string; sessionsDir: string; name: string }, callbacks: SpawnCallbacks) => {
+          const sessionName = config.name;
+          callbacksMap.set(config.taskId, callbacks);
+          if (autoComplete) {
+            setImmediate(() => callbacks.onExit(0));
+          }
+          const handle: TmuxHandle = {
+            sessionName,
+            taskId: config.taskId as TaskId,
+            sessionsDir: config.sessionsDir ?? '/tmp/sessions',
+          };
+          return ok(handle);
+        },
+      ),
     destroy: vi.fn().mockReturnValue(ok(undefined)),
     sendKeys: vi.fn().mockReturnValue(ok(undefined)),
     sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
