@@ -389,6 +389,21 @@ export class TmuxConnector implements TmuxConnectorPort {
       return err(tmuxSessionFailed('prepareForReuse', `session for taskId '${newTaskId}' already exists`));
     }
 
+    // Defense-in-depth: verify the parked tmux session is still alive before
+    // re-registering. WorkerPool.tryReuseSession() already calls isAlive() before
+    // invoking reuseSession(), but a session can die between that check and here
+    // (race window). Without this guard the new watchers silently wait up to
+    // maxSilenceMs (60s) before staleness fires.
+    const aliveResult = this.deps.sessionManager.isAlive(handle.sessionName);
+    if (!aliveResult.ok || !aliveResult.value) {
+      return err(
+        tmuxSessionFailed(
+          'prepareForReuse',
+          `parked session '${handle.sessionName}' is no longer alive`,
+        ),
+      );
+    }
+
     // Step 1: Create new task directory
     const initResult = this.deps.hooks.initTaskDirectory(newTaskId, handle.sessionsDir);
     if (!initResult.ok) return initResult;
@@ -404,11 +419,17 @@ export class TmuxConnector implements TmuxConnectorPort {
 
     // Retrieve the agent type stored when the session was parked, then remove it —
     // the session will be re-registered under newTaskId and the parked entry is no
-    // longer needed. Fall back to 'claude' defensively (should not happen in practice
-    // because triggerExit always populates parkedSessionAgents before prepareForReuse
-    // is called, but guards against a future code path where prepareForReuse is called
-    // on a session that was never parked via triggerExit).
-    const parkedAgent = this.parkedSessionAgents.get(handle.sessionName) ?? 'claude';
+    // longer needed. Missing entry is a programming error: triggerExit() must always
+    // populate parkedSessionAgents before prepareForReuse is called.
+    const parkedAgent = this.parkedSessionAgents.get(handle.sessionName);
+    if (!parkedAgent) {
+      return err(
+        tmuxSessionFailed(
+          'prepareForReuse',
+          `no parked agent type for session '${handle.sessionName}' — prepareForReuse called without a prior triggerExit, this is a bug`,
+        ),
+      );
+    }
     this.parkedSessionAgents.delete(handle.sessionName);
 
     // Synthesise a minimal TmuxSpawnConfig for buildActiveSession.
@@ -427,7 +448,7 @@ export class TmuxConnector implements TmuxConnectorPort {
       agentArgs: [] as string[],
       agent: parkedAgent,
       persistent: true,
-    };
+    } satisfies TmuxSpawnConfig;
 
     const sessionResult = this.buildActiveSession(
       syntheticConfig,
@@ -469,8 +490,22 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   /**
    * Cleans up ALL active sessions. Call on process shutdown.
+   *
+   * Also destroys any parked sessions — parked sessions were removed from
+   * activeSessions by triggerExit() but their tmux processes are still alive.
+   * If dispose() is called directly (emergency shutdown, test teardown), those
+   * processes would otherwise leak. Best-effort: failures are swallowed so one
+   * stuck session does not block the remaining teardown.
    */
   dispose(): void {
+    // Destroy parked sessions first (best-effort) before clearing the map.
+    for (const [sessionName] of this.parkedSessionAgents) {
+      try {
+        this.deps.sessionManager.destroySession(sessionName);
+      } catch {
+        // best-effort — do not block remaining teardown
+      }
+    }
     const sessions = Array.from(this.activeSessions.values());
     this.activeSessions.clear();
     this.parkedSessionAgents.clear();
