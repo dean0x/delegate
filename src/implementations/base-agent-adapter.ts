@@ -143,9 +143,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const transformedPrompt = this.transformPrompt(cfg.effectivePrompt);
     const persistent = options.persistent ?? false;
 
-    const baseFlags = persistent
-      ? this.buildTmuxArgs(cfg.resolvedModel)
-      : this.buildWrapperFlags(cfg.resolvedModel);
+    const baseFlags = persistent ? this.buildTmuxArgs(cfg.resolvedModel) : this.buildWrapperFlags(cfg.resolvedModel);
     const flagArgs = [...baseFlags, ...cfg.systemPromptArgs];
     const withRuntime = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...flagArgs] : flagArgs;
     const spawnArgs = persistent ? withRuntime : [...withRuntime, '--', transformedPrompt];
