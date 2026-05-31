@@ -357,7 +357,10 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * 2. Update AUTOBEAT_TASK_ID env var in the tmux session
    * 3. Send /clear to reset agent context
    * 4. Wait 300ms for /clear to settle
-   * 5. Remap worker state to the new task:
+   * 5. NEW (Phase B): Call prepareForReuse() — creates new task dir, starts watchers.
+   *    This must happen AFTER the settle delay and BEFORE sendKeys(prompt) so that
+   *    watchers are ready before any output arrives from the new prompt.
+   * 6. Remap worker state to the new task:
    *    a. Update taskIdRef.current so callbacks route events to the new task ID
    *    b. Re-register WorkerState if cleanupWorkerState already removed it (B1-1 fix)
    *       OR overwrite task/taskId on the existing WorkerState in-place
@@ -365,9 +368,9 @@ export class EventDrivenWorkerPool implements WorkerPool {
    *    d. Update taskToWorker map (remove old task → workerId, add new)
    *    e. Clean up flushingInProgress for the old task ID (B1-4 fix)
    *    f. Update DB registration for the new task ID (B1-5 fix)
-   * 6. Restart flushing, heartbeat, and timeout timers (B1-3 fix)
-   * 7. Send new prompt via sendKeys
-   * 8. Release reuse lock
+   * 7. Restart flushing, heartbeat, and timeout timers (B1-3 fix)
+   * 8. Send new prompt via sendKeys
+   * 9. Release reuse lock
    *
    * DESIGN DECISION (Phase 5): On any failure, fall through to fresh spawn by
    * destroying the stale session and removing it from persistentSessions. This
@@ -400,8 +403,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
         existingWorkerId: workerId,
       });
 
-      // Update AUTOBEAT_TASK_ID in the session so the Stop hook attributes output to
-      // the new task ID.
+      // Step 2: Update AUTOBEAT_TASK_ID in the session so the Stop hook attributes
+      // output to the new task ID.
       const setEnvResult = this.tmuxConnector.setEnvironment(handle, 'AUTOBEAT_TASK_ID', task.id);
       if (!setEnvResult.ok) {
         this.logger.warn('Failed to update AUTOBEAT_TASK_ID — destroying persistent session, will spawn fresh', {
@@ -413,7 +416,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
         return ok(null);
       }
 
-      // Send /clear to reset agent context
+      // Step 3: Send /clear to reset agent context
       const clearResult = this.tmuxConnector.sendKeys(handle, '/clear\n');
       if (!clearResult.ok) {
         this.logger.warn('Failed to send /clear to persistent session — destroying, will spawn fresh', {
@@ -425,10 +428,31 @@ export class EventDrivenWorkerPool implements WorkerPool {
         return ok(null);
       }
 
-      // Wait for /clear to settle before registering new output handler
+      // Step 4: Wait for /clear to settle before creating the new task directory
+      // and registering new watchers.
       await new Promise<void>((resolve) => setTimeout(resolve, CLEAR_SETTLE_MS));
 
-      // B1-1 fix: After a loop iteration completes, onExit → handleWorkerCompletion →
+      // Step 5 (Phase B): Create new task directory and start new watchers via
+      // prepareForReuse(). This must happen BEFORE the worker remap and BEFORE
+      // sendKeys(prompt) so that the connector's watchers are ready to receive
+      // output as soon as the agent starts processing the new prompt.
+      //
+      // Callbacks are created from the entry's taskIdRef which will be updated to
+      // task.id in the remap step below. prepareForReuse() embeds these callbacks
+      // in the new ActiveSession so output is routed correctly from the first message.
+      const reuseCallbacks = this.createCallbacks(entry.taskIdRef);
+      const prepareResult = this.tmuxConnector.prepareForReuse(handle, task.id, reuseCallbacks);
+      if (!prepareResult.ok) {
+        this.logger.warn('prepareForReuse failed — destroying persistent session, will spawn fresh', {
+          taskId: task.id,
+          key,
+          error: prepareResult.error.message,
+        });
+        this.cleanupPersistentSession(key);
+        return ok(null);
+      }
+
+      // Step 6: B1-1 fix: After a loop iteration completes, onExit → handleWorkerCompletion →
       // cleanupWorkerState removes the WorkerState from this.workers. The tmux session
       // remains alive, but this.workers.get(workerId) returns undefined on the next spawn.
       // If the WorkerState is gone, re-register it using the handle and taskIdRef stored
@@ -444,8 +468,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
         this.remapExistingWorkerForReuse(worker, task, workerId, entry);
       }
 
-      // B1-2 fix: Worker state is now fully remapped. If sendKeys fails, clean up the
-      // WorkerState (clears timers and removes from maps) before destroying the session,
+      // Step 8: B1-2 fix: Worker state is now fully remapped. If sendKeys fails, clean up
+      // the WorkerState (clears timers and removes from maps) before destroying the session,
       // preventing orphaned callbacks from firing against the new task ID.
       // Use worker.id (not the destructured workerId) because reRegisterWorkerForReuse
       // creates a new WorkerState with a new ID and updates entry.workerId, making the
