@@ -603,15 +603,19 @@ export class EventDrivenWorkerPool implements WorkerPool {
       });
     }
 
-    // B1-3 fix: Restart timers stopped by the previous iteration's onExit callback.
-    // onExit stops flushing and the heartbeat timer before calling handleWorkerCompletion.
-    // Without restarting them, the reused session has no periodic output flushing,
-    // no heartbeat updates, and no task timeout enforcement.
-    //
-    // Defensive clear before setup (B1-timer-leak fix): if the WorkerState is still
-    // present at reuse time (onExit has not yet removed it), the previous iteration's
-    // timers may still be running. Clearing them before setup prevents leaked handles
-    // that would write stale DB heartbeats or flush under the wrong task ID.
+    // B1-3 fix: Restart timers for the new iteration (see restartTimersForWorker).
+    this.restartTimersForWorker(worker);
+  }
+
+  /**
+   * Teardown any running timers on a WorkerState, then re-start them fresh.
+   *
+   * Called from remapExistingWorkerForReuse() to handle two cases:
+   * - Normal: onExit already stopped timers; restart them for the new iteration.
+   * - Defensive (B1-timer-leak fix): onExit has not yet fired; clearing first prevents
+   *   leaked handles that would write stale DB heartbeats or flush under the wrong task ID.
+   */
+  private restartTimersForWorker(worker: WorkerState): void {
     this.clearTimeoutForWorker(worker);
     if (worker.heartbeatTimer) {
       clearInterval(worker.heartbeatTimer);
@@ -653,20 +657,18 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Step 9: Start periodic output flushing
     this.startFlushing(worker);
 
-    // Step 10: Send prompt via sendKeys. All tasks use interactive mode; prompt is
-    // never empty for a fresh spawn (baked-arg wrapper path has been removed).
-    if (prompt) {
-      const sendResult = this.tmuxConnector.sendKeys(handle, prompt + '\n');
-      if (!sendResult.ok) {
-        this.cleanupWorkerState(worker.id, task.id);
-        this.destroySessionWithWarning(handle, 'sendKeys failure');
-        return err(
-          new AutobeatError(
-            ErrorCode.WORKER_SPAWN_FAILED,
-            `Failed to send prompt to tmux session: ${sendResult.error.message}`,
-          ),
-        );
-      }
+    // Step 10: Send prompt via sendKeys. All sessions use interactive mode;
+    // prompt is always present (baked-arg wrapper path has been removed).
+    const sendResult = this.tmuxConnector.sendKeys(handle, prompt + '\n');
+    if (!sendResult.ok) {
+      this.cleanupWorkerState(worker.id, task.id);
+      this.destroySessionWithWarning(handle, 'sendKeys failure');
+      return err(
+        new AutobeatError(
+          ErrorCode.WORKER_SPAWN_FAILED,
+          `Failed to send prompt to tmux session: ${sendResult.error.message}`,
+        ),
+      );
     }
 
     this.logger.info('Tmux worker spawned successfully', {

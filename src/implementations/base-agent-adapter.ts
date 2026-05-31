@@ -98,8 +98,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    *
    * DECISION: Wrapper pipeline mode (--print/--quiet based) has been removed.
    * All tmux sessions are interactive; output is captured via the Stop hook.
-   * The `persistent` option is accepted for backward compatibility but has no
-   * effect — every spawn uses the interactive (setup shim) path.
+   * The `persistent` flag no longer affects CLI arg generation — all sessions
+   * follow the same interactive (setup shim) path for spawn. It is still passed
+   * through to TmuxSpawnCoreConfig to control session lifecycle: persistent
+   * sessions are parked on sentinel rather than destroyed, enabling reuse across
+   * loop iterations.
    */
   buildTmuxCommand(options: SpawnOptions & { sessionsDir: string; persistent?: boolean }): Result<{
     readonly config: TmuxSpawnCoreConfig;
