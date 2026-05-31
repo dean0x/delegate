@@ -232,6 +232,9 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const adapter = adapterResult.value;
 
     // Step 4: Build tmux config
+    // Persistent sessions (loops) use interactive mode with sendKeys prompt delivery.
+    // Non-persistent tasks use wrapper mode with --print and prompt baked into args.
+    const psk = task.persistentSessionKey;
     const buildResult = adapter.buildTmuxCommand({
       prompt: task.prompt,
       workingDirectory: task.workingDirectory || process.cwd(),
@@ -241,6 +244,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
       jsonSchema: task.jsonSchema,
       systemPrompt: task.systemPrompt,
       sessionsDir: this.sessionsDir,
+      persistent: !!psk,
     });
     if (!buildResult.ok) {
       return err(buildResult.error);
@@ -259,7 +263,6 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Step 5b: Check for persistent session reuse (Phase 5).
     // tryReuseSession() handles the existence/liveness/reuse chain and returns a Worker on
     // success, or null to signal "fall through to fresh spawn". Extracted to keep nesting flat.
-    const psk = task.persistentSessionKey;
     if (psk) {
       const reused = await this.tryReuseSession(task, psk, prompt);
       if (reused !== null) {
@@ -626,18 +629,20 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Step 9: Start periodic output flushing
     this.startFlushing(worker);
 
-    // Step 10: Send prompt via sendKeys
-    const sendResult = this.tmuxConnector.sendKeys(handle, prompt + '\n');
-    if (!sendResult.ok) {
-      // Rollback: cleanup the worker state + destroy session
-      this.cleanupWorkerState(worker.id, task.id);
-      this.destroySessionWithWarning(handle, 'sendKeys failure');
-      return err(
-        new AutobeatError(
-          ErrorCode.WORKER_SPAWN_FAILED,
-          `Failed to send prompt to tmux session: ${sendResult.error.message}`,
-        ),
-      );
+    // Step 10: Send prompt via sendKeys (interactive/persistent mode only).
+    // In wrapper mode, the prompt is baked into agentArgs — prompt is empty.
+    if (prompt) {
+      const sendResult = this.tmuxConnector.sendKeys(handle, prompt + '\n');
+      if (!sendResult.ok) {
+        this.cleanupWorkerState(worker.id, task.id);
+        this.destroySessionWithWarning(handle, 'sendKeys failure');
+        return err(
+          new AutobeatError(
+            ErrorCode.WORKER_SPAWN_FAILED,
+            `Failed to send prompt to tmux session: ${sendResult.error.message}`,
+          ),
+        );
+      }
     }
 
     this.logger.info('Tmux worker spawned successfully', {

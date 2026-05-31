@@ -286,7 +286,7 @@ export interface AgentAdapter {
    * All adapters require a non-empty taskId; return err with ErrorCode.AGENT_MISCONFIGURED
    * when taskId is absent or empty.
    */
-  buildTmuxCommand(options: SpawnOptions & { sessionsDir: string }): Result<{
+  buildTmuxCommand(options: SpawnOptions & { sessionsDir: string; persistent?: boolean }): Result<{
     readonly config: TmuxSpawnCoreConfig;
     readonly prompt: string;
   }>;

@@ -27,6 +27,11 @@ export class CodexAdapter extends BaseAgentAdapter {
     return ['--full-auto', ...modelArgs];
   }
 
+  protected override buildWrapperFlags(model?: string): readonly string[] {
+    const modelArgs: string[] = model ? ['--model', model] : [];
+    return ['--quiet', '--full-auto', ...modelArgs];
+  }
+
   protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
     return ['--full-auto', ...modelArgs, '--', prompt];
