@@ -7,7 +7,8 @@
  */
 
 import * as p from '@clack/prompts';
-import { cpSync, existsSync, rmSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { AgentAuthStatus, AgentProvider } from '../../core/agents.js';
@@ -50,7 +51,28 @@ export interface InitDeps {
   readonly skillsExist?: (agents: readonly AgentProvider[], projectRoot: string) => boolean;
   readonly confirmSkillUpdate?: () => Promise<boolean | 'cancelled'>;
   readonly getProjectRoot?: () => string;
+  /**
+   * Configure Stop hooks for supported agent CLIs (claude, codex).
+   * Optional: if not provided, hook configuration is skipped silently.
+   */
+  readonly configureHooks?: (agent: AgentProvider) => readonly HookConfigResult[];
 }
+
+/** Result of a single agent hook configuration attempt. */
+export type HookConfigResult =
+  | {
+      readonly agentType: 'claude' | 'codex';
+      readonly ok: true;
+      /** true if already present (no-op) */
+      readonly alreadyPresent?: boolean;
+      /** Warning message (e.g., config dir not found) */
+      readonly warning?: string;
+    }
+  | {
+      readonly agentType: 'claude' | 'codex';
+      readonly ok: false;
+      readonly error: string;
+    };
 
 /**
  * Agent-specific skill install directories.
@@ -59,6 +81,155 @@ export const AGENT_SKILL_DIRS: Readonly<Record<AgentProvider, readonly string[]>
   claude: ['.claude/skills/autobeat'],
   codex: ['.agents/skills/autobeat'],
 });
+
+// ============================================================================
+// Hook Configuration
+// ============================================================================
+
+/**
+ * Config file paths for agent hook configuration.
+ */
+export const AGENT_HOOK_CONFIG_PATHS: Readonly<Record<'claude' | 'codex', string>> = Object.freeze({
+  claude: path.join(homedir(), '.claude', 'settings.json'),
+  codex: path.join(homedir(), '.codex', 'hooks.json'),
+});
+
+/**
+ * The Stop hook entry to inject into agent config files.
+ *
+ * DESIGN DECISION: autobeat-stop-hook is registered as an npm bin entry so
+ * it is available on PATH after `npm install -g autobeat`. Both Claude Code
+ * and Codex CLI support a "command" type hook that invokes a shell command.
+ */
+const STOP_HOOK_COMMAND = 'autobeat-stop-hook';
+
+/** Deps for hook configuration (injectable for testing). */
+export interface HookConfigDeps {
+  readonly readFile: (filePath: string) => string | null;
+  readonly writeFile: (filePath: string, content: string) => void;
+  readonly renameFile: (from: string, to: string) => void;
+  readonly ensureDir: (dirPath: string) => void;
+  readonly fileExists: (filePath: string) => boolean;
+}
+
+/**
+ * Deep-merge a Stop hook entry into an agent's config file.
+ *
+ * Idempotent: if `autobeat-stop-hook` is already present in the hooks array,
+ * returns Ok without modifying the file.
+ *
+ * Creates a `.bak` backup before first modification.
+ * Writes atomically via `.tmp` + rename.
+ *
+ * @param agentType - 'claude' | 'codex'
+ * @param configPath - Absolute path to the config file
+ * @param deps - Injectable file system dependencies
+ */
+export function configureAgentHook(
+  agentType: 'claude' | 'codex',
+  configPath: string,
+  deps: HookConfigDeps,
+): Result<void, string> {
+  // Ensure parent directory exists
+  const configDir = path.dirname(configPath);
+  deps.ensureDir(configDir);
+
+  // Read existing config (or empty object if not present)
+  let existing: Record<string, unknown> = {};
+  if (deps.fileExists(configPath)) {
+    const raw = deps.readFile(configPath);
+    if (raw !== null) {
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          existing = parsed as Record<string, unknown>;
+        }
+      } catch {
+        return err(`Failed to parse ${agentType} config at ${configPath}: invalid JSON`);
+      }
+    }
+  }
+
+  // Check idempotency — scan existing hooks array for our command
+  const existingHooks =
+    typeof existing.hooks === 'object' && existing.hooks !== null && !Array.isArray(existing.hooks)
+      ? (existing.hooks as Record<string, unknown>)
+      : {};
+
+  const stopHooks = Array.isArray(existingHooks.Stop) ? (existingHooks.Stop as unknown[]) : [];
+
+  const alreadyPresent = stopHooks.some((entry) => {
+    if (typeof entry !== 'object' || entry === null) return false;
+    const e = entry as Record<string, unknown>;
+    if (Array.isArray(e.hooks)) {
+      return (e.hooks as unknown[]).some((h) => {
+        if (typeof h !== 'object' || h === null) return false;
+        const hookEntry = h as Record<string, unknown>;
+        return hookEntry.type === 'command' && hookEntry.command === STOP_HOOK_COMMAND;
+      });
+    }
+    return false;
+  });
+
+  if (alreadyPresent) {
+    return ok(undefined);
+  }
+
+  // Create backup before first modification
+  if (deps.fileExists(configPath)) {
+    const backupPath = configPath + '.bak';
+    if (!deps.fileExists(backupPath)) {
+      const original = deps.readFile(configPath);
+      if (original !== null) {
+        deps.writeFile(backupPath, original);
+      }
+    }
+  }
+
+  // Build the updated config: deep merge hooks.Stop array
+  const newHookEntry = {
+    hooks: [{ type: 'command', command: STOP_HOOK_COMMAND }],
+  };
+
+  const updatedStopHooks = [...stopHooks, newHookEntry];
+  const updatedHooks = { ...existingHooks, Stop: updatedStopHooks };
+  const updated = { ...existing, hooks: updatedHooks };
+
+  // Atomic write via .tmp + rename
+  const tmpPath = configPath + '.tmp';
+  const content = JSON.stringify(updated, null, 2) + '\n';
+  deps.writeFile(tmpPath, content);
+  deps.renameFile(tmpPath, configPath);
+
+  return ok(undefined);
+}
+
+/**
+ * Production implementation of HookConfigDeps using real filesystem.
+ */
+export function createDefaultHookConfigDeps(): HookConfigDeps {
+  return {
+    readFile(filePath: string): string | null {
+      try {
+        return readFileSync(filePath, 'utf-8');
+      } catch {
+        return null;
+      }
+    },
+    writeFile(filePath: string, content: string): void {
+      writeFileSync(filePath, content, { encoding: 'utf-8', mode: 0o600 });
+    },
+    renameFile(from: string, to: string): void {
+      renameSync(from, to);
+    },
+    ensureDir(dirPath: string): void {
+      mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+    },
+    fileExists(filePath: string): boolean {
+      return existsSync(filePath);
+    },
+  };
+}
 
 // ============================================================================
 // Arg Parsing
@@ -212,10 +383,12 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<Ini
       const skillResult = await runSkillInstall(options.agent, options, deps);
       if (skillResult.code === 1) return skillResult;
       if ('skillPaths' in skillResult) {
+        runHookConfigure(options.agent, deps);
         return { code: 0, agent: options.agent, status, skillPaths: skillResult.skillPaths };
       }
     }
 
+    runHookConfigure(options.agent, deps);
     return { code: 0, agent: options.agent, status };
   }
 
@@ -258,10 +431,12 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<Ini
     const skillResult = await runSkillInstall(selected, options, deps);
     if (skillResult.code === 1) return skillResult;
     if ('skillPaths' in skillResult) {
+      runHookConfigure(selected, deps);
       return { code: 0, agent: selected, status, skillPaths: skillResult.skillPaths };
     }
   }
 
+  runHookConfigure(selected, deps);
   return { code: 0, agent: selected, status };
 }
 
@@ -335,6 +510,23 @@ async function runSkillInstall(
   }
 
   return { code: 0, skillPaths: copyResult.value };
+}
+
+/**
+ * Configure Stop hooks for both Claude and Codex CLIs.
+ * Fires and logs warnings — never fails init on hook configuration errors.
+ * Hook config failures are non-fatal: the agent selection itself succeeded.
+ */
+function runHookConfigure(agent: AgentProvider, deps: InitDeps): void {
+  if (!deps.configureHooks) return;
+  const results = deps.configureHooks(agent);
+  for (const result of results) {
+    if (!result.ok) {
+      ui.info(`Hook configuration for ${result.agentType}: ${result.error}`);
+    } else if (result.warning) {
+      ui.info(`Hook configuration for ${result.agentType}: ${result.warning}`);
+    }
+  }
 }
 
 // ============================================================================
@@ -443,7 +635,52 @@ export function createDefaultDeps(): InitDeps {
       if (p.isCancel(result)) return 'cancelled';
       return result;
     },
+
+    configureHooks(agent: AgentProvider): readonly HookConfigResult[] {
+      return defaultConfigureHooks(agent);
+    },
   };
+}
+
+/**
+ * Configure Stop hooks for both Claude Code and Codex CLI config files.
+ *
+ * Both agents are always configured regardless of which default agent was
+ * selected, because a user may run both CLIs on the same machine. If a CLI
+ * config directory is not present, the configuration is skipped with a
+ * warning rather than failing init.
+ *
+ * For Codex: prints an informational note about trust requirements because
+ * Codex CLI requires explicit trust approval for hook commands.
+ */
+export function defaultConfigureHooks(agent: AgentProvider): readonly HookConfigResult[] {
+  void agent; // Both CLIs are always configured; agent param is for future extensibility
+  const deps = createDefaultHookConfigDeps();
+  const results: HookConfigResult[] = [];
+
+  for (const agentType of ['claude', 'codex'] as const) {
+    const configPath = AGENT_HOOK_CONFIG_PATHS[agentType];
+    const configDir = path.dirname(configPath);
+
+    // Skip if agent CLI config directory doesn't exist (CLI not installed)
+    if (!deps.fileExists(configDir)) {
+      results.push({
+        agentType,
+        ok: true,
+        warning: `${agentType} config directory not found (${configDir}) — skipped. Install the ${agentType} CLI first.`,
+      });
+      continue;
+    }
+
+    const configResult = configureAgentHook(agentType, configPath, deps);
+    if (!configResult.ok) {
+      results.push({ agentType, ok: false, error: configResult.error });
+    } else {
+      results.push({ agentType, ok: true });
+    }
+  }
+
+  return results;
 }
 
 // ============================================================================
