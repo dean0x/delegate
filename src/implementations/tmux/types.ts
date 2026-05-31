@@ -218,8 +218,8 @@ export interface TmuxSessionManagerPort {
 }
 
 /**
- * Configuration for generating a setup shim for a persistent interactive session.
- * Used when persistent=true — the agent runs as an interactive REPL.
+ * Configuration for generating a setup shim for an interactive session.
+ * All agent sessions run via the setup shim — output is captured by the Stop hook.
  */
 export interface SetupShimConfig {
   /** Task identifier */
@@ -250,7 +250,7 @@ export interface SetupShimManifest {
  */
 export interface TmuxHooksPort {
   /**
-   * Generates the session directory and setup shim for a persistent interactive session.
+   * Generates the session directory and setup shim for an interactive session.
    * The shim initialises the messages directory and seq file, then execs the agent
    * interactively (no --print). Output is captured via the Stop hook mechanism.
    */

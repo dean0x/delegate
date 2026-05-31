@@ -23,7 +23,6 @@ export type {
   OutputMessage,
   SetupShimConfig,
   SetupShimManifest,
-  SpawnCallbacks,
   StalenessConfig,
   TmuxAgentType,
   TmuxConnectorPort,

@@ -2829,7 +2829,7 @@ describe('TmuxConnector.prepareForReuse()', () => {
     const hooks = makeFailingHooks();
     const readFileSync = vi.fn().mockReturnValue('0');
 
-    // Need a hooks that generates wrapper ok but initTaskDirectory fails
+    // Need a hooks where generateSetupShim succeeds but initTaskDirectory fails
     const mixedHooks: TmuxHooksPort = {
       ...makeValidHooks(),
       initTaskDirectory: vi.fn().mockReturnValue(err(new AutobeatError(ErrorCode.TMUX_HOOK_FAILED, 'init failed'))),

@@ -261,7 +261,7 @@ async function spawnAndDeliverPrompt(ctx: SpawnPromptContext): Promise<SpawnedSe
 
   const handle = spawnResult.value;
 
-  // Deliver the initial prompt via send-keys (the wrapper is now alive and ready).
+  // Deliver the initial prompt via send-keys (the session is now alive and ready).
   const sendKeysResult = tmuxConnector.sendKeys(handle, tmuxPrompt);
   if (!sendKeysResult.ok) {
     return failWith(`Failed to deliver prompt to tmux session: ${sendKeysResult.error.message}`, handle);
