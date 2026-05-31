@@ -51,7 +51,7 @@ describe('TmuxHooks.cleanup()', () => {
   });
 
   // SECURITY: taskId and sessionsDir are validated before being passed to path.join + rmSync.
-  // These tests guard cleanup() as a public interface independent of generateWrapper() tests.
+  // These tests guard cleanup() as a public interface independent of generateSetupShim() tests.
   it('returns TMUX_HOOK_FAILED for invalid taskId (shell metacharacters)', () => {
     const { deps, rmSync } = makeDeps();
     const hooks = new TmuxHooks(deps);

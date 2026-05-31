@@ -102,7 +102,7 @@ export enum ErrorCode {
   TMUX_SESSION_FAILED = 'TMUX_SESSION_FAILED',
   /** tmux not installed, version too old, or binary not found */
   TMUX_VALIDATION_FAILED = 'TMUX_VALIDATION_FAILED',
-  /** Failed to generate wrapper script or create session directory */
+  /** Failed to generate setup shim or create session directory */
   TMUX_HOOK_FAILED = 'TMUX_HOOK_FAILED',
   /** Failed to send keys to a tmux session */
   TMUX_SEND_KEYS_FAILED = 'TMUX_SEND_KEYS_FAILED',

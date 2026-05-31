@@ -169,7 +169,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     // State files are not created for default orchestrations — the loop's agent
     // evaluator reads the iteration output directly and decides PASS/FAIL based
     // on goal achievement. This eliminates the RETRY→cannot-write-state-file
-    // termination deadlock (workers run as `claude --print`, cannot write files).
+    // termination deadlock (workers run as interactive REPL sessions via tmux, cannot write files).
     // Interactive orchestrations still use state files for user-facing state display.
     // ========================================================================
 

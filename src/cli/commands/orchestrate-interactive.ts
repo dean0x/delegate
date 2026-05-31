@@ -100,7 +100,7 @@ export function parseOrchestrateInteractiveArgs(args: readonly string[]): Result
  * Other CLI commands (list, status, cancel) do not need tmux.
  *
  * Uses TmuxValidator (canonical implementation) rather than reimplementing
- * version parsing. Also validates jq is available, which the wrapper scripts require.
+ * version parsing. Also validates jq is available, which the Stop hook requires.
  */
 function validateTmux(): Result<void, string> {
   const validator = new TmuxValidator({
@@ -243,11 +243,11 @@ async function spawnAndDeliverPrompt(ctx: SpawnPromptContext): Promise<SpawnedSe
     resolveExitPromise = resolve;
   });
 
-  // Spawn the tmux session (creates the tmux window + wrapper, does NOT attach).
-  // Callbacks receive output and exit signals from the wrapper.
+  // Spawn the tmux session (creates the tmux window + setup shim, does NOT attach).
+  // Callbacks receive output and exit signals from the Stop hook.
   const spawnResult = tmuxConnector.spawn(tmuxConfig, {
     onOutput: (_msg) => {
-      // Output captured by wrapper; not displayed in interactive mode (user sees it directly).
+      // Output captured by Stop hook; not displayed in interactive mode (user sees it directly).
     },
     onExit: (code) => {
       agentState.exitCode = code;
