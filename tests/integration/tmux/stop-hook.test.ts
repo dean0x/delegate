@@ -75,9 +75,7 @@ function runHook(
   extraEnv: Record<string, string> = {},
 ): { status: number; stdout: string; stderr: string; taskDir: string } {
   const env: Record<string, string> = {
-    ...Object.fromEntries(
-      Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][],
-    ),
+    ...Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][]),
     AUTOBEAT_WORKER: 'true',
     AUTOBEAT_TASK_ID: taskId,
     AUTOBEAT_SESSIONS_DIR: sessionsDir,
@@ -113,11 +111,7 @@ function codexPayload(response: string, stopReason = 'end_turn'): string {
  * Build a Claude-style hook payload (transcript_path field).
  * Writes the JSONL transcript to disk and returns the payload JSON.
  */
-function claudePayload(
-  transcriptPath: string,
-  assistantText: string,
-  stopReason = 'end_turn',
-): string {
+function claudePayload(transcriptPath: string, assistantText: string, stopReason = 'end_turn'): string {
   // Write a minimal transcript JSONL with one assistant message
   const lines = [
     JSON.stringify({ role: 'user', message: { content: 'do something' } }),
@@ -182,9 +176,7 @@ describe('stop-hook: guard behavior', () => {
       input: codexPayload('hello'),
       encoding: 'utf8',
       env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][],
-        ),
+        ...Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][]),
         AUTOBEAT_TASK_ID: 'task-abc',
         AUTOBEAT_SESSIONS_DIR: sessionsDir,
         // AUTOBEAT_WORKER intentionally absent
@@ -204,9 +196,7 @@ describe('stop-hook: guard behavior', () => {
       input: codexPayload('hello'),
       encoding: 'utf8',
       env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][],
-        ),
+        ...Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][]),
         AUTOBEAT_WORKER: 'false',
         AUTOBEAT_TASK_ID: 'task-abc',
         AUTOBEAT_SESSIONS_DIR: sessionsDir,
@@ -529,9 +519,7 @@ describe('stop-hook: security', () => {
       input: codexPayload('hello'),
       encoding: 'utf8',
       env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][],
-        ),
+        ...Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][]),
         AUTOBEAT_WORKER: 'true',
         AUTOBEAT_TASK_ID: '../etc/passwd',
         AUTOBEAT_SESSIONS_DIR: sessionsDir,
@@ -551,9 +539,7 @@ describe('stop-hook: security', () => {
       input: codexPayload('hello'),
       encoding: 'utf8',
       env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][],
-        ),
+        ...Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][]),
         AUTOBEAT_WORKER: 'true',
         AUTOBEAT_TASK_ID: 'task with spaces',
         AUTOBEAT_SESSIONS_DIR: sessionsDir,
@@ -573,9 +559,7 @@ describe('stop-hook: security', () => {
       input: codexPayload('hello'),
       encoding: 'utf8',
       env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][],
-        ),
+        ...Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][]),
         AUTOBEAT_WORKER: 'true',
         AUTOBEAT_TASK_ID: 'task-legit',
         AUTOBEAT_SESSIONS_DIR: sessionsDir,
