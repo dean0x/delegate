@@ -2,11 +2,11 @@
  * Event-driven worker pool implementation
  * Eliminates race conditions through event-based coordination
  *
- * ARCHITECTURE (Phase 3): Uses TmuxConnectorPort for all worker lifecycle.
+ * ARCHITECTURE: Uses TmuxConnectorPort for all worker lifecycle.
  * Workers are tmux sessions identified by sessionName, not PIDs.
  *
- * ARCHITECTURE (v0.5.0): Uses AgentRegistry to resolve the correct agent adapter
- * per task. Requires task.agent to be set (resolved by TaskManager before queueing).
+ * ARCHITECTURE: Uses AgentRegistry to resolve the correct agent adapter per task.
+ * Requires task.agent to be set (resolved by TaskManager before queueing).
  */
 
 import type { AgentRegistry } from '../core/agents.js';
@@ -52,11 +52,11 @@ interface LaunchParams {
 /**
  * Mutable reference to the current task ID for a session.
  *
- * DESIGN DECISION (Phase 5 fix): onExit/onOutput callbacks are created once at spawn
- * time and live for the lifetime of the tmux session. For persistent sessions, the
- * session is reused across loop iterations — each iteration has a different task ID.
- * Capturing taskId by value would leave the callbacks pointing at the first iteration's
- * ID forever, causing output mis-attribution and silent completion failures.
+ * DESIGN DECISION: Callbacks are created once at spawn time and live for the lifetime
+ * of the tmux session. For persistent sessions, the session is reused across loop
+ * iterations — each iteration has a different task ID. Capturing taskId by value would
+ * leave the callbacks pointing at the first iteration's ID forever, causing output
+ * mis-attribution and silent completion failures.
  *
  * Using a ref object means the callbacks always read taskIdRef.current, which
  * reuseSession() updates when remapping the session to a new task.
@@ -102,19 +102,19 @@ export interface EventDrivenWorkerPoolDeps {
   readonly workerRepository: WorkerRepository;
   readonly outputRepository: OutputRepository;
   readonly outputFlushIntervalMs?: number;
-  /** Phase 3: Injected TmuxConnector — not constructed internally (DI) */
+  /** Injected TmuxConnector — not constructed internally (DI) */
   readonly tmuxConnector: TmuxConnectorPort;
-  /** Phase 3: Base directory for session data (sentinels, messages) */
+  /** Base directory for session data (sentinels, messages) */
   readonly sessionsDir: string;
 }
 
 /**
  * Entry in the persistent session map.
- * DESIGN DECISION (Phase 5): WorkerId is stored so reuseSession can look up the
- * WorkerState and update its task reference when reusing for a new iteration.
+ * DESIGN DECISION: WorkerId is stored so reuseSession can look up the WorkerState
+ * and update its task reference when reusing for a new iteration.
  *
- * DESIGN DECISION (Phase 5 fix — B1-1): taskIdRef and agentProvider are stored here
- * so they survive cleanupWorkerState(). After a loop iteration completes, onExit →
+ * DESIGN DECISION: taskIdRef and agentProvider are stored here so they survive
+ * cleanupWorkerState(). After a loop iteration completes, onExit →
  * handleWorkerCompletion → cleanupWorkerState removes the WorkerState from this.workers,
  * but the tmux session itself stays alive. The next iteration's reuseSession() needs
  * the ref to re-register a new WorkerState without recreating the tmux callbacks.
@@ -127,7 +127,7 @@ interface PersistentSessionEntry {
    * Not readonly: reRegisterWorkerForReuse() creates a new WorkerState with a new
    * workerId (worker-beat-{newTaskId}) and updates this field so subsequent reuse
    * lookups (this.workers.get(entry.workerId)) resolve the live WorkerState instead
-   * of always falling into the B1-1 re-registration path.
+   * of re-entering the re-registration path on every iteration.
    */
   workerId: WorkerId;
   /**
@@ -162,8 +162,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * Populated when spawn() is called for a task with persistentSessionKey set.
    * The entry lives for the lifetime of the loop; cleanupPersistentSession() removes it.
    *
-   * DESIGN DECISION (Phase 5): Persistent sessions are stored separately from the
-   * regular workers map so the reuse check is O(1) without scanning workers.
+   * DESIGN DECISION: Persistent sessions are stored separately from the regular workers
+   * map so the reuse check is O(1) without scanning workers.
    */
   private readonly persistentSessions = new Map<string, PersistentSessionEntry>();
 
@@ -260,7 +260,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Capture adapter cleanup at spawn time (P3: same pattern as old process-based pool)
     const cleanupFn = task.systemPrompt ? (taskId: string) => adapter.cleanup(taskId) : undefined;
 
-    // Step 5b: Check for persistent session reuse (Phase 5).
+    // Step 5b: Check for persistent session reuse.
     // tryReuseSession() handles the existence/liveness/reuse chain and returns a Worker on
     // success, or null to signal "fall through to fresh spawn". Extracted to keep nesting flat.
     if (psk) {
@@ -296,7 +296,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * Register the freshly-spawned worker in the persistentSessions map.
    * Called once after a successful fresh spawn for a task with a persistent session key.
    * Stores taskIdRef and agentProvider so reuseSession() can re-register a WorkerState
-   * after cleanupWorkerState() removes it at the end of each loop iteration (B1-1 fix).
+   * after cleanupWorkerState() removes it at the end of each loop iteration.
    */
   private registerPersistentEntry(psk: string, workerId: WorkerId, taskIdRef: TaskIdRef, agentProvider: string): void {
     const worker = this.workers.get(workerId);
@@ -369,8 +369,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * Returns ok(callbacks) on success; ok(null) when any step fails (caller falls
    * through to fresh spawn after this method has already called cleanupPersistentSession).
    *
-   * DESIGN DECISION (Phase 5): Grouped here so the preparation boundary is testable
-   * in isolation and reuseSession() can focus on worker state branching and prompt delivery.
+   * DESIGN DECISION: Extracted so the preparation boundary is testable in isolation
+   * and reuseSession() can focus on worker state branching and prompt delivery.
    */
   private async prepareSessionForIteration(
     task: Task,
@@ -407,11 +407,11 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // and registering new watchers.
     await new Promise<void>((resolve) => setTimeout(resolve, CLEAR_SETTLE_MS));
 
-    // Step 5 (Phase B): Update taskIdRef.current BEFORE creating callbacks so that
-    // if any callback fires in the window between createCallbacks() and the remap step
-    // (Step 6 in reuseSession), it routes to the correct new task ID rather than the
-    // previous iteration's ID. In normal operation the agent has not received its prompt
-    // yet at this point, so no callback should fire — but the ordering makes the invariant
+    // Step 5: Update taskIdRef.current BEFORE creating callbacks so that if any callback
+    // fires in the window between createCallbacks() and the remap step (Step 6 in
+    // reuseSession), it routes to the correct new task ID rather than the previous
+    // iteration's ID. In normal operation the agent has not received its prompt yet at
+    // this point, so no callback should fire — but the ordering makes the invariant
     // explicit. Then create new task directory and start new watchers via prepareForReuse().
     // This must happen BEFORE the worker remap and BEFORE sendKeys(prompt) so that the
     // connector's watchers are ready to receive output as soon as the agent starts.
@@ -448,9 +448,9 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * 8. Send new prompt via sendKeys
    * 9. Release reuse lock
    *
-   * DESIGN DECISION (Phase 5): On any failure, fall through to fresh spawn by
-   * destroying the stale session and removing it from persistentSessions. This
-   * prevents the loop from stalling on a broken persistent session.
+   * DESIGN DECISION: On any failure, fall through to fresh spawn by destroying the stale
+   * session and removing it from persistentSessions. This prevents the loop from stalling
+   * on a broken persistent session.
    * Returns ok(null) to signal "fall through to fresh spawn"; ok(Worker) on success.
    */
   private async reuseSession(
@@ -477,7 +477,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
         return ok(null);
       }
 
-      // Step 6: B1-1 fix: After a loop iteration completes, onExit → handleWorkerCompletion →
+      // Step 6: After a loop iteration completes, onExit → handleWorkerCompletion →
       // cleanupWorkerState removes the WorkerState from this.workers. The tmux session
       // remains alive, but this.workers.get(workerId) returns undefined on the next spawn.
       // If the WorkerState is gone, re-register it using the handle and taskIdRef stored
@@ -493,8 +493,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
         this.remapExistingWorkerForReuse(worker, task, workerId, entry);
       }
 
-      // Step 8: B1-2 fix: Worker state is now fully remapped. If sendKeys fails, clean up
-      // the WorkerState (clears timers and removes from maps) before destroying the session,
+      // Step 8: Worker state is now fully remapped. If sendKeys fails, clean up the
+      // WorkerState (clears timers and removes from maps) before destroying the session,
       // preventing orphaned callbacks from firing against the new task ID.
       // Use worker.id (not the destructured workerId) because reRegisterWorkerForReuse
       // creates a new WorkerState with a new ID and updates entry.workerId, making the
@@ -556,9 +556,9 @@ export class EventDrivenWorkerPool implements WorkerPool {
 
     const worker = regResult.value;
     // Update the entry's workerId so subsequent reuseSession() calls resolve the live
-    // WorkerState via this.workers.get(entry.workerId) instead of always entering B1-1
-    // re-registration. Without this update, every iteration after the first uses a stale
-    // workerId that no longer exists in this.workers.
+    // WorkerState via this.workers.get(entry.workerId) instead of re-entering the
+    // re-registration path. Without this update, every iteration after the first uses
+    // a stale workerId that no longer exists in this.workers.
     entry.workerId = worker.id;
     this.setupTimeoutForWorker(worker);
     this.setupHeartbeatForWorker(worker);
@@ -585,7 +585,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const { handle, agentProvider } = entry;
     const prevTaskId = worker.taskId;
 
-    // ── Phase 1: Remap identity (must precede Phase 2 — timers read taskId) ─────
+    // ── Remap identity (must precede timer restart — timers read taskId) ──────────
 
     // Remove the old task's in-flight flush entry before updating taskId.
     // The startFlushing closure reads worker.taskId on each tick; deleting the old
@@ -628,7 +628,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
       });
     }
 
-    // ── Phase 2: Restart timers under new identity ────────────────────────────
+    // ── Restart timers under new identity ─────────────────────────────────────
 
     this.restartTimersForWorker(worker);
   }
@@ -638,8 +638,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
    *
    * Called from remapExistingWorkerForReuse() to handle two cases:
    * - Normal: onExit already stopped timers; restart them for the new iteration.
-   * - Defensive (B1-timer-leak fix): onExit has not yet fired; clearing first prevents
-   *   leaked handles that would write stale DB heartbeats or flush under the wrong task ID.
+   * - Defensive: onExit has not yet fired; clearing first prevents leaked handles that
+   *   would write stale DB heartbeats or flush under the wrong task ID.
    */
   private restartTimersForWorker(worker: WorkerState): void {
     this.clearTimeoutForWorker(worker);
@@ -712,9 +712,9 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * Called by LoopHandler when a loop completes, fails terminally, or is cancelled.
    * No-op if no session is registered for the key.
    *
-   * DESIGN DECISION (Phase 5): destroy() is called on the tmux connector so that
-   * TmuxConnector's cleanup path (watchers, cleanup fn, session directory) runs
-   * uniformly whether the session exits naturally or is explicitly torn down.
+   * DESIGN DECISION: destroy() is called on the tmux connector so that TmuxConnector's
+   * cleanup path (watchers, cleanup fn, session directory) runs uniformly whether the
+   * session exits naturally or is explicitly torn down.
    */
   cleanupPersistentSession(key: string): void {
     const entry = this.persistentSessions.get(key);
@@ -910,11 +910,11 @@ export class EventDrivenWorkerPool implements WorkerPool {
   /**
    * Build SpawnCallbacks for a task — wires output capture + exit handling.
    *
-   * DESIGN DECISION (Phase 5 fix): callbacks read taskIdRef.current rather than
-   * capturing taskId by value. This allows reuseSession() to update the ref when
-   * remapping the session to a new loop iteration without recreating the callbacks.
-   * Recreating callbacks would require re-registering with TmuxConnector, which
-   * couples worker pool internals to connector lifecycle management.
+   * DESIGN DECISION: Callbacks read taskIdRef.current rather than capturing taskId
+   * by value. This allows reuseSession() to update the ref when remapping the session
+   * to a new loop iteration without recreating the callbacks. Recreating callbacks
+   * would require re-registering with TmuxConnector, which couples worker pool
+   * internals to connector lifecycle management.
    */
   private createCallbacks(taskIdRef: TaskIdRef): SpawnCallbacks {
     return {

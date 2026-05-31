@@ -91,8 +91,8 @@ export interface TmuxConnectorDeps {
 /**
  * Lifecycle state for a managed session.
  *
- * DESIGN DECISION (Phase B): Replaces the boolean `exited` field to support the
- * three-state lifecycle needed for persistent session reuse.
+ * Three-state lifecycle for managed sessions. Replaces a boolean `exited` field to
+ * support persistent session reuse.
  *
  * - 'active': session running, watchers active, processing output
  * - 'parked': iteration complete, tmux session alive, watchers closed, awaiting reuse.
@@ -114,9 +114,8 @@ interface ActiveSession {
   /** Timestamp of last confirmed-alive check — used for maxSilenceMs threshold */
   lastAliveCheck: number;
   /**
-   * Current session state. Replaces the boolean `exited` field (Phase B).
-   * Guards in handleMessageFile, onMessageFileChange, and triggerExit check
-   * state !== 'active' to avoid processing output after exit/park.
+   * Current session state. Guards in handleMessageFile, onMessageFileChange, and
+   * triggerExit check state !== 'active' to avoid processing output after exit/park.
    */
   state: SessionState;
   /** Watermark: highest sequence number successfully delivered (monotonic) */
@@ -354,7 +353,7 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   /**
    * Delegates setEnvironment to the session manager.
-   * Used by WorkerPool for persistent session reuse (Phase 5).
+   * Used by WorkerPool when remapping a persistent session to a new loop iteration.
    */
   setEnvironment(handle: TmuxHandle, varName: string, value: string): Result<void, AutobeatError> {
     return this.deps.sessionManager.setSessionEnvironment(handle.sessionName, varName, value);
@@ -362,7 +361,7 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   /**
    * Delivers content to a session via load-buffer / paste-buffer.
-   * Delegates to session manager. Used by ChannelManager (Phase 7) for literal message delivery.
+   * Delegates to session manager. Used by ChannelManager for literal message delivery.
    */
   pasteContent(handle: TmuxHandle, content: string): Result<void, AutobeatError> {
     return this.deps.sessionManager.pasteContent(handle.sessionName, content);
@@ -1031,10 +1030,10 @@ export class TmuxConnector implements TmuxConnectorPort {
   ): void {
     if (session.state !== 'active') return;
 
-    // DESIGN DECISION (Phase B): Persistent sessions are "parked" rather than destroyed
-    // when a sentinel fires — the tmux session stays alive between loop iterations.
-    // WorkerPool will call prepareForReuse() on the next iteration to set up new
-    // watchers and task directory, then sendKeys() to deliver the next prompt.
+    // DESIGN DECISION: Persistent sessions are "parked" rather than destroyed when a
+    // sentinel fires — the tmux session stays alive between loop iterations. WorkerPool
+    // calls prepareForReuse() on the next iteration to set up new watchers and task
+    // directory, then sendKeys() to deliver the next prompt.
     if (session.persistent) {
       // Set state to 'parked' BEFORE flushPendingFiles so that any in-flight staleness
       // timer ticks that fire during the flush see state !== 'active' and return early.
