@@ -396,12 +396,7 @@ export class TmuxConnector implements TmuxConnectorPort {
     // maxSilenceMs (60s) before staleness fires.
     const aliveResult = this.deps.sessionManager.isAlive(handle.sessionName);
     if (!aliveResult.ok || !aliveResult.value) {
-      return err(
-        tmuxSessionFailed(
-          'prepareForReuse',
-          `parked session '${handle.sessionName}' is no longer alive`,
-        ),
-      );
+      return err(tmuxSessionFailed('prepareForReuse', `parked session '${handle.sessionName}' is no longer alive`));
     }
 
     // Step 1: Create new task directory

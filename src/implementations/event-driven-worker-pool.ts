@@ -285,21 +285,29 @@ export class EventDrivenWorkerPool implements WorkerPool {
     });
 
     // After successful fresh spawn with a persistent key, register in persistentSessions map.
-    // Store taskIdRef and agentProvider so reuseSession() can re-register a WorkerState
-    // after cleanupWorkerState() removes it at the end of each loop iteration (B1-1 fix).
     if (result.ok && psk) {
-      const worker = this.workers.get(result.value.id);
-      if (worker) {
-        this.persistentSessions.set(psk, {
-          handle: worker.handle,
-          workerId: worker.id,
-          taskIdRef,
-          agentProvider,
-        });
-      }
+      this.registerPersistentEntry(psk, result.value.id, taskIdRef, agentProvider);
     }
 
     return result;
+  }
+
+  /**
+   * Register the freshly-spawned worker in the persistentSessions map.
+   * Called once after a successful fresh spawn for a task with a persistent session key.
+   * Stores taskIdRef and agentProvider so reuseSession() can re-register a WorkerState
+   * after cleanupWorkerState() removes it at the end of each loop iteration (B1-1 fix).
+   */
+  private registerPersistentEntry(psk: string, workerId: WorkerId, taskIdRef: TaskIdRef, agentProvider: string): void {
+    const worker = this.workers.get(workerId);
+    if (worker) {
+      this.persistentSessions.set(psk, {
+        handle: worker.handle,
+        workerId: worker.id,
+        taskIdRef,
+        agentProvider,
+      });
+    }
   }
 
   /**
@@ -350,24 +358,92 @@ export class EventDrivenWorkerPool implements WorkerPool {
   }
 
   /**
+   * Preparation phase for reuseSession(): steps 2–5 of the reuse protocol.
+   *
+   * Steps:
+   * 2. Update AUTOBEAT_TASK_ID env var in the tmux session
+   * 3. Send /clear to reset agent context
+   * 4. Wait 300ms for /clear to settle
+   * 5. Update taskIdRef.current, create callbacks, call prepareForReuse()
+   *
+   * Returns ok(callbacks) on success; ok(null) when any step fails (caller falls
+   * through to fresh spawn after this method has already called cleanupPersistentSession).
+   *
+   * DESIGN DECISION (Phase 5): Grouped here so the preparation boundary is testable
+   * in isolation and reuseSession() can focus on worker state branching and prompt delivery.
+   */
+  private async prepareSessionForIteration(
+    task: Task,
+    key: string,
+    handle: TmuxHandle,
+    entry: PersistentSessionEntry,
+  ): Promise<Result<SpawnCallbacks | null, string>> {
+    // Step 2: Update AUTOBEAT_TASK_ID in the session so the Stop hook attributes
+    // output to the new task ID.
+    const setEnvResult = this.tmuxConnector.setEnvironment(handle, 'AUTOBEAT_TASK_ID', task.id);
+    if (!setEnvResult.ok) {
+      this.logger.warn('Failed to update AUTOBEAT_TASK_ID — destroying persistent session, will spawn fresh', {
+        taskId: task.id,
+        key,
+        error: setEnvResult.error.message,
+      });
+      this.cleanupPersistentSession(key);
+      return ok(null);
+    }
+
+    // Step 3: Send /clear to reset agent context
+    const clearResult = this.tmuxConnector.sendKeys(handle, '/clear\n');
+    if (!clearResult.ok) {
+      this.logger.warn('Failed to send /clear to persistent session — destroying, will spawn fresh', {
+        taskId: task.id,
+        key,
+        error: clearResult.error.message,
+      });
+      this.cleanupPersistentSession(key);
+      return ok(null);
+    }
+
+    // Step 4: Wait for /clear to settle before creating the new task directory
+    // and registering new watchers.
+    await new Promise<void>((resolve) => setTimeout(resolve, CLEAR_SETTLE_MS));
+
+    // Step 5 (Phase B): Update taskIdRef.current BEFORE creating callbacks so that
+    // if any callback fires in the window between createCallbacks() and the remap step
+    // (Step 6 in reuseSession), it routes to the correct new task ID rather than the
+    // previous iteration's ID. In normal operation the agent has not received its prompt
+    // yet at this point, so no callback should fire — but the ordering makes the invariant
+    // explicit. Then create new task directory and start new watchers via prepareForReuse().
+    // This must happen BEFORE the worker remap and BEFORE sendKeys(prompt) so that the
+    // connector's watchers are ready to receive output as soon as the agent starts.
+    entry.taskIdRef.current = task.id;
+    const reuseCallbacks = this.createCallbacks(entry.taskIdRef);
+    const prepareResult = this.tmuxConnector.prepareForReuse(handle, task.id, reuseCallbacks);
+    if (!prepareResult.ok) {
+      this.logger.warn('prepareForReuse failed — destroying persistent session, will spawn fresh', {
+        taskId: task.id,
+        key,
+        error: prepareResult.error.message,
+      });
+      this.cleanupPersistentSession(key);
+      return ok(null);
+    }
+
+    return ok(reuseCallbacks);
+  }
+
+  /**
    * Reuse an existing persistent tmux session for a new loop iteration.
    *
    * Protocol:
    * 1. Acquire per-key reuse lock (prevents concurrent reuse races)
-   * 2. Update AUTOBEAT_TASK_ID env var in the tmux session
-   * 3. Send /clear to reset agent context
-   * 4. Wait 300ms for /clear to settle
-   * 5. NEW (Phase B): Call prepareForReuse() — creates new task dir, starts watchers.
-   *    This must happen AFTER the settle delay and BEFORE sendKeys(prompt) so that
-   *    watchers are ready before any output arrives from the new prompt.
+   * 2–5. Delegated to prepareSessionForIteration(): env update, /clear, settle, prepareForReuse
    * 6. Remap worker state to the new task:
-   *    a. Update taskIdRef.current so callbacks route events to the new task ID
-   *    b. Re-register WorkerState if cleanupWorkerState already removed it,
+   *    a. Re-register WorkerState if cleanupWorkerState already removed it,
    *       OR overwrite task/taskId on the existing WorkerState in-place
-   *    c. Reset completionHandled to false (G2 guard for the new iteration)
-   *    d. Update taskToWorker map (remove old task → workerId, add new)
-   *    e. Clean up flushingInProgress for the old task ID
-   *    f. Atomically update DB registration from old task ID to new task ID
+   *    b. Reset completionHandled to false (G2 guard for the new iteration)
+   *    c. Update taskToWorker map (remove old task → workerId, add new)
+   *    d. Clean up flushingInProgress for the old task ID
+   *    e. Atomically update DB registration from old task ID to new task ID
    * 7. Restart flushing, heartbeat, and timeout timers
    * 8. Send new prompt via sendKeys
    * 9. Release reuse lock
@@ -376,7 +452,6 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * destroying the stale session and removing it from persistentSessions. This
    * prevents the loop from stalling on a broken persistent session.
    * Returns ok(null) to signal "fall through to fresh spawn"; ok(Worker) on success.
-   *
    */
   private async reuseSession(
     task: Task,
@@ -395,55 +470,10 @@ export class EventDrivenWorkerPool implements WorkerPool {
         existingWorkerId: workerId,
       });
 
-      // Step 2: Update AUTOBEAT_TASK_ID in the session so the Stop hook attributes
-      // output to the new task ID.
-      const setEnvResult = this.tmuxConnector.setEnvironment(handle, 'AUTOBEAT_TASK_ID', task.id);
-      if (!setEnvResult.ok) {
-        this.logger.warn('Failed to update AUTOBEAT_TASK_ID — destroying persistent session, will spawn fresh', {
-          taskId: task.id,
-          key,
-          error: setEnvResult.error.message,
-        });
-        this.cleanupPersistentSession(key);
-        return ok(null);
-      }
-
-      // Step 3: Send /clear to reset agent context
-      const clearResult = this.tmuxConnector.sendKeys(handle, '/clear\n');
-      if (!clearResult.ok) {
-        this.logger.warn('Failed to send /clear to persistent session — destroying, will spawn fresh', {
-          taskId: task.id,
-          key,
-          error: clearResult.error.message,
-        });
-        this.cleanupPersistentSession(key);
-        return ok(null);
-      }
-
-      // Step 4: Wait for /clear to settle before creating the new task directory
-      // and registering new watchers.
-      await new Promise<void>((resolve) => setTimeout(resolve, CLEAR_SETTLE_MS));
-
-      // Step 5 (Phase B): Create new task directory and start new watchers via
-      // prepareForReuse(). This must happen BEFORE the worker remap and BEFORE
-      // sendKeys(prompt) so that the connector's watchers are ready to receive
-      // output as soon as the agent starts processing the new prompt.
-      //
-      // Update taskIdRef.current BEFORE creating callbacks so that if any callback
-      // fires in the window between createCallbacks() and the remap step (Step 6),
-      // it routes to the correct new task ID rather than the previous iteration's ID.
-      // In normal operation the agent has not received its prompt yet at this point,
-      // so no callback should fire — but the ordering makes the invariant explicit.
-      entry.taskIdRef.current = task.id;
-      const reuseCallbacks = this.createCallbacks(entry.taskIdRef);
-      const prepareResult = this.tmuxConnector.prepareForReuse(handle, task.id, reuseCallbacks);
-      if (!prepareResult.ok) {
-        this.logger.warn('prepareForReuse failed — destroying persistent session, will spawn fresh', {
-          taskId: task.id,
-          key,
-          error: prepareResult.error.message,
-        });
-        this.cleanupPersistentSession(key);
+      // Steps 2–5: env update, /clear, settle, prepareForReuse.
+      // Returns ok(null) on any failure (session already cleaned up); ok(callbacks) on success.
+      const prepareResult = await this.prepareSessionForIteration(task, key, handle, entry);
+      if (!prepareResult.ok || prepareResult.value === null) {
         return ok(null);
       }
 
@@ -654,7 +684,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     this.startFlushing(worker);
 
     // Step 10: Send prompt via sendKeys. All sessions use interactive mode;
-    // prompt is always present (baked-arg wrapper path has been removed).
+    // prompt is always present (delivered via send-keys, not baked into args).
     const sendResult = this.tmuxConnector.sendKeys(handle, prompt + '\n');
     if (!sendResult.ok) {
       this.cleanupWorkerState(worker.id, task.id);
