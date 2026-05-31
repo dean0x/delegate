@@ -365,15 +365,20 @@ export class TmuxConnector implements TmuxConnectorPort {
     };
 
     // Synthesise a minimal TmuxSpawnConfig for buildActiveSession.
-    // Only the fields needed by buildActiveSession are required here:
-    // taskId, sessionsDir, staleness (default), and persistent=true.
+    // buildActiveSession reads exactly four fields from config:
+    //   config.staleness  → merged with DEFAULT_STALENESS_CONFIG
+    //   config.taskId     → embedded in session.handle
+    //   config.sessionsDir → embedded in session.handle
+    //   config.persistent  → stored as session.persistent
+    // The remaining fields (command, agentArgs, agent) satisfy the type constraint
+    // but are not read; they carry no meaning in this reuse path.
     const syntheticConfig = {
       taskId: newTaskId,
       sessionsDir: handle.sessionsDir,
       name: handle.sessionName,
-      command: '', // not used by buildActiveSession
-      agentArgs: [], // not used by buildActiveSession
-      agent: 'claude' as const, // not used by buildActiveSession
+      command: '',
+      agentArgs: [] as string[],
+      agent: 'claude' as const,
       persistent: true,
     };
 
@@ -384,7 +389,13 @@ export class TmuxConnector implements TmuxConnectorPort {
       sessionDir,
       callbacks,
     );
-    if (!sessionResult.ok) return sessionResult;
+    if (!sessionResult.ok) {
+      // Clean up the task directory created above — it would otherwise be orphaned
+      // since the session was never registered and cleanupPersistentSession() will
+      // not know about newTaskId.
+      this.loggedCleanup('prepareForReuse', newTaskId, handle.sessionsDir);
+      return sessionResult;
+    }
     const session = sessionResult.value;
 
     // Override the handle in the new session to point to the new taskId
@@ -488,7 +499,7 @@ export class TmuxConnector implements TmuxConnectorPort {
       messagesWatcher: null,
       stalenessConfig,
       lastAliveCheck: Date.now(),
-      state: 'active' as SessionState,
+      state: 'active',
       lastDeliveredSeq: 0,
       pendingMessages: new Map(),
       nextExpectedSeq: 1,
@@ -523,11 +534,11 @@ export class TmuxConnector implements TmuxConnectorPort {
         (_eventType: string, filename: string | null) => {
           if (!filename) return;
           if (filename === '.done' || filename === '.exit') {
-            // No debounce needed here: handleSentinel() reads session.exited
+            // No debounce needed here: handleSentinel() checks session.state !== 'active'
             // synchronously at the top of the event-loop tick. Because
-            // triggerExit() sets session.exited = true before returning,
+            // triggerExit() sets session.state to 'parked' or 'exited' before returning,
             // any platform double-fire of the same sentinel file is a no-op —
-            // the second callback sees exited = true and returns immediately.
+            // the second callback sees state !== 'active' and returns immediately.
             this.handleSentinel(taskId, sessionDir, filename);
           }
         },
@@ -957,8 +968,10 @@ export class TmuxConnector implements TmuxConnectorPort {
         this.restartSharedStalenessTimer();
       }
       // Notify the caller (fires TaskCompleted event). Session directory preserved for
-      // output reading — cleanup happens via loggedCleanup on the NEXT iteration's park
-      // or when cleanupPersistentSession() is called by WorkerPool at loop end.
+      // output reading — cleanup happens when cleanupPersistentSession() is called by
+      // WorkerPool at loop end (or on error/cancel paths). prepareForReuse() does not
+      // clean up the previous iteration's directory so that dashboard reads remain
+      // valid until the loop finishes.
       this.safeCallOnExit('triggerExit', session, code, signal);
       return;
     }
