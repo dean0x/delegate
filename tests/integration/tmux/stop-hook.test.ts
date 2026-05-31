@@ -769,6 +769,140 @@ describe('stop-hook: usage capture', () => {
 });
 
 // ============================================================================
+// jq Unavailable Guard
+// ============================================================================
+
+describe('stop-hook: jq unavailable guard', () => {
+  it('exits 0 silently and creates no files when jq is not on PATH', () => {
+    const sessionsDir = path.join(tmpDir, 'no-jq');
+    fs.mkdirSync(sessionsDir, { recursive: true });
+
+    // Use an absolute bash path so spawnSync can find it, then restrict PATH
+    // to system directories that provide bash but not jq.  This exercises the
+    // `command -v jq >/dev/null 2>&1 || exit 0` guard at line 6 of the script.
+    const result = spawnSync('/bin/bash', [HOOK_SCRIPT], {
+      input: codexPayload('hello'),
+      encoding: 'utf8',
+      env: {
+        PATH: '/bin:/usr/sbin',
+        AUTOBEAT_WORKER: 'true',
+        AUTOBEAT_TASK_ID: 'task-no-jq',
+        AUTOBEAT_SESSIONS_DIR: sessionsDir,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.readdirSync(sessionsDir)).toHaveLength(0);
+  });
+});
+
+// ============================================================================
+// Transcript: Plain-String Content Branch
+// ============================================================================
+
+describe('stop-hook: Claude path — plain-string content', () => {
+  it('extracts response when assistant message content is a plain string', () => {
+    const sessionsDir = path.join(tmpDir, 'claude-string-content');
+    const taskId = 'task-claude-string';
+    const transcriptPath = path.join(tmpDir, 'transcript-string.jsonl');
+
+    // Write a transcript where content is a plain string, not an array of text objects.
+    // This exercises the else branch of:
+    //   if .message.content | type == "array" then ... else .message.content // "" end
+    const lines = [
+      JSON.stringify({ role: 'user', message: { content: 'do something' } }),
+      JSON.stringify({
+        role: 'assistant',
+        message: { content: 'plain string response from assistant' },
+      }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join('\n') + '\n');
+
+    const payload = JSON.stringify({
+      transcript_path: transcriptPath,
+      stop_reason: 'end_turn',
+    });
+
+    const { status, taskDir } = runHook(payload, taskId, sessionsDir);
+
+    expect(status).toBe(0);
+    expect(fs.existsSync(path.join(taskDir, '.done'))).toBe(true);
+
+    const msg = readFirstMessage(taskDir);
+    expect(msg.type).toBe('result');
+    expect(msg.content).toBe('plain string response from assistant');
+  });
+
+  it('uses last assistant message when transcript has multiple assistant turns with plain-string content', () => {
+    const sessionsDir = path.join(tmpDir, 'claude-string-multiturn');
+    const taskId = 'task-claude-string-multi';
+    const transcriptPath = path.join(tmpDir, 'transcript-string-multi.jsonl');
+
+    // Both assistant messages use plain string content (not array).
+    // Verifies the else-branch respects the "last assistant message" semantics.
+    const lines = [
+      JSON.stringify({ role: 'user', message: { content: 'step 1' } }),
+      JSON.stringify({ role: 'assistant', message: { content: 'intermediate answer' } }),
+      JSON.stringify({ role: 'user', message: { content: 'step 2' } }),
+      JSON.stringify({ role: 'assistant', message: { content: 'final answer' } }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join('\n') + '\n');
+
+    const payload = JSON.stringify({
+      transcript_path: transcriptPath,
+      stop_reason: 'end_turn',
+    });
+
+    const { taskDir } = runHook(payload, taskId, sessionsDir);
+
+    const msg = readFirstMessage(taskDir);
+    expect(msg.content).toBe('final answer');
+  });
+});
+
+// ============================================================================
+// Transcript Path: Special Characters
+// ============================================================================
+
+describe('stop-hook: Claude path — special characters', () => {
+  it('handles double quotes in transcript assistant response', () => {
+    const sessionsDir = path.join(tmpDir, 'claude-special-quotes');
+    const taskId = 'task-claude-quotes';
+    const transcriptPath = path.join(tmpDir, 'transcript-quotes.jsonl');
+
+    const payload = claudePayload(transcriptPath, 'say "hello world" and "goodbye"');
+    runHook(payload, taskId, sessionsDir);
+
+    const msg = readFirstMessage(path.join(sessionsDir, taskId));
+    expect(msg.content).toBe('say "hello world" and "goodbye"');
+  });
+
+  it('handles newlines in transcript assistant response', () => {
+    const sessionsDir = path.join(tmpDir, 'claude-special-newlines');
+    const taskId = 'task-claude-newlines';
+    const transcriptPath = path.join(tmpDir, 'transcript-newlines.jsonl');
+
+    const payload = claudePayload(transcriptPath, 'line one\nline two\nline three');
+    runHook(payload, taskId, sessionsDir);
+
+    const msg = readFirstMessage(path.join(sessionsDir, taskId));
+    expect(msg.content).toBe('line one\nline two\nline three');
+  });
+
+  it('handles backslashes in transcript assistant response', () => {
+    const sessionsDir = path.join(tmpDir, 'claude-special-backslash');
+    const taskId = 'task-claude-backslash';
+    const transcriptPath = path.join(tmpDir, 'transcript-backslash.jsonl');
+
+    const payload = claudePayload(transcriptPath, 'path: C:\\Users\\test');
+    runHook(payload, taskId, sessionsDir);
+
+    const msg = readFirstMessage(path.join(sessionsDir, taskId));
+    expect(msg.content).toBe('path: C:\\Users\\test');
+  });
+});
+
+// ============================================================================
 // ESCAPED guard (Issue 2 fix: err-trap / jq failure fallback)
 // ============================================================================
 
