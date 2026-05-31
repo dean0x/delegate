@@ -145,6 +145,12 @@ export class TmuxHooks implements TmuxHooksPort {
    *
    * Creates {sessionsDir}/{taskId}/messages/ and writes 0 to .seq.
    * Returns the sessionDir and messagesDir paths on success.
+   *
+   * ORDERING INVARIANT: AUTOBEAT_TASK_ID env is updated atomically by prepareForReuse()
+   * before this method is called. The agent process inside the tmux session does not see
+   * the new task ID until after prepareForReuse() completes, so no Stop hook for the new
+   * taskId can fire before .seq is reset to 0. /clear is a client-side command that does
+   * not trigger a Stop hook, so there is no race path in normal operation.
    */
   initTaskDirectory(
     taskId: TaskId,

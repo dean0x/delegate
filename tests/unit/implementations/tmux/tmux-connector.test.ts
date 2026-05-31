@@ -581,6 +581,10 @@ describe('TmuxConnector — null filename guard (macOS fs.watch edge case)', () 
   });
 
   it('messages watcher ignores null filename — no crash and onOutput not called', async () => {
+    // Use fake timers to avoid CI timing fragility — advance past the DEBOUNCE_MS=50ms
+    // window and flush microtasks, then assert readFile was never scheduled.
+    vi.useFakeTimers();
+
     // Capture the messages watcher callback so we can fire null
     let messageCallback: ((event: string, filename: string | null) => void) | null = null;
     let watchCallCount = 0;
@@ -610,12 +614,16 @@ describe('TmuxConnector — null filename guard (macOS fs.watch edge case)', () 
     // Fire messages watcher with null filename
     expect(() => messageCallback?.('change', null)).not.toThrow();
 
-    // No debounce timer should have been scheduled (readFile never called)
-    await new Promise((r) => setTimeout(r, 100));
+    // Advance past the debounce window — no timer should have been scheduled for null filename
+    vi.advanceTimersByTime(100);
+    await Promise.resolve();
+    await Promise.resolve();
+
     expect(readFile).not.toHaveBeenCalled();
     expect(onOutput).not.toHaveBeenCalled();
 
     connector.dispose();
+    vi.useRealTimers();
   });
 });
 

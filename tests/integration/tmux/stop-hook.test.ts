@@ -29,6 +29,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 // Test Infrastructure
 // ============================================================================
 
+// NOTE: Shared mutable tmpDir with afterEach cleanup — safe because vitest runs
+// with maxWorkers: 1 (sequential execution, see vitest.config.ts). Tests must
+// not run in parallel or afterEach cleanup could race a concurrent test's reads.
 let tmpDir = '';
 const HOOK_SCRIPT = path.resolve(process.cwd(), 'scripts/autobeat-stop-hook.sh');
 

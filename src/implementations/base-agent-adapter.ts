@@ -35,6 +35,9 @@ import { err, ok, Result } from '../core/result.js';
 import type { TmuxSpawnCoreConfig } from '../core/tmux-types.js';
 import { TASK_ID_REGEX, type TmuxAgentType } from './tmux/types.js';
 
+/** Validates that an orchestratorId matches the canonical orchestrator ID format. */
+const ORCHESTRATOR_ID_RE = /^orchestrator-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 export abstract class BaseAgentAdapter implements AgentAdapter {
   abstract readonly provider: AgentProvider;
 
@@ -412,7 +415,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     );
     const baseUrlEnv = options.runtimeConfig?.suppressBaseUrl ? {} : this.resolveBaseUrl(options.agentConfig);
 
-    const ORCHESTRATOR_ID_RE = /^orchestrator-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     const safeOrchestratorId =
       options.orchestratorId && ORCHESTRATOR_ID_RE.test(options.orchestratorId) ? options.orchestratorId : undefined;
     if (options.orchestratorId && !safeOrchestratorId) {

@@ -171,18 +171,25 @@ function atomicWriteConfig(
   return ok(undefined);
 }
 
+/** Narrows an unknown value to an object with a `hooks` array (Stop hook group entry shape). */
+function isHookGroupEntry(x: unknown): x is { hooks: unknown[] } {
+  return typeof x === 'object' && x !== null && Array.isArray((x as Record<string, unknown>).hooks);
+}
+
+/** Narrows an unknown value to a command hook entry with `type` and `command` fields. */
+function isCommandHookEntry(x: unknown): x is { type: string; command: string } {
+  if (typeof x !== 'object' || x === null) return false;
+  const h = x as Record<string, unknown>;
+  return typeof h.type === 'string' && typeof h.command === 'string';
+}
+
 /** Return true if `autobeat-stop-hook` is already registered in the Stop hooks array. */
 function hasStopHookCommand(stopHookEntries: unknown[]): boolean {
-  return stopHookEntries.some((entry) => {
-    if (typeof entry !== 'object' || entry === null) return false;
-    const e = entry as Record<string, unknown>;
-    if (!Array.isArray(e.hooks)) return false;
-    return (e.hooks as unknown[]).some((h) => {
-      if (typeof h !== 'object' || h === null) return false;
-      const hookEntry = h as Record<string, unknown>;
-      return hookEntry.type === 'command' && hookEntry.command === STOP_HOOK_COMMAND;
-    });
-  });
+  return stopHookEntries.some(
+    (entry) =>
+      isHookGroupEntry(entry) &&
+      entry.hooks.some((h) => isCommandHookEntry(h) && h.type === 'command' && h.command === STOP_HOOK_COMMAND),
+  );
 }
 
 /**
