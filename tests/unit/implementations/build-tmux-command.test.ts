@@ -105,12 +105,20 @@ describe('buildTmuxCommand() return shape', () => {
     expect(config).toHaveProperty('agent');
   });
 
-  it('prompt field equals the input prompt', () => {
-    const result = adapter.buildTmuxCommand(baseOptions);
+  it('persistent mode: prompt field equals the input prompt', () => {
+    const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.prompt).toBe('Implement the feature');
+  });
+
+  it('wrapper mode: prompt field is empty (baked into agentArgs)', () => {
+    const result = adapter.buildTmuxCommand(baseOptions);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.prompt).toBe('');
   });
 });
 
@@ -127,51 +135,81 @@ describe('buildTmuxCommand() — ClaudeAdapter', () => {
     adapter.dispose();
   });
 
-  it('config.agentArgs includes --dangerously-skip-permissions', () => {
-    const result = adapter.buildTmuxCommand(baseOptions);
+  // ─── Persistent mode (interactive sessions — loops) ─────────────────────
+  // Prompt delivered via sendKeys; agentArgs use stream-json for live output.
+
+  it('persistent: agentArgs includes --dangerously-skip-permissions', () => {
+    const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.config.agentArgs).toContain('--dangerously-skip-permissions');
   });
 
-  it('config.agentArgs includes --output-format stream-json', () => {
-    const result = adapter.buildTmuxCommand(baseOptions);
+  it('persistent: agentArgs includes --output-format stream-json', () => {
+    const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.config.agentArgs).toContain('--output-format');
     expect(result.value.config.agentArgs).toContain('stream-json');
   });
 
-  it('config.agentArgs does NOT include --print', () => {
-    const result = adapter.buildTmuxCommand(baseOptions);
+  it('persistent: agentArgs does NOT include --print', () => {
+    const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.config.agentArgs).not.toContain('--print');
   });
 
-  it('config.agentArgs does NOT include --output-format json', () => {
+  it('persistent: agentArgs does NOT contain the prompt text (delivered via sendKeys)', () => {
+    const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.config.agentArgs).not.toContain('Implement the feature');
+  });
+
+  it('persistent: agentArgs does NOT contain -- separator', () => {
+    const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.config.agentArgs).not.toContain('--');
+  });
+
+  // ─── Wrapper mode (default — one-shot tasks) ──────────────────────────────
+  // Prompt baked into agentArgs with --print for headless execution.
+
+  it('wrapper: agentArgs includes --print', () => {
+    const result = adapter.buildTmuxCommand(baseOptions);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.config.agentArgs).toContain('--print');
+  });
+
+  it('wrapper: agentArgs includes --output-format json (not stream-json)', () => {
     const result = adapter.buildTmuxCommand(baseOptions);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const args = result.value.config.agentArgs;
     const fmtIndex = args.indexOf('--output-format');
     expect(fmtIndex).toBeGreaterThanOrEqual(0);
-    expect(args[fmtIndex + 1]).toBe('stream-json');
+    expect(args[fmtIndex + 1]).toBe('json');
   });
 
-  it('config.agentArgs does NOT contain the prompt text', () => {
+  it('wrapper: agentArgs contains -- separator and prompt text', () => {
     const result = adapter.buildTmuxCommand(baseOptions);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.config.agentArgs).not.toContain('Implement the feature');
+    expect(result.value.config.agentArgs).toContain('--');
+    expect(result.value.config.agentArgs).toContain('Implement the feature');
   });
 
-  it('config.agentArgs does NOT contain -- separator', () => {
+  it('wrapper: prompt field is empty (prompt baked into agentArgs)', () => {
     const result = adapter.buildTmuxCommand(baseOptions);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.config.agentArgs).not.toContain('--');
+    expect(result.value.prompt).toBe('');
   });
+
+  // ─── Shared behavior (both modes) ─────────────────────────────────────────
 
   it('config.name follows beat-task-{taskId} pattern', () => {
     const result = adapter.buildTmuxCommand(baseOptions);
@@ -239,9 +277,10 @@ describe('buildTmuxCommand() — ClaudeAdapter', () => {
     expect(args[spIndex + 1]).toBe('You are a helpful assistant');
   });
 
-  it('with systemPrompt: prompt text NOT in agentArgs', () => {
+  it('persistent with systemPrompt: prompt text NOT in agentArgs', () => {
     const result = adapter.buildTmuxCommand({
       ...baseOptions,
+      persistent: true,
       systemPrompt: 'You are a helpful assistant',
     });
     expect(result.ok).toBe(true);
@@ -287,26 +326,42 @@ describe('buildTmuxCommand() — CodexAdapter', () => {
     adapter.dispose();
   });
 
-  it('config.agentArgs includes --full-auto', () => {
-    const result = adapter.buildTmuxCommand(baseOptions);
+  // ─── Persistent mode (interactive sessions — loops) ─────────────────────
+
+  it('persistent: agentArgs includes --full-auto without --quiet', () => {
+    const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.config.agentArgs).toContain('--full-auto');
-  });
-
-  it('config.agentArgs does NOT include --quiet', () => {
-    const result = adapter.buildTmuxCommand(baseOptions);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
     expect(result.value.config.agentArgs).not.toContain('--quiet');
   });
 
-  it('config.agentArgs does NOT contain the prompt text', () => {
-    const result = adapter.buildTmuxCommand(baseOptions);
+  it('persistent: agentArgs does NOT contain the prompt text (delivered via sendKeys)', () => {
+    const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.config.agentArgs).not.toContain('Implement the feature');
   });
+
+  // ─── Wrapper mode (default — one-shot tasks) ──────────────────────────────
+
+  it('wrapper: agentArgs includes --quiet and --full-auto', () => {
+    const result = adapter.buildTmuxCommand(baseOptions);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.config.agentArgs).toContain('--quiet');
+    expect(result.value.config.agentArgs).toContain('--full-auto');
+  });
+
+  it('wrapper: agentArgs contains -- separator and prompt text', () => {
+    const result = adapter.buildTmuxCommand(baseOptions);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.config.agentArgs).toContain('--');
+    expect(result.value.config.agentArgs).toContain('Implement the feature');
+  });
+
+  // ─── Shared behavior (both modes) ─────────────────────────────────────────
 
   it('config.agent is codex', () => {
     const result = adapter.buildTmuxCommand(baseOptions);
@@ -370,13 +425,24 @@ describe('buildTmuxCommand() — ProxiedClaudeAdapter', () => {
     adapter.dispose();
   });
 
-  it('prompt field equals input prompt (proxy does not modify prompt)', () => {
+  it('persistent: prompt field equals input prompt (proxy does not modify prompt)', () => {
+    const adapter = new ProxiedClaudeAdapter(testConfig, 9876);
+    const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.prompt).toBe('Implement the feature');
+    adapter.dispose();
+  });
+
+  it('wrapper: prompt baked into agentArgs, prompt field is empty', () => {
     const adapter = new ProxiedClaudeAdapter(testConfig, 9876);
     const result = adapter.buildTmuxCommand(baseOptions);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.prompt).toBe('Implement the feature');
+    expect(result.value.prompt).toBe('');
+    expect(result.value.config.agentArgs).toContain('Implement the feature');
     adapter.dispose();
   });
 });

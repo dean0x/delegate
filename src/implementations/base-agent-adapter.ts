@@ -81,7 +81,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Build CLI args for tmux mode (no prompt — delivered via send-keys).
+   * Build CLI args for interactive tmux mode (no prompt — delivered via send-keys).
    * Each adapter omits headless flags (e.g. --print, --quiet) and prompt.
    * Default returns empty args; Claude and Codex override to add agent-specific flags.
    * New adapters that support tmux should override this method.
@@ -91,12 +91,23 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Produce a TmuxSpawnCoreConfig + prompt for Phase 3 consumption.
-   * Config is used for session setup; prompt is delivered via send-keys after session is alive.
-   * The returned config is a TmuxSpawnConfig (extends TmuxSpawnCoreConfig) with all implementation
-   * fields populated. Does NOT call TmuxConnector — pure config assembly.
+   * Build CLI flags for wrapper (non-interactive) tmux mode.
+   * Returns headless flags (--print, --output-format, --model, etc.) WITHOUT
+   * the prompt or `--` separator. The prompt is appended by buildTmuxCommand
+   * after systemPromptArgs to ensure correct argument ordering.
    */
-  buildTmuxCommand(options: SpawnOptions & { sessionsDir: string }): Result<{
+  protected abstract buildWrapperFlags(model?: string): readonly string[];
+
+  /**
+   * Produce a TmuxSpawnCoreConfig + prompt delivery strategy.
+   *
+   * When persistent=true (interactive shim): prompt is returned separately for
+   * delivery via send-keys after the session is alive.
+   *
+   * When persistent=false (wrapper pipeline): prompt is baked into agentArgs
+   * with --print so the agent runs headlessly. Returned prompt is empty.
+   */
+  buildTmuxCommand(options: SpawnOptions & { sessionsDir: string; persistent?: boolean }): Result<{
     readonly config: TmuxSpawnCoreConfig;
     readonly prompt: string;
   }> {
@@ -129,8 +140,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     if (!configResult.ok) return configResult;
     const cfg = configResult.value;
 
-    const args = [...this.buildTmuxArgs(cfg.resolvedModel), ...cfg.systemPromptArgs];
-    const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...args] : args;
+    const transformedPrompt = this.transformPrompt(cfg.effectivePrompt);
+    const persistent = options.persistent ?? false;
+
+    const baseFlags = persistent ? this.buildTmuxArgs(cfg.resolvedModel) : this.buildWrapperFlags(cfg.resolvedModel);
+    const flagArgs = [...baseFlags, ...cfg.systemPromptArgs];
+    const withRuntime = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...flagArgs] : flagArgs;
+    const spawnArgs = persistent ? withRuntime : [...withRuntime, '--', transformedPrompt];
 
     return ok({
       config: {
@@ -143,7 +159,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         taskId: options.taskId as TaskId,
         sessionsDir: options.sessionsDir,
       },
-      prompt: this.transformPrompt(cfg.effectivePrompt),
+      prompt: persistent ? transformedPrompt : '',
     });
   }
 

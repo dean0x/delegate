@@ -11,54 +11,19 @@ import {
   ChannelId,
   ChannelMemberStatus,
   ChannelStatus,
+  TaskId,
 } from '../../../src/core/domain.js';
 import { InMemoryEventBus } from '../../../src/core/events/event-bus.js';
 import type { ChannelRepository } from '../../../src/core/interfaces.js';
 import { ok } from '../../../src/core/result.js';
+import type { TmuxHandle } from '../../../src/core/tmux-types.js';
 import { ChannelManager } from '../../../src/services/channel-manager.js';
 import { createTestConfiguration } from '../../fixtures/factories.js';
+import { createMockTmuxConnector } from '../../fixtures/mocks.js';
 import { TestLogger } from '../../fixtures/test-doubles.js';
 import { flushEventLoop } from '../../utils/event-helpers.js';
 
 // ─── Test doubles ─────────────────────────────────────────────────────────────
-
-interface MockTmuxHandle {
-  sessionName: string;
-  taskId: string;
-  sessionsDir: string;
-}
-
-function createMockTmuxConnector() {
-  const spawnedSessions: string[] = [];
-  const destroyedSessions: string[] = [];
-  const pastedContent: Array<{ session: string; content: string }> = [];
-
-  const connector = {
-    spawn: vi.fn().mockImplementation((config: { name: string; taskId: string; sessionsDir: string }) => {
-      spawnedSessions.push(config.name);
-      return ok<MockTmuxHandle>({ sessionName: config.name, taskId: config.taskId, sessionsDir: config.sessionsDir });
-    }),
-    destroy: vi.fn().mockImplementation((handle: MockTmuxHandle) => {
-      destroyedSessions.push(handle.sessionName);
-      return ok(undefined);
-    }),
-    sendKeys: vi.fn().mockReturnValue(ok(undefined)),
-    sendControlKeys: vi.fn().mockReturnValue(ok(undefined)),
-    isAlive: vi.fn().mockReturnValue(ok(true)),
-    setEnvironment: vi.fn().mockReturnValue(ok(undefined)),
-    pasteContent: vi.fn().mockImplementation((handle: MockTmuxHandle, content: string) => {
-      pastedContent.push({ session: handle.sessionName, content });
-      return ok(undefined);
-    }),
-    getActiveHandles: vi.fn().mockReturnValue([]),
-    dispose: vi.fn(),
-    // Test inspection
-    _spawnedSessions: spawnedSessions,
-    _destroyedSessions: destroyedSessions,
-    _pastedContent: pastedContent,
-  };
-  return connector;
-}
 
 function createMockAgentRegistry() {
   return {
@@ -366,9 +331,9 @@ describe('ChannelManager', () => {
         (config: { name: string; taskId: string; sessionsDir: string }) => {
           spawnCallCount++;
           if (spawnCallCount === 1) {
-            return ok<MockTmuxHandle>({
+            return ok<TmuxHandle>({
               sessionName: config.name,
-              taskId: config.taskId,
+              taskId: TaskId(config.taskId),
               sessionsDir: config.sessionsDir,
             });
           }
@@ -541,7 +506,7 @@ describe('ChannelManager', () => {
       // All 3 members should receive the message
       expect(tmuxConnector.pasteContent).toHaveBeenCalledTimes(3);
       // Every delivered content must equal the sent message
-      for (const { content } of tmuxConnector._pastedContent) {
+      for (const [, content] of vi.mocked(tmuxConnector.pasteContent).mock.calls) {
         expect(content).toBe('hello everyone');
       }
     });
@@ -566,7 +531,7 @@ describe('ChannelManager', () => {
 
       // Only 1 member (b) should receive it
       expect(tmuxConnector.pasteContent).toHaveBeenCalledOnce();
-      const call = vi.mocked(tmuxConnector.pasteContent).mock.calls[0] as [MockTmuxHandle, string];
+      const call = vi.mocked(tmuxConnector.pasteContent).mock.calls[0] as [TmuxHandle, string];
       expect(call[0].sessionName).toContain('b');
     });
 

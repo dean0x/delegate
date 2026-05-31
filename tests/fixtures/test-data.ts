@@ -112,27 +112,3 @@ export const createMockQueue = () => ({
   isEmpty: () => true,
   clear: () => {},
 });
-
-export const createMockWorkerPool = () => ({
-  addWorker: () => ({ ok: true, value: undefined }),
-  removeWorker: () => ({ ok: true, value: undefined }),
-  getWorker: () => ({ ok: true, value: null }),
-  updateWorker: () => ({ ok: true, value: undefined }),
-  getActiveWorkers: () => [],
-  getIdleWorkers: () => [],
-  size: () => 0,
-});
-
-export const createMockResourceMonitor = () => ({
-  getResources: () =>
-    Promise.resolve({
-      ok: true,
-      value: {
-        cpu: { usage: 50, available: 50 },
-        memory: { used: 4000, free: 4000, total: 8000 },
-        canSpawnWorker: true,
-      },
-    }),
-  startMonitoring: () => {},
-  stopMonitoring: () => {},
-});

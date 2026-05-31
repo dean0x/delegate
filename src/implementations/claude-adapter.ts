@@ -31,6 +31,11 @@ export class ClaudeAdapter extends BaseAgentAdapter {
     return ['--dangerously-skip-permissions', '--output-format', 'stream-json', ...modelArgs];
   }
 
+  protected override buildWrapperFlags(model?: string): readonly string[] {
+    const modelArgs: string[] = model ? ['--model', model] : [];
+    return [...this.baseArgs, ...modelArgs];
+  }
+
   protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
     // DECISION: --dangerously-skip-permissions is intentional for interactive orchestrators.
