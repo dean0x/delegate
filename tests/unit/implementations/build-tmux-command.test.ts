@@ -136,7 +136,7 @@ describe('buildTmuxCommand() — ClaudeAdapter', () => {
   });
 
   // ─── Persistent mode (interactive sessions — loops) ─────────────────────
-  // Prompt delivered via sendKeys; agentArgs use stream-json for live output.
+  // Prompt delivered via sendKeys; agentArgs use interactive (no --print, no --output-format).
 
   it('persistent: agentArgs includes --dangerously-skip-permissions', () => {
     const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
@@ -145,12 +145,12 @@ describe('buildTmuxCommand() — ClaudeAdapter', () => {
     expect(result.value.config.agentArgs).toContain('--dangerously-skip-permissions');
   });
 
-  it('persistent: agentArgs includes --output-format stream-json', () => {
+  it('persistent: agentArgs does NOT include --output-format (no effect in interactive mode)', () => {
     const result = adapter.buildTmuxCommand({ ...baseOptions, persistent: true });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.config.agentArgs).toContain('--output-format');
-    expect(result.value.config.agentArgs).toContain('stream-json');
+    expect(result.value.config.agentArgs).not.toContain('--output-format');
+    expect(result.value.config.agentArgs).not.toContain('stream-json');
   });
 
   it('persistent: agentArgs does NOT include --print', () => {

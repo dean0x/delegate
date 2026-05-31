@@ -28,7 +28,10 @@ export class ClaudeAdapter extends BaseAgentAdapter {
 
   protected override buildTmuxArgs(model?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
-    return ['--dangerously-skip-permissions', '--output-format', 'stream-json', ...modelArgs];
+    // DECISION: --output-format stream-json has no effect in interactive (persistent)
+    // mode — Claude Code ignores it when running as a REPL. Removing it keeps the
+    // arg list lean and avoids sending a flag that the agent may reject in future versions.
+    return ['--dangerously-skip-permissions', ...modelArgs];
   }
 
   protected override buildWrapperFlags(model?: string): readonly string[] {
