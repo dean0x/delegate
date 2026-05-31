@@ -5,10 +5,18 @@
 
 command -v jq >/dev/null 2>&1 || exit 0
 
+# SECURITY: Claude Code guarantees stdin pipe closure on every stop-hook
+# invocation (synchronous call, always completes), so head will not hang
+# in practice. Defense-in-depth: cap at 10 MiB so an unexpectedly large
+# payload cannot stall this process indefinitely.
 HOOK_DATA=$(head -c 10485760)
 
 # Extract all fields from HOOK_DATA in one jq pass.
-# @sh escaping ensures values with spaces, quotes, or newlines are safely eval'd.
+# SECURITY: @sh shells-quotes each value so that eval is equivalent to a safe
+# assignment. jq @sh produces single-quoted tokens with internal single-quotes
+# escaped as '\'' — the output cannot contain bare shell metacharacters.
+# The trust boundary is: HOOK_DATA originates from Claude Code / Codex over a
+# local pipe; it is not attacker-controlled in normal operation.
 # Fields:
 #   RESPONSE       — last_assistant_message (Codex path); empty when absent
 #   STOP_REASON    — stop_reason, defaulting to "end_turn"
@@ -21,11 +29,42 @@ eval "$(printf '%s' "$HOOK_DATA" | jq -r '
   "TOTAL_COST_USD=" + (if .total_cost_usd then (.total_cost_usd | tostring | @sh) else "'\''" + "'\''" end)
 ' 2>/dev/null)" 2>/dev/null || true
 
+# Defensive post-eval guard: if jq produced malformed/truncated output (e.g.
+# due to OOM or a signal mid-write), one or more variables may be unset.
+# Reset all four to safe defaults so the rest of the script never sees an
+# unbound variable and cannot execute an unintended fragment.
+if [ -z "${STOP_REASON+x}" ]; then
+  RESPONSE=''
+  STOP_REASON='end_turn'
+  USAGE_JSON=''
+  TOTAL_COST_USD=''
+fi
+
 [ -n "$RESPONSE" ] && RESPONSE_FROM_DIRECT=true || RESPONSE_FROM_DIRECT=false
 
 if [ -z "$RESPONSE" ]; then
   TRANSCRIPT=$(printf '%s' "$HOOK_DATA" | jq -r '.transcript_path // empty' 2>/dev/null)
-  if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+  # SECURITY: Validate transcript_path is within a trusted directory before
+  # reading it.  Accept only paths under well-known Claude Code / Codex / OS-temp
+  # prefixes.  Reject anything containing ".." regardless.
+  #   /tmp/            — Linux temp dir (Claude Code writes here on Linux CI)
+  #   /var/folders/    — macOS temp dir (os.tmpdir() on macOS)
+  #   /private/var/    — macOS realpath alias for /var/folders/
+  #   $HOME/.claude/   — Claude Code config/transcript directory
+  #   $HOME/.codex/    — Codex config/transcript directory
+  _transcript_allowed=false
+  if [ -n "$TRANSCRIPT" ]; then
+    case "$TRANSCRIPT" in
+      /tmp/*|/var/folders/*|/private/var/folders/*|"${HOME}/.claude/"*|"${HOME}/.codex/"*)
+        _transcript_allowed=true ;;
+    esac
+    # Belt-and-suspenders: reject any path that still contains a traversal segment.
+    case "$TRANSCRIPT" in
+      *..*)
+        _transcript_allowed=false ;;
+    esac
+  fi
+  if [ "$_transcript_allowed" = "true" ] && [ -f "$TRANSCRIPT" ]; then
     RESPONSE=$(tail -n 50 "$TRANSCRIPT" | \
       jq -s '[.[] | select(.role == "assistant")] | last |
         if .message.content | type == "array"

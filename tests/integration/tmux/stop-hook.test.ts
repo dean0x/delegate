@@ -605,6 +605,62 @@ describe('stop-hook: security', () => {
 
     expect(fs.existsSync(path.join(taskDir, '.done'))).toBe(true);
   });
+
+  it('rejects transcript_path outside trusted prefixes — treats as missing, writes .exit', () => {
+    // A transcript_path pointing at /etc/passwd (or any other path outside the
+    // allowed prefix list) must be rejected without reading it.
+    const sessionsDir = path.join(tmpDir, 'security-transcript-prefix');
+    const taskId = 'task-transcript-prefix';
+
+    // Write a real file at /tmp/ with trusted content — but specify an untrusted path
+    // in the payload to confirm the hook ignores it based on prefix alone.
+    const payload = JSON.stringify({
+      transcript_path: '/etc/passwd',
+      stop_reason: 'end_turn',
+    });
+
+    const { taskDir } = runHook(payload, taskId, sessionsDir);
+
+    // No response extracted → fail-fast path → .exit sentinel
+    expect(fs.existsSync(path.join(taskDir, '.exit'))).toBe(true);
+    const messagesDir = path.join(taskDir, 'messages');
+    const hasMessages = fs.existsSync(messagesDir) && fs.readdirSync(messagesDir).length > 0;
+    expect(hasMessages).toBe(false);
+  });
+
+  it('rejects transcript_path containing .. even within an allowed prefix', () => {
+    // A path like /tmp/claude-abc/../../etc/passwd starts with /tmp/ but
+    // the traversal segment must still be rejected.
+    const sessionsDir = path.join(tmpDir, 'security-transcript-traversal');
+    const taskId = 'task-transcript-traversal';
+
+    const payload = JSON.stringify({
+      transcript_path: '/tmp/claude-abc/../../etc/passwd',
+      stop_reason: 'end_turn',
+    });
+
+    const { taskDir } = runHook(payload, taskId, sessionsDir);
+
+    expect(fs.existsSync(path.join(taskDir, '.exit'))).toBe(true);
+    const messagesDir = path.join(taskDir, 'messages');
+    const hasMessages = fs.existsSync(messagesDir) && fs.readdirSync(messagesDir).length > 0;
+    expect(hasMessages).toBe(false);
+  });
+
+  it('reads transcript_path when it is within the trusted OS temp prefix', () => {
+    // Confirm the allowlist correctly permits real transcript files written
+    // by Claude Code / tests into the OS temp directory.
+    const sessionsDir = path.join(tmpDir, 'security-transcript-allowed');
+    const taskId = 'task-transcript-allowed';
+    const transcriptPath = path.join(tmpDir, 'transcript-allowed.jsonl');
+
+    const payload = claudePayload(transcriptPath, 'trusted transcript response');
+    const { taskDir } = runHook(payload, taskId, sessionsDir);
+
+    expect(fs.existsSync(path.join(taskDir, '.done'))).toBe(true);
+    const msg = readFirstMessage(taskDir);
+    expect(msg.content).toBe('trusted transcript response');
+  });
 });
 
 // ============================================================================
@@ -919,6 +975,24 @@ describe('stop-hook: jq escape fallback', () => {
     });
     const { taskDir } = runHook(payload, taskId, sessionsDir);
 
+    expect(fs.existsSync(path.join(taskDir, '.exit'))).toBe(true);
+    const messagesDir = path.join(taskDir, 'messages');
+    const hasMessages = fs.existsSync(messagesDir) && fs.readdirSync(messagesDir).length > 0;
+    expect(hasMessages).toBe(false);
+  });
+
+  it('post-eval guard: malformed stdin (jq fails) does not crash — exits 0, writes .exit', () => {
+    // Simulate jq eval failure by providing truncated / non-JSON input.
+    // When jq fails, STOP_REASON is never set; the post-eval guard resets all
+    // four variables to safe defaults so the hook continues cleanly to
+    // the fail-fast .exit path rather than crashing with an unbound variable.
+    const sessionsDir = path.join(tmpDir, 'post-eval-guard');
+    const taskId = 'task-post-eval-guard';
+
+    const { status, taskDir } = runHook('{not valid json', taskId, sessionsDir);
+
+    expect(status).toBe(0);
+    // No response extracted → fail-fast path → .exit sentinel
     expect(fs.existsSync(path.join(taskDir, '.exit'))).toBe(true);
     const messagesDir = path.join(taskDir, 'messages');
     const hasMessages = fs.existsSync(messagesDir) && fs.readdirSync(messagesDir).length > 0;
