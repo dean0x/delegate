@@ -541,3 +541,73 @@ describe('TmuxHooks.generateSetupShim()', () => {
     expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
   });
 });
+
+// ─── TmuxHooks.initTaskDirectory() ───────────────────────────────────────────
+
+describe('TmuxHooks.initTaskDirectory()', () => {
+  let writeFile: ReturnType<typeof vi.fn>;
+  let mkdirSync: ReturnType<typeof vi.fn>;
+  let hooks: TmuxHooks;
+
+  beforeEach(() => {
+    const m = makeDeps();
+    writeFile = m.writeFile;
+    mkdirSync = m.mkdirSync;
+    hooks = new TmuxHooks(m.deps);
+  });
+
+  it('creates session root directory with mode 0o700', () => {
+    hooks.initTaskDirectory('task-iter2', '/tmp/sessions');
+    const call = mkdirSync.mock.calls.find(([p]: [string]) => p.endsWith('/task-iter2'));
+    expect(call).toBeDefined();
+    expect(call?.[1]).toMatchObject({ mode: 0o700 });
+  });
+
+  it('creates messages subdirectory with mode 0o700', () => {
+    hooks.initTaskDirectory('task-iter2', '/tmp/sessions');
+    const call = mkdirSync.mock.calls.find(([p]: [string]) => p.endsWith('/messages'));
+    expect(call).toBeDefined();
+    expect(call?.[1]).toMatchObject({ mode: 0o700 });
+  });
+
+  it('writes 0 to the .seq file', () => {
+    hooks.initTaskDirectory('task-iter2', '/tmp/sessions');
+    const call = writeFile.mock.calls.find(([p]: [string]) => p.endsWith('/.seq'));
+    expect(call).toBeDefined();
+    expect(call?.[1]).toBe('0');
+  });
+
+  it('returns ok with sessionDir and messagesDir paths', () => {
+    const result = hooks.initTaskDirectory('task-iter2', '/tmp/sessions');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.sessionDir).toBe('/tmp/sessions/task-iter2');
+    expect(result.value.messagesDir).toBe('/tmp/sessions/task-iter2/messages');
+  });
+
+  it('returns TMUX_HOOK_FAILED when mkdirSync throws', () => {
+    const m = makeDeps();
+    m.mkdirSync.mockImplementation(() => {
+      throw new Error('EACCES: permission denied');
+    });
+    const hooksWithError = new TmuxHooks(m.deps);
+    const result = hooksWithError.initTaskDirectory('task-err', '/tmp/sessions');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  it('returns TMUX_HOOK_FAILED for invalid taskId', () => {
+    const result = hooks.initTaskDirectory('INVALID TASK ID!', '/tmp/sessions');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  it('returns TMUX_HOOK_FAILED for unsafe sessionsDir path', () => {
+    const result = hooks.initTaskDirectory('task-abc', '/tmp/../etc/passwd');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+});

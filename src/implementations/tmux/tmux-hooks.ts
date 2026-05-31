@@ -309,6 +309,38 @@ export class TmuxHooks implements TmuxHooksPort {
   }
 
   /**
+   * Creates the session directory tree for a new loop iteration without regenerating
+   * the setup shim. Called by TmuxConnector.prepareForReuse() when a persistent session
+   * is being reused — the tmux session already exists; only the per-iteration task
+   * directory needs to be (re)initialised.
+   *
+   * Creates {sessionsDir}/{taskId}/messages/ and writes 0 to .seq.
+   * Returns the sessionDir and messagesDir paths on success.
+   */
+  initTaskDirectory(
+    taskId: TaskId,
+    sessionsDir: string,
+  ): Result<{ sessionDir: string; messagesDir: string }, AutobeatError> {
+    const baseCheck = this.validateBaseInputs('initTaskDirectory', taskId, sessionsDir);
+    if (!baseCheck.ok) return baseCheck;
+
+    const sessionDir = path.join(sessionsDir, taskId);
+    const messagesDir = path.join(sessionDir, 'messages');
+    const seqFilePath = path.join(sessionDir, '.seq');
+
+    try {
+      this.deps.mkdirSync(sessionDir, { recursive: true, mode: FILE_MODE });
+      this.deps.mkdirSync(messagesDir, { recursive: true, mode: FILE_MODE });
+      this.deps.writeFile(seqFilePath, '0', { mode: FILE_MODE });
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      return err(tmuxHookFailed('initTaskDirectory', reason, { taskId, sessionDir }));
+    }
+
+    return ok({ sessionDir, messagesDir });
+  }
+
+  /**
    * Removes the session directory and all its contents.
    * taskId and sessionsDir are validated via validateBaseInputs before being
    * passed to path.join + rmSync(recursive:true) — callers cannot introduce

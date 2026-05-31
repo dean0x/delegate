@@ -190,6 +190,25 @@ export interface TmuxConnectorPort {
    * shell metacharacters ($, `, \n, etc.) in the content.
    */
   pasteContent(handle: TmuxHandle, content: string): Result<void, AutobeatError>;
+  /**
+   * Prepare a parked persistent session for reuse by the next loop iteration.
+   *
+   * DESIGN DECISION (Phase B): Encapsulates all connector-internal reuse steps behind
+   * a single port method so WorkerPool does not need to know about task directories,
+   * sequence counters, or watcher lifecycle. The port boundary stays thin.
+   *
+   * Steps:
+   * 1. Create new task directory (sessionsDir/newTaskId/messages/) and reset .seq to 0
+   * 2. Register a new ActiveSession with state 'active' for newTaskId
+   * 3. Start new sentinel + messages watchers for the new directory
+   * 4. Restart the staleness timer
+   *
+   * Must be called AFTER setEnvironment(AUTOBEAT_TASK_ID) and the /clear settle delay,
+   * and BEFORE sendKeys(prompt) so watchers are ready before any output arrives.
+   *
+   * Returns err() if the task directory cannot be created.
+   */
+  prepareForReuse(handle: TmuxHandle, newTaskId: TaskId, callbacks: SpawnCallbacks): Result<void, AutobeatError>;
   getActiveHandles(): TmuxHandle[];
   dispose(): void;
 }

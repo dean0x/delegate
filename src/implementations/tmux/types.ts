@@ -301,6 +301,19 @@ export interface TmuxHooksPort {
    * interactively (no --print). Output is captured via the Stop hook mechanism.
    */
   generateSetupShim(config: SetupShimConfig): Result<SetupShimManifest, AutobeatError>;
+  /**
+   * Creates the session directory tree for a new loop iteration without regenerating
+   * the setup shim. Used by TmuxConnector.prepareForReuse() when a persistent session
+   * is being reused — the tmux session already exists; only the task directory needs
+   * to be (re)initialised for the new iteration's output messages.
+   *
+   * Creates: {sessionsDir}/{taskId}/messages/ and resets .seq to 0.
+   * Returns the sessionDir and messagesDir paths on success.
+   */
+  initTaskDirectory(
+    taskId: TaskId,
+    sessionsDir: string,
+  ): Result<{ sessionDir: string; messagesDir: string }, AutobeatError>;
   cleanup(taskId: TaskId, sessionsDir: string): Result<void, AutobeatError>;
 }
 
