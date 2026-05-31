@@ -777,14 +777,13 @@ describe('stop-hook: jq unavailable guard', () => {
     const sessionsDir = path.join(tmpDir, 'no-jq');
     fs.mkdirSync(sessionsDir, { recursive: true });
 
-    // Use an absolute bash path so spawnSync can find it, then restrict PATH
-    // to system directories that provide bash but not jq.  This exercises the
-    // `command -v jq >/dev/null 2>&1 || exit 0` guard at line 6 of the script.
+    // Empty PATH so `command -v jq` fails. We invoke /bin/bash by absolute
+    // path, and the script exits at line 6 before reaching any other command.
     const result = spawnSync('/bin/bash', [HOOK_SCRIPT], {
       input: codexPayload('hello'),
       encoding: 'utf8',
       env: {
-        PATH: '/bin:/usr/sbin',
+        PATH: '',
         AUTOBEAT_WORKER: 'true',
         AUTOBEAT_TASK_ID: 'task-no-jq',
         AUTOBEAT_SESSIONS_DIR: sessionsDir,

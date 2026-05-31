@@ -297,9 +297,12 @@ export class TmuxConnector implements TmuxConnectorPort {
     if (!session) {
       // Parked-session path: no ActiveSession to flush/close, but the tmux process
       // is still alive and must be killed. Skip the watcher/callback machinery and
-      // delegate directly to the session manager. Also clean up the parked agent entry.
+      // delegate directly to the session manager. Also clean up the parked agent entry
+      // and the session directory for this handle's taskId.
       this.parkedSessionAgents.delete(handle.sessionName);
-      return this.deps.sessionManager.destroySession(handle.sessionName);
+      const parkedDestroyResult = this.deps.sessionManager.destroySession(handle.sessionName);
+      this.loggedCleanup('destroy', handle.taskId, handle.sessionsDir);
+      return parkedDestroyResult;
     }
 
     // Set state to 'exited' before flush so late staleness timer ticks cannot trigger
