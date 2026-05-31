@@ -91,21 +91,15 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Build CLI flags for wrapper (non-interactive) tmux mode.
-   * Returns headless flags (--print, --output-format, --model, etc.) WITHOUT
-   * the prompt or `--` separator. The prompt is appended by buildTmuxCommand
-   * after systemPromptArgs to ensure correct argument ordering.
-   */
-  protected abstract buildWrapperFlags(model?: string): readonly string[];
-
-  /**
    * Produce a TmuxSpawnCoreConfig + prompt delivery strategy.
    *
-   * When persistent=true (interactive shim): prompt is returned separately for
-   * delivery via send-keys after the session is alive.
+   * All sessions run in interactive mode (setup shim). The prompt is returned
+   * separately for delivery via send-keys after the session is alive.
    *
-   * When persistent=false (wrapper pipeline): prompt is baked into agentArgs
-   * with --print so the agent runs headlessly. Returned prompt is empty.
+   * DECISION: Wrapper pipeline mode (--print/--quiet based) has been removed.
+   * All tmux sessions are interactive; output is captured via the Stop hook.
+   * The `persistent` option is accepted for backward compatibility but has no
+   * effect — every spawn uses the interactive (setup shim) path.
    */
   buildTmuxCommand(options: SpawnOptions & { sessionsDir: string; persistent?: boolean }): Result<{
     readonly config: TmuxSpawnCoreConfig;
@@ -141,12 +135,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const cfg = configResult.value;
 
     const transformedPrompt = this.transformPrompt(cfg.effectivePrompt);
-    const persistent = options.persistent ?? false;
 
-    const baseFlags = persistent ? this.buildTmuxArgs(cfg.resolvedModel) : this.buildWrapperFlags(cfg.resolvedModel);
+    // Always interactive mode: use buildTmuxArgs (no --print/--quiet), prompt delivered via send-keys.
+    const baseFlags = this.buildTmuxArgs(cfg.resolvedModel);
     const flagArgs = [...baseFlags, ...cfg.systemPromptArgs];
-    const withRuntime = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...flagArgs] : flagArgs;
-    const spawnArgs = persistent ? withRuntime : [...withRuntime, '--', transformedPrompt];
+    const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...flagArgs] : flagArgs;
 
     return ok({
       config: {
@@ -159,7 +152,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         taskId: options.taskId as TaskId,
         sessionsDir: options.sessionsDir,
       },
-      prompt: persistent ? transformedPrompt : '',
+      prompt: transformedPrompt,
     });
   }
 

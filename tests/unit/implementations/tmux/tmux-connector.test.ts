@@ -11,13 +11,13 @@ import { err, ok } from '../../../../src/core/result.js';
 import { TmuxConnector, type TmuxConnectorDeps } from '../../../../src/implementations/tmux/tmux-connector.js';
 import type {
   OutputMessage,
+  SetupShimManifest,
   TmuxHandle,
   TmuxHooksPort,
   TmuxSessionManagerPort,
   TmuxSessionResult,
   TmuxSpawnConfig,
   TmuxValidatorPort,
-  WrapperManifest,
 } from '../../../../src/implementations/tmux/types.js';
 import { MAX_CONCURRENT_SESSIONS } from '../../../../src/implementations/tmux/types.js';
 import { sleep } from '../../../fixtures/test-data.js';
@@ -47,13 +47,11 @@ function makeLogger(): Logger {
   };
 }
 
-function makeManifest(taskId: string, sessionsDir = '/tmp/sessions'): WrapperManifest {
+function makeShimManifest(taskId: string, sessionsDir = '/tmp/sessions'): SetupShimManifest {
   return {
-    wrapperPath: `${sessionsDir}/${taskId}/wrapper.sh`,
+    shimPath: `${sessionsDir}/${taskId}/setup-shim.sh`,
     sessionDir: `${sessionsDir}/${taskId}`,
-    sentinelPath: `${sessionsDir}/${taskId}/.done`,
     messagesDir: `${sessionsDir}/${taskId}/messages`,
-    seqFilePath: `${sessionsDir}/${taskId}/.seq`,
   };
 }
 
@@ -166,20 +164,18 @@ function makeFailingValidator(): TmuxValidatorPort {
 
 function makeValidHooks(taskId = 'task-abc'): TmuxHooksPort {
   return {
-    generateWrapper: vi.fn().mockReturnValue(ok(makeManifest(taskId))),
-    generateSetupShim: vi.fn().mockReturnValue(
-      ok({ shimPath: `/tmp/sessions/${taskId}/setup-shim.sh`, sessionDir: `/tmp/sessions/${taskId}`, messagesDir: `/tmp/sessions/${taskId}/messages` }),
-    ),
-    initTaskDirectory: vi.fn().mockImplementation((newTaskId: string, sessionsDir: string) =>
-      ok({ sessionDir: `${sessionsDir}/${newTaskId}`, messagesDir: `${sessionsDir}/${newTaskId}/messages` }),
-    ),
+    generateSetupShim: vi.fn().mockReturnValue(ok(makeShimManifest(taskId))),
+    initTaskDirectory: vi
+      .fn()
+      .mockImplementation((newTaskId: string, sessionsDir: string) =>
+        ok({ sessionDir: `${sessionsDir}/${newTaskId}`, messagesDir: `${sessionsDir}/${newTaskId}/messages` }),
+      ),
     cleanup: vi.fn().mockReturnValue(ok(undefined)),
   } as unknown as TmuxHooksPort;
 }
 
 function makeFailingHooks(code = ErrorCode.TMUX_HOOK_FAILED): TmuxHooksPort {
   return {
-    generateWrapper: vi.fn().mockReturnValue(err(new AutobeatError(code, 'hook failed'))),
     generateSetupShim: vi.fn().mockReturnValue(err(new AutobeatError(code, 'hook failed'))),
     initTaskDirectory: vi.fn().mockReturnValue(err(new AutobeatError(code, 'init failed'))),
     cleanup: vi.fn().mockReturnValue(ok(undefined)),
@@ -233,7 +229,7 @@ describe('TmuxConnector.spawn()', () => {
     expect(sessionManager.createSession).not.toHaveBeenCalled();
   });
 
-  it('calls hooks.generateWrapper before creating the session', () => {
+  it('calls hooks.generateSetupShim before creating the session', () => {
     const hooks = makeValidHooks();
     const sessionManager = makeValidSessionManager();
     const { watch } = makeWatchMock();
@@ -248,10 +244,10 @@ describe('TmuxConnector.spawn()', () => {
     });
 
     connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
-    expect(hooks.generateWrapper).toHaveBeenCalled();
+    expect(hooks.generateSetupShim).toHaveBeenCalled();
   });
 
-  it('passes config.agentArgs to hooks.generateWrapper (not hardcoded [])', () => {
+  it('passes config.agentArgs to hooks.generateSetupShim (not hardcoded [])', () => {
     const hooks = makeValidHooks();
     const { watch } = makeWatchMock();
 
@@ -266,17 +262,17 @@ describe('TmuxConnector.spawn()', () => {
 
     const configWithArgs = {
       ...BASE_CONFIG,
-      agentArgs: ['--dangerously-skip-permissions', '--output-format', 'stream-json'],
+      agentArgs: ['--dangerously-skip-permissions'],
     };
     connector.spawn(configWithArgs, { onOutput: vi.fn(), onExit: vi.fn() });
-    expect(hooks.generateWrapper).toHaveBeenCalledWith(
+    expect(hooks.generateSetupShim).toHaveBeenCalledWith(
       expect.objectContaining({
-        agentArgs: ['--dangerously-skip-permissions', '--output-format', 'stream-json'],
+        agentArgs: ['--dangerously-skip-permissions'],
       }),
     );
   });
 
-  it('passes empty agentArgs to hooks.generateWrapper when config has empty array', () => {
+  it('passes empty agentArgs to hooks.generateSetupShim when config has empty array', () => {
     const hooks = makeValidHooks();
     const { watch } = makeWatchMock();
 
@@ -290,10 +286,10 @@ describe('TmuxConnector.spawn()', () => {
     });
 
     connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
-    expect(hooks.generateWrapper).toHaveBeenCalledWith(expect.objectContaining({ agentArgs: [] }));
+    expect(hooks.generateSetupShim).toHaveBeenCalledWith(expect.objectContaining({ agentArgs: [] }));
   });
 
-  it('creates session with the wrapper script as the command', () => {
+  it('creates session with the setup shim as the command', () => {
     const sessionManager = makeValidSessionManager();
     const { watch } = makeWatchMock();
 
@@ -308,7 +304,7 @@ describe('TmuxConnector.spawn()', () => {
 
     connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     const createCall = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    expect(createCall?.command).toContain('wrapper.sh');
+    expect(createCall?.command).toContain('setup-shim.sh');
   });
 
   it('starts a sentinel watcher (fs.watch called at least once)', () => {
@@ -381,7 +377,7 @@ describe('TmuxConnector.spawn()', () => {
     expect(result.value.taskId).toBe('task-abc');
   });
 
-  it('returns hook error when generateWrapper fails', () => {
+  it('returns hook error when generateSetupShim fails', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -1689,10 +1685,11 @@ describe('TmuxConnector — staleness detection', () => {
     } as unknown as TmuxSessionManagerPort;
 
     const hooks: TmuxHooksPort = {
-      generateWrapper: vi
+      generateSetupShim: vi
         .fn()
-        .mockReturnValueOnce(ok(makeManifest('task-fast')))
-        .mockReturnValueOnce(ok(makeManifest('task-slow'))),
+        .mockReturnValueOnce(ok(makeShimManifest('task-fast')))
+        .mockReturnValueOnce(ok(makeShimManifest('task-slow'))),
+      initTaskDirectory: vi.fn().mockReturnValue(ok({ sessionDir: '', messagesDir: '' })),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
     } as unknown as TmuxHooksPort;
 
@@ -2103,10 +2100,11 @@ describe('TmuxConnector.dispose()', () => {
     } as unknown as TmuxSessionManagerPort;
 
     const hooks = {
-      generateWrapper: vi
+      generateSetupShim: vi
         .fn()
-        .mockReturnValueOnce(ok(makeManifest('task-abc')))
-        .mockReturnValueOnce(ok(makeManifest('task-def'))),
+        .mockReturnValueOnce(ok(makeShimManifest('task-abc')))
+        .mockReturnValueOnce(ok(makeShimManifest('task-def'))),
+      initTaskDirectory: vi.fn().mockReturnValue(ok({ sessionDir: '', messagesDir: '' })),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
     } as unknown as TmuxHooksPort;
 
@@ -2158,10 +2156,11 @@ describe('TmuxConnector.dispose()', () => {
     } as unknown as TmuxSessionManagerPort;
 
     const hooks = {
-      generateWrapper: vi
+      generateSetupShim: vi
         .fn()
-        .mockReturnValueOnce(ok(makeManifest('task-abc')))
-        .mockReturnValueOnce(ok(makeManifest('task-def'))),
+        .mockReturnValueOnce(ok(makeShimManifest('task-abc')))
+        .mockReturnValueOnce(ok(makeShimManifest('task-def'))),
+      initTaskDirectory: vi.fn().mockReturnValue(ok({ sessionDir: '', messagesDir: '' })),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
     } as unknown as TmuxHooksPort;
 
@@ -2224,7 +2223,8 @@ describe('TmuxConnector.getActiveHandles()', () => {
 describe('TmuxConnector — loggedCleanup failure logging', () => {
   function makeCleanupFailingHooks(taskId = 'task-abc'): TmuxHooksPort {
     return {
-      generateWrapper: vi.fn().mockReturnValue(ok(makeManifest(taskId))),
+      generateSetupShim: vi.fn().mockReturnValue(ok(makeShimManifest(taskId))),
+      initTaskDirectory: vi.fn().mockReturnValue(ok({ sessionDir: '', messagesDir: '' })),
       cleanup: vi.fn().mockReturnValue(err(new AutobeatError(ErrorCode.TMUX_HOOK_FAILED, 'cleanup error'))),
     } as unknown as TmuxHooksPort;
   }
@@ -2327,7 +2327,8 @@ describe('TmuxConnector — connector-level session cap (rel-conn-1)', () => {
     } as unknown as TmuxSessionManagerPort;
 
     const hooks: TmuxHooksPort = {
-      generateWrapper: vi.fn().mockImplementation((cfg: { taskId: string }) => ok(makeManifest(cfg.taskId))),
+      generateSetupShim: vi.fn().mockImplementation((cfg: { taskId: string }) => ok(makeShimManifest(cfg.taskId))),
+      initTaskDirectory: vi.fn().mockReturnValue(ok({ sessionDir: '', messagesDir: '' })),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
     } as unknown as TmuxHooksPort;
 
@@ -2750,13 +2751,13 @@ describe('TmuxConnector.prepareForReuse()', () => {
     // Count total watch calls: spawn uses 2, prepareForReuse must add 2 more
     let watchCallCount = 0;
     const watchCallbacks: Array<(event: string, filename: string | null) => void> = [];
-    const watchFn = vi.fn().mockImplementation(
-      (_p: string, _opts: unknown, cb: (event: string, f: string | null) => void) => {
+    const watchFn = vi
+      .fn()
+      .mockImplementation((_p: string, _opts: unknown, cb: (event: string, f: string | null) => void) => {
         watchCallCount++;
         watchCallbacks.push(cb);
         return { close: vi.fn(), on: vi.fn() };
-      },
-    ) as unknown as TmuxConnectorDeps['watch'];
+      }) as unknown as TmuxConnectorDeps['watch'];
 
     const hooks = makeValidHooks();
     const readFileSync = vi.fn().mockReturnValue('0');
@@ -2794,9 +2795,7 @@ describe('TmuxConnector.prepareForReuse()', () => {
     // Need a hooks that generates wrapper ok but initTaskDirectory fails
     const mixedHooks: TmuxHooksPort = {
       ...makeValidHooks(),
-      initTaskDirectory: vi.fn().mockReturnValue(
-        err(new AutobeatError(ErrorCode.TMUX_HOOK_FAILED, 'init failed')),
-      ),
+      initTaskDirectory: vi.fn().mockReturnValue(err(new AutobeatError(ErrorCode.TMUX_HOOK_FAILED, 'init failed'))),
     } as unknown as TmuxHooksPort;
 
     const connector = new TmuxConnector({
@@ -2815,7 +2814,10 @@ describe('TmuxConnector.prepareForReuse()', () => {
 
     fireSentinel('.done');
 
-    const result = connector.prepareForReuse(handle, 'task-iter2' as typeof handle.taskId, { onOutput: vi.fn(), onExit: vi.fn() });
+    const result = connector.prepareForReuse(handle, 'task-iter2' as typeof handle.taskId, {
+      onOutput: vi.fn(),
+      onExit: vi.fn(),
+    });
 
     expect(result.ok).toBe(false);
     // Session should not have been registered
@@ -2826,9 +2828,9 @@ describe('TmuxConnector.prepareForReuse()', () => {
     const { watch, fireSentinel, fireMessage } = makeWatchMock();
     const hooks = makeValidHooks();
     const readFileSync = vi.fn().mockReturnValue('0');
-    const readFile = vi.fn().mockResolvedValue(
-      JSON.stringify({ sequence: 1, timestamp: 'ts', type: 'result', content: 'hello' }),
-    );
+    const readFile = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify({ sequence: 1, timestamp: 'ts', type: 'result', content: 'hello' }));
 
     const connector = new TmuxConnector({
       ...makeDefaultFsDeps(),

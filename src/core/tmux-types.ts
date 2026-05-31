@@ -8,7 +8,7 @@
  * src/implementations/tmux/types.ts imports these types from here and re-exports
  * them so that existing callers that import from tmux/types.ts continue to work.
  *
- * Internal types (WrapperConfig, WrapperManifest, StalenessConfig, ExecFn, WatchFn,
+ * Internal types (SetupShimConfig, SetupShimManifest, StalenessConfig, ExecFn, WatchFn,
  * TmuxSessionConfig, TmuxAgentType, etc.) remain in src/implementations/tmux/types.ts
  * because they are implementation concerns. TmuxSpawnConfig extends TmuxSpawnCoreConfig
  * defined here — that extension is the only coupling point.
@@ -90,10 +90,13 @@ export interface TmuxSpawnCoreConfig {
    */
   readonly env?: Record<string, string>;
   /**
-   * Persistent session mode (Phase 5).
-   * When true: agent runs interactively (no --print), output captured via Stop hook,
-   * completion detected via per-iteration sentinel files. Used for loop iteration reuse.
-   * When false/absent: existing --print + wrapper pipeline mode.
+   * Persistent session mode.
+   * When true: the tmux session is parked (kept alive) after a sentinel fires so
+   * that WorkerPool can reuse it for the next loop iteration via prepareForReuse().
+   * When false/absent: the tmux session is destroyed after the sentinel fires.
+   *
+   * All sessions use the interactive (setup shim) path regardless of this flag —
+   * wrapper pipeline mode has been removed.
    */
   readonly persistent?: boolean;
 }

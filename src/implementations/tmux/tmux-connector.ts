@@ -159,15 +159,14 @@ export class TmuxConnector implements TmuxConnectorPort {
   /**
    * Spawns a new managed tmux session.
    * 1. Validates tmux availability
-   * 2. Generates the wrapper script (or setup shim for persistent mode)
+   * 2. Generates the setup shim (interactive mode — all sessions)
    * 3. Starts fs.watch watchers (BEFORE session launch to avoid race)
-   * 4. Creates the tmux session running the wrapper
+   * 4. Creates the tmux session running the setup shim
    * 5. Starts (or restarts) the shared staleness timer
    *
-   * DESIGN DECISION (Phase 5): When rawConfig.persistent=true, a setup shim is used
-   * instead of the wrapper pipeline. The agent runs as an interactive REPL — no --print,
-   * no piping. Output is captured via the Stop hook; completion via per-iteration sentinels.
-   * The session remains alive across iterations; WorkerPool manages reuse.
+   * DECISION: All sessions use the interactive (setup shim) path.
+   * The agent runs as an interactive REPL — no --print, no piping.
+   * Output is captured via the Stop hook; completion via per-iteration sentinels.
    */
   spawn(rawConfig: TmuxSpawnCoreConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
     // TmuxSpawnConfig extends TmuxSpawnCoreConfig (the port interface type) and adds
@@ -195,39 +194,18 @@ export class TmuxConnector implements TmuxConnectorPort {
     const validationResult = this.deps.validator.validate();
     if (!validationResult.ok) return validationResult;
 
-    // 2. Generate wrapper or setup shim depending on mode
-    if (config.persistent) {
-      const shimConfig: SetupShimConfig = {
-        taskId: config.taskId,
-        sessionsDir: config.sessionsDir,
-        agentCommand: config.command,
-        agentArgs: config.agentArgs,
-      };
-      const shimResult = this.deps.hooks.generateSetupShim(shimConfig);
-      if (!shimResult.ok) return shimResult;
-      const shim = shimResult.value;
-
-      return this.createAndRegisterSession(config, shim.shimPath, shim.messagesDir, shim.sessionDir, callbacks);
-    }
-
-    // Non-persistent (default): wrapper pipeline mode
-    const manifestResult = this.deps.hooks.generateWrapper({
+    // 2. Generate setup shim — all sessions run in interactive mode
+    const shimConfig: SetupShimConfig = {
       taskId: config.taskId,
-      agent: config.agent,
       sessionsDir: config.sessionsDir,
       agentCommand: config.command,
       agentArgs: config.agentArgs,
-    });
-    if (!manifestResult.ok) return manifestResult;
-    const manifest = manifestResult.value;
+    };
+    const shimResult = this.deps.hooks.generateSetupShim(shimConfig);
+    if (!shimResult.ok) return shimResult;
+    const shim = shimResult.value;
 
-    return this.createAndRegisterSession(
-      config,
-      manifest.wrapperPath,
-      manifest.messagesDir,
-      manifest.sessionDir,
-      callbacks,
-    );
+    return this.createAndRegisterSession(config, shim.shimPath, shim.messagesDir, shim.sessionDir, callbacks);
   }
 
   /**
@@ -370,9 +348,7 @@ export class TmuxConnector implements TmuxConnectorPort {
   prepareForReuse(handle: TmuxHandle, newTaskId: TaskId, callbacks: SpawnCallbacks): Result<void, AutobeatError> {
     // Guard: reject if newTaskId is already active (shouldn't happen in steady state)
     if (this.activeSessions.has(newTaskId)) {
-      return err(
-        tmuxSessionFailed('prepareForReuse', `session for taskId '${newTaskId}' already exists`),
-      );
+      return err(tmuxSessionFailed('prepareForReuse', `session for taskId '${newTaskId}' already exists`));
     }
 
     // Step 1: Create new task directory
@@ -395,13 +371,19 @@ export class TmuxConnector implements TmuxConnectorPort {
       taskId: newTaskId,
       sessionsDir: handle.sessionsDir,
       name: handle.sessionName,
-      command: '',      // not used by buildActiveSession
-      agentArgs: [],    // not used by buildActiveSession
+      command: '', // not used by buildActiveSession
+      agentArgs: [], // not used by buildActiveSession
       agent: 'claude' as const, // not used by buildActiveSession
       persistent: true,
     };
 
-    const sessionResult = this.buildActiveSession(syntheticConfig, handle.sessionName, messagesDir, sessionDir, callbacks);
+    const sessionResult = this.buildActiveSession(
+      syntheticConfig,
+      handle.sessionName,
+      messagesDir,
+      sessionDir,
+      callbacks,
+    );
     if (!sessionResult.ok) return sessionResult;
     const session = sessionResult.value;
 

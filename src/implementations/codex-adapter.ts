@@ -24,12 +24,9 @@ export class CodexAdapter extends BaseAgentAdapter {
 
   protected override buildTmuxArgs(model?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
+    // DECISION: Interactive tmux mode — no --quiet, no prompt in args.
+    // Output is captured via the Stop hook; --quiet is only for non-tmux invocations.
     return ['--full-auto', ...modelArgs];
-  }
-
-  protected override buildWrapperFlags(model?: string): readonly string[] {
-    const modelArgs: string[] = model ? ['--model', model] : [];
-    return ['--quiet', '--full-auto', ...modelArgs];
   }
 
   protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {

@@ -13,30 +13,31 @@ import { BaseAgentAdapter } from './base-agent-adapter.js';
 export class ClaudeAdapter extends BaseAgentAdapter {
   readonly provider: AgentProvider = 'claude';
 
-  private readonly baseArgs: readonly string[];
-
   constructor(config: Configuration, claudeCommand = 'claude') {
     super(config, claudeCommand);
-    this.baseArgs = Object.freeze(['--print', '--dangerously-skip-permissions', '--output-format', 'json']);
   }
 
   protected buildArgs(prompt: string, model?: string, jsonSchema?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
     const schemaArgs: string[] = jsonSchema ? ['--json-schema', jsonSchema] : [];
-    return [...this.baseArgs, ...modelArgs, ...schemaArgs, '--', prompt];
+    // DECISION: --print used for non-tmux (process-based) invocation only.
+    return [
+      '--print',
+      '--dangerously-skip-permissions',
+      '--output-format',
+      'json',
+      ...modelArgs,
+      ...schemaArgs,
+      '--',
+      prompt,
+    ];
   }
 
   protected override buildTmuxArgs(model?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
-    // DECISION: --output-format stream-json has no effect in interactive (persistent)
-    // mode — Claude Code ignores it when running as a REPL. Removing it keeps the
-    // arg list lean and avoids sending a flag that the agent may reject in future versions.
+    // DECISION: Interactive tmux mode — no --print, no --output-format.
+    // Output is captured via the Stop hook; --print is only for non-tmux invocations.
     return ['--dangerously-skip-permissions', ...modelArgs];
-  }
-
-  protected override buildWrapperFlags(model?: string): readonly string[] {
-    const modelArgs: string[] = model ? ['--model', model] : [];
-    return [...this.baseArgs, ...modelArgs];
   }
 
   protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
