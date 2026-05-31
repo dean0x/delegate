@@ -1906,6 +1906,43 @@ describe('TmuxConnector.destroy()', () => {
       connector.destroy(spawnResult.value);
     }).not.toThrow();
   });
+
+  it('destroy on a parked session kills the tmux process (session-orphan regression)', () => {
+    // Regression: before the fix, destroy() on a parked handle returned ok(undefined)
+    // without calling destroySession() because the parked session is removed from
+    // activeSessions by triggerExit(). Every loop with 2+ iterations would leak a tmux process.
+    const { watch, fireSentinel } = makeWatchMock();
+    const sessionManager = makeValidSessionManager();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    const persistentConfig: TmuxSpawnConfig = { ...BASE_CONFIG, persistent: true };
+    const spawnResult = connector.spawn(persistentConfig, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) throw new Error('spawn failed');
+    const handle = spawnResult.value;
+
+    // Park the session (removes it from activeSessions)
+    fireSentinel('.done');
+    expect(connector.getActiveHandles()).toHaveLength(0);
+
+    // Reset the destroySession call count so we can assert only the destroy() call
+    vi.mocked(sessionManager.destroySession).mockClear();
+
+    // destroy() on the parked handle must still kill the tmux process
+    const result = connector.destroy(handle);
+
+    expect(result.ok).toBe(true);
+    expect(sessionManager.destroySession).toHaveBeenCalledWith(handle.sessionName);
+  });
 });
 
 describe('TmuxConnector.sendControlKeys()', () => {

@@ -27,6 +27,7 @@ import type {
   OutputMessage,
   SetupShimConfig,
   StalenessConfig,
+  TmuxAgentType,
   TmuxConnectorPort,
   TmuxHandle,
   TmuxHooksPort,
@@ -136,6 +137,15 @@ interface ActiveSession {
    * stays alive for the next loop iteration.
    */
   persistent: boolean;
+  /**
+   * Agent type that spawned this session.
+   * Stored here so prepareForReuse() can forward the correct agent to
+   * buildActiveSession() without hardcoding 'claude'. The syntheticConfig
+   * passed to buildActiveSession satisfies the type shape; buildActiveSession
+   * does not currently read config.agent, but storing it here is defensive:
+   * if that changes, the field will carry the right value automatically.
+   */
+  agent: TmuxAgentType;
   /** Stored callbacks for flush-on-destroy/dispose */
   callbacks: SpawnCallbacks;
   /** Re-entrancy guard for flushPendingFiles */
@@ -153,6 +163,17 @@ export class TmuxConnector implements TmuxConnectorPort {
    * batch spawn (e.g. a pipeline launching 10 tasks back-to-back).
    */
   private currentTimerIntervalMs: number | null = null;
+
+  /**
+   * Agent type for parked persistent sessions, keyed by tmux session name.
+   * When triggerExit() parks a session it removes it from activeSessions (so the
+   * staleness timer skips it) but the tmux process stays alive. We need the agent
+   * type to survive the park so prepareForReuse() can forward it to buildActiveSession()
+   * via the syntheticConfig rather than hardcoding 'claude'.
+   * Entries are removed when prepareForReuse() re-registers the session, or when
+   * destroy() / dispose() cleans it up.
+   */
+  private readonly parkedSessionAgents = new Map<string, TmuxAgentType>();
 
   constructor(private readonly deps: TmuxConnectorDeps) {}
 
@@ -260,12 +281,26 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   /**
    * Destroys a session and cleans up all watchers and timers.
-   * Idempotent. Returns early when the handle is not tracked to avoid
-   * acting on sessions owned by other connectors.
+   *
+   * When the session is tracked in activeSessions (the normal path), this method
+   * flushes pending output, closes watchers, kills the tmux process, and fires onExit.
+   *
+   * When the session is NOT tracked — which happens when a persistent session was parked
+   * by triggerExit() (parking removes the entry from activeSessions so the staleness
+   * timer skips it, but the tmux process stays alive) — the tracked-session cleanup
+   * steps are skipped, but the tmux process is still killed via destroySession().
+   * Without this fall-through, cleanupPersistentSession() calling destroy() on a
+   * parked handle would silently no-op and leak the tmux session.
    */
   destroy(handle: TmuxHandle): Result<void, AutobeatError> {
     const session = this.activeSessions.get(handle.taskId);
-    if (!session) return ok(undefined);
+    if (!session) {
+      // Parked-session path: no ActiveSession to flush/close, but the tmux process
+      // is still alive and must be killed. Skip the watcher/callback machinery and
+      // delegate directly to the session manager. Also clean up the parked agent entry.
+      this.parkedSessionAgents.delete(handle.sessionName);
+      return this.deps.sessionManager.destroySession(handle.sessionName);
+    }
 
     // Set state to 'exited' before flush so late staleness timer ticks cannot trigger
     // onExit after we have already destroyed the session.
@@ -364,21 +399,30 @@ export class TmuxConnector implements TmuxConnectorPort {
       sessionsDir: handle.sessionsDir,
     };
 
+    // Retrieve the agent type stored when the session was parked, then remove it —
+    // the session will be re-registered under newTaskId and the parked entry is no
+    // longer needed. Fall back to 'claude' defensively (should not happen in practice
+    // because triggerExit always populates parkedSessionAgents before prepareForReuse
+    // is called, but guards against a future code path where prepareForReuse is called
+    // on a session that was never parked via triggerExit).
+    const parkedAgent = this.parkedSessionAgents.get(handle.sessionName) ?? 'claude';
+    this.parkedSessionAgents.delete(handle.sessionName);
+
     // Synthesise a minimal TmuxSpawnConfig for buildActiveSession.
     // buildActiveSession reads exactly four fields from config:
     //   config.staleness  → merged with DEFAULT_STALENESS_CONFIG
     //   config.taskId     → embedded in session.handle
     //   config.sessionsDir → embedded in session.handle
     //   config.persistent  → stored as session.persistent
-    // The remaining fields (command, agentArgs, agent) satisfy the type constraint
-    // but are not read; they carry no meaning in this reuse path.
+    //   config.agent       → stored as session.agent (for future use by buildActiveSession)
+    // The remaining fields (command, agentArgs) satisfy the type constraint but are not read.
     const syntheticConfig = {
       taskId: newTaskId,
       sessionsDir: handle.sessionsDir,
       name: handle.sessionName,
       command: '',
       agentArgs: [] as string[],
-      agent: 'claude' as const,
+      agent: parkedAgent,
       persistent: true,
     };
 
@@ -426,6 +470,7 @@ export class TmuxConnector implements TmuxConnectorPort {
   dispose(): void {
     const sessions = Array.from(this.activeSessions.values());
     this.activeSessions.clear();
+    this.parkedSessionAgents.clear();
     this.stopSharedStalenessTimer();
     for (const session of sessions) {
       // Per-session try/catch ensures one failing teardown does not prevent
@@ -507,6 +552,7 @@ export class TmuxConnector implements TmuxConnectorPort {
       messagesDir,
       sessionDir,
       persistent: config.persistent === true,
+      agent: config.agent,
       callbacks,
       flushing: false,
     });
@@ -963,7 +1009,10 @@ export class TmuxConnector implements TmuxConnectorPort {
       this.flushPendingFiles(session);
       this.closeSession(session);
       // Remove from activeSessions — prepareForReuse() will re-register with new taskId.
+      // Store the agent type so prepareForReuse() can forward it to buildActiveSession()
+      // via the syntheticConfig, avoiding the hardcoded 'claude' placeholder.
       this.activeSessions.delete(taskId);
+      this.parkedSessionAgents.set(session.handle.sessionName, session.agent);
       if (!skipTimerRestart) {
         this.restartSharedStalenessTimer();
       }

@@ -437,9 +437,12 @@ export class EventDrivenWorkerPool implements WorkerPool {
       // sendKeys(prompt) so that the connector's watchers are ready to receive
       // output as soon as the agent starts processing the new prompt.
       //
-      // Callbacks are created from the entry's taskIdRef which will be updated to
-      // task.id in the remap step below. prepareForReuse() embeds these callbacks
-      // in the new ActiveSession so output is routed correctly from the first message.
+      // Update taskIdRef.current BEFORE creating callbacks so that if any callback
+      // fires in the window between createCallbacks() and the remap step (Step 6),
+      // it routes to the correct new task ID rather than the previous iteration's ID.
+      // In normal operation the agent has not received its prompt yet at this point,
+      // so no callback should fire — but the ordering makes the invariant explicit.
+      entry.taskIdRef.current = task.id;
       const reuseCallbacks = this.createCallbacks(entry.taskIdRef);
       const prepareResult = this.tmuxConnector.prepareForReuse(handle, task.id, reuseCallbacks);
       if (!prepareResult.ok) {
@@ -561,6 +564,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const { handle, agentProvider } = entry;
     const prevTaskId = worker.taskId;
 
+    // ── Phase 1: Remap identity (must precede Phase 2 — timers read taskId) ─────
+
     // B1-4 fix: Remove the old task's in-flight flush entry before updating taskId.
     // The startFlushing closure reads worker.taskId on each tick; deleting the old
     // entry prevents a spurious "already in progress" skip on the first new-task flush.
@@ -602,6 +607,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
         error: updateResult.error.message,
       });
     }
+
+    // ── Phase 2: Restart timers under new identity ────────────────────────────
 
     // B1-3 fix: Restart timers for the new iteration (see restartTimersForWorker).
     this.restartTimersForWorker(worker);
