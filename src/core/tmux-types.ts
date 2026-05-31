@@ -36,7 +36,7 @@ export interface TmuxHandle {
 // ─── Output message ───────────────────────────────────────────────────────────
 
 /**
- * A single output message written by the wrapper script.
+ * A single output message written by the Stop hook (autobeat-stop-hook).
  */
 export interface OutputMessage {
   readonly sequence: number;
@@ -162,7 +162,7 @@ export interface TmuxSessionManagerCorePort {
  * spawn() accepts TmuxSpawnCoreConfig — the minimal core-layer type. The concrete
  * TmuxConnector casts it to the richer TmuxSpawnConfig (which extends TmuxSpawnCoreConfig)
  * at the implementation boundary, where the full field set is needed to configure
- * the tmux session and wrapper script.
+ * the tmux session and setup shim.
  */
 export interface TmuxConnectorPort {
   spawn(config: TmuxSpawnCoreConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError>;

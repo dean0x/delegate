@@ -272,7 +272,7 @@ export class TmuxConnector implements TmuxConnectorPort {
     session.state = 'exited';
     this.flushPendingFiles(session);
     this.closeSession(session);
-    // Kill the tmux session before removing the directory — the wrapper script
+    // Kill the tmux session before removing the directory — the agent
     // may still be writing when destroy() is called, and rmSync while the
     // process has open file handles produces I/O errors.
     const destroyResult = this.deps.sessionManager.destroySession(handle.sessionName);

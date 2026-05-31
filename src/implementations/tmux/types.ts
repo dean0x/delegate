@@ -111,7 +111,7 @@ export interface TmuxInfo {
   readonly version: string;
   /** Path to the tmux binary */
   readonly path: string;
-  /** Path to the jq binary (required for JSON escaping in wrapper scripts) */
+  /** Path to the jq binary (required by the Stop hook for JSON parsing) */
   readonly jqPath: string;
 }
 
