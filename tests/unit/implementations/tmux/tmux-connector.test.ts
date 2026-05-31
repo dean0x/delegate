@@ -2824,7 +2824,7 @@ describe('TmuxConnector.prepareForReuse()', () => {
     expect(connector.getActiveHandles()).toHaveLength(0);
   });
 
-  it('resets nextExpectedSeq to 1 and clears pendingMessages for new iteration', () => {
+  it('resets nextExpectedSeq to 1 and clears pendingMessages for new iteration', async () => {
     const { watch, fireSentinel, fireMessage } = makeWatchMock();
     const hooks = makeValidHooks();
     const readFileSync = vi.fn().mockReturnValue('0');
@@ -2856,13 +2856,12 @@ describe('TmuxConnector.prepareForReuse()', () => {
     fireMessage('00001-result.json');
 
     // The message should be delivered via new callbacks (sequence counting restarts at 1)
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
+    await vi.waitFor(
+      () =>
         expect(newOnOutput).toHaveBeenCalledWith(
           expect.objectContaining({ sequence: 1, type: 'result', content: 'hello' }),
-        );
-        resolve();
-      }, 100);
-    });
+        ),
+      { timeout: 300 },
+    );
   });
 });
