@@ -362,13 +362,13 @@ export class EventDrivenWorkerPool implements WorkerPool {
    *    watchers are ready before any output arrives from the new prompt.
    * 6. Remap worker state to the new task:
    *    a. Update taskIdRef.current so callbacks route events to the new task ID
-   *    b. Re-register WorkerState if cleanupWorkerState already removed it (B1-1 fix)
+   *    b. Re-register WorkerState if cleanupWorkerState already removed it,
    *       OR overwrite task/taskId on the existing WorkerState in-place
    *    c. Reset completionHandled to false (G2 guard for the new iteration)
    *    d. Update taskToWorker map (remove old task → workerId, add new)
-   *    e. Clean up flushingInProgress for the old task ID (B1-4 fix)
-   *    f. Update DB registration for the new task ID (B1-5 fix)
-   * 7. Restart flushing, heartbeat, and timeout timers (B1-3 fix)
+   *    e. Clean up flushingInProgress for the old task ID
+   *    f. Atomically update DB registration from old task ID to new task ID
+   * 7. Restart flushing, heartbeat, and timeout timers
    * 8. Send new prompt via sendKeys
    * 9. Release reuse lock
    *
@@ -377,14 +377,6 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * prevents the loop from stalling on a broken persistent session.
    * Returns ok(null) to signal "fall through to fresh spawn"; ok(Worker) on success.
    *
-   * B1-1 fix: WorkerState is gone after every loop iteration (cleanupWorkerState removes
-   * it on completion). Re-register using the handle + taskIdRef stored in the entry.
-   * B1-2 fix: On sendKeys failure, call cleanupWorkerState before destroying the session
-   * so orphaned timers are cleared and the stale workerId is removed from maps.
-   * B1-3 fix: After remapping, restart flushing, heartbeat, and timeout — onExit stopped
-   * them before calling handleWorkerCompletion, and they are not auto-restarted on reuse.
-   * B1-4 fix: Delete the old task's flushingInProgress entry before updating taskId.
-   * B1-5 fix: Update DB worker registration from old task ID to new task ID.
    */
   private async reuseSession(
     task: Task,
@@ -538,7 +530,6 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // re-registration. Without this update, every iteration after the first uses a stale
     // workerId that no longer exists in this.workers.
     entry.workerId = worker.id;
-    // Start timers for the freshly-registered worker (B1-3 fix applies here too).
     this.setupTimeoutForWorker(worker);
     this.setupHeartbeatForWorker(worker);
     this.startFlushing(worker);
@@ -566,7 +557,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
 
     // ── Phase 1: Remap identity (must precede Phase 2 — timers read taskId) ─────
 
-    // B1-4 fix: Remove the old task's in-flight flush entry before updating taskId.
+    // Remove the old task's in-flight flush entry before updating taskId.
     // The startFlushing closure reads worker.taskId on each tick; deleting the old
     // entry prevents a spurious "already in progress" skip on the first new-task flush.
     this.flushingInProgress.delete(prevTaskId);
@@ -586,10 +577,9 @@ export class EventDrivenWorkerPool implements WorkerPool {
     worker.taskId = task.id;
     worker.completionHandled = false;
 
-    // B1-5 fix / B1-non-atomic-db fix: Atomically update DB registration from old
-    // task ID to new task ID. Uses updateTaskId() which wraps DELETE + INSERT in a
-    // single SQLite transaction, eliminating the crash window of the prior
-    // unregister() + register() sequence.
+    // Atomically update DB registration from old task ID to new task ID.
+    // updateTaskId() wraps DELETE + INSERT in a single SQLite transaction,
+    // eliminating the crash window of a sequential unregister() + register().
     const updateResult = this.workerRepository.updateTaskId({
       workerId,
       taskId: task.id,
@@ -610,7 +600,6 @@ export class EventDrivenWorkerPool implements WorkerPool {
 
     // ── Phase 2: Restart timers under new identity ────────────────────────────
 
-    // B1-3 fix: Restart timers for the new iteration (see restartTimersForWorker).
     this.restartTimersForWorker(worker);
   }
 

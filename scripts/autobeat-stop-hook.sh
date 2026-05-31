@@ -7,7 +7,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 
 HOOK_DATA=$(head -c 10485760)
 
-# Issue 3 (jq consolidation): extract all fields from HOOK_DATA in one jq pass.
+# Extract all fields from HOOK_DATA in one jq pass.
 # @sh escaping ensures values with spaces, quotes, or newlines are safely eval'd.
 # Fields:
 #   RESPONSE       — last_assistant_message (Codex path); empty when absent
@@ -21,10 +21,7 @@ eval "$(printf '%s' "$HOOK_DATA" | jq -r '
   "TOTAL_COST_USD=" + (if .total_cost_usd then (.total_cost_usd | tostring | @sh) else "'\''" + "'\''" end)
 ' 2>/dev/null)" 2>/dev/null || true
 
-RESPONSE_FROM_DIRECT=false
-if [ -n "$RESPONSE" ]; then
-  RESPONSE_FROM_DIRECT=true
-fi
+[ -n "$RESPONSE" ] && RESPONSE_FROM_DIRECT=true || RESPONSE_FROM_DIRECT=false
 
 if [ -z "$RESPONSE" ]; then
   TRANSCRIPT=$(printf '%s' "$HOOK_DATA" | jq -r '.transcript_path // empty' 2>/dev/null)
@@ -77,7 +74,7 @@ TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%FT%TZ)
 
 # Direct payload responses are raw strings that need JSON-string escaping.
 # Transcript fallback responses come from jq join() and are already safe as-is.
-# Issue 2 (err-trap): fall back to empty JSON string if jq -Rs fails (e.g. OOM),
+# Fall back to empty JSON string if jq -Rs fails (e.g. OOM),
 # rather than producing a malformed content field in the message JSON.
 if [ "$RESPONSE_FROM_DIRECT" = "true" ]; then
   ESCAPED=$(printf '%s' "$RESPONSE" | jq -Rs . 2>/dev/null)
@@ -93,11 +90,10 @@ printf '{"sequence":%d,"timestamp":"%s","type":"result","content":%s}\n' \
   "$SEQ" "$TIMESTAMP" "$ESCAPED" > "${MSG_FILE}.tmp"
 mv "${MSG_FILE}.tmp" "$MSG_FILE"
 
-# Issue 1 (usage regression): emit a synthetic stdout message containing the JSON
-# usage blob so UsageParser can find {"type":"result",...,"usage":{...}} in the
-# concatenated stdout buffer.  Only written when usage fields are present in
-# HOOK_DATA (Claude Code path).  Codex and transcript-fallback paths omit usage
-# gracefully — UsageParser already handles ok(null) for missing data.
+# Emit a synthetic stdout message containing the JSON usage blob so UsageParser can
+# find {"type":"result",...,"usage":{...}} in the concatenated stdout buffer.
+# Only written when usage fields are present (Claude Code path).
+# Codex and transcript-fallback paths omit usage gracefully — UsageParser handles ok(null).
 if [ -n "$USAGE_JSON" ] && [ -n "$TOTAL_COST_USD" ]; then
   SEQ2=$((SEQ + 1))
   echo "$SEQ2" > "$SEQ_FILE"

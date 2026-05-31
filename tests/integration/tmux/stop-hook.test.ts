@@ -674,7 +674,7 @@ describe('stop-hook: fail-fast on empty response', () => {
 });
 
 // ============================================================================
-// Usage Capture (Issue 1 fix: usage regression)
+// Usage Capture
 // ============================================================================
 
 describe('stop-hook: usage capture', () => {
@@ -903,27 +903,23 @@ describe('stop-hook: Claude path — special characters', () => {
 });
 
 // ============================================================================
-// ESCAPED guard (Issue 2 fix: err-trap / jq failure fallback)
+// jq escape fallback
 // ============================================================================
 
-describe('stop-hook: ESCAPED guard', () => {
-  it('writes a valid result file even when response is an empty string', () => {
-    // Simulate the edge case where jq -Rs would produce an empty result
-    // by sending a Codex payload with empty last_assistant_message.
-    // The hook exits early on empty RESPONSE (writes .exit), so this test
-    // validates that the fallback path is correct — an empty response
-    // should not produce a malformed message file.
+describe('stop-hook: jq escape fallback', () => {
+  it('treats empty last_assistant_message as missing — writes .exit, no message file', () => {
+    // An empty string from the Codex field is indistinguishable from "no response".
+    // The hook exits the fail-fast path (writes .exit) rather than writing a
+    // malformed or empty message file.
     const sessionsDir = path.join(tmpDir, 'escaped-guard');
     const taskId = 'task-escaped-guard';
 
-    // Non-empty response ensures we reach the message-writing path
     const payload = JSON.stringify({
       last_assistant_message: '',
       stop_reason: 'end_turn',
     });
     const { taskDir } = runHook(payload, taskId, sessionsDir);
 
-    // Empty last_assistant_message → treated as missing → .exit written, no message
     expect(fs.existsSync(path.join(taskDir, '.exit'))).toBe(true);
     const messagesDir = path.join(taskDir, 'messages');
     const hasMessages = fs.existsSync(messagesDir) && fs.readdirSync(messagesDir).length > 0;

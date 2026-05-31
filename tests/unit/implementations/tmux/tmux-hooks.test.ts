@@ -37,7 +37,6 @@ describe('TmuxHooks.cleanup()', () => {
     expect(opts.force).toBe(true);
   });
 
-  // B5: cleanup error path — rmSync throws
   it('returns TMUX_HOOK_FAILED when rmSync throws', () => {
     const { deps, rmSync } = makeDeps();
     rmSync.mockImplementation(() => {

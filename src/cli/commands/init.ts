@@ -113,8 +113,6 @@ export interface HookConfigDeps {
   readonly unlinkFile: (filePath: string) => void;
 }
 
-// ── Private helpers for configureAgentHook ──────────────────────────────────
-
 /** Read and parse an existing agent config file, returning an empty object if absent or unreadable. */
 function readExistingConfig(
   configPath: string,
@@ -186,8 +184,6 @@ function hasStopHookCommand(stopHookEntries: unknown[]): boolean {
     });
   });
 }
-
-// ────────────────────────────────────────────────────────────────────────────
 
 /**
  * Deep-merge a Stop hook entry into an agent's config file.
