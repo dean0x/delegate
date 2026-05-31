@@ -218,7 +218,7 @@ export class TmuxConnector implements TmuxConnectorPort {
    */
   private createAndRegisterSession(
     config: TmuxSpawnConfig,
-    wrapperPath: string,
+    shimPath: string,
     messagesDir: string,
     sessionDir: string,
     callbacks: SpawnCallbacks,
@@ -231,10 +231,10 @@ export class TmuxConnector implements TmuxConnectorPort {
     const session = activeSessionResult.value;
     this.startWatchers(session, sessionDir);
 
-    // 4. Create tmux session running the wrapper
+    // 4. Create tmux session running the setup shim
     const sessionResult = this.deps.sessionManager.createSession({
       ...config,
-      command: wrapperPath,
+      command: shimPath,
     });
     if (!sessionResult.ok) {
       // Clean up watchers and generated session directory on failure
@@ -511,7 +511,7 @@ export class TmuxConnector implements TmuxConnectorPort {
   }
 
   /**
-   * Starts the sentinel watcher that detects .done / .exit files written by the wrapper.
+   * Starts the sentinel watcher that detects .done / .exit files written by the Stop hook.
    * Errors are logged but do not throw — staleness detection handles the degraded path.
    */
   private startSentinelWatcher(session: ActiveSession, sessionDir: string): void {

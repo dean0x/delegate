@@ -64,7 +64,7 @@ export interface TmuxSpawnConfig extends TmuxSessionConfig, TmuxSpawnCoreConfig 
   readonly taskId: TaskId;
   /** Base directory where all session data lives */
   readonly sessionsDir: string;
-  /** Agent type to wrap — must match a supported WrapperConfig agent value */
+  /** Agent type supported by the tmux abstraction layer (see TmuxAgentType) */
   readonly agent: TmuxAgentType;
   /** CLI arguments to pass to the agent (populated by adapter's buildTmuxArgs) */
   readonly agentArgs: readonly string[];

@@ -232,8 +232,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const adapter = adapterResult.value;
 
     // Step 4: Build tmux config
-    // Persistent sessions (loops) use interactive mode with sendKeys prompt delivery.
-    // Non-persistent tasks use wrapper mode with --print and prompt baked into args.
+    // All tasks use interactive mode with the prompt delivered via sendKeys.
+    // Persistent sessions (loops) reuse the session across iterations.
     const psk = task.persistentSessionKey;
     const buildResult = adapter.buildTmuxCommand({
       prompt: task.prompt,
@@ -271,8 +271,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
     }
 
     // Steps 6-10: spawn session, register, wire timers, send prompt
-    // Phase 5: Set persistent=true when the task has a persistent session key so
-    // TmuxConnector.spawn() uses the setup shim instead of the wrapper pipeline.
+    // Set persistent=true when the task has a persistent session key so
+    // TmuxConnector.spawn() uses the setup shim for interactive session initialisation.
     const spawnConfig: TmuxSpawnCoreConfig = psk ? { ...config, persistent: true } : config;
     const result = this.launchAndRegister({
       task,
@@ -653,8 +653,8 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Step 9: Start periodic output flushing
     this.startFlushing(worker);
 
-    // Step 10: Send prompt via sendKeys (interactive/persistent mode only).
-    // In wrapper mode, the prompt is baked into agentArgs — prompt is empty.
+    // Step 10: Send prompt via sendKeys. All tasks use interactive mode; prompt is
+    // never empty for a fresh spawn (baked-arg wrapper path has been removed).
     if (prompt) {
       const sendResult = this.tmuxConnector.sendKeys(handle, prompt + '\n');
       if (!sendResult.ok) {

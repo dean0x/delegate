@@ -650,8 +650,8 @@ export function createDefaultDeps(): InitDeps {
  * config directory is not present, the configuration is skipped with a
  * warning rather than failing init.
  *
- * For Codex: prints an informational note about trust requirements because
- * Codex CLI requires explicit trust approval for hook commands.
+ * For Codex: emits a warning in the HookConfigResult when configuration succeeds
+ * because Codex CLI requires explicit trust approval for hook commands on first run.
  */
 export function defaultConfigureHooks(agent: AgentProvider): readonly HookConfigResult[] {
   void agent; // Both CLIs are always configured; agent param is for future extensibility
@@ -675,6 +675,13 @@ export function defaultConfigureHooks(agent: AgentProvider): readonly HookConfig
     const configResult = configureAgentHook(agentType, configPath, deps);
     if (!configResult.ok) {
       results.push({ agentType, ok: false, error: configResult.error });
+    } else if (agentType === 'codex') {
+      results.push({
+        agentType,
+        ok: true,
+        warning:
+          'Codex may require you to approve the autobeat-stop-hook on first run. Run `codex` and accept the hook trust prompt.',
+      });
     } else {
       results.push({ agentType, ok: true });
     }
