@@ -705,6 +705,9 @@ function makeHookDeps(): HookConfigDeps {
     fileExists(filePath: string): boolean {
       return fs.existsSync(filePath);
     },
+    unlinkFile(filePath: string): void {
+      fs.unlinkSync(filePath);
+    },
   };
 }
 
@@ -903,9 +906,9 @@ describe('configureAgentHook', () => {
     if (!result.ok) {
       expect(result.error).toContain('EXDEV');
     }
-    // .tmp file should not contain valid JSON content (cleaned up to empty string)
-    if (writtenTmpPath && fs.existsSync(writtenTmpPath)) {
-      expect(fs.readFileSync(writtenTmpPath, 'utf-8')).toBe('');
+    // .tmp file should be deleted on rename failure (no orphaned file)
+    if (writtenTmpPath) {
+      expect(fs.existsSync(writtenTmpPath)).toBe(false);
     }
   });
 });

@@ -110,7 +110,84 @@ export interface HookConfigDeps {
   readonly renameFile: (from: string, to: string) => void;
   readonly ensureDir: (dirPath: string) => void;
   readonly fileExists: (filePath: string) => boolean;
+  readonly unlinkFile: (filePath: string) => void;
 }
+
+// ── Private helpers for configureAgentHook ──────────────────────────────────
+
+/** Read and parse an existing agent config file, returning an empty object if absent or unreadable. */
+function readExistingConfig(
+  configPath: string,
+  agentType: 'claude' | 'codex',
+  deps: HookConfigDeps,
+): Result<Record<string, unknown>, string> {
+  if (!deps.fileExists(configPath)) return ok({});
+  const raw = deps.readFile(configPath);
+  if (raw === null) return ok({});
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return ok(parsed as Record<string, unknown>);
+    }
+    return ok({});
+  } catch {
+    return err(`Failed to parse ${agentType} config at ${configPath}: invalid JSON`);
+  }
+}
+
+/** Copy the config file to `<configPath>.bak` if no backup exists yet. */
+function backupIfNeeded(configPath: string, deps: HookConfigDeps): void {
+  if (!deps.fileExists(configPath)) return;
+  const backupPath = configPath + '.bak';
+  if (deps.fileExists(backupPath)) return;
+  const original = deps.readFile(configPath);
+  if (original !== null) {
+    deps.writeFile(backupPath, original);
+  }
+}
+
+/** Write `content` atomically to `configPath` via a `.tmp` + rename pair. */
+function atomicWriteConfig(
+  configPath: string,
+  content: string,
+  agentType: 'claude' | 'codex',
+  deps: HookConfigDeps,
+): Result<void, string> {
+  const tmpPath = configPath + '.tmp';
+  try {
+    deps.writeFile(tmpPath, content);
+  } catch (e) {
+    return err(`Failed to write ${agentType} config (tmp): ${e instanceof Error ? e.message : String(e)}`);
+  }
+  try {
+    deps.renameFile(tmpPath, configPath);
+  } catch (e) {
+    // Best-effort delete of the orphaned .tmp file.
+    try {
+      deps.unlinkFile(tmpPath);
+    } catch {
+      /* ignore */
+    }
+    return err(`Failed to write ${agentType} config (rename): ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return ok(undefined);
+}
+
+/** Return true if `autobeat-stop-hook` is already registered in the Stop hooks array. */
+function hasStopHookCommand(stopHookEntries: unknown[]): boolean {
+  return stopHookEntries.some((entry) => {
+    if (typeof entry !== 'object' || entry === null) return false;
+    const e = entry as Record<string, unknown>;
+    if (!Array.isArray(e.hooks)) return false;
+    return (e.hooks as unknown[]).some((h) => {
+      if (typeof h !== 'object' || h === null) return false;
+      const hookEntry = h as Record<string, unknown>;
+      return hookEntry.type === 'command' && hookEntry.command === STOP_HOOK_COMMAND;
+    });
+  });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 
 /**
  * Deep-merge a Stop hook entry into an agent's config file.
@@ -130,95 +207,33 @@ export function configureAgentHook(
   configPath: string,
   deps: HookConfigDeps,
 ): Result<void, string> {
-  // Ensure parent directory exists
   const configDir = path.dirname(configPath);
-  deps.ensureDir(configDir);
-
-  // Read existing config (or empty object if not present)
-  let existing: Record<string, unknown> = {};
-  if (deps.fileExists(configPath)) {
-    const raw = deps.readFile(configPath);
-    if (raw !== null) {
-      try {
-        const parsed: unknown = JSON.parse(raw);
-        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-          existing = parsed as Record<string, unknown>;
-        }
-      } catch {
-        return err(`Failed to parse ${agentType} config at ${configPath}: invalid JSON`);
-      }
-    }
+  try {
+    deps.ensureDir(configDir);
+  } catch (e) {
+    return err(`Failed to create ${agentType} config directory: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  // Check idempotency — scan existing hooks array for our command
+  const existingResult = readExistingConfig(configPath, agentType, deps);
+  if (!existingResult.ok) return existingResult;
+  const existing = existingResult.value;
+
   const existingHooks =
     typeof existing.hooks === 'object' && existing.hooks !== null && !Array.isArray(existing.hooks)
       ? (existing.hooks as Record<string, unknown>)
       : {};
-
   const stopHooks = Array.isArray(existingHooks.Stop) ? (existingHooks.Stop as unknown[]) : [];
 
-  function hasStopHookCommand(stopHookEntries: unknown[]): boolean {
-    return stopHookEntries.some((entry) => {
-      if (typeof entry !== 'object' || entry === null) return false;
-      const e = entry as Record<string, unknown>;
-      if (!Array.isArray(e.hooks)) return false;
-      return (e.hooks as unknown[]).some((h) => {
-        if (typeof h !== 'object' || h === null) return false;
-        const hookEntry = h as Record<string, unknown>;
-        return hookEntry.type === 'command' && hookEntry.command === STOP_HOOK_COMMAND;
-      });
-    });
-  }
+  if (hasStopHookCommand(stopHooks)) return ok(undefined);
 
-  const alreadyPresent = hasStopHookCommand(stopHooks);
+  backupIfNeeded(configPath, deps);
 
-  if (alreadyPresent) {
-    return ok(undefined);
-  }
-
-  // Create backup before first modification
-  if (deps.fileExists(configPath)) {
-    const backupPath = configPath + '.bak';
-    if (!deps.fileExists(backupPath)) {
-      const original = deps.readFile(configPath);
-      if (original !== null) {
-        deps.writeFile(backupPath, original);
-      }
-    }
-  }
-
-  // Build the updated config: deep merge hooks.Stop array
-  const newHookEntry = {
-    hooks: [{ type: 'command', command: STOP_HOOK_COMMAND }],
-  };
-
-  const updatedStopHooks = [...stopHooks, newHookEntry];
-  const updatedHooks = { ...existingHooks, Stop: updatedStopHooks };
+  const newHookEntry = { hooks: [{ type: 'command', command: STOP_HOOK_COMMAND }] };
+  const updatedHooks = { ...existingHooks, Stop: [...stopHooks, newHookEntry] };
   const updated = { ...existing, hooks: updatedHooks };
-
-  // Atomic write via .tmp + rename — wrapped so disk errors return err() instead of throwing.
-  // On rename failure, attempt best-effort cleanup of the orphaned .tmp file.
-  const tmpPath = configPath + '.tmp';
   const content = JSON.stringify(updated, null, 2) + '\n';
-  try {
-    deps.writeFile(tmpPath, content);
-  } catch (e) {
-    return err(`Failed to write ${agentType} config (tmp): ${e instanceof Error ? e.message : String(e)}`);
-  }
-  try {
-    deps.renameFile(tmpPath, configPath);
-  } catch (e) {
-    // Best-effort cleanup of the orphaned .tmp file before returning the error.
-    try {
-      deps.writeFile(tmpPath, '');
-    } catch {
-      /* ignore cleanup failure */
-    }
-    return err(`Failed to write ${agentType} config (rename): ${e instanceof Error ? e.message : String(e)}`);
-  }
 
-  return ok(undefined);
+  return atomicWriteConfig(configPath, content, agentType, deps);
 }
 
 /**
@@ -244,6 +259,9 @@ export function createDefaultHookConfigDeps(): HookConfigDeps {
     },
     fileExists(filePath: string): boolean {
       return existsSync(filePath);
+    },
+    unlinkFile(filePath: string): void {
+      rmSync(filePath);
     },
   };
 }
@@ -377,6 +395,29 @@ export function parseSkillsAgents(value: string): Result<readonly AgentProvider[
 // Core Logic
 // ============================================================================
 
+/**
+ * Run skill install if applicable, configure hooks, then return the success InitResult.
+ * `runSkills` controls whether skill install is attempted (differs between paths).
+ */
+async function finalizeInit(
+  agent: AgentProvider,
+  status: AgentAuthStatus,
+  runSkills: boolean,
+  options: InitOptions,
+  deps: InitDeps,
+): Promise<InitResult> {
+  if (runSkills) {
+    const skillResult = await runSkillInstall(agent, options, deps);
+    if (skillResult.code === 1) return skillResult;
+    if ('skillPaths' in skillResult) {
+      runHookConfigure(agent, deps);
+      return { code: 0, agent, status, skillPaths: skillResult.skillPaths };
+    }
+  }
+  runHookConfigure(agent, deps);
+  return { code: 0, agent, status };
+}
+
 export async function runInit(options: InitOptions, deps: InitDeps): Promise<InitResult> {
   const config = deps.loadConfig();
   const existingAgent =
@@ -388,25 +429,13 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<Ini
       return { code: 1, reason: `Unknown agent: "${options.agent}". Available agents: ${AGENT_PROVIDERS.join(', ')}` };
     }
 
-    const result = deps.saveConfig('defaultAgent', options.agent);
-    if (!result.ok) {
-      return { code: 1, reason: result.error };
+    const saveResult = deps.saveConfig('defaultAgent', options.agent);
+    if (!saveResult.ok) {
+      return { code: 1, reason: saveResult.error };
     }
 
     const status = deps.checkAuth(options.agent);
-
-    // Non-interactive skill install: --install-skills
-    if (options.installSkills && deps.copySkills) {
-      const skillResult = await runSkillInstall(options.agent, options, deps);
-      if (skillResult.code === 1) return skillResult;
-      if ('skillPaths' in skillResult) {
-        runHookConfigure(options.agent, deps);
-        return { code: 0, agent: options.agent, status, skillPaths: skillResult.skillPaths };
-      }
-    }
-
-    runHookConfigure(options.agent, deps);
-    return { code: 0, agent: options.agent, status };
+    return finalizeInit(options.agent, status, !!(options.installSkills && deps.copySkills), options, deps);
   }
 
   // Non-TTY guard
@@ -433,9 +462,9 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<Ini
     return { code: 0, reason: 'Setup cancelled.' };
   }
 
-  const result = deps.saveConfig('defaultAgent', selected);
-  if (!result.ok) {
-    return { code: 1, reason: result.error };
+  const saveResult = deps.saveConfig('defaultAgent', selected);
+  if (!saveResult.ok) {
+    return { code: 1, reason: saveResult.error };
   }
 
   const status = statuses.find((s) => s.provider === selected);
@@ -443,18 +472,58 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<Ini
     return { code: 1, reason: `Internal error: no auth status for '${selected}'` };
   }
 
-  // Interactive skill install (only if deps are available)
-  if (deps.confirmSkillInstall) {
-    const skillResult = await runSkillInstall(selected, options, deps);
-    if (skillResult.code === 1) return skillResult;
-    if ('skillPaths' in skillResult) {
-      runHookConfigure(selected, deps);
-      return { code: 0, agent: selected, status, skillPaths: skillResult.skillPaths };
-    }
+  return finalizeInit(selected, status, !!deps.confirmSkillInstall, options, deps);
+}
+
+type SkillInstallResult =
+  | { code: 0; skillPaths: readonly string[] }
+  | { code: 0; reason: string }
+  | { code: 1; reason: string };
+
+type AgentResolution =
+  | { resolved: true; agents: readonly AgentProvider[] }
+  | { resolved: false; result: SkillInstallResult };
+
+/**
+ * Resolve the list of target agents for skill install.
+ * Returns the resolved agent list, or an early-exit SkillInstallResult (skip/cancel/error).
+ */
+async function resolveTargetAgents(
+  defaultAgent: AgentProvider,
+  options: InitOptions,
+  deps: InitDeps,
+): Promise<AgentResolution> {
+  if (options.skillsAgents) {
+    // Non-interactive: explicit --skills-agents
+    const parsed = parseSkillsAgents(options.skillsAgents);
+    if (!parsed.ok) return { resolved: false, result: { code: 1, reason: parsed.error } };
+    return { resolved: true, agents: parsed.value };
   }
 
-  runHookConfigure(selected, deps);
-  return { code: 0, agent: selected, status };
+  if (options.installSkills && !deps.isTTY) {
+    // Non-interactive without --skills-agents: install for default agent only
+    return { resolved: true, agents: [defaultAgent] };
+  }
+
+  if (deps.selectSkillAgents) {
+    // Interactive: confirm then select agents
+    const confirmResult = await deps.confirmSkillInstall?.();
+    if (confirmResult === 'cancelled') {
+      return { resolved: false, result: { code: 0, reason: 'Skills install cancelled.' } };
+    }
+    if (!confirmResult) {
+      return { resolved: false, result: { code: 0, reason: 'Skills install skipped.' } };
+    }
+
+    const selectedAgents = await deps.selectSkillAgents(defaultAgent);
+    if (selectedAgents === 'cancelled') {
+      return { resolved: false, result: { code: 0, reason: 'Skills install cancelled.' } };
+    }
+    return { resolved: true, agents: selectedAgents };
+  }
+
+  // No skill deps available — skip silently
+  return { resolved: false, result: { code: 0, reason: 'Skills install skipped.' } };
 }
 
 /**
@@ -465,41 +534,12 @@ async function runSkillInstall(
   defaultAgent: AgentProvider,
   options: InitOptions,
   deps: InitDeps,
-): Promise<{ code: 0; skillPaths: readonly string[] } | { code: 0; reason: string } | { code: 1; reason: string }> {
+): Promise<SkillInstallResult> {
   const projectRoot = deps.getProjectRoot?.() ?? process.cwd();
 
-  // Determine target agents
-  let agents: readonly AgentProvider[];
-
-  if (options.skillsAgents) {
-    // Non-interactive: explicit --skills-agents
-    const parsed = parseSkillsAgents(options.skillsAgents);
-    if (!parsed.ok) {
-      return { code: 1, reason: parsed.error };
-    }
-    agents = parsed.value;
-  } else if (options.installSkills && !deps.isTTY) {
-    // Non-interactive without --skills-agents: install for default agent only
-    agents = [defaultAgent];
-  } else if (deps.selectSkillAgents) {
-    // Interactive: ask which agents
-    const confirmResult = await deps.confirmSkillInstall?.();
-    if (confirmResult === 'cancelled') {
-      return { code: 0, reason: 'Skills install cancelled.' };
-    }
-    if (!confirmResult) {
-      return { code: 0, reason: 'Skills install skipped.' };
-    }
-
-    const selectedAgents = await deps.selectSkillAgents(defaultAgent);
-    if (selectedAgents === 'cancelled') {
-      return { code: 0, reason: 'Skills install cancelled.' };
-    }
-    agents = selectedAgents;
-  } else {
-    // No skill deps available — skip silently
-    return { code: 0, reason: 'Skills install skipped.' };
-  }
+  const resolution = await resolveTargetAgents(defaultAgent, options, deps);
+  if (!resolution.resolved) return resolution.result;
+  const { agents } = resolution;
 
   if (agents.length === 0) {
     return { code: 0, reason: 'No agents selected for skills.' };
@@ -670,8 +710,9 @@ export function createDefaultDeps(): InitDeps {
  * For Codex: emits a warning in the HookConfigResult when configuration succeeds
  * because Codex CLI requires explicit trust approval for hook commands on first run.
  */
-export function defaultConfigureHooks(agent: AgentProvider): readonly HookConfigResult[] {
-  void agent; // Both CLIs are always configured; agent param is for future extensibility
+export function defaultConfigureHooks(_agent: AgentProvider): readonly HookConfigResult[] {
+  // Both CLIs are always configured regardless of which agent was selected,
+  // because a user may run both on the same machine. _agent reserved for future extensibility.
   const deps = createDefaultHookConfigDeps();
   const results: HookConfigResult[] = [];
 

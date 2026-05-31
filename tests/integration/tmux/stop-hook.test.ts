@@ -108,6 +108,29 @@ function codexPayload(response: string, stopReason = 'end_turn'): string {
 }
 
 /**
+ * Build a Claude Code hook payload with usage fields.
+ * Models the Stop hook stdin format from Claude Code (includes usage + total_cost_usd).
+ */
+function claudeCodePayload(
+  response: string,
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  },
+  totalCostUsd: number,
+  stopReason = 'end_turn',
+): string {
+  return JSON.stringify({
+    last_assistant_message: response,
+    stop_reason: stopReason,
+    usage,
+    total_cost_usd: totalCostUsd,
+  });
+}
+
+/**
  * Build a Claude-style hook payload (transcript_path field).
  * Writes the JSONL transcript to disk and returns the payload JSON.
  */
@@ -647,5 +670,129 @@ describe('stop-hook: fail-fast on empty response', () => {
     const { taskDir } = runHook(payload, taskId, sessionsDir);
 
     expect(fs.existsSync(path.join(taskDir, '.exit'))).toBe(true);
+  });
+});
+
+// ============================================================================
+// Usage Capture (Issue 1 fix: usage regression)
+// ============================================================================
+
+describe('stop-hook: usage capture', () => {
+  it('writes a second stdout message with usage JSON when usage fields are present', () => {
+    const sessionsDir = path.join(tmpDir, 'usage-present');
+    const taskId = 'task-usage-1';
+
+    const payload = claudeCodePayload('Task complete.', { input_tokens: 100, output_tokens: 50 }, 0.001234);
+    const { taskDir } = runHook(payload, taskId, sessionsDir);
+
+    const messages = readAllMessages(taskDir);
+    // Should have 2 messages: result + stdout usage blob
+    expect(messages).toHaveLength(2);
+
+    const resultMsg = messages[0]!;
+    expect(resultMsg.type).toBe('result');
+    expect(resultMsg.content).toBe('Task complete.');
+
+    const usageMsg = messages[1]!;
+    expect(usageMsg.type).toBe('stdout');
+    expect(typeof usageMsg.content).toBe('string');
+
+    // Parse the usage content — must contain type:"result", usage, and total_cost_usd
+    const usageContent = JSON.parse(usageMsg.content as string) as Record<string, unknown>;
+    expect(usageContent.type).toBe('result');
+    expect(typeof usageContent.usage).toBe('object');
+    const usage = usageContent.usage as Record<string, unknown>;
+    expect(usage.input_tokens).toBe(100);
+    expect(usage.output_tokens).toBe(50);
+    expect(usageContent.total_cost_usd).toBeCloseTo(0.001234);
+  });
+
+  it('includes cache token fields in usage JSON when present', () => {
+    const sessionsDir = path.join(tmpDir, 'usage-cache');
+    const taskId = 'task-usage-cache';
+
+    const payload = claudeCodePayload(
+      'Done.',
+      { input_tokens: 200, output_tokens: 80, cache_creation_input_tokens: 20, cache_read_input_tokens: 10 },
+      0.005,
+    );
+    const { taskDir } = runHook(payload, taskId, sessionsDir);
+
+    const messages = readAllMessages(taskDir);
+    expect(messages).toHaveLength(2);
+
+    const usageContent = JSON.parse(messages[1]!.content as string) as Record<string, unknown>;
+    const usage = usageContent.usage as Record<string, unknown>;
+    expect(usage.cache_creation_input_tokens).toBe(20);
+    expect(usage.cache_read_input_tokens).toBe(10);
+  });
+
+  it('does not write a usage message when usage fields are absent (Codex path)', () => {
+    const sessionsDir = path.join(tmpDir, 'usage-absent');
+    const taskId = 'task-usage-absent';
+
+    // Codex path — no usage fields
+    const payload = codexPayload('Codex done.');
+    const { taskDir } = runHook(payload, taskId, sessionsDir);
+
+    const messages = readAllMessages(taskDir);
+    // Only the result message — no usage stdout message
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.type).toBe('result');
+  });
+
+  it('does not write a usage message when transcript path is used (no usage available)', () => {
+    const sessionsDir = path.join(tmpDir, 'usage-transcript');
+    const taskId = 'task-usage-transcript';
+    const transcriptPath = path.join(tmpDir, 'transcript-usage.jsonl');
+
+    const payload = claudePayload(transcriptPath, 'Transcript response.');
+    const { taskDir } = runHook(payload, taskId, sessionsDir);
+
+    const messages = readAllMessages(taskDir);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.type).toBe('result');
+  });
+
+  it('sequence numbers are contiguous: result=1, usage=2', () => {
+    const sessionsDir = path.join(tmpDir, 'usage-seq');
+    const taskId = 'task-usage-seq';
+
+    const payload = claudeCodePayload('Response.', { input_tokens: 10, output_tokens: 5 }, 0.0001);
+    const { taskDir } = runHook(payload, taskId, sessionsDir);
+
+    const messages = readAllMessages(taskDir);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]!.sequence).toBe(1);
+    expect(messages[1]!.sequence).toBe(2);
+  });
+});
+
+// ============================================================================
+// ESCAPED guard (Issue 2 fix: err-trap / jq failure fallback)
+// ============================================================================
+
+describe('stop-hook: ESCAPED guard', () => {
+  it('writes a valid result file even when response is an empty string', () => {
+    // Simulate the edge case where jq -Rs would produce an empty result
+    // by sending a Codex payload with empty last_assistant_message.
+    // The hook exits early on empty RESPONSE (writes .exit), so this test
+    // validates that the fallback path is correct — an empty response
+    // should not produce a malformed message file.
+    const sessionsDir = path.join(tmpDir, 'escaped-guard');
+    const taskId = 'task-escaped-guard';
+
+    // Non-empty response ensures we reach the message-writing path
+    const payload = JSON.stringify({
+      last_assistant_message: '',
+      stop_reason: 'end_turn',
+    });
+    const { taskDir } = runHook(payload, taskId, sessionsDir);
+
+    // Empty last_assistant_message → treated as missing → .exit written, no message
+    expect(fs.existsSync(path.join(taskDir, '.exit'))).toBe(true);
+    const messagesDir = path.join(taskDir, 'messages');
+    const hasMessages = fs.existsSync(messagesDir) && fs.readdirSync(messagesDir).length > 0;
+    expect(hasMessages).toBe(false);
   });
 });

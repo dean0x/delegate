@@ -7,7 +7,20 @@ command -v jq >/dev/null 2>&1 || exit 0
 
 HOOK_DATA=$(head -c 10485760)
 
-RESPONSE=$(printf '%s' "$HOOK_DATA" | jq -r '.last_assistant_message // empty' 2>/dev/null)
+# Issue 3 (jq consolidation): extract all fields from HOOK_DATA in one jq pass.
+# @sh escaping ensures values with spaces, quotes, or newlines are safely eval'd.
+# Fields:
+#   RESPONSE       — last_assistant_message (Codex path); empty when absent
+#   STOP_REASON    — stop_reason, defaulting to "end_turn"
+#   USAGE_JSON     — .usage as compact JSON string, or "" when absent
+#   TOTAL_COST_USD — .total_cost_usd as raw decimal string, or "" when absent
+eval "$(printf '%s' "$HOOK_DATA" | jq -r '
+  "RESPONSE=" + (.last_assistant_message // "" | @sh) + "\n" +
+  "STOP_REASON=" + (.stop_reason // "end_turn" | @sh) + "\n" +
+  "USAGE_JSON=" + (if .usage then (.usage | tojson | @sh) else "'\''" + "'\''" end) + "\n" +
+  "TOTAL_COST_USD=" + (if .total_cost_usd then (.total_cost_usd | tostring | @sh) else "'\''" + "'\''" end)
+' 2>/dev/null)" 2>/dev/null || true
+
 RESPONSE_FROM_DIRECT=false
 if [ -n "$RESPONSE" ]; then
   RESPONSE_FROM_DIRECT=true
@@ -62,21 +75,45 @@ PADDED=$(printf "%05d" "$SEQ")
 
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%FT%TZ)
 
-# RESPONSE_FROM_DIRECT (set at line 11) replaces a redundant jq existence-check
-# on HOOK_DATA: direct payload responses need JSON-string escaping; transcript
-# fallback responses are used as-is (raw text from jq join()).
+# Direct payload responses are raw strings that need JSON-string escaping.
+# Transcript fallback responses come from jq join() and are already safe as-is.
+# Issue 2 (err-trap): fall back to empty JSON string if jq -Rs fails (e.g. OOM),
+# rather than producing a malformed content field in the message JSON.
 if [ "$RESPONSE_FROM_DIRECT" = "true" ]; then
-  ESCAPED=$(printf '%s' "$RESPONSE" | jq -Rs .)
+  ESCAPED=$(printf '%s' "$RESPONSE" | jq -Rs . 2>/dev/null)
+  if [ -z "$ESCAPED" ]; then
+    ESCAPED='""'
+  fi
 else
   ESCAPED="$RESPONSE"
 fi
-
-STOP_REASON=$(printf '%s' "$HOOK_DATA" | jq -r '.stop_reason // "end_turn"' 2>/dev/null)
 
 MSG_FILE="$MESSAGES_DIR/${PADDED}-result.json"
 printf '{"sequence":%d,"timestamp":"%s","type":"result","content":%s}\n' \
   "$SEQ" "$TIMESTAMP" "$ESCAPED" > "${MSG_FILE}.tmp"
 mv "${MSG_FILE}.tmp" "$MSG_FILE"
+
+# Issue 1 (usage regression): emit a synthetic stdout message containing the JSON
+# usage blob so UsageParser can find {"type":"result",...,"usage":{...}} in the
+# concatenated stdout buffer.  Only written when usage fields are present in
+# HOOK_DATA (Claude Code path).  Codex and transcript-fallback paths omit usage
+# gracefully — UsageParser already handles ok(null) for missing data.
+if [ -n "$USAGE_JSON" ] && [ -n "$TOTAL_COST_USD" ]; then
+  SEQ2=$((SEQ + 1))
+  echo "$SEQ2" > "$SEQ_FILE"
+  PADDED2=$(printf "%05d" "$SEQ2")
+
+  # Build the JSON result blob that UsageParser searches for.  We use jq to
+  # produce a compact, correctly-escaped JSON string from the extracted fields.
+  USAGE_CONTENT=$(printf '{"type":"result","usage":%s,"total_cost_usd":%s}' \
+    "$USAGE_JSON" "$TOTAL_COST_USD" | jq -Rs .)
+  if [ -n "$USAGE_CONTENT" ]; then
+    USAGE_MSG_FILE="$MESSAGES_DIR/${PADDED2}-stdout.json"
+    printf '{"sequence":%d,"timestamp":"%s","type":"stdout","content":%s}\n' \
+      "$SEQ2" "$TIMESTAMP" "$USAGE_CONTENT" > "${USAGE_MSG_FILE}.tmp"
+    mv "${USAGE_MSG_FILE}.tmp" "$USAGE_MSG_FILE"
+  fi
+fi
 
 case "$STOP_REASON" in
   end_turn|stop_sequence|max_tokens)
