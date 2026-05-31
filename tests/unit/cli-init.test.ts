@@ -859,6 +859,55 @@ describe('configureAgentHook', () => {
     const hooks = config.hooks as Record<string, unknown>;
     expect(hooks.Stop).toBeDefined();
   });
+
+  it('returns err() when writeFile throws — no unhandled exception propagates', () => {
+    const configDir = path.join(hookTmpDir, 'claude-write-throws');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+    const deps: HookConfigDeps = {
+      ...makeHookDeps(),
+      writeFile(_filePath: string, _content: string): void {
+        throw new Error('ENOSPC: no space left on device');
+      },
+    };
+
+    const result = configureAgentHook('claude', configPath, deps);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('ENOSPC');
+    }
+  });
+
+  it('returns err() when renameFile throws and leaves no orphaned .tmp', () => {
+    const configDir = path.join(hookTmpDir, 'claude-rename-throws');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+
+    let writtenTmpPath: string | undefined;
+    const realDeps = makeHookDeps();
+    const deps: HookConfigDeps = {
+      ...realDeps,
+      writeFile(filePath: string, content: string): void {
+        writtenTmpPath = filePath;
+        realDeps.writeFile(filePath, content);
+      },
+      renameFile(_from: string, _to: string): void {
+        throw new Error('EXDEV: cross-device link not permitted');
+      },
+    };
+
+    const result = configureAgentHook('claude', configPath, deps);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('EXDEV');
+    }
+    // .tmp file should not contain valid JSON content (cleaned up to empty string)
+    if (writtenTmpPath && fs.existsSync(writtenTmpPath)) {
+      expect(fs.readFileSync(writtenTmpPath, 'utf-8')).toBe('');
+    }
+  });
 });
 
 // ============================================================================

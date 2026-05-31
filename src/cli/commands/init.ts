@@ -158,18 +158,20 @@ export function configureAgentHook(
 
   const stopHooks = Array.isArray(existingHooks.Stop) ? (existingHooks.Stop as unknown[]) : [];
 
-  const alreadyPresent = stopHooks.some((entry) => {
-    if (typeof entry !== 'object' || entry === null) return false;
-    const e = entry as Record<string, unknown>;
-    if (Array.isArray(e.hooks)) {
+  function hasStopHookCommand(stopHookEntries: unknown[]): boolean {
+    return stopHookEntries.some((entry) => {
+      if (typeof entry !== 'object' || entry === null) return false;
+      const e = entry as Record<string, unknown>;
+      if (!Array.isArray(e.hooks)) return false;
       return (e.hooks as unknown[]).some((h) => {
         if (typeof h !== 'object' || h === null) return false;
         const hookEntry = h as Record<string, unknown>;
         return hookEntry.type === 'command' && hookEntry.command === STOP_HOOK_COMMAND;
       });
-    }
-    return false;
-  });
+    });
+  }
+
+  const alreadyPresent = hasStopHookCommand(stopHooks);
 
   if (alreadyPresent) {
     return ok(undefined);
@@ -195,11 +197,26 @@ export function configureAgentHook(
   const updatedHooks = { ...existingHooks, Stop: updatedStopHooks };
   const updated = { ...existing, hooks: updatedHooks };
 
-  // Atomic write via .tmp + rename
+  // Atomic write via .tmp + rename — wrapped so disk errors return err() instead of throwing.
+  // On rename failure, attempt best-effort cleanup of the orphaned .tmp file.
   const tmpPath = configPath + '.tmp';
   const content = JSON.stringify(updated, null, 2) + '\n';
-  deps.writeFile(tmpPath, content);
-  deps.renameFile(tmpPath, configPath);
+  try {
+    deps.writeFile(tmpPath, content);
+  } catch (e) {
+    return err(`Failed to write ${agentType} config (tmp): ${e instanceof Error ? e.message : String(e)}`);
+  }
+  try {
+    deps.renameFile(tmpPath, configPath);
+  } catch (e) {
+    // Best-effort cleanup of the orphaned .tmp file before returning the error.
+    try {
+      deps.writeFile(tmpPath, '');
+    } catch {
+      /* ignore cleanup failure */
+    }
+    return err(`Failed to write ${agentType} config (rename): ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   return ok(undefined);
 }
