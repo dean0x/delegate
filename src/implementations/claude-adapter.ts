@@ -17,36 +17,11 @@ export class ClaudeAdapter extends BaseAgentAdapter {
     super(config, claudeCommand);
   }
 
-  protected buildArgs(prompt: string, model?: string, jsonSchema?: string): readonly string[] {
-    const modelArgs: string[] = model ? ['--model', model] : [];
-    const schemaArgs: string[] = jsonSchema ? ['--json-schema', jsonSchema] : [];
-    // DECISION: --print used for non-tmux (process-based) invocation only.
-    return [
-      '--print',
-      '--dangerously-skip-permissions',
-      '--output-format',
-      'json',
-      ...modelArgs,
-      ...schemaArgs,
-      '--',
-      prompt,
-    ];
-  }
-
   protected override buildTmuxArgs(model?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
     // DECISION: Interactive tmux mode — no --print, no --output-format.
     // Output is captured via the Stop hook; --print is only for non-tmux invocations.
     return ['--dangerously-skip-permissions', ...modelArgs];
-  }
-
-  protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
-    const modelArgs: string[] = model ? ['--model', model] : [];
-    // DECISION: --dangerously-skip-permissions is intentional for interactive orchestrators.
-    // Interactive orchestrators delegate sub-tasks and must run uninterrupted without prompting
-    // for tool permissions. The user retains control via Ctrl+C (SIGINT) at the terminal,
-    // which is surfaced as a cancellation event by the parent process.
-    return ['--dangerously-skip-permissions', ...modelArgs, '--', prompt];
   }
 
   protected get envPrefixesToStrip(): readonly string[] {

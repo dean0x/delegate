@@ -1337,10 +1337,12 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
 
       // Make prepareForReuse fail
       vi.mocked(tmuxConnector.prepareForReuse).mockReturnValueOnce(
-        err(new (await import('../../../src/core/errors')).AutobeatError(
-          (await import('../../../src/core/errors')).ErrorCode.TMUX_HOOK_FAILED,
-          'dir creation failed',
-        )),
+        err(
+          new (await import('../../../src/core/errors')).AutobeatError(
+            (await import('../../../src/core/errors')).ErrorCode.TMUX_HOOK_FAILED,
+            'dir creation failed',
+          ),
+        ),
       );
 
       const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);

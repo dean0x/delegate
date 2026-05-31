@@ -139,7 +139,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Always interactive mode: use buildTmuxArgs (no --print/--quiet), prompt delivered via send-keys.
     const baseFlags = this.buildTmuxArgs(cfg.resolvedModel);
     const flagArgs = [...baseFlags, ...cfg.systemPromptArgs];
-    const spawnArgs = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...flagArgs] : flagArgs;
+    const spawnArgs = [...cfg.runtimePrependArgs, ...flagArgs];
 
     return ok({
       config: {
