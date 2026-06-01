@@ -35,6 +35,9 @@ import { err, ok, Result } from '../core/result.js';
 import type { TmuxSpawnCoreConfig } from '../core/tmux-types.js';
 import { TASK_ID_REGEX, type TmuxAgentType } from './tmux/types.js';
 
+/** Validates that an orchestratorId matches the canonical orchestrator ID format. */
+const ORCHESTRATOR_ID_RE = /^orchestrator-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 export abstract class BaseAgentAdapter implements AgentAdapter {
   abstract readonly provider: AgentProvider;
 
@@ -91,21 +94,18 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Build CLI flags for wrapper (non-interactive) tmux mode.
-   * Returns headless flags (--print, --output-format, --model, etc.) WITHOUT
-   * the prompt or `--` separator. The prompt is appended by buildTmuxCommand
-   * after systemPromptArgs to ensure correct argument ordering.
-   */
-  protected abstract buildWrapperFlags(model?: string): readonly string[];
-
-  /**
    * Produce a TmuxSpawnCoreConfig + prompt delivery strategy.
    *
-   * When persistent=true (interactive shim): prompt is returned separately for
-   * delivery via send-keys after the session is alive.
+   * All sessions run in interactive mode (setup shim). The prompt is returned
+   * separately for delivery via send-keys after the session is alive.
    *
-   * When persistent=false (wrapper pipeline): prompt is baked into agentArgs
-   * with --print so the agent runs headlessly. Returned prompt is empty.
+   * DECISION: Wrapper pipeline mode (--print/--quiet based) has been removed.
+   * All tmux sessions are interactive; output is captured via the Stop hook.
+   * The `persistent` flag no longer affects CLI arg generation — all sessions
+   * follow the same interactive (setup shim) path for spawn. It is still passed
+   * through to TmuxSpawnCoreConfig to control session lifecycle: persistent
+   * sessions are parked on sentinel rather than destroyed, enabling reuse across
+   * loop iterations.
    */
   buildTmuxCommand(options: SpawnOptions & { sessionsDir: string; persistent?: boolean }): Result<{
     readonly config: TmuxSpawnCoreConfig;
@@ -141,12 +141,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const cfg = configResult.value;
 
     const transformedPrompt = this.transformPrompt(cfg.effectivePrompt);
-    const persistent = options.persistent ?? false;
 
-    const baseFlags = persistent ? this.buildTmuxArgs(cfg.resolvedModel) : this.buildWrapperFlags(cfg.resolvedModel);
+    // Always interactive mode: use buildTmuxArgs (no --print/--quiet), prompt delivered via send-keys.
+    const baseFlags = this.buildTmuxArgs(cfg.resolvedModel);
     const flagArgs = [...baseFlags, ...cfg.systemPromptArgs];
-    const withRuntime = cfg.runtimePrependArgs.length > 0 ? [...cfg.runtimePrependArgs, ...flagArgs] : flagArgs;
-    const spawnArgs = persistent ? withRuntime : [...withRuntime, '--', transformedPrompt];
+    const spawnArgs = [...cfg.runtimePrependArgs, ...flagArgs];
 
     return ok({
       config: {
@@ -159,7 +158,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         taskId: options.taskId as TaskId,
         sessionsDir: options.sessionsDir,
       },
-      prompt: persistent ? transformedPrompt : '',
+      prompt: transformedPrompt,
     });
   }
 
@@ -416,7 +415,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     );
     const baseUrlEnv = options.runtimeConfig?.suppressBaseUrl ? {} : this.resolveBaseUrl(options.agentConfig);
 
-    const ORCHESTRATOR_ID_RE = /^orchestrator-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     const safeOrchestratorId =
       options.orchestratorId && ORCHESTRATOR_ID_RE.test(options.orchestratorId) ? options.orchestratorId : undefined;
     if (options.orchestratorId && !safeOrchestratorId) {

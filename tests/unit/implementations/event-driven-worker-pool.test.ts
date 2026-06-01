@@ -1289,5 +1289,83 @@ describe('EventDrivenWorkerPool (Phase 3: tmux)', () => {
       // The persistent session must be destroyed (cleanupPersistentSession called after cleanupWorkerState)
       expect(tmuxConnector.destroy).toHaveBeenCalled();
     });
+
+    // ─── Phase B: prepareForReuse ordering ────────────────────────────────────
+
+    it('Phase B: prepareForReuse called after setEnvironment and /clear settle, before sendKeys(prompt)', async () => {
+      // Verify the call ordering: setEnvironment → sendKeys(/clear) → [settle] →
+      // prepareForReuse → sendKeys(prompt). The connector must have watchers ready
+      // before the agent starts processing the new prompt.
+      const task1 = buildPersistentTask('loop-ordering', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-ordering', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+
+      const callOrder: string[] = [];
+      vi.mocked(tmuxConnector.setEnvironment).mockImplementation((...args) => {
+        callOrder.push(`setEnvironment(${args[1]})`);
+        return ok(undefined);
+      });
+      vi.mocked(tmuxConnector.sendKeys).mockImplementation((...args) => {
+        const keys = args[1] as string;
+        callOrder.push(keys.includes('/clear') ? 'sendKeys(/clear)' : 'sendKeys(prompt)');
+        return ok(undefined);
+      });
+      vi.mocked(tmuxConnector.prepareForReuse).mockImplementation(() => {
+        callOrder.push('prepareForReuse');
+        return ok(undefined);
+      });
+
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      const envIdx = callOrder.indexOf('setEnvironment(AUTOBEAT_TASK_ID)');
+      const clearIdx = callOrder.indexOf('sendKeys(/clear)');
+      const prepareIdx = callOrder.indexOf('prepareForReuse');
+      const promptIdx = callOrder.indexOf('sendKeys(prompt)');
+
+      expect(envIdx).toBeGreaterThanOrEqual(0);
+      expect(clearIdx).toBeGreaterThan(envIdx);
+      expect(prepareIdx).toBeGreaterThan(clearIdx);
+      expect(promptIdx).toBeGreaterThan(prepareIdx);
+    });
+
+    it('Phase B: prepareForReuse failure falls through to fresh spawn', async () => {
+      const task1 = buildPersistentTask('loop-prepare-fail', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-prepare-fail', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+
+      // Make prepareForReuse fail
+      vi.mocked(tmuxConnector.prepareForReuse).mockReturnValueOnce(
+        err(
+          new (await import('../../../src/core/errors')).AutobeatError(
+            (await import('../../../src/core/errors')).ErrorCode.TMUX_HOOK_FAILED,
+            'dir creation failed',
+          ),
+        ),
+      );
+
+      const [spawnResult] = await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // Must fall through to fresh spawn
+      expect(spawnResult.ok).toBe(true);
+      expect(tmuxConnector.spawn).toHaveBeenCalledTimes(2);
+    });
+
+    it('Phase B: prepareForReuse called with the new task ID', async () => {
+      const task1 = buildPersistentTask('loop-taskid', (f) => f.withPrompt('iter 1'));
+      const task2 = buildPersistentTask('loop-taskid', (f) => f.withPrompt('iter 2'));
+
+      await pool.spawn(task1);
+
+      await Promise.all([pool.spawn(task2), vi.advanceTimersByTimeAsync(400)]);
+
+      // prepareForReuse must have been called with task2's ID
+      expect(tmuxConnector.prepareForReuse).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionName: expect.stringContaining('beat-') }),
+        task2.id,
+        expect.any(Object), // callbacks
+      );
+    });
   });
 });

@@ -6,7 +6,7 @@
  * (TmuxHandle, TmuxSessionConfig, TmuxSpawnConfig, TmuxSessionInfo, TmuxInfo,
  * TmuxConnectorPort) carry the "Tmux" prefix to avoid collision at call sites.
  * Internal or self-documenting types (OutputMessage, CommunicationMode,
- * StalenessConfig, WrapperConfig, WrapperManifest, SpawnCallbacks) do not carry
+ * StalenessConfig, SetupShimConfig, SetupShimManifest, SpawnCallbacks) do not carry
  * the prefix because they are unambiguous in context and live behind the barrel
  * re-export in index.ts. Do not add the prefix to internal types retroactively.
  */
@@ -64,7 +64,7 @@ export interface TmuxSpawnConfig extends TmuxSessionConfig, TmuxSpawnCoreConfig 
   readonly taskId: TaskId;
   /** Base directory where all session data lives */
   readonly sessionsDir: string;
-  /** Agent type to wrap — must match a supported WrapperConfig agent value */
+  /** Agent type supported by the tmux abstraction layer (see TmuxAgentType) */
   readonly agent: TmuxAgentType;
   /** CLI arguments to pass to the agent (populated by adapter's buildTmuxArgs) */
   readonly agentArgs: readonly string[];
@@ -84,51 +84,6 @@ export type TmuxSessionResult = Pick<TmuxHandle, 'sessionName'>;
 // ─── Output & messaging ───────────────────────────────────────────────────────
 
 // OutputMessage is now defined in core/tmux-types.ts and re-exported above.
-
-// ─── Wrapper script ───────────────────────────────────────────────────────────
-
-/**
- * Communication mode for wrapper-generated inter-session messages
- */
-export type CommunicationMode = 'unicast' | 'broadcast';
-
-/**
- * Configuration for generating a wrapper script around an agent invocation
- */
-export interface WrapperConfig {
-  /** Task identifier */
-  readonly taskId: TaskId;
-  /** Agent type being wrapped */
-  readonly agent: TmuxAgentType;
-  /** Base directory for session data */
-  readonly sessionsDir: string;
-  /** Agent executable path or name */
-  readonly agentCommand: string;
-  /** Arguments to pass to the agent */
-  readonly agentArgs: readonly string[];
-  /** tmux session names to forward output to */
-  readonly communicationTargets?: readonly string[];
-  /** How to deliver messages to targets */
-  readonly communicationMode?: CommunicationMode;
-  /** Return address session name for result routing */
-  readonly returnAddress?: string;
-}
-
-/**
- * Paths to all artifacts produced by generateWrapper()
- */
-export interface WrapperManifest {
-  /** Path to the generated wrapper shell script */
-  readonly wrapperPath: string;
-  /** Task-specific session directory (sessionsDir/taskId) */
-  readonly sessionDir: string;
-  /** Path to the completion sentinel file (.done or .exit) */
-  readonly sentinelPath: string;
-  /** Directory where output JSON messages are written */
-  readonly messagesDir: string;
-  /** Path to the atomic sequence-number file */
-  readonly seqFilePath: string;
-}
 
 // ─── Session info ─────────────────────────────────────────────────────────────
 
@@ -156,7 +111,7 @@ export interface TmuxInfo {
   readonly version: string;
   /** Path to the tmux binary */
   readonly path: string;
-  /** Path to the jq binary (required for JSON escaping in wrapper scripts) */
+  /** Path to the jq binary (required by the Stop hook for JSON parsing) */
   readonly jqPath: string;
 }
 
@@ -263,8 +218,8 @@ export interface TmuxSessionManagerPort {
 }
 
 /**
- * Configuration for generating a setup shim for a persistent interactive session.
- * Used when persistent=true — the agent runs as an interactive REPL.
+ * Configuration for generating a setup shim for an interactive session.
+ * All agent sessions run via the setup shim — output is captured by the Stop hook.
  */
 export interface SetupShimConfig {
   /** Task identifier */
@@ -290,17 +245,29 @@ export interface SetupShimManifest {
 }
 
 /**
- * Port interface for wrapper script generation and session directory lifecycle.
+ * Port interface for setup shim generation and session directory lifecycle.
  * TmuxHooks is the canonical implementation.
  */
 export interface TmuxHooksPort {
-  generateWrapper(config: WrapperConfig): Result<WrapperManifest, AutobeatError>;
   /**
-   * Generates the session directory and setup shim for a persistent interactive session.
+   * Generates the session directory and setup shim for an interactive session.
    * The shim initialises the messages directory and seq file, then execs the agent
    * interactively (no --print). Output is captured via the Stop hook mechanism.
    */
   generateSetupShim(config: SetupShimConfig): Result<SetupShimManifest, AutobeatError>;
+  /**
+   * Creates the session directory tree for a new loop iteration without regenerating
+   * the setup shim. Used by TmuxConnector.prepareForReuse() when a persistent session
+   * is being reused — the tmux session already exists; only the task directory needs
+   * to be (re)initialised for the new iteration's output messages.
+   *
+   * Creates: {sessionsDir}/{taskId}/messages/ and resets .seq to 0.
+   * Returns the sessionDir and messagesDir paths on success.
+   */
+  initTaskDirectory(
+    taskId: TaskId,
+    sessionsDir: string,
+  ): Result<{ sessionDir: string; messagesDir: string }, AutobeatError>;
   cleanup(taskId: TaskId, sessionsDir: string): Result<void, AutobeatError>;
 }
 

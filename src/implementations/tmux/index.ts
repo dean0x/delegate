@@ -1,8 +1,8 @@
 /**
  * tmux abstraction layer — public API
  *
- * Provides foundational tmux session management, wrapper script generation,
- * and push-based completion detection for the v1.6.0 worker migration.
+ * Provides foundational tmux session management, setup shim generation,
+ * and push-based completion detection for interactive (Stop hook) workers.
  */
 
 // Implementations
@@ -18,11 +18,11 @@ export type { TmuxValidatorDeps } from './tmux-validator.js';
 export { TmuxValidator } from './tmux-validator.js';
 // Types (type-only re-exports to avoid unnecessary runtime imports)
 export type {
-  CommunicationMode,
   ExecFn,
   ExecResult,
   OutputMessage,
-  SpawnCallbacks,
+  SetupShimConfig,
+  SetupShimManifest,
   StalenessConfig,
   TmuxAgentType,
   TmuxConnectorPort,
@@ -36,8 +36,6 @@ export type {
   TmuxSpawnConfig,
   TmuxValidatorPort,
   WatchFn,
-  WrapperConfig,
-  WrapperManifest,
 } from './types.js';
 // Constants
 export {

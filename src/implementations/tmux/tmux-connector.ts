@@ -22,12 +22,12 @@ import { tmuxSessionFailed } from '../../core/errors.js';
 import type { Logger } from '../../core/interfaces.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
-import type { TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
+import type { SpawnCallbacks, TmuxSpawnCoreConfig } from '../../core/tmux-types.js';
 import type {
   OutputMessage,
   SetupShimConfig,
-  SpawnCallbacks,
   StalenessConfig,
+  TmuxAgentType,
   TmuxConnectorPort,
   TmuxHandle,
   TmuxHooksPort,
@@ -89,6 +89,20 @@ export interface TmuxConnectorDeps {
 }
 
 /**
+ * Lifecycle state for a managed session.
+ *
+ * Three-state lifecycle for managed sessions. Replaces a boolean `exited` field to
+ * support persistent session reuse.
+ *
+ * - 'active': session running, watchers active, processing output
+ * - 'parked': iteration complete, tmux session alive, watchers closed, awaiting reuse.
+ *   The session directory has been preserved; a new one will be created for the next
+ *   iteration. The staleness timer skips parked sessions — they are intentionally idle.
+ * - 'exited': session destroyed, fully cleaned up (terminal state)
+ */
+type SessionState = 'active' | 'parked' | 'exited';
+
+/**
  * Internal state for a single managed session
  */
 interface ActiveSession {
@@ -99,7 +113,11 @@ interface ActiveSession {
   stalenessConfig: StalenessConfig;
   /** Timestamp of last confirmed-alive check — used for maxSilenceMs threshold */
   lastAliveCheck: number;
-  exited: boolean;
+  /**
+   * Current session state. Guards in handleMessageFile, onMessageFileChange, and
+   * triggerExit check state !== 'active' to avoid processing output after exit/park.
+   */
+  state: SessionState;
   /** Watermark: highest sequence number successfully delivered (monotonic) */
   lastDeliveredSeq: number;
   /** Pending messages waiting for gap-filling (sequence ordering) */
@@ -110,6 +128,23 @@ interface ActiveSession {
   debounceTimers: Map<string, ReturnType<typeof setTimeout>>;
   /** Path to the messages directory for disk-based flush */
   messagesDir: string;
+  /** Path to the session root directory (parent of messages/) — used by sentinel watcher */
+  sessionDir: string;
+  /**
+   * Whether this session was spawned in persistent (interactive REPL) mode.
+   * When true, triggerExit() parks rather than destroys — the tmux session
+   * stays alive for the next loop iteration.
+   */
+  persistent: boolean;
+  /**
+   * Agent type that spawned this session.
+   * Stored here so prepareForReuse() can forward the correct agent to
+   * buildActiveSession() without hardcoding 'claude'. The syntheticConfig
+   * passed to buildActiveSession satisfies the type shape; buildActiveSession
+   * does not currently read config.agent, but storing it here is defensive:
+   * if that changes, the field will carry the right value automatically.
+   */
+  agent: TmuxAgentType;
   /** Stored callbacks for flush-on-destroy/dispose */
   callbacks: SpawnCallbacks;
   /** Re-entrancy guard for flushPendingFiles */
@@ -128,20 +163,30 @@ export class TmuxConnector implements TmuxConnectorPort {
    */
   private currentTimerIntervalMs: number | null = null;
 
+  /**
+   * Agent type for parked persistent sessions, keyed by tmux session name.
+   * When triggerExit() parks a session it removes it from activeSessions (so the
+   * staleness timer skips it) but the tmux process stays alive. We need the agent
+   * type to survive the park so prepareForReuse() can forward it to buildActiveSession()
+   * via the syntheticConfig rather than hardcoding 'claude'.
+   * Entries are removed when prepareForReuse() re-registers the session, or when
+   * destroy() / dispose() cleans it up.
+   */
+  private readonly parkedSessionAgents = new Map<string, TmuxAgentType>();
+
   constructor(private readonly deps: TmuxConnectorDeps) {}
 
   /**
    * Spawns a new managed tmux session.
    * 1. Validates tmux availability
-   * 2. Generates the wrapper script (or setup shim for persistent mode)
+   * 2. Generates the setup shim (interactive mode — all sessions)
    * 3. Starts fs.watch watchers (BEFORE session launch to avoid race)
-   * 4. Creates the tmux session running the wrapper
+   * 4. Creates the tmux session running the setup shim
    * 5. Starts (or restarts) the shared staleness timer
    *
-   * DESIGN DECISION (Phase 5): When rawConfig.persistent=true, a setup shim is used
-   * instead of the wrapper pipeline. The agent runs as an interactive REPL — no --print,
-   * no piping. Output is captured via the Stop hook; completion via per-iteration sentinels.
-   * The session remains alive across iterations; WorkerPool manages reuse.
+   * DECISION: All sessions use the interactive (setup shim) path.
+   * The agent runs as an interactive REPL — no --print, no piping.
+   * Output is captured via the Stop hook; completion via per-iteration sentinels.
    */
   spawn(rawConfig: TmuxSpawnCoreConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
     // TmuxSpawnConfig extends TmuxSpawnCoreConfig (the port interface type) and adds
@@ -169,39 +214,18 @@ export class TmuxConnector implements TmuxConnectorPort {
     const validationResult = this.deps.validator.validate();
     if (!validationResult.ok) return validationResult;
 
-    // 2. Generate wrapper or setup shim depending on mode
-    if (config.persistent) {
-      const shimConfig: SetupShimConfig = {
-        taskId: config.taskId,
-        sessionsDir: config.sessionsDir,
-        agentCommand: config.command,
-        agentArgs: config.agentArgs,
-      };
-      const shimResult = this.deps.hooks.generateSetupShim(shimConfig);
-      if (!shimResult.ok) return shimResult;
-      const shim = shimResult.value;
-
-      return this.createAndRegisterSession(config, shim.shimPath, shim.messagesDir, shim.sessionDir, callbacks);
-    }
-
-    // Non-persistent (default): wrapper pipeline mode
-    const manifestResult = this.deps.hooks.generateWrapper({
+    // 2. Generate setup shim — all sessions run in interactive mode
+    const shimConfig: SetupShimConfig = {
       taskId: config.taskId,
-      agent: config.agent,
       sessionsDir: config.sessionsDir,
       agentCommand: config.command,
       agentArgs: config.agentArgs,
-    });
-    if (!manifestResult.ok) return manifestResult;
-    const manifest = manifestResult.value;
+    };
+    const shimResult = this.deps.hooks.generateSetupShim(shimConfig);
+    if (!shimResult.ok) return shimResult;
+    const shim = shimResult.value;
 
-    return this.createAndRegisterSession(
-      config,
-      manifest.wrapperPath,
-      manifest.messagesDir,
-      manifest.sessionDir,
-      callbacks,
-    );
+    return this.createAndRegisterSession(config, shim.shimPath, shim.messagesDir, shim.sessionDir, callbacks);
   }
 
   /**
@@ -214,7 +238,7 @@ export class TmuxConnector implements TmuxConnectorPort {
    */
   private createAndRegisterSession(
     config: TmuxSpawnConfig,
-    wrapperPath: string,
+    shimPath: string,
     messagesDir: string,
     sessionDir: string,
     callbacks: SpawnCallbacks,
@@ -222,15 +246,15 @@ export class TmuxConnector implements TmuxConnectorPort {
     // 3. Start fs.watch watchers (BEFORE session launch to avoid race).
     // Build a temporary session object with a placeholder sessionName so watchers
     // can be registered before createSession() returns the real name.
-    const activeSessionResult = this.buildActiveSession(config, config.name, messagesDir, callbacks);
+    const activeSessionResult = this.buildActiveSession(config, config.name, messagesDir, sessionDir, callbacks);
     if (!activeSessionResult.ok) return activeSessionResult;
     const session = activeSessionResult.value;
     this.startWatchers(session, sessionDir);
 
-    // 4. Create tmux session running the wrapper
+    // 4. Create tmux session running the setup shim
     const sessionResult = this.deps.sessionManager.createSession({
       ...config,
-      command: wrapperPath,
+      command: shimPath,
     });
     if (!sessionResult.ok) {
       // Clean up watchers and generated session directory on failure
@@ -256,19 +280,36 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   /**
    * Destroys a session and cleans up all watchers and timers.
-   * Idempotent. Returns early when the handle is not tracked to avoid
-   * acting on sessions owned by other connectors.
+   *
+   * When the session is tracked in activeSessions (the normal path), this method
+   * flushes pending output, closes watchers, kills the tmux process, and fires onExit.
+   *
+   * When the session is NOT tracked — which happens when a persistent session was parked
+   * by triggerExit() (parking removes the entry from activeSessions so the staleness
+   * timer skips it, but the tmux process stays alive) — the tracked-session cleanup
+   * steps are skipped, but the tmux process is still killed via destroySession().
+   * Without this fall-through, cleanupPersistentSession() calling destroy() on a
+   * parked handle would silently no-op and leak the tmux session.
    */
   destroy(handle: TmuxHandle): Result<void, AutobeatError> {
     const session = this.activeSessions.get(handle.taskId);
-    if (!session) return ok(undefined);
+    if (!session) {
+      // Parked-session path: no ActiveSession to flush/close, but the tmux process
+      // is still alive and must be killed. Skip the watcher/callback machinery and
+      // delegate directly to the session manager. Also clean up the parked agent entry
+      // and the session directory for this handle's taskId.
+      this.parkedSessionAgents.delete(handle.sessionName);
+      const parkedDestroyResult = this.deps.sessionManager.destroySession(handle.sessionName);
+      this.loggedCleanup('destroy', handle.taskId, handle.sessionsDir);
+      return parkedDestroyResult;
+    }
 
-    // Set exited before flush so late staleness timer ticks cannot trigger
+    // Set state to 'exited' before flush so late staleness timer ticks cannot trigger
     // onExit after we have already destroyed the session.
-    session.exited = true;
+    session.state = 'exited';
     this.flushPendingFiles(session);
     this.closeSession(session);
-    // Kill the tmux session before removing the directory — the wrapper script
+    // Kill the tmux session before removing the directory — the agent
     // may still be writing when destroy() is called, and rmSync while the
     // process has open file handles produces I/O errors.
     const destroyResult = this.deps.sessionManager.destroySession(handle.sessionName);
@@ -312,7 +353,7 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   /**
    * Delegates setEnvironment to the session manager.
-   * Used by WorkerPool for persistent session reuse (Phase 5).
+   * Used by WorkerPool when remapping a persistent session to a new loop iteration.
    */
   setEnvironment(handle: TmuxHandle, varName: string, value: string): Result<void, AutobeatError> {
     return this.deps.sessionManager.setSessionEnvironment(handle.sessionName, varName, value);
@@ -320,10 +361,121 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   /**
    * Delivers content to a session via load-buffer / paste-buffer.
-   * Delegates to session manager. Used by ChannelManager (Phase 7) for literal message delivery.
+   * Delegates to session manager. Used by ChannelManager for literal message delivery.
    */
   pasteContent(handle: TmuxHandle, content: string): Result<void, AutobeatError> {
     return this.deps.sessionManager.pasteContent(handle.sessionName, content);
+  }
+
+  /**
+   * Prepares a parked persistent session for reuse by the next loop iteration.
+   *
+   * Protocol:
+   * 1. Create new task directory (newTaskId/messages/) and reset .seq to 0
+   * 2. Build a new ActiveSession registered under newTaskId with state 'active'
+   * 3. Start new sentinel + messages watchers for the new directory
+   * 4. Restart the staleness timer
+   *
+   * Must be called AFTER setEnvironment(AUTOBEAT_TASK_ID) and the /clear settle
+   * delay, and BEFORE sendKeys(prompt) so watchers are ready before output arrives.
+   *
+   * Returns err() if the task directory cannot be created (caller falls through
+   * to fresh spawn by calling cleanupPersistentSession then spawning fresh).
+   */
+  prepareForReuse(handle: TmuxHandle, newTaskId: TaskId, callbacks: SpawnCallbacks): Result<void, AutobeatError> {
+    // Guard: reject if newTaskId is already active (shouldn't happen in steady state)
+    if (this.activeSessions.has(newTaskId)) {
+      return err(tmuxSessionFailed('prepareForReuse', `session for taskId '${newTaskId}' already exists`));
+    }
+
+    // Defense-in-depth: verify the parked tmux session is still alive before
+    // re-registering. WorkerPool.tryReuseSession() already calls isAlive() before
+    // invoking reuseSession(), but a session can die between that check and here
+    // (race window). Without this guard the new watchers silently wait up to
+    // maxSilenceMs (60s) before staleness fires.
+    const aliveResult = this.deps.sessionManager.isAlive(handle.sessionName);
+    if (!aliveResult.ok || !aliveResult.value) {
+      return err(tmuxSessionFailed('prepareForReuse', `parked session '${handle.sessionName}' is no longer alive`));
+    }
+
+    // Step 1: Create new task directory
+    const initResult = this.deps.hooks.initTaskDirectory(newTaskId, handle.sessionsDir);
+    if (!initResult.ok) return initResult;
+    const { sessionDir, messagesDir } = initResult.value;
+
+    // Step 2: Build a new ActiveSession with state 'active'
+    // Re-use the existing handle's sessionName — the tmux session is still alive.
+    const newHandle: TmuxHandle = {
+      sessionName: handle.sessionName,
+      taskId: newTaskId,
+      sessionsDir: handle.sessionsDir,
+    };
+
+    // Retrieve the agent type stored when the session was parked, then remove it —
+    // the session will be re-registered under newTaskId and the parked entry is no
+    // longer needed. Missing entry is a programming error: triggerExit() must always
+    // populate parkedSessionAgents before prepareForReuse is called.
+    const parkedAgent = this.parkedSessionAgents.get(handle.sessionName);
+    if (!parkedAgent) {
+      return err(
+        tmuxSessionFailed(
+          'prepareForReuse',
+          `no parked agent type for session '${handle.sessionName}' — prepareForReuse called without a prior triggerExit, this is a bug`,
+        ),
+      );
+    }
+    this.parkedSessionAgents.delete(handle.sessionName);
+
+    // Synthesise a minimal TmuxSpawnConfig for buildActiveSession.
+    // buildActiveSession reads exactly four fields from config:
+    //   config.staleness  → merged with DEFAULT_STALENESS_CONFIG
+    //   config.taskId     → embedded in session.handle
+    //   config.sessionsDir → embedded in session.handle
+    //   config.persistent  → stored as session.persistent
+    //   config.agent       → stored as session.agent (for future use by buildActiveSession)
+    // The remaining fields (command, agentArgs) satisfy the type constraint but are not read.
+    const syntheticConfig = {
+      taskId: newTaskId,
+      sessionsDir: handle.sessionsDir,
+      name: handle.sessionName,
+      command: '',
+      agentArgs: [] as string[],
+      agent: parkedAgent,
+      persistent: true,
+    } satisfies TmuxSpawnConfig;
+
+    const sessionResult = this.buildActiveSession(
+      syntheticConfig,
+      handle.sessionName,
+      messagesDir,
+      sessionDir,
+      callbacks,
+    );
+    if (!sessionResult.ok) {
+      // Clean up the task directory created above — it would otherwise be orphaned
+      // since the session was never registered and cleanupPersistentSession() will
+      // not know about newTaskId.
+      this.loggedCleanup('prepareForReuse', newTaskId, handle.sessionsDir);
+      return sessionResult;
+    }
+    const session = sessionResult.value;
+
+    // Override the handle in the new session to point to the new taskId
+    session.handle = newHandle;
+
+    // Step 3: Start new watchers for the new task directory
+    this.startWatchers(session, sessionDir);
+
+    // Step 4: Register and restart staleness timer
+    this.activeSessions.set(newTaskId, session);
+    this.restartSharedStalenessTimer();
+
+    this.deps.logger.info('Session prepared for reuse', {
+      sessionName: handle.sessionName,
+      newTaskId,
+    });
+
+    return ok(undefined);
   }
 
   getActiveHandles(): TmuxHandle[] {
@@ -332,18 +484,33 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   /**
    * Cleans up ALL active sessions. Call on process shutdown.
+   *
+   * Also destroys any parked sessions — parked sessions were removed from
+   * activeSessions by triggerExit() but their tmux processes are still alive.
+   * If dispose() is called directly (emergency shutdown, test teardown), those
+   * processes would otherwise leak. Best-effort: failures are swallowed so one
+   * stuck session does not block the remaining teardown.
    */
   dispose(): void {
+    // Destroy parked sessions first (best-effort) before clearing the map.
+    for (const [sessionName] of this.parkedSessionAgents) {
+      try {
+        this.deps.sessionManager.destroySession(sessionName);
+      } catch {
+        // best-effort — do not block remaining teardown
+      }
+    }
     const sessions = Array.from(this.activeSessions.values());
     this.activeSessions.clear();
+    this.parkedSessionAgents.clear();
     this.stopSharedStalenessTimer();
     for (const session of sessions) {
       // Per-session try/catch ensures one failing teardown does not prevent
       // the remaining sessions from being cleaned up.
       try {
-        // Set exited before flush so late staleness timer ticks that fire during
-        // teardown see session.exited = true and return early.
-        session.exited = true;
+        // Set state to 'exited' before flush so late staleness timer ticks that
+        // fire during teardown see state !== 'active' and return early.
+        session.state = 'exited';
         this.flushPendingFiles(session);
         this.closeSession(session);
         const result = this.deps.sessionManager.destroySession(session.handle.sessionName);
@@ -379,11 +546,13 @@ export class TmuxConnector implements TmuxConnectorPort {
    * @param sessionName - The tmux session name to embed in the handle. Callers
    *   may pass a placeholder before createSession() returns the real name, then
    *   overwrite session.handle.sessionName afterward.
+   * @param sessionDir - The session root directory (parent of messages/).
    */
   private buildActiveSession(
     config: TmuxSpawnConfig,
     sessionName: string,
     messagesDir: string,
+    sessionDir: string,
     callbacks: SpawnCallbacks,
   ): Result<ActiveSession, AutobeatError> {
     const stalenessConfig: StalenessConfig = {
@@ -407,12 +576,15 @@ export class TmuxConnector implements TmuxConnectorPort {
       messagesWatcher: null,
       stalenessConfig,
       lastAliveCheck: Date.now(),
-      exited: false,
+      state: 'active',
       lastDeliveredSeq: 0,
       pendingMessages: new Map(),
       nextExpectedSeq: 1,
       debounceTimers: new Map(),
       messagesDir,
+      sessionDir,
+      persistent: config.persistent === true,
+      agent: config.agent,
       callbacks,
       flushing: false,
     });
@@ -428,7 +600,7 @@ export class TmuxConnector implements TmuxConnectorPort {
   }
 
   /**
-   * Starts the sentinel watcher that detects .done / .exit files written by the wrapper.
+   * Starts the sentinel watcher that detects .done / .exit files written by the Stop hook.
    * Errors are logged but do not throw — staleness detection handles the degraded path.
    */
   private startSentinelWatcher(session: ActiveSession, sessionDir: string): void {
@@ -440,11 +612,11 @@ export class TmuxConnector implements TmuxConnectorPort {
         (_eventType: string, filename: string | null) => {
           if (!filename) return;
           if (filename === '.done' || filename === '.exit') {
-            // No debounce needed here: handleSentinel() reads session.exited
+            // No debounce needed here: handleSentinel() checks session.state !== 'active'
             // synchronously at the top of the event-loop tick. Because
-            // triggerExit() sets session.exited = true before returning,
+            // triggerExit() sets session.state to 'parked' or 'exited' before returning,
             // any platform double-fire of the same sentinel file is a no-op —
-            // the second callback sees exited = true and returns immediately.
+            // the second callback sees state !== 'active' and returns immediately.
             this.handleSentinel(taskId, sessionDir, filename);
           }
         },
@@ -504,7 +676,7 @@ export class TmuxConnector implements TmuxConnectorPort {
    * Extracted from startMessagesWatcher to flatten nesting and keep the watcher setup readable.
    */
   private onMessageFileChange(session: ActiveSession, filename: string | null): void {
-    if (!filename || session.exited) return;
+    if (!filename || session.state !== 'active') return;
     // Ignore temp files and non-JSON
     if (filename.endsWith('.tmp')) return;
     if (!filename.endsWith('.json')) return;
@@ -597,7 +769,10 @@ export class TmuxConnector implements TmuxConnectorPort {
     const staleEntries: Array<[TaskId, ActiveSession]> = [];
 
     for (const [taskId, session] of this.activeSessions) {
-      if (session.exited) continue;
+      // Skip sessions that are not active — 'exited' sessions are in cleanup,
+      // 'parked' sessions are intentionally idle between loop iterations and
+      // should not be treated as stale (tmux session is alive, just waiting).
+      if (session.state !== 'active') continue;
       if (this.checkSessionStaleness(session, aliveSessions, now)) {
         staleEntries.push([taskId, session]);
       }
@@ -735,7 +910,7 @@ export class TmuxConnector implements TmuxConnectorPort {
 
   private handleSentinel(taskId: TaskId, sessionDir: string, filename: string): void {
     const session = this.activeSessions.get(taskId);
-    if (!session || session.exited) return;
+    if (!session || session.state !== 'active') return;
 
     // Read exit code from sentinel file
     let code: number | null = null;
@@ -754,15 +929,15 @@ export class TmuxConnector implements TmuxConnectorPort {
   }
 
   private async handleMessageFile(filePath: string, session: ActiveSession, callbacks: SpawnCallbacks): Promise<void> {
-    if (session.exited) return;
+    if (session.state !== 'active') return;
 
     let parsed: unknown;
     try {
       // Async read to avoid blocking the event loop on the hot output path.
       // Sentinel and flush paths remain sync (one-shot on exit).
       const raw = await this.deps.readFile(filePath, 'utf8');
-      // Re-check after async gap — session may have exited during the read
-      if (session.exited) return;
+      // Re-check after async gap — session may have exited or been parked during the read
+      if (session.state !== 'active') return;
       parsed = JSON.parse(raw);
     } catch {
       this.deps.logger.warn('Failed to parse output message file', { filePath });
@@ -853,12 +1028,41 @@ export class TmuxConnector implements TmuxConnectorPort {
     signal: string | undefined,
     skipTimerRestart = false,
   ): void {
-    if (session.exited) return;
+    if (session.state !== 'active') return;
 
-    // Set exited BEFORE flushPendingFiles so that any in-flight staleness timer
-    // tick that fires during the flush sees session.exited = true and returns
-    // early, preventing a double onExit call.
-    session.exited = true;
+    // DESIGN DECISION: Persistent sessions are "parked" rather than destroyed when a
+    // sentinel fires — the tmux session stays alive between loop iterations. WorkerPool
+    // calls prepareForReuse() on the next iteration to set up new watchers and task
+    // directory, then sendKeys() to deliver the next prompt.
+    if (session.persistent) {
+      // Set state to 'parked' BEFORE flushPendingFiles so that any in-flight staleness
+      // timer ticks that fire during the flush see state !== 'active' and return early.
+      session.state = 'parked';
+      this.flushPendingFiles(session);
+      this.closeSession(session);
+      // Remove from activeSessions — prepareForReuse() will re-register with new taskId.
+      // Store the agent type so prepareForReuse() can forward it to buildActiveSession()
+      // via the syntheticConfig, avoiding the hardcoded 'claude' placeholder.
+      this.activeSessions.delete(taskId);
+      this.parkedSessionAgents.set(session.handle.sessionName, session.agent);
+      if (!skipTimerRestart) {
+        this.restartSharedStalenessTimer();
+      }
+      // Notify the caller (fires TaskCompleted event). Session directory preserved for
+      // output reading — cleanup happens when cleanupPersistentSession() is called by
+      // WorkerPool at loop end (or on error/cancel paths). prepareForReuse() does not
+      // clean up the previous iteration's directory so that dashboard reads remain
+      // valid until the loop finishes.
+      this.safeCallOnExit('triggerExit', session, code, signal);
+      return;
+    }
+
+    // Non-persistent path: destroy session, cleanup directory, fire onExit.
+
+    // Set state to 'exited' BEFORE flushPendingFiles so that any in-flight staleness
+    // timer tick that fires during the flush sees state !== 'active' and returns early,
+    // preventing a double onExit call.
+    session.state = 'exited';
     this.flushPendingFiles(session);
     this.closeSession(session);
     this.activeSessions.delete(taskId);

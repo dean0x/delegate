@@ -2,7 +2,7 @@
  * OpenAI Codex CLI agent adapter implementation
  *
  * ARCHITECTURE: Codex-specific CLI flags on top of BaseAgentAdapter.
- * Uses --quiet and --full-auto for non-interactive execution.
+ * Uses --full-auto for interactive tmux execution.
  */
 
 import { AgentProvider } from '../core/agents.js';
@@ -16,25 +16,11 @@ export class CodexAdapter extends BaseAgentAdapter {
     super(config, codexCommand);
   }
 
-  // jsonSchema parameter accepted but ignored — Codex CLI does not support structured output
-  protected buildArgs(prompt: string, model?: string, _jsonSchema?: string): readonly string[] {
-    const modelArgs: string[] = model ? ['--model', model] : [];
-    return ['--quiet', '--full-auto', ...modelArgs, '--', prompt];
-  }
-
   protected override buildTmuxArgs(model?: string): readonly string[] {
     const modelArgs: string[] = model ? ['--model', model] : [];
+    // DECISION: Interactive tmux mode — no --quiet, no prompt in args.
+    // Output is captured via the Stop hook; --quiet is only for non-tmux invocations.
     return ['--full-auto', ...modelArgs];
-  }
-
-  protected override buildWrapperFlags(model?: string): readonly string[] {
-    const modelArgs: string[] = model ? ['--model', model] : [];
-    return ['--quiet', '--full-auto', ...modelArgs];
-  }
-
-  protected buildInteractiveArgs(prompt: string, model?: string): readonly string[] {
-    const modelArgs: string[] = model ? ['--model', model] : [];
-    return ['--full-auto', ...modelArgs, '--', prompt];
   }
 
   protected get envPrefixesToStrip(): readonly string[] {

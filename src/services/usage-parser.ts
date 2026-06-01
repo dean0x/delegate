@@ -4,8 +4,8 @@
  * ARCHITECTURE: Best-effort parser — never throws, returns ok(null) on any
  * missing or unparseable data. Cost capture must not affect task outcome.
  * Pattern: Functional core with explicit Result types.
- * Rationale: Claude spawns with --output-format json which appends a final
- * {"type":"result", ..., "usage": {...}, "total_cost_usd": ...} message.
+ * Rationale: The Stop hook captures Claude's output per turn and writes JSON
+ * message files containing {"type":"result", ..., "usage": {...}, "total_cost_usd": ...}.
  */
 
 import { TaskId, TaskOutput, TaskUsage } from '../core/domain.js';

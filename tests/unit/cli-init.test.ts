@@ -5,10 +5,15 @@
  * No vi.mock() — all interactive prompts are plain function injections via InitDeps.
  */
 
-import { describe, expect, it } from 'vitest';
-import type { InitDeps, InitOptions } from '../../src/cli/commands/init';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { HookConfigDeps, HookConfigResult, InitDeps, InitOptions } from '../../src/cli/commands/init';
 import {
+  AGENT_HOOK_CONFIG_PATHS,
   AGENT_SKILL_DIRS,
+  configureAgentHook,
   defaultSkillsExist,
   getSkillTargetDirs,
   parseInitArgs,
@@ -638,5 +643,347 @@ describe('getSkillTargetDirs', () => {
 describe('defaultSkillsExist', () => {
   it('should return false for non-existent project path', () => {
     expect(defaultSkillsExist(['claude'], '/nonexistent/path/that/does/not/exist')).toBe(false);
+  });
+});
+
+// ============================================================================
+// configureAgentHook
+// ============================================================================
+
+let hookTmpDir = '';
+
+beforeAll(() => {
+  hookTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beat-init-hook-'));
+});
+
+afterAll(() => {
+  if (hookTmpDir) {
+    try {
+      fs.rmSync(hookTmpDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+afterEach(() => {
+  // Clean per-test subdirs
+  try {
+    const entries = fs.readdirSync(hookTmpDir);
+    for (const entry of entries) {
+      const full = path.join(hookTmpDir, entry);
+      if (fs.statSync(full).isDirectory()) {
+        fs.rmSync(full, { recursive: true, force: true });
+      } else {
+        fs.unlinkSync(full);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+});
+
+/** Build an injectable HookConfigDeps backed by real filesystem in a tmpDir. */
+function makeHookDeps(): HookConfigDeps {
+  return {
+    readFile(filePath: string): string | null {
+      try {
+        return fs.readFileSync(filePath, 'utf-8');
+      } catch {
+        return null;
+      }
+    },
+    writeFile(filePath: string, content: string): void {
+      fs.writeFileSync(filePath, content, { encoding: 'utf-8' });
+    },
+    renameFile(from: string, to: string): void {
+      fs.renameSync(from, to);
+    },
+    ensureDir(dirPath: string): void {
+      fs.mkdirSync(dirPath, { recursive: true });
+    },
+    fileExists(filePath: string): boolean {
+      return fs.existsSync(filePath);
+    },
+    unlinkFile(filePath: string): void {
+      fs.unlinkSync(filePath);
+    },
+  };
+}
+
+describe('configureAgentHook', () => {
+  it('creates config file with Stop hook when it does not exist', () => {
+    const configDir = path.join(hookTmpDir, 'claude-create');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+    const deps = makeHookDeps();
+
+    const result = configureAgentHook('claude', configPath, deps);
+
+    expect(result.ok).toBe(true);
+    expect(fs.existsSync(configPath)).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    const hooks = config.hooks as Record<string, unknown>;
+    const stopHooks = hooks.Stop as unknown[];
+    expect(stopHooks).toHaveLength(1);
+    const entry = stopHooks[0] as Record<string, unknown>;
+    const innerHooks = entry.hooks as unknown[];
+    expect(innerHooks[0]).toEqual({ type: 'command', command: 'autobeat-stop-hook' });
+  });
+
+  it('merges hook into existing config without overwriting other hooks', () => {
+    const configDir = path.join(hookTmpDir, 'claude-merge');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+    const deps = makeHookDeps();
+
+    // Pre-populate with existing hooks
+    const existing = {
+      hooks: {
+        PreToolUse: [{ hooks: [{ type: 'command', command: 'my-pre-tool' }] }],
+      },
+      someOtherSetting: 'value',
+    };
+    fs.writeFileSync(configPath, JSON.stringify(existing, null, 2) + '\n');
+
+    const result = configureAgentHook('claude', configPath, deps);
+
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    // Original settings preserved
+    expect(config.someOtherSetting).toBe('value');
+    // Pre-existing hooks preserved
+    const hooks = config.hooks as Record<string, unknown>;
+    expect(hooks.PreToolUse).toBeDefined();
+    // Stop hook added
+    const stopHooks = hooks.Stop as unknown[];
+    expect(stopHooks).toHaveLength(1);
+  });
+
+  it('is idempotent — second call does not duplicate the hook', () => {
+    const configDir = path.join(hookTmpDir, 'claude-idempotent');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+    const deps = makeHookDeps();
+
+    // First call
+    configureAgentHook('claude', configPath, deps);
+    // Second call
+    const result = configureAgentHook('claude', configPath, deps);
+
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    const hooks = config.hooks as Record<string, unknown>;
+    const stopHooks = hooks.Stop as unknown[];
+    // Should still be exactly 1 entry
+    expect(stopHooks).toHaveLength(1);
+  });
+
+  it('creates a .bak backup before first modification', () => {
+    const configDir = path.join(hookTmpDir, 'claude-backup');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+    const deps = makeHookDeps();
+
+    // Pre-populate so there is an original to backup
+    const original = { existingSetting: 'original' };
+    fs.writeFileSync(configPath, JSON.stringify(original, null, 2) + '\n');
+
+    configureAgentHook('claude', configPath, deps);
+
+    // Backup should exist with original content
+    const backupPath = configPath + '.bak';
+    expect(fs.existsSync(backupPath)).toBe(true);
+    const backup = JSON.parse(fs.readFileSync(backupPath, 'utf-8')) as Record<string, unknown>;
+    expect(backup.existingSetting).toBe('original');
+  });
+
+  it('does not overwrite existing .bak on repeated calls', () => {
+    const configDir = path.join(hookTmpDir, 'claude-backup-no-overwrite');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+    const deps = makeHookDeps();
+
+    // Write a settings file and take a first backup
+    fs.writeFileSync(configPath, JSON.stringify({ version: 1 }) + '\n');
+    configureAgentHook('claude', configPath, deps);
+    const backupPath = configPath + '.bak';
+    const backupAfterFirst = fs.readFileSync(backupPath, 'utf-8');
+
+    // Simulate someone modifying the settings after initial backup
+    fs.writeFileSync(configPath, JSON.stringify({ version: 2 }) + '\n');
+    configureAgentHook('claude', configPath, deps); // hook already present — no-op
+
+    // Backup should not be overwritten
+    const backupAfterSecond = fs.readFileSync(backupPath, 'utf-8');
+    expect(backupAfterSecond).toBe(backupAfterFirst);
+  });
+
+  it('no .tmp file remains after successful write', () => {
+    const configDir = path.join(hookTmpDir, 'claude-atomic');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+    const deps = makeHookDeps();
+
+    configureAgentHook('claude', configPath, deps);
+
+    expect(fs.existsSync(configPath + '.tmp')).toBe(false);
+  });
+
+  it('returns error for invalid JSON in existing config file', () => {
+    const configDir = path.join(hookTmpDir, 'claude-invalid-json');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+    const deps = makeHookDeps();
+
+    fs.writeFileSync(configPath, 'not valid json {{{');
+
+    const result = configureAgentHook('claude', configPath, deps);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('invalid JSON');
+    }
+  });
+
+  it('works for codex agent type', () => {
+    const configDir = path.join(hookTmpDir, 'codex-create');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'hooks.json');
+    const deps = makeHookDeps();
+
+    const result = configureAgentHook('codex', configPath, deps);
+
+    expect(result.ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    const hooks = config.hooks as Record<string, unknown>;
+    expect(hooks.Stop).toBeDefined();
+  });
+
+  it('returns err() when writeFile throws — no unhandled exception propagates', () => {
+    const configDir = path.join(hookTmpDir, 'claude-write-throws');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+    const deps: HookConfigDeps = {
+      ...makeHookDeps(),
+      writeFile(_filePath: string, _content: string): void {
+        throw new Error('ENOSPC: no space left on device');
+      },
+    };
+
+    const result = configureAgentHook('claude', configPath, deps);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('ENOSPC');
+    }
+  });
+
+  it('returns err() when renameFile throws and leaves no orphaned .tmp', () => {
+    const configDir = path.join(hookTmpDir, 'claude-rename-throws');
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'settings.json');
+
+    let writtenTmpPath: string | undefined;
+    const realDeps = makeHookDeps();
+    const deps: HookConfigDeps = {
+      ...realDeps,
+      writeFile(filePath: string, content: string): void {
+        writtenTmpPath = filePath;
+        realDeps.writeFile(filePath, content);
+      },
+      renameFile(_from: string, _to: string): void {
+        throw new Error('EXDEV: cross-device link not permitted');
+      },
+    };
+
+    const result = configureAgentHook('claude', configPath, deps);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('EXDEV');
+    }
+    // .tmp file should be deleted on rename failure (no orphaned file)
+    if (writtenTmpPath) {
+      expect(fs.existsSync(writtenTmpPath)).toBe(false);
+    }
+  });
+});
+
+// ============================================================================
+// runInit — hook configuration integration
+// ============================================================================
+
+describe('runInit — hook configuration', () => {
+  it('calls configureHooks after successful agent save (non-interactive path)', async () => {
+    const hookResults: HookConfigResult[] = [];
+    const deps = makeDeps({
+      configureHooks: (agent) => {
+        hookResults.push({ agentType: 'claude', ok: true });
+        void agent;
+        return [{ agentType: 'claude', ok: true }];
+      },
+    });
+
+    const result = await runInit({ agent: 'claude' }, deps);
+
+    expect(result.code).toBe(0);
+    expect(hookResults).toHaveLength(1);
+  });
+
+  it('calls configureHooks after successful agent selection (interactive path)', async () => {
+    const hookResults: HookConfigResult[] = [];
+    const deps = makeDeps({
+      isTTY: true,
+      selectAgent: async () => 'claude',
+      configureHooks: () => {
+        hookResults.push({ agentType: 'claude', ok: true });
+        return [{ agentType: 'claude', ok: true }];
+      },
+    });
+
+    const result = await runInit({}, deps);
+
+    expect(result.code).toBe(0);
+    expect(hookResults).toHaveLength(1);
+  });
+
+  it('does not fail init when configureHooks returns an error result', async () => {
+    const deps = makeDeps({
+      configureHooks: () => [{ agentType: 'claude', ok: false, error: 'Could not write config' }],
+    });
+
+    const result = await runInit({ agent: 'claude' }, deps);
+
+    // Init still succeeds — hook errors are non-fatal warnings
+    expect(result.code).toBe(0);
+  });
+
+  it('silently skips hook configuration when configureHooks is absent', async () => {
+    // No configureHooks in deps — should complete without error
+    const deps = makeDeps();
+
+    const result = await runInit({ agent: 'claude' }, deps);
+
+    expect(result.code).toBe(0);
+  });
+});
+
+// ============================================================================
+// AGENT_HOOK_CONFIG_PATHS
+// ============================================================================
+
+describe('AGENT_HOOK_CONFIG_PATHS', () => {
+  it('claude path ends with .claude/settings.json', () => {
+    expect(AGENT_HOOK_CONFIG_PATHS.claude).toContain('.claude');
+    expect(AGENT_HOOK_CONFIG_PATHS.claude).toMatch(/settings\.json$/);
+  });
+
+  it('codex path ends with .codex/hooks.json', () => {
+    expect(AGENT_HOOK_CONFIG_PATHS.codex).toContain('.codex');
+    expect(AGENT_HOOK_CONFIG_PATHS.codex).toMatch(/hooks\.json$/);
   });
 });

@@ -11,13 +11,13 @@ import { err, ok } from '../../../../src/core/result.js';
 import { TmuxConnector, type TmuxConnectorDeps } from '../../../../src/implementations/tmux/tmux-connector.js';
 import type {
   OutputMessage,
+  SetupShimManifest,
   TmuxHandle,
   TmuxHooksPort,
   TmuxSessionManagerPort,
   TmuxSessionResult,
   TmuxSpawnConfig,
   TmuxValidatorPort,
-  WrapperManifest,
 } from '../../../../src/implementations/tmux/types.js';
 import { MAX_CONCURRENT_SESSIONS } from '../../../../src/implementations/tmux/types.js';
 import { sleep } from '../../../fixtures/test-data.js';
@@ -47,13 +47,11 @@ function makeLogger(): Logger {
   };
 }
 
-function makeManifest(taskId: string, sessionsDir = '/tmp/sessions'): WrapperManifest {
+function makeShimManifest(taskId: string, sessionsDir = '/tmp/sessions'): SetupShimManifest {
   return {
-    wrapperPath: `${sessionsDir}/${taskId}/wrapper.sh`,
+    shimPath: `${sessionsDir}/${taskId}/setup-shim.sh`,
     sessionDir: `${sessionsDir}/${taskId}`,
-    sentinelPath: `${sessionsDir}/${taskId}/.done`,
     messagesDir: `${sessionsDir}/${taskId}/messages`,
-    seqFilePath: `${sessionsDir}/${taskId}/.seq`,
   };
 }
 
@@ -166,14 +164,20 @@ function makeFailingValidator(): TmuxValidatorPort {
 
 function makeValidHooks(taskId = 'task-abc'): TmuxHooksPort {
   return {
-    generateWrapper: vi.fn().mockReturnValue(ok(makeManifest(taskId))),
+    generateSetupShim: vi.fn().mockReturnValue(ok(makeShimManifest(taskId))),
+    initTaskDirectory: vi
+      .fn()
+      .mockImplementation((newTaskId: string, sessionsDir: string) =>
+        ok({ sessionDir: `${sessionsDir}/${newTaskId}`, messagesDir: `${sessionsDir}/${newTaskId}/messages` }),
+      ),
     cleanup: vi.fn().mockReturnValue(ok(undefined)),
   } as unknown as TmuxHooksPort;
 }
 
 function makeFailingHooks(code = ErrorCode.TMUX_HOOK_FAILED): TmuxHooksPort {
   return {
-    generateWrapper: vi.fn().mockReturnValue(err(new AutobeatError(code, 'hook failed'))),
+    generateSetupShim: vi.fn().mockReturnValue(err(new AutobeatError(code, 'hook failed'))),
+    initTaskDirectory: vi.fn().mockReturnValue(err(new AutobeatError(code, 'init failed'))),
     cleanup: vi.fn().mockReturnValue(ok(undefined)),
   } as unknown as TmuxHooksPort;
 }
@@ -225,7 +229,7 @@ describe('TmuxConnector.spawn()', () => {
     expect(sessionManager.createSession).not.toHaveBeenCalled();
   });
 
-  it('calls hooks.generateWrapper before creating the session', () => {
+  it('calls hooks.generateSetupShim before creating the session', () => {
     const hooks = makeValidHooks();
     const sessionManager = makeValidSessionManager();
     const { watch } = makeWatchMock();
@@ -240,10 +244,10 @@ describe('TmuxConnector.spawn()', () => {
     });
 
     connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
-    expect(hooks.generateWrapper).toHaveBeenCalled();
+    expect(hooks.generateSetupShim).toHaveBeenCalled();
   });
 
-  it('passes config.agentArgs to hooks.generateWrapper (not hardcoded [])', () => {
+  it('passes config.agentArgs to hooks.generateSetupShim (not hardcoded [])', () => {
     const hooks = makeValidHooks();
     const { watch } = makeWatchMock();
 
@@ -258,17 +262,17 @@ describe('TmuxConnector.spawn()', () => {
 
     const configWithArgs = {
       ...BASE_CONFIG,
-      agentArgs: ['--dangerously-skip-permissions', '--output-format', 'stream-json'],
+      agentArgs: ['--dangerously-skip-permissions'],
     };
     connector.spawn(configWithArgs, { onOutput: vi.fn(), onExit: vi.fn() });
-    expect(hooks.generateWrapper).toHaveBeenCalledWith(
+    expect(hooks.generateSetupShim).toHaveBeenCalledWith(
       expect.objectContaining({
-        agentArgs: ['--dangerously-skip-permissions', '--output-format', 'stream-json'],
+        agentArgs: ['--dangerously-skip-permissions'],
       }),
     );
   });
 
-  it('passes empty agentArgs to hooks.generateWrapper when config has empty array', () => {
+  it('passes empty agentArgs to hooks.generateSetupShim when config has empty array', () => {
     const hooks = makeValidHooks();
     const { watch } = makeWatchMock();
 
@@ -282,10 +286,10 @@ describe('TmuxConnector.spawn()', () => {
     });
 
     connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
-    expect(hooks.generateWrapper).toHaveBeenCalledWith(expect.objectContaining({ agentArgs: [] }));
+    expect(hooks.generateSetupShim).toHaveBeenCalledWith(expect.objectContaining({ agentArgs: [] }));
   });
 
-  it('creates session with the wrapper script as the command', () => {
+  it('creates session with the setup shim as the command', () => {
     const sessionManager = makeValidSessionManager();
     const { watch } = makeWatchMock();
 
@@ -300,7 +304,7 @@ describe('TmuxConnector.spawn()', () => {
 
     connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
     const createCall = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    expect(createCall?.command).toContain('wrapper.sh');
+    expect(createCall?.command).toContain('setup-shim.sh');
   });
 
   it('starts a sentinel watcher (fs.watch called at least once)', () => {
@@ -373,7 +377,7 @@ describe('TmuxConnector.spawn()', () => {
     expect(result.value.taskId).toBe('task-abc');
   });
 
-  it('returns hook error when generateWrapper fails', () => {
+  it('returns hook error when generateSetupShim fails', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
@@ -577,6 +581,10 @@ describe('TmuxConnector — null filename guard (macOS fs.watch edge case)', () 
   });
 
   it('messages watcher ignores null filename — no crash and onOutput not called', async () => {
+    // Use fake timers to avoid CI timing fragility — advance past the DEBOUNCE_MS=50ms
+    // window and flush microtasks, then assert readFile was never scheduled.
+    vi.useFakeTimers();
+
     // Capture the messages watcher callback so we can fire null
     let messageCallback: ((event: string, filename: string | null) => void) | null = null;
     let watchCallCount = 0;
@@ -606,12 +614,16 @@ describe('TmuxConnector — null filename guard (macOS fs.watch edge case)', () 
     // Fire messages watcher with null filename
     expect(() => messageCallback?.('change', null)).not.toThrow();
 
-    // No debounce timer should have been scheduled (readFile never called)
-    await new Promise((r) => setTimeout(r, 100));
+    // Advance past the debounce window — no timer should have been scheduled for null filename
+    vi.advanceTimersByTime(100);
+    await Promise.resolve();
+    await Promise.resolve();
+
     expect(readFile).not.toHaveBeenCalled();
     expect(onOutput).not.toHaveBeenCalled();
 
     connector.dispose();
+    vi.useRealTimers();
   });
 });
 
@@ -1681,10 +1693,11 @@ describe('TmuxConnector — staleness detection', () => {
     } as unknown as TmuxSessionManagerPort;
 
     const hooks: TmuxHooksPort = {
-      generateWrapper: vi
+      generateSetupShim: vi
         .fn()
-        .mockReturnValueOnce(ok(makeManifest('task-fast')))
-        .mockReturnValueOnce(ok(makeManifest('task-slow'))),
+        .mockReturnValueOnce(ok(makeShimManifest('task-fast')))
+        .mockReturnValueOnce(ok(makeShimManifest('task-slow'))),
+      initTaskDirectory: vi.fn().mockReturnValue(ok({ sessionDir: '', messagesDir: '' })),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
     } as unknown as TmuxHooksPort;
 
@@ -1901,6 +1914,43 @@ describe('TmuxConnector.destroy()', () => {
       connector.destroy(spawnResult.value);
     }).not.toThrow();
   });
+
+  it('destroy on a parked session kills the tmux process (session-orphan regression)', () => {
+    // Regression: before the fix, destroy() on a parked handle returned ok(undefined)
+    // without calling destroySession() because the parked session is removed from
+    // activeSessions by triggerExit(). Every loop with 2+ iterations would leak a tmux process.
+    const { watch, fireSentinel } = makeWatchMock();
+    const sessionManager = makeValidSessionManager();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    const persistentConfig: TmuxSpawnConfig = { ...BASE_CONFIG, persistent: true };
+    const spawnResult = connector.spawn(persistentConfig, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) throw new Error('spawn failed');
+    const handle = spawnResult.value;
+
+    // Park the session (removes it from activeSessions)
+    fireSentinel('.done');
+    expect(connector.getActiveHandles()).toHaveLength(0);
+
+    // Reset the destroySession call count so we can assert only the destroy() call
+    vi.mocked(sessionManager.destroySession).mockClear();
+
+    // destroy() on the parked handle must still kill the tmux process
+    const result = connector.destroy(handle);
+
+    expect(result.ok).toBe(true);
+    expect(sessionManager.destroySession).toHaveBeenCalledWith(handle.sessionName);
+  });
 });
 
 describe('TmuxConnector.sendControlKeys()', () => {
@@ -2095,10 +2145,11 @@ describe('TmuxConnector.dispose()', () => {
     } as unknown as TmuxSessionManagerPort;
 
     const hooks = {
-      generateWrapper: vi
+      generateSetupShim: vi
         .fn()
-        .mockReturnValueOnce(ok(makeManifest('task-abc')))
-        .mockReturnValueOnce(ok(makeManifest('task-def'))),
+        .mockReturnValueOnce(ok(makeShimManifest('task-abc')))
+        .mockReturnValueOnce(ok(makeShimManifest('task-def'))),
+      initTaskDirectory: vi.fn().mockReturnValue(ok({ sessionDir: '', messagesDir: '' })),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
     } as unknown as TmuxHooksPort;
 
@@ -2150,10 +2201,11 @@ describe('TmuxConnector.dispose()', () => {
     } as unknown as TmuxSessionManagerPort;
 
     const hooks = {
-      generateWrapper: vi
+      generateSetupShim: vi
         .fn()
-        .mockReturnValueOnce(ok(makeManifest('task-abc')))
-        .mockReturnValueOnce(ok(makeManifest('task-def'))),
+        .mockReturnValueOnce(ok(makeShimManifest('task-abc')))
+        .mockReturnValueOnce(ok(makeShimManifest('task-def'))),
+      initTaskDirectory: vi.fn().mockReturnValue(ok({ sessionDir: '', messagesDir: '' })),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
     } as unknown as TmuxHooksPort;
 
@@ -2216,7 +2268,8 @@ describe('TmuxConnector.getActiveHandles()', () => {
 describe('TmuxConnector — loggedCleanup failure logging', () => {
   function makeCleanupFailingHooks(taskId = 'task-abc'): TmuxHooksPort {
     return {
-      generateWrapper: vi.fn().mockReturnValue(ok(makeManifest(taskId))),
+      generateSetupShim: vi.fn().mockReturnValue(ok(makeShimManifest(taskId))),
+      initTaskDirectory: vi.fn().mockReturnValue(ok({ sessionDir: '', messagesDir: '' })),
       cleanup: vi.fn().mockReturnValue(err(new AutobeatError(ErrorCode.TMUX_HOOK_FAILED, 'cleanup error'))),
     } as unknown as TmuxHooksPort;
   }
@@ -2319,7 +2372,8 @@ describe('TmuxConnector — connector-level session cap (rel-conn-1)', () => {
     } as unknown as TmuxSessionManagerPort;
 
     const hooks: TmuxHooksPort = {
-      generateWrapper: vi.fn().mockImplementation((cfg: { taskId: string }) => ok(makeManifest(cfg.taskId))),
+      generateSetupShim: vi.fn().mockImplementation((cfg: { taskId: string }) => ok(makeShimManifest(cfg.taskId))),
+      initTaskDirectory: vi.fn().mockReturnValue(ok({ sessionDir: '', messagesDir: '' })),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
     } as unknown as TmuxHooksPort;
 
@@ -2501,5 +2555,358 @@ describe('TmuxConnector — flushPendingFiles filename-based skip (perf-conn-1)'
     // readFileSyncCalls should only contain the path for file 3, not files 1 or 2
     expect(readFileSyncCalls.every((p) => p.includes('00003'))).toBe(true);
     expect(readFileSyncCalls).toHaveLength(1);
+  });
+});
+
+// ─── SessionState: persistent=true → parked (not destroyed) ──────────────────
+
+const PERSISTENT_CONFIG: TmuxSpawnConfig = {
+  ...BASE_CONFIG,
+  persistent: true,
+};
+
+describe('TmuxConnector — persistent session state machine (triggerExit / parked)', () => {
+  it('persistent=true: sentinel fires onExit (TaskCompleted) and state becomes parked', () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const sessionManager = makeValidSessionManager();
+    const onExit = vi.fn();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    connector.spawn(PERSISTENT_CONFIG, { onOutput: vi.fn(), onExit });
+    fireSentinel('.done');
+
+    // onExit must have been called (fires TaskCompleted) — even for persistent sessions
+    expect(onExit).toHaveBeenCalledWith(0, undefined);
+  });
+
+  it('persistent=true: sentinel does NOT destroy the tmux session', () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const sessionManager = makeValidSessionManager();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    connector.spawn(PERSISTENT_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+
+    // Reset call count after spawn (createSession calls destroySession implicitly in some mocks)
+    vi.mocked(sessionManager.destroySession).mockClear();
+
+    fireSentinel('.done');
+
+    // destroySession must NOT have been called — the session stays alive for reuse
+    expect(sessionManager.destroySession).not.toHaveBeenCalled();
+  });
+
+  it('persistent=true: hooks.cleanup NOT called when session is parked', () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const hooks = makeValidHooks();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    connector.spawn(PERSISTENT_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    vi.mocked(hooks.cleanup).mockClear();
+    fireSentinel('.done');
+
+    // cleanup preserves the session dir so the next iteration can read output
+    expect(hooks.cleanup).not.toHaveBeenCalled();
+  });
+
+  it('persistent=false: sentinel destroys the tmux session and calls hooks.cleanup', () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const sessionManager = makeValidSessionManager();
+    const hooks = makeValidHooks();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks,
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    vi.mocked(sessionManager.destroySession).mockClear();
+    vi.mocked(hooks.cleanup).mockClear();
+    fireSentinel('.done');
+
+    // Non-persistent: destroySession must be called
+    expect(sessionManager.destroySession).toHaveBeenCalled();
+    // cleanup also called on non-persistent exit
+    expect(hooks.cleanup).toHaveBeenCalled();
+  });
+
+  it('persistent=true: session removed from activeSessions after parking', () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    connector.spawn(PERSISTENT_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    expect(connector.getActiveHandles()).toHaveLength(1);
+
+    fireSentinel('.done');
+
+    // Parked sessions are removed from activeSessions (prepareForReuse re-registers)
+    expect(connector.getActiveHandles()).toHaveLength(0);
+  });
+});
+
+// ─── SessionState: staleness timer ignores parked sessions ───────────────────
+
+describe('TmuxConnector — staleness timer ignores parked sessions', () => {
+  it('parked session does not trigger staleness even when not in listSessions result', () => {
+    vi.useFakeTimers();
+    const { watch, fireSentinel } = makeWatchMock();
+    const onExit = vi.fn();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    // listSessions returns empty — session not present (simulates tmux reporting it gone)
+    // For a parked session this should be irrelevant (it should be skipped)
+    const sessionManager = makeValidSessionManager('task-abc');
+    vi.mocked(sessionManager.listSessions).mockReturnValue(ok([]));
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    connector.spawn(
+      { ...PERSISTENT_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 500 } },
+      { onOutput: vi.fn(), onExit },
+    );
+
+    // Park the session by firing the sentinel
+    fireSentinel('.done');
+    expect(onExit).toHaveBeenCalledTimes(1);
+
+    // Advance timers well past maxSilenceMs — parked session must not fire stale onExit
+    vi.advanceTimersByTime(5000);
+    expect(onExit).toHaveBeenCalledTimes(1); // still only once
+
+    vi.useRealTimers();
+  });
+});
+
+// ─── TmuxConnector.prepareForReuse() ─────────────────────────────────────────
+
+describe('TmuxConnector.prepareForReuse()', () => {
+  it('returns ok and registers a new ActiveSession under newTaskId', () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const hooks = makeValidHooks();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    const spawnResult = connector.spawn(PERSISTENT_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) throw new Error('spawn failed');
+    const handle = spawnResult.value;
+
+    // Park the session
+    fireSentinel('.done');
+    expect(connector.getActiveHandles()).toHaveLength(0);
+
+    // Prepare for reuse with a new task ID
+    const newCallbacks = { onOutput: vi.fn(), onExit: vi.fn() };
+    const result = connector.prepareForReuse(handle, 'task-iter2' as typeof handle.taskId, newCallbacks);
+
+    expect(result.ok).toBe(true);
+    // New session registered under newTaskId
+    expect(connector.getActiveHandles()).toHaveLength(1);
+    expect(connector.getActiveHandles()[0]?.taskId).toBe('task-iter2');
+  });
+
+  it('calls hooks.initTaskDirectory with newTaskId and sessionsDir', () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const hooks = makeValidHooks();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    const spawnResult = connector.spawn(PERSISTENT_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) throw new Error('spawn failed');
+    const handle = spawnResult.value;
+
+    fireSentinel('.done');
+
+    connector.prepareForReuse(handle, 'task-iter2' as typeof handle.taskId, { onOutput: vi.fn(), onExit: vi.fn() });
+
+    expect(hooks.initTaskDirectory).toHaveBeenCalledWith('task-iter2', handle.sessionsDir);
+  });
+
+  it('starts new watchers for the new task directory', () => {
+    // Count total watch calls: spawn uses 2, prepareForReuse must add 2 more
+    let watchCallCount = 0;
+    const watchCallbacks: Array<(event: string, filename: string | null) => void> = [];
+    const watchFn = vi
+      .fn()
+      .mockImplementation((_p: string, _opts: unknown, cb: (event: string, f: string | null) => void) => {
+        watchCallCount++;
+        watchCallbacks.push(cb);
+        return { close: vi.fn(), on: vi.fn() };
+      }) as unknown as TmuxConnectorDeps['watch'];
+
+    const hooks = makeValidHooks();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger: makeLogger(),
+      watch: watchFn,
+      readFileSync,
+    });
+
+    const spawnResult = connector.spawn(PERSISTENT_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) throw new Error('spawn failed');
+    const handle = spawnResult.value;
+
+    const watchCallsAfterSpawn = watchCallCount; // should be 2
+
+    // Fire sentinel to park the session (closes watchers)
+    watchCallbacks[0]?.('change', '.done'); // trigger sentinel watcher
+
+    connector.prepareForReuse(handle, 'task-iter2' as typeof handle.taskId, { onOutput: vi.fn(), onExit: vi.fn() });
+
+    // prepareForReuse must start 2 new watchers (sentinel + messages)
+    expect(watchCallCount).toBe(watchCallsAfterSpawn + 2);
+  });
+
+  it('returns err when initTaskDirectory fails', () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const hooks = makeFailingHooks();
+    const readFileSync = vi.fn().mockReturnValue('0');
+
+    // Need a hooks where generateSetupShim succeeds but initTaskDirectory fails
+    const mixedHooks: TmuxHooksPort = {
+      ...makeValidHooks(),
+      initTaskDirectory: vi.fn().mockReturnValue(err(new AutobeatError(ErrorCode.TMUX_HOOK_FAILED, 'init failed'))),
+    } as unknown as TmuxHooksPort;
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: mixedHooks,
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    const spawnResult = connector.spawn(PERSISTENT_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) throw new Error('spawn failed');
+    const handle = spawnResult.value;
+
+    fireSentinel('.done');
+
+    const result = connector.prepareForReuse(handle, 'task-iter2' as typeof handle.taskId, {
+      onOutput: vi.fn(),
+      onExit: vi.fn(),
+    });
+
+    expect(result.ok).toBe(false);
+    // Session should not have been registered
+    expect(connector.getActiveHandles()).toHaveLength(0);
+  });
+
+  it('resets nextExpectedSeq to 1 and clears pendingMessages for new iteration', async () => {
+    const { watch, fireSentinel, fireMessage } = makeWatchMock();
+    const hooks = makeValidHooks();
+    const readFileSync = vi.fn().mockReturnValue('0');
+    const readFile = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify({ sequence: 1, timestamp: 'ts', type: 'result', content: 'hello' }));
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks,
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+      readFile,
+    });
+
+    const spawnResult = connector.spawn(PERSISTENT_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) throw new Error('spawn failed');
+    const handle = spawnResult.value;
+
+    fireSentinel('.done');
+
+    const newOnOutput = vi.fn();
+    connector.prepareForReuse(handle, 'task-iter2' as typeof handle.taskId, { onOutput: newOnOutput, onExit: vi.fn() });
+
+    // Fire message seq=1 for the new iteration
+    fireMessage('00001-result.json');
+
+    // The message should be delivered via new callbacks (sequence counting restarts at 1)
+    await vi.waitFor(
+      () =>
+        expect(newOnOutput).toHaveBeenCalledWith(
+          expect.objectContaining({ sequence: 1, type: 'result', content: 'hello' }),
+        ),
+      { timeout: 300 },
+    );
   });
 });

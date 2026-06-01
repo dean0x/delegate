@@ -8,7 +8,7 @@
  * src/implementations/tmux/types.ts imports these types from here and re-exports
  * them so that existing callers that import from tmux/types.ts continue to work.
  *
- * Internal types (WrapperConfig, WrapperManifest, StalenessConfig, ExecFn, WatchFn,
+ * Internal types (SetupShimConfig, SetupShimManifest, StalenessConfig, ExecFn, WatchFn,
  * TmuxSessionConfig, TmuxAgentType, etc.) remain in src/implementations/tmux/types.ts
  * because they are implementation concerns. TmuxSpawnConfig extends TmuxSpawnCoreConfig
  * defined here — that extension is the only coupling point.
@@ -36,7 +36,7 @@ export interface TmuxHandle {
 // ─── Output message ───────────────────────────────────────────────────────────
 
 /**
- * A single output message written by the wrapper script.
+ * A single output message written by the Stop hook (autobeat-stop-hook).
  */
 export interface OutputMessage {
   readonly sequence: number;
@@ -90,10 +90,13 @@ export interface TmuxSpawnCoreConfig {
    */
   readonly env?: Record<string, string>;
   /**
-   * Persistent session mode (Phase 5).
-   * When true: agent runs interactively (no --print), output captured via Stop hook,
-   * completion detected via per-iteration sentinel files. Used for loop iteration reuse.
-   * When false/absent: existing --print + wrapper pipeline mode.
+   * Persistent session mode.
+   * When true: the tmux session is parked (kept alive) after a sentinel fires so
+   * that WorkerPool can reuse it for the next loop iteration via prepareForReuse().
+   * When false/absent: the tmux session is destroyed after the sentinel fires.
+   *
+   * All sessions use the interactive (setup shim) path regardless of this flag —
+   * wrapper pipeline mode has been removed.
    */
   readonly persistent?: boolean;
 }
@@ -159,7 +162,7 @@ export interface TmuxSessionManagerCorePort {
  * spawn() accepts TmuxSpawnCoreConfig — the minimal core-layer type. The concrete
  * TmuxConnector casts it to the richer TmuxSpawnConfig (which extends TmuxSpawnCoreConfig)
  * at the implementation boundary, where the full field set is needed to configure
- * the tmux session and wrapper script.
+ * the tmux session and setup shim.
  */
 export interface TmuxConnectorPort {
   spawn(config: TmuxSpawnCoreConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError>;
@@ -190,6 +193,25 @@ export interface TmuxConnectorPort {
    * shell metacharacters ($, `, \n, etc.) in the content.
    */
   pasteContent(handle: TmuxHandle, content: string): Result<void, AutobeatError>;
+  /**
+   * Prepare a parked persistent session for reuse by the next loop iteration.
+   *
+   * DESIGN DECISION (Phase B): Encapsulates all connector-internal reuse steps behind
+   * a single port method so WorkerPool does not need to know about task directories,
+   * sequence counters, or watcher lifecycle. The port boundary stays thin.
+   *
+   * Steps:
+   * 1. Create new task directory (sessionsDir/newTaskId/messages/) and reset .seq to 0
+   * 2. Register a new ActiveSession with state 'active' for newTaskId
+   * 3. Start new sentinel + messages watchers for the new directory
+   * 4. Restart the staleness timer
+   *
+   * Must be called AFTER setEnvironment(AUTOBEAT_TASK_ID) and the /clear settle delay,
+   * and BEFORE sendKeys(prompt) so watchers are ready before any output arrives.
+   *
+   * Returns err() if the task directory cannot be created.
+   */
+  prepareForReuse(handle: TmuxHandle, newTaskId: TaskId, callbacks: SpawnCallbacks): Result<void, AutobeatError>;
   getActiveHandles(): TmuxHandle[];
   dispose(): void;
 }
