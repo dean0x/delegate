@@ -140,7 +140,12 @@ function backupIfNeeded(configPath: string, deps: HookConfigDeps): void {
   if (deps.fileExists(backupPath)) return;
   const original = deps.readFile(configPath);
   if (original !== null) {
-    deps.writeFile(backupPath, original);
+    try {
+      deps.writeFile(backupPath, original);
+    } catch {
+      // Best-effort: backup failure is non-critical — the config file itself
+      // is intact, and we must not throw through the Result-returning caller.
+    }
   }
 }
 
